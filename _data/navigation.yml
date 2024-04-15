@@ -1,0 +1,19 @@
+#Please use the main menu items under the "text"
+
+- text: Home
+  url: /
+- text: Blog Posts
+  url: "#"
+  submenu:
+    - text: Standard Fullwidth
+      url: /the-best-soft-tropical-getaway.html
+    - text: Standard Left Sidebar
+      url: /free-wordpress-and-html-themes.html
+    - text: Standard Right Sidebar
+      url: /ingredient-cilantro-vinaigrette.html
+- text: About
+  url: /about.html
+- text: Category
+  url: /category/design
+- text: Contact
+  url: /contact.html
