@@ -218,6 +218,8 @@ body {
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
     scrollbar-color: #c5c9d2 #f1f1f1;
+    min-height: 300px;
+    align-items: flex-start;
 }
 
 .paper-scroll-container::-webkit-scrollbar {
@@ -241,12 +243,16 @@ body {
 .paper-image {
     flex-shrink: 0;
     width: 200px;
-    height: 280px;
-    object-fit: cover;
+    height: auto;
+    min-height: 280px;
+    max-height: 400px;
+    object-fit: contain;
     border-radius: 6px;
     border: 2px solid #e9ecef;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    transition: all 0.3s ease;
     cursor: pointer;
+    background: #fff;
+    display: block;
 }
 
 .paper-image:hover {
@@ -255,11 +261,27 @@ body {
     border-color: #667eea;
 }
 
+/* 图片加载状态 */
+.paper-image:not([src]) {
+    background: #f8f9fa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6c757d;
+    font-size: 0.875rem;
+}
+
+.paper-image:not([src]):before {
+    content: "图片加载中...";
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
     .paper-image {
         width: 150px;
-        height: 210px;
+        height: auto;
+        min-height: 210px;
+        max-height: 300px;
     }
     
     .paper-preview {
