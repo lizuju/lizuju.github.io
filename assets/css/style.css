@@ -947,6 +947,7 @@ h3 { font-weight: 600; }
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
     color: var(--brand);
     word-break: break-all;
+    overflow-wrap: anywhere; /* 更强的断行支持 */
     font-size: 0.9rem;
     line-height: 1.4;
     padding: 0.5rem;
@@ -985,6 +986,30 @@ h3 { font-weight: 600; }
     font-size: 0.9rem;
     color: var(--muted);
     font-style: italic;
+}
+
+/* 二维码样式 */
+.qrcode-box {
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.qrcode-image {
+    width: 160px;
+    height: 160px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    background: #fff;
+    object-fit: contain;
+}
+
+.qrcode-tip {
+    font-size: 0.85rem;
+    color: var(--muted);
 }
 
 /* 复制提示动画 */
