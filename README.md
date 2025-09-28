@@ -93,5 +93,5 @@ lizuju.github.io/
 ## 联系方式
 
 - 邮箱: li2096870763@Gmail.com
-- GitHub: [lizuju](https://github.com/lizuju)
-- B站: [个人空间](https://space.bilibili.com/1129036891)
+- 电话: 13113356348
+- 微信: gavinxlee
