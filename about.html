@@ -88,7 +88,7 @@
                         <li>构建数学模型，主要提出了假设检验模型、整数规划模型、0-1 决策、蒙特卡罗模拟等把问题转化为非线性优化问题 并给出可量化公式，确保模型在理论上严谨且具备实际应用价值。</li>
                         <li>协同代码手完成模型的算法实现与数值验证，推动模型从理论推导到计算机仿真全过程落地。</li>
                         <li>独立撰写并统筹整篇论文的逻辑架构与内容表达，保证成果完整性与学术规范性。</li>
-                        <li>带领团队在短时间内高效完成任务，最终成功荣获国赛一等奖级美赛Meritorious Winner(一等奖)。</li>
+                        <li>带领团队在短时间内高效完成任务，最终成功荣获国赛一等奖及美赛Meritorious Winner(一等奖)。</li>
                     </ul>
                 </div>
             </div>
@@ -97,6 +97,21 @@
                 <p>这个网站展示我的个人简历和获奖证书，欢迎查看我的</p>
                 <a href="awards.html" class="btn btn-primary" style="display:inline-block;margin-top:0.5rem;">奖状画廊 →</a>
             </div>
+
+            <section class="support-section">
+                <h2>支持 Gavin Lee</h2>
+                <p>如果你喜欢我的工作或项目，可以通过 Ethereum 捐赠支持我：</p>
+                
+                <div class="wallet-info">
+                    <span class="wallet-label">Ethereum 地址:</span>
+                    <span class="wallet-address">0x9A3E52cE52BCAD179908b3a38acfB2Fe93F581Da</span>
+                    <button onclick="copyToClipboard('0x9A3E52cE52BCAD179908b3a38acfB2Fe93F581Da')" class="copy-btn">
+                        复制地址
+                    </button>
+                </div>
+
+                <p class="support-note">支持不论大小，感激不尽！</p>
+            </section>
         </div>
     </div>
 
@@ -138,6 +153,36 @@
             overlay.addEventListener('click', function(e){ if (e.target === overlay) close(); });
             window.addEventListener('keydown', function(e){ if (e.key === 'Escape') close(); });
         });
+
+        // 复制以太坊地址功能
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                // 创建临时提示元素
+                const toast = document.createElement('div');
+                toast.textContent = 'Ethereum 地址已复制到剪贴板！';
+                toast.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    background: var(--brand);
+                    color: white;
+                    padding: 0.75rem 1.5rem;
+                    border-radius: 8px;
+                    box-shadow: var(--shadow-md);
+                    z-index: 1001;
+                    font-weight: 600;
+                    animation: slideIn 0.3s ease;
+                `;
+                document.body.appendChild(toast);
+                
+                setTimeout(() => {
+                    toast.style.animation = 'slideOut 0.3s ease';
+                    setTimeout(() => document.body.removeChild(toast), 300);
+                }, 2000);
+            }).catch(() => {
+                alert('复制失败，请手动复制地址');
+            });
+        }
     </script>
 </body>
 </html>

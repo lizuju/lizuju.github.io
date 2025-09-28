@@ -573,7 +573,13 @@ body {
 @media (max-width: 768px) {
     .awards-grid { grid-template-columns: 1fr; gap: 1.25rem; }
     .award-item { padding: 1rem; }
-    .award-image { height: 180px; }
+    /* 手机端按原图比例自适应，完整显示奖状图片 */
+    .award-image {
+        width: 100%;
+        height: auto;
+        max-height: 70vh;
+        object-fit: contain;
+    }
 }
 
 /* 页面标题样式 */
@@ -888,6 +894,133 @@ h3 { font-weight: 600; }
 
 /* 指针样式统一 */
 .award-image { cursor: zoom-in; }
+
+/* ===== 支持区域样式 ===== */
+.support-section {
+    text-align: center;
+    padding: 2rem;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-radius: var(--radius-lg);
+    max-width: 500px;
+    margin: 2rem auto;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+}
+
+.support-section h2 {
+    font-size: 1.8rem;
+    margin-bottom: 1rem;
+    color: var(--text);
+    font-weight: 700;
+}
+
+.support-section p {
+    font-size: 1rem;
+    margin-bottom: 1.5rem;
+    color: var(--muted);
+    line-height: 1.6;
+}
+
+.wallet-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    background: var(--card-bg);
+    padding: 1.5rem;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border);
+    margin-bottom: 1rem;
+}
+
+.wallet-label {
+    font-weight: 700;
+    color: var(--text);
+    font-size: 1rem;
+}
+
+.wallet-address {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    color: var(--brand);
+    word-break: break-all;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    padding: 0.5rem;
+    background: rgba(102, 126, 234, 0.1);
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(102, 126, 234, 0.2);
+}
+
+.copy-btn {
+    margin-top: 0.5rem;
+    padding: 0.6rem 1.2rem;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--brand);
+    color: white;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: all 0.25s ease;
+    box-shadow: var(--shadow-sm);
+}
+
+.copy-btn:hover {
+    background: var(--brand-2);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+.support-note {
+    margin-top: 1rem;
+    font-size: 0.9rem;
+    color: var(--muted);
+    font-style: italic;
+}
+
+/* 复制提示动画 */
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOut {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+}
+
+/* 移动端支持区域优化 */
+@media (max-width: 768px) {
+    .support-section {
+        padding: 1.5rem;
+        margin: 1.5rem auto;
+    }
+    
+    .support-section h2 {
+        font-size: 1.5rem;
+    }
+    
+    .wallet-info {
+        padding: 1.25rem;
+    }
+    
+    .wallet-address {
+        font-size: 0.8rem;
+    }
+}
 
 /* ======================== */
 /* UI Polish: Theme & Overrides
