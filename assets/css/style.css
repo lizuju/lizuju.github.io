@@ -193,6 +193,84 @@ body {
     padding-bottom: 0.5rem;
 }
 
+/* 论文预览样式 */
+.paper-preview {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #e9ecef;
+}
+
+.paper-preview h4 {
+    color: #667eea;
+    margin-bottom: 0.75rem;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.paper-scroll-container {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #c5c9d2 #f1f1f1;
+}
+
+.paper-scroll-container::-webkit-scrollbar {
+    height: 8px;
+}
+
+.paper-scroll-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+.paper-scroll-container::-webkit-scrollbar-thumb {
+    background: #c5c9d2;
+    border-radius: 4px;
+}
+
+.paper-scroll-container::-webkit-scrollbar-thumb:hover {
+    background: #a8aeb8;
+}
+
+.paper-image {
+    flex-shrink: 0;
+    width: 200px;
+    height: 280px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 2px solid #e9ecef;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    cursor: pointer;
+}
+
+.paper-image:hover {
+    transform: scale(1.02);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border-color: #667eea;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .paper-image {
+        width: 150px;
+        height: 210px;
+    }
+    
+    .paper-preview {
+        padding: 0.75rem;
+    }
+    
+    .paper-scroll-container {
+        gap: 0.5rem;
+    }
+}
+
 /* Home页面样式 */
 .hero-section {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
