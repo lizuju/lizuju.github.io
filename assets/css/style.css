@@ -209,21 +209,20 @@ body {
     font-weight: 600;
 }
 
+/* 纵向预览：宽度填满，高度可滚动 */
 .paper-scroll-container {
-    display: flex;
-    overflow-x: auto;
-    overflow-y: hidden;
-    gap: 0.75rem;
-    padding: 0.5rem 0;
+    display: block;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0.5rem 0.25rem 0.5rem 0;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
     scrollbar-color: #c5c9d2 #f1f1f1;
-    min-height: 300px;
-    align-items: flex-start;
+    max-height: 60vh; /* 视窗高度的60%，超出部分可纵向滚动 */
 }
 
 .paper-scroll-container::-webkit-scrollbar {
-    height: 8px;
+    width: 8px; /* 纵向滚动条宽度 */
 }
 
 .paper-scroll-container::-webkit-scrollbar-track {
@@ -241,11 +240,8 @@ body {
 }
 
 .paper-image {
-    flex-shrink: 0;
-    width: 200px;
-    height: auto;
-    min-height: 280px;
-    max-height: 400px;
+    width: 100%; /* 宽度填充到最大 */
+    height: auto; /* 按比例自适应高度 */
     object-fit: contain;
     border-radius: 6px;
     border: 2px solid #e9ecef;
@@ -253,6 +249,7 @@ body {
     cursor: pointer;
     background: #fff;
     display: block;
+    margin-bottom: 0.75rem; /* 多页时的间距 */
 }
 
 .paper-image:hover {
@@ -277,19 +274,11 @@ body {
 
 /* 响应式设计 */
 @media (max-width: 768px) {
-    .paper-image {
-        width: 150px;
-        height: auto;
-        min-height: 210px;
-        max-height: 300px;
+    .paper-scroll-container {
+        max-height: 70vh; /* 移动端更高的可视区域 */
     }
-    
     .paper-preview {
         padding: 0.75rem;
-    }
-    
-    .paper-scroll-container {
-        gap: 0.5rem;
     }
 }
 
