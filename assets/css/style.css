@@ -921,7 +921,7 @@ h3 { font-weight: 600; }
     line-height: 1.6;
 }
 
-.wallet-info {
+.support-box {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -934,13 +934,16 @@ h3 { font-weight: 600; }
     margin-bottom: 1rem;
 }
 
-.wallet-label {
+.support-label {
     font-weight: 700;
     color: var(--text);
     font-size: 1rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
-.wallet-address {
+.support-address {
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
     color: var(--brand);
     word-break: break-all;
@@ -950,6 +953,11 @@ h3 { font-weight: 600; }
     background: rgba(102, 126, 234, 0.1);
     border-radius: var(--radius-sm);
     border: 1px solid rgba(102, 126, 234, 0.2);
+}
+
+.support-icon {
+    display: inline-block;
+    vertical-align: middle;
 }
 
 .copy-btn {
@@ -1013,11 +1021,11 @@ h3 { font-weight: 600; }
         font-size: 1.5rem;
     }
     
-    .wallet-info {
+    .support-box {
         padding: 1.25rem;
     }
     
-    .wallet-address {
+    .support-address {
         font-size: 0.8rem;
     }
 }
