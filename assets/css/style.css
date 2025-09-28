@@ -680,6 +680,166 @@ h3 { font-weight: 600; }
 /* 调整画廊间距更现代 */
 .awards-grid { gap: 1.5rem; }
 
+/* ===== 统一按钮与卡片视觉风格 ===== */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    border-radius: 999px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.95rem;
+    letter-spacing: 0.3px;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 2px solid transparent;
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
+}
+
+.btn:before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    transition: left 0.5s;
+}
+
+.btn:hover:before {
+    left: 100%;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    color: white;
+    border-color: transparent;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+}
+
+.btn-secondary {
+    background: transparent;
+    color: var(--brand);
+    border-color: var(--brand);
+}
+
+.btn-secondary:hover {
+    background: var(--brand);
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.btn-large {
+    padding: 1rem 2rem;
+    font-size: 1.1rem;
+}
+
+/* 卡片统一风格 */
+.card, .award-item, .resume-section, .project-item, .contact-item, .skill-item, .achievements-list li {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.card:hover, .award-item:hover, .resume-section:hover, .project-item:hover, .contact-item:hover, .skill-item:hover, .achievements-list li:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--brand);
+}
+
+/* 特殊卡片样式 */
+.resume-section {
+    border-left: 4px solid var(--brand);
+    border-radius: var(--radius-lg);
+}
+
+.contact-item {
+    text-align: center;
+    padding: 1.5rem;
+}
+
+.contact-item strong {
+    color: var(--brand);
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+/* ===== 移动端响应式优化 ===== */
+@media (max-width: 768px) {
+    /* 字体大小调整 */
+    .hero-title { font-size: 2.5rem; }
+    .hero-subtitle { font-size: 1.2rem; }
+    .page-title { font-size: 2rem; }
+    .page-subtitle { font-size: 1rem; }
+    
+    h2 { font-size: 1.4rem; }
+    h3 { font-size: 1.1rem; }
+    
+    /* 间距调整 */
+    .container { padding: 0 1rem; }
+    .page-content { padding: 1.5rem 0; }
+    .resume-sections { padding: 0 1rem; }
+    
+    .hero-section { padding: 3rem 1rem; }
+    .resume-section { padding: 1.5rem; margin-bottom: 2rem; }
+    .awards-section { margin: 2rem 0; }
+    
+    /* 按钮调整 */
+    .btn { padding: 0.7rem 1.2rem; font-size: 0.9rem; }
+    .btn-large { padding: 0.9rem 1.8rem; font-size: 1rem; }
+    .hero-buttons { flex-direction: column; align-items: center; gap: 0.75rem; }
+    
+    /* 网格调整 */
+    .skills-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; }
+    .contact-grid { grid-template-columns: 1fr; gap: 1rem; }
+    .awards-grid { grid-template-columns: 1fr; gap: 1.25rem; }
+    
+    /* 卡片内边距 */
+    .award-item, .project-item { padding: 1.25rem; }
+    .contact-item { padding: 1.25rem; }
+    .achievements-list li { padding: 0.875rem 1rem 0.875rem 2rem; }
+    
+    /* 导航调整 */
+    .nav-container { padding: 0 1rem; height: 56px; }
+    .nav-links { gap: 1.5rem; }
+    .nav-links a { font-size: 0.9rem; }
+    
+    /* 页脚调整 */
+    .footer-content { flex-direction: column; text-align: center; gap: 1rem; }
+    .footer-links { gap: 1.5rem; }
+}
+
+@media (max-width: 480px) {
+    /* 超小屏幕优化 */
+    .hero-title { font-size: 2rem; }
+    .hero-subtitle { font-size: 1rem; }
+    .page-title { font-size: 1.75rem; }
+    
+    .container { padding: 0 0.75rem; }
+    .resume-section { padding: 1.25rem; }
+    .award-item { padding: 1rem; }
+    
+    .btn { padding: 0.6rem 1rem; font-size: 0.85rem; }
+    .skills-grid { grid-template-columns: repeat(2, 1fr); }
+    
+    .nav-links { gap: 1rem; }
+    .nav-links a { font-size: 0.85rem; }
+}
+
 /* ===== 灯箱预览（极简） ===== */
 .lightbox-overlay {
     position: fixed;
