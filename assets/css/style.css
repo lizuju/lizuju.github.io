@@ -555,3 +555,11 @@ body {
     color: white;
     text-decoration: none;
 }
+
+.award-image {
+    width: 100%;          /* 占满容器宽度 */
+    height: 200px;        /* 统一高度，可改成 180px / 220px */
+    object-fit: cover;    /* 保持比例，裁剪超出的部分 */
+    border-radius: 8px;   /* 可选：圆角 */
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15); /* 可选：阴影 */
+}
