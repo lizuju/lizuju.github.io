@@ -505,36 +505,57 @@ body {
 /* 奖状画廊样式 */
 .awards-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 2rem;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1.5rem;
     margin: 2rem 0;
+    align-items: stretch;
 }
 
 .award-item {
-    background: #fff;
-    border-radius: 12px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    padding: 1.5rem;
+    background: var(--card-bg);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    padding: 1.25rem 1.25rem 1.1rem;
     text-align: center;
-    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    position: relative;
+    overflow: hidden;
 }
 
 .award-item:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 8px 15px rgba(0, 0, 0, 0.2);
+    transform: translateY(-6px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--brand);
 }
+.award-item:after {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, var(--brand), var(--brand-2));
+    opacity: 0;
+    transition: opacity .25s ease;
+}
+.award-item:hover:after { opacity: 1; }
 
 .award-image {
-    /*width: 100%;*/
-    /*max-width: 300px;*/
-    /*height: 200px;*/
-    width: 300px;
-    height: auto;
+    width: 100%;
+    height: 220px;
     object-fit: cover;
-    border-radius: 8px;
-    margin-bottom: 1rem;
-    border: 2px solid #f0f0f0;
+    border-radius: 10px;
+    margin-bottom: 0.5rem;
+    border: 1px solid var(--border);
+    transition: transform 0.35s ease, filter 0.35s ease;
+    filter: saturate(1.02) contrast(1.01);
+    cursor: zoom-in;
 }
+.award-item:hover .award-image { transform: scale(1.035); filter: saturate(1.12) contrast(1.06); }
+.award-item h3 { margin: 0.25rem 0 0.25rem; line-height: 1.35; }
+.award-item p { margin: 0; color: var(--muted); }
 
 .award-item h3 {
     color: #333;
@@ -550,20 +571,9 @@ body {
 
 /* 响应式设计 */
 @media (max-width: 768px) {
-    .awards-grid {
-        grid-template-columns: 1fr;
-        gap: 1rem;
-    }
-    
-    .award-item {
-        padding: 1rem;
-    }
-    
-    .award-image {
-        /*height: 150px;*/
-        width: 100%;
-        height: auto;
-    }
+    .awards-grid { grid-template-columns: 1fr; gap: 1.25rem; }
+    .award-item { padding: 1rem; }
+    .award-image { height: 180px; }
 }
 
 /* 页面标题样式 */
