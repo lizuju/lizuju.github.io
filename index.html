@@ -81,5 +81,34 @@
             </div>
         </div>
     </footer>
+
+    <!-- 极简灯箱预览（首页） -->
+    <div class="lightbox-overlay" id="lightbox-home" role="dialog" aria-modal="true" aria-label="图片预览">
+        <button class="lightbox-close" id="lightboxHomeClose" aria-label="关闭预览">×</button>
+        <img id="lightboxHomeImg" class="lightbox-image" alt="预览图片">
+    </div>
+
+    <script>
+        // 首页灯箱：为未来可能添加的图片提供预览能力
+        document.addEventListener('DOMContentLoaded', function() {
+            const imgs = document.querySelectorAll('.lightboxable');
+            const overlay = document.getElementById('lightbox-home');
+            const overlayImg = document.getElementById('lightboxHomeImg');
+            const overlayClose = document.getElementById('lightboxHomeClose');
+
+            imgs.forEach(function(img) {
+                img.style.cursor = 'zoom-in';
+                img.addEventListener('click', function() {
+                    overlayImg.src = img.src;
+                    overlay.classList.add('open');
+                });
+            });
+
+            function close() { overlay.classList.remove('open'); overlayImg.src=''; }
+            overlayClose.addEventListener('click', close);
+            overlay.addEventListener('click', function(e){ if (e.target === overlay) close(); });
+            window.addEventListener('keydown', function(e){ if (e.key === 'Escape') close(); });
+        });
+    </script>
 </body>
 </html>

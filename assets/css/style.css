@@ -648,3 +648,191 @@ body {
     color: white;
     text-decoration: none;
 }
+
+/* ===== 简洁现代：排版与间距优化 ===== */
+h1, h2, h3 {
+    line-height: 1.3;
+    color: var(--text);
+}
+h1 { font-weight: 800; }
+h2 { font-weight: 700; }
+h3 { font-weight: 600; }
+
+.page-content .container > *:not(:last-child) {
+    margin-bottom: 1.25rem;
+}
+
+.awards-section h2 {
+    position: relative;
+}
+.awards-section h2:after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: -10px;
+    width: 56px;
+    height: 3px;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--brand), var(--brand-2));
+}
+
+/* 调整画廊间距更现代 */
+.awards-grid { gap: 1.5rem; }
+
+/* ===== 灯箱预览（极简） ===== */
+.lightbox-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 2rem;
+}
+.lightbox-overlay.open { display: flex; }
+.lightbox-image {
+    max-width: 92vw;
+    max-height: 92vh;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    background: #fff;
+}
+.lightbox-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 36px;
+    height: 36px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.5);
+    background: rgba(0,0,0,0.35);
+    color: #fff;
+    display: grid;
+    place-items: center;
+    font-size: 18px;
+    cursor: pointer;
+}
+.lightbox-close:hover { background: rgba(0,0,0,0.5); }
+
+/* 指针样式统一 */
+.award-image { cursor: zoom-in; }
+
+/* ======================== */
+/* UI Polish: Theme & Overrides
+   追加在文件末尾以提高覆盖优先级 */
+/* ======================== */
+
+:root {
+    --brand: #667eea;
+    --brand-2: #764ba2;
+    --accent: #f093fb;
+    --accent-2: #f5576c;
+    --bg: #f6f7fb;
+    --card-bg: #ffffff;
+    --text: #2b2e3a;
+    --muted: #6b7280;
+    --border: #e6e8ef;
+    --shadow-sm: 0 2px 6px rgba(18, 38, 63, 0.06);
+    --shadow-md: 0 10px 20px rgba(18, 38, 63, 0.08);
+    --shadow-lg: 0 14px 28px rgba(18, 38, 63, 0.12);
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+}
+
+body {
+    color: var(--text);
+    background: radial-gradient(1200px 600px at 10% -10%, rgba(102,126,234,0.08), transparent 60%),
+                radial-gradient(1000px 600px at 100% 0%, rgba(118,75,162,0.08), transparent 60%),
+                var(--bg);
+}
+
+.main-nav {
+    background: rgba(255,255,255,0.75);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+}
+
+.nav-logo {
+    color: var(--brand);
+    font-weight: 800;
+    letter-spacing: .2px;
+}
+
+.nav-links a {
+    color: var(--text);
+    font-weight: 600;
+}
+.nav-links a:hover,
+.nav-links a.active { color: var(--brand); }
+
+.page-title { color: var(--text); }
+.page-subtitle { color: var(--muted); }
+
+.site-footer {
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+}
+
+.hero-section {
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+    border-bottom-left-radius: var(--radius-lg);
+    border-bottom-right-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+}
+
+.resume-section {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-left: none;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+}
+
+.skill-item {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+}
+.skill-item:hover { box-shadow: var(--shadow-md); }
+
+.achievements-list li {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+}
+.achievements-list li:before { top: 0.95rem; left: 0.9rem; font-weight: 800; }
+
+.award-item {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+}
+.award-item:hover { box-shadow: var(--shadow-md); transform: translateY(-4px); }
+
+.btn {
+    border-radius: 999px;
+    box-shadow: var(--shadow-sm);
+    font-weight: 700;
+    letter-spacing: .2px;
+}
+.btn-primary { background: #fff; color: var(--brand); border-color: #fff; }
+.btn-primary:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.btn-secondary { background: transparent; color: #fff; border-color: #fff; }
+.btn-secondary:hover { background: #fff; color: var(--brand); transform: translateY(-2px); box-shadow: var(--shadow-md); }
+
+.paper-preview {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+}
+.paper-scroll-container { box-shadow: inset 0 1px 2px rgba(17,17,26,0.06); border-radius: var(--radius-sm); }
+.paper-image { border: 1px solid var(--border); box-shadow: var(--shadow-sm); }
+.paper-image:hover { box-shadow: var(--shadow-md); border-color: var(--brand); }

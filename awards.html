@@ -123,10 +123,20 @@
         </div>
     </footer>
 
+    <!-- 极简灯箱预览 -->
+    <div class="lightbox-overlay" id="lightbox" role="dialog" aria-modal="true" aria-label="图片预览">
+        <button class="lightbox-close" id="lightboxClose" aria-label="关闭预览">×</button>
+        <img id="lightboxImg" class="lightbox-image" alt="预览图片">
+    </div>
+
     <script>
         // 图片加载调试和优化
         document.addEventListener('DOMContentLoaded', function() {
             const paperImages = document.querySelectorAll('.paper-image');
+            const awardImages = document.querySelectorAll('.award-image');
+            const lightbox = document.getElementById('lightbox');
+            const lightboxImg = document.getElementById('lightboxImg');
+            const lightboxClose = document.getElementById('lightboxClose');
             
             paperImages.forEach(function(img) {
                 // 添加加载状态
@@ -148,7 +158,27 @@
                 // 设置初始透明度
                 img.style.opacity = '0.7';
                 img.style.transition = 'opacity 0.3s ease';
+
+                // 点击弹出灯箱
+                img.addEventListener('click', function() {
+                    lightboxImg.src = img.src;
+                    lightbox.classList.add('open');
+                });
             });
+
+            // 奖状大图也支持灯箱
+            awardImages.forEach(function(img) {
+                img.addEventListener('click', function() {
+                    lightboxImg.src = img.src;
+                    lightbox.classList.add('open');
+                });
+            });
+
+            // 关闭灯箱
+            function closeLightbox() { lightbox.classList.remove('open'); lightboxImg.src=''; }
+            lightboxClose.addEventListener('click', closeLightbox);
+            lightbox.addEventListener('click', function(e) { if (e.target === lightbox) closeLightbox(); });
+            window.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeLightbox(); });
         });
     </script>
 </body>
