@@ -1,0 +1,17 @@
+{
+  "name": "lizuju-portfolio",
+  "version": "1.0.0",
+  "description": "Personal portfolio and skills site",
+  "private": true,
+  "scripts": {
+    "dev": "npx serve . -l 3090",
+    "dev:python": "python3 -m http.server 3090"
+  },
+  "keywords": [
+    "portfolio",
+    "skills",
+    "documentation"
+  ],
+  "author": "lizuju",
+  "license": "MIT"
+}

@@ -1,0 +1,20 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Temp
+tmp/
+temp/
+
+# Skills with custom endpoints (have their own .git)
+# Add skill names here when they use custom remotes
+# Example: /custom-skill/
