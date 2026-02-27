@@ -141,26 +141,29 @@ const SKILL_MARKETING = {
 // Categories configuration with SVG icons
 const SKILLS = {
     'education': {
-        title: 'Education',
-        description: '教育背景',
+        title: { en: 'Education', 'zh-CN': '教育背景' },
         icon: '<path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 2 4 3 6 3s6-1 6-3v-5"/>'
     },
     'technical-skills': {
-        title: 'Technical Skills',
-        description: '专业技能',
+        title: { en: 'Technical Skills', 'zh-CN': '专业技能' },
         icon: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'
     },
     'projects': {
-        title: 'Projects',
-        description: '项目经历',
+        title: { en: 'Projects', 'zh-CN': '项目经历' },
         icon: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>'
     },
     'awards': {
-        title: 'Awards',
-        description: '个人荣誉',
+        title: { en: 'Awards', 'zh-CN': '个人荣誉' },
         icon: '<circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>'
     }
 };
+
+// Get translated skill name
+function getSkillName(skillId) {
+    const skill = SKILLS[skillId];
+    if (!skill) return skillId;
+    return skill.title[currentLang] || skill.title['en'];
+}
 
 // Generate skill icon SVG
 function skillIcon(skillId, size = 18) {
@@ -177,7 +180,7 @@ function renderSkillLists() {
     const navDropdown = document.getElementById('navSkillList');
     if (navDropdown) {
         navDropdown.innerHTML = Object.keys(SKILLS).map(id => `
-            <a href="?skill=${id}">${skillIcon(id, 16)} ${id}</a>
+            <a href="?skill=${id}">${skillIcon(id, 16)} ${getSkillName(id)}</a>
         `).join('');
     }
 
@@ -185,7 +188,7 @@ function renderSkillLists() {
     const mobileMenu = document.getElementById('mobileSkillList');
     if (mobileMenu) {
         mobileMenu.innerHTML = Object.keys(SKILLS).map(id => `
-            <a href="?skill=${id}">${id}</a>
+            <a href="?skill=${id}">${getSkillName(id)}</a>
         `).join('');
     }
 
@@ -194,7 +197,7 @@ function renderSkillLists() {
     if (sidebar) {
         sidebar.innerHTML = Object.keys(SKILLS).map(id => `
             <a class="sidebar-link${id === currentSkill ? ' active' : ''}" href="?skill=${id}">
-                ${skillIcon(id)} ${id}
+                ${skillIcon(id)} ${getSkillName(id)}
             </a>
         `).join('');
     }
@@ -364,6 +367,9 @@ function setLanguage(lang) {
 
     // Update contact modal with new language
     renderContactContent();
+
+    // Update skill lists language
+    renderSkillLists();
 
     // Reload documentation with new language
     const skillName = getCurrentSkill();
@@ -552,7 +558,7 @@ async function loadDocumentation(skillName) {
         document.getElementById('content').innerHTML = marketingHtml + html;
 
         // Update page title
-        document.title = `${skill.title} - ${USER_DISPLAY_NAME}${I18N[currentLang].titleSuffix}`;
+        document.title = `${getSkillName(skillName)} - ${USER_DISPLAY_NAME}${I18N[currentLang].titleSuffix}`;
 
         // Highlight code blocks
         document.querySelectorAll('pre code').forEach((block) => {
