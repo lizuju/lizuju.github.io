@@ -12,8 +12,8 @@
 ---
 
 ## Mathematical Modeling
-- 2025 American Mathematical Contest in Modeling (MCM) **Meritorious Winner (Global M Prize)**
-- 2024 Guangdong Province Mathematical Modeling Competition **Provincial First Prize**
+- 2025 American Mathematical Contest in Modeling (MCM) **Meritorious Winner (Top 5%)**
+- 2024 Guangdong Province Mathematical Modeling Competition **Provincial First Prize(Top 5%)**
 - 2024 "HuaShu Cup" National Mathematical Modeling Competition **National Second Prize**
 - 2024 "CSEE Cup" Electrical Engineering Mathematical Modeling Competition **National Third Prize**
 - 2025 MathorCup Mathematical Modeling Challenge **Provincial First Prize**

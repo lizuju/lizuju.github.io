@@ -10,10 +10,10 @@ Familiar with common data structures (arrays, linked lists, binary trees, etc.) 
 Familiar with computer vision technologies, proficient in OpenCV. Understanding of neural networks and their applications in image processing. Hands-on experience with deep learning models such as YOLOv5 for object detection. Proficient in industrial camera calibration and application development.
 
 ## 4. Robotics Development
-Familiar with robot system debugging, with experience in integrating computer vision modules with electronic control systems. Proficient in sensor data acquisition and fusion, motion attitude estimation and motion control. Experienced in MiniPC platform development with algorithm porting and optimization capabilities.
+Expertise in integrated robotic system debugging, with extensive experience in the co-design and synchronization of computer vision modules and electronic control systems. Proficient in sensor data acquisition, multi-sensor fusion, motion attitude estimation, and motion control algorithms. Highly skilled in development and debugging across MiniPC platforms (NVIDIA Jetson, Intel NUC, Raspberry Pi, Arduino), with proven capabilities in algorithm porting and performance optimization.
 
 ## 5. Linux
-Familiar with multi-threaded programming and inter-process communication in Linux environments. Proficient in common thread synchronization and mutex mechanisms.
+Proficient in multi-threaded programming and Inter-process Communication (IPC) within Linux environments, with a deep understanding of thread synchronization and mutex mechanisms. Experienced in Linux system administration, including the mastery of standard command-line tools and Shell scripting for automated workflows.
 
 ## 6. Toolchain
 Proficient in Vim, GCC, GDB, Git and other tools. Capable of writing Makefiles to support large-scale project compilation.

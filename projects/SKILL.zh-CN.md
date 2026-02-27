@@ -16,6 +16,7 @@
 - 通过算法复杂度优化、并行计算与系统级性能调优，提升机器人响应速度与控制精度，并承担项目管理工作，协调机械、电控等模块开发节奏，助力团队在 RoboMaster 赛事中取得优异成绩。
 
 **项目成果：** 荣获两届 RoboMaster 机甲大师赛 步兵对抗赛 & 3V3 对抗赛 多项奖项
+**GitHub：** [NOTOS_RM_AutoAim](https://github.com/notos-robomaster/NOTOS_RM_AutoAim)
 
 ---
 

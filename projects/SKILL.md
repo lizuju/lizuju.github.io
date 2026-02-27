@@ -16,6 +16,7 @@
 - Coordinated mechanical, electronic control and other module development schedules, helping the team achieve excellent results in RoboMaster competitions.
 
 **Project Outcome:** Won multiple awards in two RoboMaster Mecha Master Competitions (Infantry Combat & 3V3 Combat)
+**GitHub:** [NOTOS_RM_AutoAim](https://github.com/notos-robomaster/NOTOS_RM_AutoAim)
 
 ---
 

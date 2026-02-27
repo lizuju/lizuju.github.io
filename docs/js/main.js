@@ -4,7 +4,7 @@ const REPO_NAME = 'lizuju.github.io';
 const BRANCH = 'main';
 
 // Cache busting version (update this when content changes)
-const CACHE_VERSION = Date.now();
+const CACHE_VERSION = 'v1.0.0';
 
 // i18n translations
 const I18N = {
@@ -23,7 +23,8 @@ const I18N = {
         whyUseThis: 'Highlights',
         painPoints: 'Key Points',
         triggersTitle: 'Details',
-        triggersDesc: 'Key achievements and highlights:'
+        triggersDesc: 'Key achievements and highlights:',
+        name: 'Name'
     },
     'zh-CN': {
         skills: '分类导航',
@@ -40,7 +41,8 @@ const I18N = {
         whyUseThis: '亮点',
         painPoints: '要点',
         triggersTitle: '详情',
-        triggersDesc: '主要成就与亮点：'
+        triggersDesc: '主要成就与亮点：',
+        name: '姓名'
     }
 };
 
@@ -55,7 +57,7 @@ const SKILL_MARKETING = {
                 { icon: '🎓', title: 'Two National Scholarships', desc: 'Awarded China\'s most prestigious undergraduate scholarship twice.' },
                 { icon: '🌍', title: 'Trilingual', desc: 'Fluent in English, Mandarin Chinese, and Cantonese.' }
             ],
-            triggers: ['2022.09 - 2026.06', 'Bachelor of Computer Science']
+            triggers: ['Ranked top 1.5% (3/219) in CS; two-time recipient of the prestigious National Scholarship', 'Honored as Student of the Year and Inspirational Role Model; professionally fluent in English, Mandarin, and Cantonese']
         },
         'zh-CN': {
             headline: '广州南方学院 — 计算机科学与技术',
@@ -65,7 +67,7 @@ const SKILL_MARKETING = {
                 { icon: '🎓', title: '两届国家奖学金', desc: '两次获得中国最高荣誉的本科奖学金。' },
                 { icon: '🌍', title: '三语能力', desc: '熟练使用英语、普通话和广东话。' }
             ],
-            triggers: ['2022.09 - 2026.06', '计算机科学与技术本科']
+            triggers: ['计算机专业排名前1.5% (3/219)，连续两年荣膺国家奖学金', '获评大学生年度人物及励志榜样，精通英中粤三语']
         }
     },
     'technical-skills': {
@@ -74,20 +76,20 @@ const SKILL_MARKETING = {
             why: 'Proficient in C++, Python, and full-stack web development (Flask + Vue). Deep experience in computer vision (OpenCV, YOLOv5), robotics, and Linux system programming.',
             painPoints: [
                 { icon: '💻', title: 'C++ / Python / Full-Stack', desc: 'OOP design, Flask backend, Vue frontend, MySQL database.' },
-                { icon: '👁️', title: 'Computer Vision & Deep Learning', desc: 'OpenCV, YOLOv5, industrial camera calibration, CUDA acceleration.' },
+                { icon: '👁️', title: 'Computer Vision & Deep Learning', desc: 'OpenCV, YOLOv5, industrial camera, CUDA acceleration.' },
                 { icon: '🤖', title: 'Robotics & Embedded Systems', desc: 'Sensor fusion, pose estimation, MiniPC optimization, multi-threaded Linux programming.' }
             ],
-            triggers: ['C++, Python, Flask, Vue, MySQL', 'OpenCV, YOLOv5, CUDA, Linux, Git']
+            triggers: ['C++, Python, Flask, Vue, MySQL', 'OpenCV, MiniPC, YOLOv5, CUDA, Linux, Git']
         },
         'zh-CN': {
             headline: '全栈 & 计算机视觉工程师',
             why: '熟练掌握 C++、Python 及全栈开发（Flask + Vue）。在计算机视觉（OpenCV、YOLOv5）、机器人开发和 Linux 系统编程方面有深厚经验。',
             painPoints: [
                 { icon: '💻', title: 'C++ / Python / 全栈开发', desc: '面向对象设计，Flask 后端，Vue 前端，MySQL 数据库。' },
-                { icon: '👁️', title: '计算机视觉与深度学习', desc: 'OpenCV、YOLOv5、工业相机标定、CUDA 加速。' },
+                { icon: '👁️', title: '计算机视觉与深度学习', desc: 'OpenCV、YOLOv5、工业相机、CUDA 加速。' },
                 { icon: '🤖', title: '机器人与嵌入式系统', desc: '传感器融合、姿态解算、MiniPC 优化、Linux 多线程编程。' }
             ],
-            triggers: ['C++, Python, Flask, Vue, MySQL', 'OpenCV, YOLOv5, CUDA, Linux, Git']
+            triggers: ['C++, Python, Flask, Vue, MySQL', 'OpenCV, MiniPC, YOLOv5, CUDA, Linux, Git']
         }
     },
     'projects': {
@@ -121,7 +123,7 @@ const SKILL_MARKETING = {
                 { icon: '📐', title: 'Mathematical Modeling', desc: 'MCM Global M Prize, 2 provincial first prizes, multiple national awards.' },
                 { icon: '🚀', title: 'Innovation & Entrepreneurship', desc: '2 national-level and 4 provincial-level project completions, plus 1 patent and 4 software copyrights.' }
             ],
-            triggers: ['National Scholarship × 2', 'MCM Meritorious Winner', 'Chuanzhi Cup National First Prize']
+            triggers: ['National Scholarship × 2', 'First Prize winner in both the MCM and CUMCM; Second Prize in the RoboMaster University Regional Competition', 'Led 2 national-level and 4 provincial-level Undergraduate Innovation Training Programs to successful completion']
         },
         'zh-CN': {
             headline: '30+ 项竞赛与创新项目荣誉',
@@ -131,7 +133,7 @@ const SKILL_MARKETING = {
                 { icon: '📐', title: '数学建模', desc: '美赛全球M奖、2项省级一等奖、多项国家级奖项。' },
                 { icon: '🚀', title: '创新创业', desc: '2项国家级结项、4项省级结项，1项实用型专利、4项软著。' }
             ],
-            triggers: ['国家奖学金 × 2', '美赛M奖', '传智杯国家级一等奖']
+            triggers: ['国家奖学金 × 2', '数学建模美赛(MCM)国赛双料一等奖，RoboMaster机甲大师赛省级二等奖', '大创两项国家级结项，四项省级结项目']
         }
     }
 };
@@ -198,29 +200,80 @@ function renderSkillLists() {
     }
 }
 
-// Render contact info dynamically
-function renderInstallCode() {
-    const installCode = document.getElementById('installCode');
-    if (!installCode) return;
+// Toggle contact modal
+function toggleContactModal() {
+    const modal = document.getElementById('contactModal');
+    const overlay = document.getElementById('contactOverlay');
+    if (!modal || !overlay) return;
+
+    const isActive = modal.classList.contains('active');
+    modal.classList.toggle('active', !isActive);
+    overlay.classList.toggle('active', !isActive);
+
+    // Re-render content on open (to pick up language changes)
+    if (!isActive) renderContactContent();
+}
+
+// Render contact modal content
+function renderContactContent() {
+    const container = document.getElementById('contactContent');
+    if (!container) return;
 
     const t = I18N[currentLang];
 
-    installCode.innerHTML = `<div class="install-natural">
-<p class="install-natural-desc">${t.installNaturalDesc}</p>
-<div class="install-natural-example">"${t.installNaturalExample}"</div>
-</div>
-<pre><code><span class="comment"># ${t.addMarketplace}</span>
-<span class="cmd">li2096870763@gmail.com</span>
-
-<span class="comment"># ${t.installSkills}</span>
-<span class="cmd">13113356348</span></code></pre>`;
+    container.innerHTML = `
+        <div class="contact-item">
+            <div class="contact-item-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+            </div>
+            <div class="contact-item-info">
+                <div class="contact-item-label">${t.name}</div>
+                <div class="contact-item-value">李祖钜 Gavin</div>
+            </div>
+        </div>
+        <div class="contact-item">
+            <div class="contact-item-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                    <polyline points="22,6 12,13 2,6"/>
+                </svg>
+            </div>
+            <div class="contact-item-info">
+                <div class="contact-item-label">${t.addMarketplace}</div>
+                <div class="contact-item-value"><a href="mailto:li2096870763@gmail.com">li2096870763@gmail.com</a></div>
+            </div>
+        </div>
+        <div class="contact-item">
+            <div class="contact-item-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
+                </svg>
+            </div>
+            <div class="contact-item-info">
+                <div class="contact-item-label">${t.installSkills.split('：')[0].split(':')[0]}</div>
+                <div class="contact-item-value"><a href="tel:13113356348">13113356348</a></div>
+            </div>
+        </div>`;
 }
+
+// Close modal on ESC key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        const modal = document.getElementById('contactModal');
+        if (modal && modal.classList.contains('active')) {
+            toggleContactModal();
+        }
+    }
+});
 
 // Default skill to show
 const DEFAULT_SKILL = 'education';
 
 // Current language
-let currentLang = localStorage.getItem('docs-lang') || 'en';
+let currentLang = localStorage.getItem('docs-lang') || 'zh-CN';
 
 // User info cache
 let userInfo = null;
@@ -243,51 +296,31 @@ function getBasePath(skillName, lang = 'en') {
     }
 }
 
-// Fetch GitHub user info
-async function fetchUserInfo() {
-    if (userInfo) return userInfo;
-
-    try {
-        const response = await fetch(`https://api.github.com/users/${REPO_OWNER}`);
-        if (response.ok) {
-            userInfo = await response.json();
-            return userInfo;
-        }
-    } catch (error) {
-        console.log('Could not fetch GitHub user info:', error);
-    }
-
-    // Fallback
-    return {
-        login: REPO_OWNER,
-        name: REPO_OWNER,
-        avatar_url: `https://github.com/${REPO_OWNER}.png`
-    };
-}
+// User Info Constants (Hardcoded to avoid GitHub API rate limits)
+const USER_DISPLAY_NAME = '李祖钜 Gavin';
+const USER_AVATAR_URL = `https://github.com/${REPO_OWNER}.png`;
 
 // Update brand title with user name
 async function updateBrandTitle() {
-    const user = await fetchUserInfo();
-    const displayName = user.name || user.login;
     const suffix = I18N[currentLang].titleSuffix;
 
     // Update brand title
     const brandTitle = document.getElementById('brandTitle');
     if (brandTitle) {
-        brandTitle.innerHTML = `<span class="brand-name">${displayName}</span>${suffix}`;
+        brandTitle.innerHTML = `<span class="brand-name">${USER_DISPLAY_NAME}</span>${suffix}`;
     }
 
     // Update avatar
     const avatar = document.getElementById('userAvatar');
     if (avatar) {
-        avatar.src = user.avatar_url;
-        avatar.alt = displayName;
+        avatar.src = USER_AVATAR_URL;
+        avatar.alt = USER_DISPLAY_NAME;
     }
 
     // Update favicon to user's avatar
     const favicon = document.getElementById('favicon');
     if (favicon) {
-        favicon.href = user.avatar_url;
+        favicon.href = USER_AVATAR_URL;
     }
 
     // Update repo link
@@ -297,7 +330,7 @@ async function updateBrandTitle() {
     }
 
     // Update page title
-    document.title = `${displayName}${suffix}`;
+    document.title = `${USER_DISPLAY_NAME}${suffix}`;
 }
 
 // Apply i18n translations
@@ -329,8 +362,8 @@ function setLanguage(lang) {
     localStorage.setItem('docs-lang', lang);
     applyI18n();
 
-    // Update install code with new language
-    renderInstallCode();
+    // Update contact modal with new language
+    renderContactContent();
 
     // Reload documentation with new language
     const skillName = getCurrentSkill();
@@ -507,8 +540,8 @@ async function loadDocumentation(skillName) {
 
         let markdown = await response.text();
 
-        // Remove YAML frontmatter
-        markdown = markdown.replace(/^---[\s\S]*?---\n*/m, '');
+        // Remove YAML frontmatter (only at the very beginning of the file)
+        markdown = markdown.replace(/^---[\s\S]*?---\n*/, '');
 
         // Parse and render
         let html = marked.parse(markdown);
@@ -519,9 +552,7 @@ async function loadDocumentation(skillName) {
         document.getElementById('content').innerHTML = marketingHtml + html;
 
         // Update page title
-        const user = await fetchUserInfo();
-        const displayName = user.name || user.login;
-        document.title = `${skill.title} - ${displayName}${I18N[currentLang].titleSuffix}`;
+        document.title = `${skill.title} - ${USER_DISPLAY_NAME}${I18N[currentLang].titleSuffix}`;
 
         // Highlight code blocks
         document.querySelectorAll('pre code').forEach((block) => {
@@ -582,8 +613,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Render dynamic skill lists
     renderSkillLists();
 
-    // Render install code
-    renderInstallCode();
+    // Render contact content
+    renderContactContent();
 
     // Setup language switcher
     setupLanguageSwitcher();
@@ -591,8 +622,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Apply initial i18n
     applyI18n();
 
-    // Fetch user info and update UI
-    await fetchUserInfo();
+    // Update UI
     await updateBrandTitle();
 
     // Handle navigation
