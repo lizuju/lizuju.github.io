@@ -283,20 +283,12 @@ let userInfo = null;
 
 // Detect if running on GitHub Pages or locally
 function getBasePath(skillName, lang = 'en') {
-    const isGitHubPages = window.location.hostname.includes('github.io') ||
-        window.location.hostname === 'skill.lizuju.me' ||
-        window.location.hostname === 'lizuju.me';
-
     // Determine file name based on language
     const fileName = lang === 'en' ? 'SKILL.md' : `SKILL.${lang}.md`;
 
-    if (isGitHubPages) {
-        // Add cache busting for GitHub raw content
-        return `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/${skillName}/${fileName}?v=${CACHE_VERSION}`;
-    } else {
-        // Add cache busting for local development
-        return `../${skillName}/${fileName}?v=${CACHE_VERSION}`;
-    }
+    // Now all content is inside the docs/ folder along with index.html,
+    // so we can always use relative paths regardless of environment.
+    return `./${skillName}/${fileName}?v=${CACHE_VERSION}`;
 }
 
 // User Info Constants (Hardcoded to avoid GitHub API rate limits)
