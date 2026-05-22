@@ -306,12 +306,16 @@ body {
     top: calc(100% + 8px);
     left: 0;
     min-width: 220px;
+    background: rgba(51, 65, 85, 0.9);
+    border-color: rgba(148, 163, 184, 0.24);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.34);
     border-radius: 12px;
     padding: 0.5rem;
     opacity: 0;
     visibility: hidden;
     transform: translateY(-8px);
     transition: all var(--transition-normal);
+    z-index: 1001;
 }
 
 .nav-dropdown:hover .nav-dropdown-content {

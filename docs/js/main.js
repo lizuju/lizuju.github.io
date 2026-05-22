@@ -4,7 +4,7 @@ const REPO_NAME = 'lizuju.github.io';
 const BRANCH = 'main';
 
 // Cache busting version (update this when content changes)
-const CACHE_VERSION = 'v1.0.0';
+const CACHE_VERSION = 'v1.0.1';
 
 // i18n translations
 const I18N = {
@@ -14,7 +14,7 @@ const I18N = {
         loading: 'Loading...',
         installation: 'Contact',
         installNaturalDesc: 'Feel free to reach out:',
-        installNaturalExample: 'li2096870763@gmail.com',
+        installNaturalExample: 'gavinxleele@gmail.com',
         installDesc: 'Contact Information:',
         addMarketplace: 'Email',
         installSkills: 'Phone: 13113356348',
@@ -32,7 +32,7 @@ const I18N = {
         loading: '加载中...',
         installation: '联系方式',
         installNaturalDesc: '欢迎联系我：',
-        installNaturalExample: 'li2096870763@gmail.com',
+        installNaturalExample: 'gavinxleele@gmail.com',
         installDesc: '联系方式：',
         addMarketplace: '邮箱',
         installSkills: '电话：13113356348',
@@ -50,7 +50,7 @@ const I18N = {
 const SKILL_MARKETING = {
     'education': {
         en: {
-            headline: 'Guangzhou Nanfang College — Computer Science & Technology',
+            headline: 'Computer Science & Technology — Bachelor Candidate',
             why: 'Ranked 3rd out of 219 students. Two-time National Scholarship recipient with multiple academic honors including Inspirational Role Model and Annual Character of the Year.',
             painPoints: [
                 { icon: '🏆', title: 'Rank: 3/219', desc: 'Outstanding academic performance throughout university.' },
@@ -60,7 +60,7 @@ const SKILL_MARKETING = {
             triggers: ['Ranked top 1.5% (3/219) in CS; two-time recipient of the prestigious National Scholarship', 'Honored as Student of the Year and Inspirational Role Model; professionally fluent in English, Mandarin, and Cantonese']
         },
         'zh-CN': {
-            headline: '广州南方学院 — 计算机科学与技术',
+            headline: '计算机科学与技术 — 本科',
             why: '综合排名 3/219。两次获得国家奖学金，荣获励志榜样、大学生年度人物等多项荣誉。',
             painPoints: [
                 { icon: '🏆', title: '排名：3/219', desc: '大学期间优异的学术表现。' },
@@ -70,26 +70,48 @@ const SKILL_MARKETING = {
             triggers: ['计算机专业排名前1.5% (3/219)，连续两年荣膺国家奖学金', '获评大学生年度人物及励志榜样，精通英中粤三语']
         }
     },
-    'technical-skills': {
+    'experience': {
         en: {
-            headline: 'Full-stack & Computer Vision Engineer',
-            why: 'Proficient in C++, Python, and full-stack web development (Flask + Vue). Deep experience in computer vision (OpenCV, YOLOv5), robotics, and Linux system programming.',
+            headline: 'AI Agent Voice Companion Robot Development',
+            why: 'Built cloud-device collaboration for a voice companion robot, connecting LLM reasoning, RAG, tool calling, streaming voice interaction, and ESP32 hardware execution.',
             painPoints: [
-                { icon: '💻', title: 'C++ / Python / Full-Stack', desc: 'OOP design, Flask backend, Vue frontend, MySQL database.' },
-                { icon: '👁️', title: 'Computer Vision & Deep Learning', desc: 'OpenCV, YOLOv5, industrial camera, CUDA acceleration.' },
-                { icon: '🤖', title: 'Robotics & Embedded Systems', desc: 'Sensor fusion, pose estimation, MiniPC optimization, multi-threaded Linux programming.' }
+                { icon: '🤖', title: 'Agent System', desc: 'LLM decision loop with RAG retrieval, prompt templates, function calling, and MCP-style tools.' },
+                { icon: '📡', title: 'Realtime Communication', desc: 'WebSocket and MQTT protocols for audio streams, state sync, commands, and reconnection.' },
+                { icon: '🔊', title: 'Voice & Hardware', desc: 'Integrated ASR, TTS, VAD, speaker recognition, camera upload, screen control, and servo actions.' }
             ],
-            triggers: ['C++, Python, Flask, Vue, MySQL', 'OpenCV, MiniPC, YOLOv5, CUDA, Linux, Git']
+            triggers: ['AI Agent system development for voice companion robots', 'Python, C/C++, ESP32, FastAPI, WebSocket, MQTT, ASR/TTS/VAD, RAG, LLM API']
         },
         'zh-CN': {
-            headline: '全栈 & 计算机视觉工程师',
-            why: '熟练掌握 C++、Python 及全栈开发（Flask + Vue）。在计算机视觉（OpenCV、YOLOv5）、机器人开发和 Linux 系统编程方面有深厚经验。',
+            headline: 'AI Agent 语音陪伴机器人开发',
+            why: '围绕“大模型决策 + 工具调用 + 多模态硬件执行”搭建云端服务与 ESP32 设备端协同链路，覆盖语音输入、LLM 推理、RAG 检索、工具调用、语音播报与硬件动作执行闭环。',
             painPoints: [
-                { icon: '💻', title: 'C++ / Python / 全栈开发', desc: '面向对象设计，Flask 后端，Vue 前端，MySQL 数据库。' },
-                { icon: '👁️', title: '计算机视觉与深度学习', desc: 'OpenCV、YOLOv5、工业相机、CUDA 加速。' },
-                { icon: '🤖', title: '机器人与嵌入式系统', desc: '传感器融合、姿态解算、MiniPC 优化、Linux 多线程编程。' }
+                { icon: '🤖', title: 'Agent 系统', desc: '设计 LLM 决策、RAG 检索、Prompt 模板、Function Calling 与 MCP 工具体系。' },
+                { icon: '📡', title: '实时通信', desc: '基于 WebSocket / MQTT 封装音频流、状态同步、控制指令与异常重连。' },
+                { icon: '🔊', title: '语音与硬件', desc: '集成 ASR、TTS、VAD、声纹识别、摄像头上传、屏幕控制与舵机动作。' }
             ],
-            triggers: ['C++, Python, Flask, Vue, MySQL', 'OpenCV, MiniPC, YOLOv5, CUDA, Linux, Git']
+            triggers: ['负责智能语音机器人 AI Agent 系统开发', 'Python，C/C++，ESP32，FastAPI，WebSocket，MQTT，ASR/TTS/VAD，RAG，LLM API']
+        }
+    },
+    'technical-skills': {
+        en: {
+            headline: 'AI Agent, Full-stack & Computer Vision Engineer',
+            why: 'Proficient in C++, Python, and full-stack web development (FastAPI/Flask + Vue). Deep experience in AI agents, computer vision (OpenCV, YOLOv5), robotics, and Linux system programming.',
+            painPoints: [
+                { icon: '💻', title: 'C++ / Python / Full-Stack', desc: 'OOP design, FastAPI/Flask backend, Vue frontend, MySQL database.' },
+                { icon: '👁️', title: 'Computer Vision & Deep Learning', desc: 'OpenCV, YOLOv5, industrial camera, CUDA acceleration.' },
+                { icon: '🤖', title: 'Robotics, Embedded & Agents', desc: 'Sensor fusion, pose estimation, ESP32 integration, AI tool calling, and Linux programming.' }
+            ],
+            triggers: ['C++, Python, FastAPI, Flask, Vue, MySQL', 'OpenCV, MiniPC, ESP32, YOLOv5, CUDA, Linux, Git']
+        },
+        'zh-CN': {
+            headline: 'AI Agent、全栈与计算机视觉工程师',
+            why: '熟练掌握 C++、Python 及全栈开发（FastAPI/Flask + Vue）。在 AI Agent、计算机视觉（OpenCV、YOLOv5）、机器人开发和 Linux 系统编程方面有实践经验。',
+            painPoints: [
+                { icon: '💻', title: 'C++ / Python / 全栈开发', desc: '面向对象设计，FastAPI/Flask 后端，Vue 前端，MySQL 数据库。' },
+                { icon: '👁️', title: '计算机视觉与深度学习', desc: 'OpenCV、YOLOv5、工业相机、CUDA 加速。' },
+                { icon: '🤖', title: '机器人、嵌入式与 Agent', desc: '传感器融合、姿态解算、ESP32 接入、AI 工具调用与 Linux 编程。' }
+            ],
+            triggers: ['C++, Python, FastAPI, Flask, Vue, MySQL', 'OpenCV, MiniPC, ESP32, YOLOv5, CUDA, Linux, Git']
         }
     },
     'projects': {
@@ -143,6 +165,10 @@ const SKILLS = {
     'education': {
         title: { en: 'Education', 'zh-CN': '教育背景' },
         icon: '<path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 2 4 3 6 3s6-1 6-3v-5"/>'
+    },
+    'experience': {
+        title: { en: 'Experience', 'zh-CN': '工作经历' },
+        icon: '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><path d="M2 13h20"/>'
     },
     'technical-skills': {
         title: { en: 'Technical Skills', 'zh-CN': '专业技能' },
@@ -246,7 +272,7 @@ function renderContactContent() {
             </div>
             <div class="contact-item-info">
                 <div class="contact-item-label">${t.addMarketplace}</div>
-                <div class="contact-item-value"><a href="mailto:li2096870763@gmail.com">li2096870763@gmail.com</a></div>
+                <div class="contact-item-value"><a href="mailto:gavinxleele@gmail.com">gavinxleele@gmail.com</a></div>
             </div>
         </div>
         <div class="contact-item">

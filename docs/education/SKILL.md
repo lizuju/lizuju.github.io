@@ -1,6 +1,6 @@
 # Education
 
-## 2022.09 - 2026.06 | Guangzhou Nanfang College | Computer Science and Technology (Bachelor)
+## 2022.09 - 2026.06 | Computer Science and Technology (Bachelor)
 
 **Overall Ranking: 3/219**
 
