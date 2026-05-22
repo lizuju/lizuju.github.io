@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "npx serve . -l 3090",
-    "dev:python": "python3 -m http.server 3090"
+    "dev:python": "python3 -m http.server 3090",
+    "test:smoke": "playwright test"
   },
   "keywords": [
     "portfolio",
@@ -13,5 +14,8 @@
     "documentation"
   ],
   "author": "lizuju",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.56.1"
+  }
 }

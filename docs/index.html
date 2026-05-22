@@ -1,177 +1,224 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>李祖钜 Gavin - Portfolio</title>
+    <meta name="description" content="李祖钜 Gavin 的个人作品集，聚焦 AI Agent、计算机视觉、机器人开发与全栈工程。">
 
-    <!-- Favicon (dynamically set to GitHub avatar) -->
-    <link rel="icon" id="favicon" type="image/png" href="">
-
-    <!-- Google Fonts: Space Grotesk + DM Sans -->
+    <link rel="icon" id="favicon" type="image/png" href="https://github.com/lizuju.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap"
         rel="stylesheet">
-
-    <!-- Highlight.js CSS (Dark theme for glassmorphism) -->
-    <link rel="stylesheet" href="https://lib.baomitu.com/highlight.js/11.9.0/styles/github-dark.min.css"
-        id="hljs-theme">
-
-    <!-- Tocbot CSS -->
-    <link rel="stylesheet" href="https://lib.baomitu.com/tocbot/4.32.2/tocbot.min.css">
-
-    <!-- Custom styles -->
-    <link rel="stylesheet" href="css/custom.css?v=2026052205">
+    <link rel="stylesheet" href="css/custom.css?v=2026052312">
 </head>
 
 <body>
-    <!-- Animated Background -->
-    <div class="bg-gradient"></div>
-    <div class="bg-orbs">
-        <div class="orb orb-1"></div>
-        <div class="orb orb-2"></div>
-        <div class="orb orb-3"></div>
-    </div>
-
-    <!-- Navigation -->
-    <nav class="navbar glass">
-        <div class="navbar-container">
-            <a class="navbar-brand" id="repoLink" href="https://github.com/lizuju/lizuju.github.io" target="_blank">
-                <img class="brand-avatar" id="userAvatar" src="" alt="Avatar">
-                <span class="brand-text" id="brandTitle">Lizuju's Portfolio</span>
+    <div class="page-shell">
+        <header class="site-header" id="top">
+            <a class="brand" href="#top" aria-label="Back to top">
+                <img src="https://github.com/lizuju.png" alt="李祖钜 Gavin" class="brand-avatar">
+                <span>李祖钜 Gavin</span>
             </a>
 
-            <button class="mobile-menu-btn" onclick="toggleMobileMenu()" aria-label="Toggle menu">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="3" y1="12" x2="21" y2="12"></line>
-                    <line x1="3" y1="6" x2="21" y2="6"></line>
-                    <line x1="3" y1="18" x2="21" y2="18"></line>
-                </svg>
-            </button>
+            <nav class="desktop-nav" aria-label="Primary navigation">
+                <a href="#experience" data-i18n="navExperience">工作</a>
+                <a href="#projects" data-i18n="navProjects">项目</a>
+                <a href="#skills" data-i18n="navSkills">能力</a>
+                <a href="#awards" data-i18n="navAwards">荣誉</a>
+                <a href="#contact" data-i18n="navContact">联系</a>
+            </nav>
 
-            <div class="navbar-links">
-                <!-- Language Switcher -->
-                <div class="lang-switcher">
-                    <button class="lang-btn" data-lang="en">EN</button>
-                    <button class="lang-btn" data-lang="zh-CN">中文</button>
-                </div>
+            <div class="header-actions">
+                <button class="lang-toggle" type="button" data-lang-toggle>EN</button>
+                <button class="menu-toggle" type="button" data-menu-toggle aria-label="Open menu" aria-controls="mobile-menu"
+                    aria-expanded="false">
+                    <span></span>
+                    <span></span>
+                </button>
+            </div>
+        </header>
 
-                <div class="nav-dropdown">
-                    <button class="nav-btn glass-light">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path
-                                d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                        </svg>
-                        <span data-i18n="skills">Skills</span>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <polyline points="6 9 12 15 18 9"></polyline>
-                        </svg>
-                    </button>
-                    <div class="nav-dropdown-content glass" id="navSkillList">
-                        <!-- Dynamically populated by main.js -->
+        <div class="mobile-menu" id="mobile-menu" data-mobile-menu>
+            <a href="#experience" data-i18n="navExperience">工作</a>
+            <a href="#projects" data-i18n="navProjects">项目</a>
+            <a href="#skills" data-i18n="navSkills">能力</a>
+            <a href="#awards" data-i18n="navAwards">荣誉</a>
+            <a href="#contact" data-i18n="navContact">联系</a>
+        </div>
+
+        <main>
+            <section class="hero section" aria-labelledby="hero-title">
+                <div class="hero-copy reveal">
+                    <p class="hero-name" data-i18n="heroName">李祖钜 Gavin</p>
+                    <h1 id="hero-title" data-i18n-lines="heroTitle">
+                        <span>AI Agent</span>
+                        <span>视觉算法</span>
+                        <span>机器人开发</span>
+                    </h1>
+                    <p class="hero-summary" data-i18n="heroSummary">
+                        我关注能落地的智能系统：从语音 Agent 云端链路，到 RoboMaster 视觉算法，再到机器视觉全栈平台，把模型、设备和产品体验连接起来。
+                    </p>
+                    <div class="hero-tags" data-list="heroTags"></div>
+                    <div class="hero-brief" aria-label="Profile highlights">
+                        <div>
+                            <span data-i18n="briefAgentLabel">Agent 链路</span>
+                            <strong data-i18n="briefAgentValue">语音、检索、工具调用到硬件动作</strong>
+                        </div>
+                        <div>
+                            <span data-i18n="briefVisionLabel">视觉系统</span>
+                            <strong data-i18n="briefVisionValue">检测、标定、解算与实时优化</strong>
+                        </div>
+                        <div>
+                            <span data-i18n="briefProductLabel">产品交付</span>
+                            <strong data-i18n="briefProductValue">后端服务、前端界面与设备联调</strong>
+                        </div>
+                    </div>
+                    <div class="hero-actions">
+                        <a class="primary-action" href="#projects" data-i18n="heroPrimary">查看项目</a>
+                        <a class="secondary-action" href="mailto:gavinxleele@gmail.com" data-i18n="heroSecondary">联系我</a>
                     </div>
                 </div>
-                <a class="nav-link" href="https://github.com/lizuju/lizuju.github.io" target="_blank">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                        <path
-                            d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-                    </svg>
-                    GitHub
-                </a>
-                <a class="nav-link" href="javascript:void(0)" onclick="toggleContactModal()">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                        <polyline points="22,6 12,13 2,6" />
-                    </svg>
-                    <span data-i18n="installation">Contact</span>
-                </a>
-            </div>
-        </div>
-    </nav>
 
-    <!-- Mobile Menu -->
-    <div class="mobile-menu glass" id="mobileMenu">
-        <div class="mobile-menu-content">
-            <div class="mobile-lang-switcher">
-                <button class="lang-btn" data-lang="en">EN</button>
-                <button class="lang-btn" data-lang="zh-CN">中文</button>
-            </div>
-            <div class="mobile-menu-divider"></div>
-            <h3 data-i18n="skills">Skills</h3>
-            <div id="mobileSkillList">
-                <!-- Dynamically populated by main.js -->
-            </div>
-            <div class="mobile-menu-divider"></div>
-            <a href="https://github.com/lizuju/lizuju.github.io" target="_blank">GitHub</a>
-            <a href="javascript:void(0)" onclick="toggleContactModal(); toggleMobileMenu();"
-                data-i18n="installation">Contact</a>
-        </div>
-    </div>
-
-    <!-- Contact Modal -->
-    <div class="contact-modal-overlay" id="contactOverlay" onclick="toggleContactModal()"></div>
-    <div class="contact-modal glass" id="contactModal">
-        <div class="contact-modal-header">
-            <h2 class="contact-modal-title" data-i18n="installation">Contact</h2>
-            <button class="contact-modal-close" onclick="toggleContactModal()">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-            </button>
-        </div>
-        <div id="contactContent">
-            <!-- Dynamically populated by main.js -->
-        </div>
-    </div>
-
-    <!-- Main Content -->
-    <div class="main-container">
-        <!-- Left Sidebar -->
-        <aside class="sidebar glass">
-            <div class="sidebar-content">
-                <div class="sidebar-section">
-                    <h4 class="sidebar-heading" data-i18n="skills">Skills</h4>
-                    <nav class="sidebar-nav" id="sidebarSkillList">
-                        <!-- Dynamically populated by main.js -->
-                    </nav>
+                <div class="hero-visual reveal" aria-label="Profile visual">
+                    <img src="https://github.com/lizuju.png" alt="李祖钜 Gavin" class="portrait">
+                    <div class="signal-panel">
+                        <span data-i18n="signalRole">Current focus</span>
+                        <strong data-i18n="signalTitle">Voice Agent Robotics</strong>
+                        <small data-i18n="signalStack">FastAPI / ESP32 / RAG / CV</small>
+                    </div>
                 </div>
+            </section>
 
-                <div class="sidebar-section">
-                    <h4 class="sidebar-heading" data-i18n="onThisPage">On This Page</h4>
-                    <div class="js-toc"></div>
+            <section class="metrics section" aria-label="Highlights">
+                <div class="metric reveal">
+                    <span>3/219</span>
+                    <p data-i18n="metricRank">计算机专业综合排名</p>
                 </div>
-            </div>
-        </aside>
+                <div class="metric reveal">
+                    <span>2x</span>
+                    <p data-i18n="metricScholarship">国家奖学金</p>
+                </div>
+                <div class="metric reveal">
+                    <span>30+</span>
+                    <p data-i18n="metricAwards">竞赛与创新项目荣誉</p>
+                </div>
+                <div class="metric reveal">
+                    <span>2025</span>
+                    <p data-i18n="metricFocus">AI Agent 语音机器人开发</p>
+                </div>
+            </section>
 
-        <!-- Documentation Content -->
-        <main class="main-content">
-            <article class="js-toc-content content-card glass" id="content">
-                <div class="loading">
-                    <div class="loading-spinner"></div>
-                    <p data-i18n="loading">Loading documentation...</p>
+            <section class="section narrative" id="experience" aria-labelledby="experience-title">
+                <div class="section-heading reveal">
+                    <p data-i18n="experienceKicker">Experience</p>
+                    <h2 id="experience-title" data-i18n="experienceTitle">让大模型真正控制设备</h2>
                 </div>
-            </article>
+                <article class="experience-row reveal">
+                    <div class="row-meta">
+                        <span>2025.09 - 2026.03</span>
+                        <strong data-i18n="experienceCompany">广东华南虎科技有限公司</strong>
+                    </div>
+                    <div class="row-main">
+                        <h3 data-i18n="experienceRole">AI Agent 语音陪伴机器人开发</h3>
+                        <p data-i18n="experienceBody">
+                            负责语音机器人 Agent 系统开发，搭建云端服务与 ESP32 设备端协同链路，覆盖语音输入、LLM 推理、RAG 检索、工具调用、语音播报与硬件动作执行闭环。
+                        </p>
+                        <div class="stack-strip" data-list="experienceStack"></div>
+                        <ul class="feature-list" data-list="experience"></ul>
+                    </div>
+                </article>
+                <div class="system-map reveal" aria-label="AI agent system flow">
+                    <div>
+                        <span>01</span>
+                        <strong data-i18n="mapAudio">语音输入</strong>
+                    </div>
+                    <div>
+                        <span>02</span>
+                        <strong data-i18n="mapReasoning">模型推理</strong>
+                    </div>
+                    <div>
+                        <span>03</span>
+                        <strong data-i18n="mapTools">工具调用</strong>
+                    </div>
+                    <div>
+                        <span>04</span>
+                        <strong data-i18n="mapDevice">硬件执行</strong>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section projects" id="projects" aria-labelledby="projects-title">
+                <div class="section-heading reveal">
+                    <p data-i18n="projectsKicker">Selected work</p>
+                    <h2 id="projects-title" data-i18n="projectsTitle">三条工程主线</h2>
+                </div>
+                <div class="project-list" data-projects></div>
+            </section>
+
+            <section class="section skills" id="skills" aria-labelledby="skills-title">
+                <div class="section-heading reveal">
+                    <p data-i18n="skillsKicker">Capability</p>
+                    <h2 id="skills-title" data-i18n="skillsTitle">从模型到产品的工程能力</h2>
+                </div>
+                <div class="skill-grid" data-skills></div>
+            </section>
+
+            <section class="section awards" id="awards" aria-labelledby="awards-title">
+                <div class="section-heading reveal">
+                    <p data-i18n="awardsKicker">Proof</p>
+                    <h2 id="awards-title" data-i18n="awardsTitle">结果和长期投入</h2>
+                </div>
+                <div class="award-columns reveal">
+                    <div>
+                        <h3 data-i18n="awardModelingTitle">数学建模</h3>
+                        <ul data-list="modeling"></ul>
+                    </div>
+                    <div>
+                        <h3 data-i18n="awardRoboticsTitle">机器人竞赛</h3>
+                        <ul data-list="robotics"></ul>
+                    </div>
+                    <div>
+                        <h3 data-i18n="awardInnovationTitle">创新实践</h3>
+                        <ul data-list="innovation"></ul>
+                    </div>
+                    <div>
+                        <h3 data-i18n="awardOtherTitle">综合荣誉</h3>
+                        <ul data-list="otherAwards"></ul>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section education" id="education" aria-labelledby="education-title">
+                <div class="education-line reveal">
+                    <div>
+                        <p data-i18n="educationKicker">Education</p>
+                        <h2 id="education-title" data-i18n="educationTitle">计算机科学与技术（本科）</h2>
+                    </div>
+                    <p data-i18n="educationBody">
+                        综合排名 3/219，两届国家奖学金，获励志榜样、大学生年度人物、学习先锋等荣誉；可使用英语、普通话和广东话工作沟通。
+                    </p>
+                </div>
+            </section>
+
+            <section class="section contact" id="contact" aria-labelledby="contact-title">
+                <div class="contact-copy reveal">
+                    <p data-i18n="contactKicker">Contact</p>
+                    <h2 id="contact-title" data-i18n="contactTitle">如果你需要把智能能力落到真实设备和产品里，可以联系我。</h2>
+                </div>
+                <div class="contact-links reveal">
+                    <a href="mailto:gavinxleele@gmail.com">gavinxleele@gmail.com</a>
+                    <a href="tel:13113356348">13113356348</a>
+                    <a href="https://github.com/lizuju" target="_blank" rel="noreferrer">GitHub</a>
+                </div>
+            </section>
         </main>
     </div>
 
-    <!-- Footer -->
-    <footer class="footer">
-        <div class="footer-content">
-            <p>Made with <span class="heart">♥</span> by <a href="https://lizuju.github.io/">lizuju</a></p>
-        </div>
-    </footer>
-
-    <!-- Scripts -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://lib.baomitu.com/tocbot/4.32.2/tocbot.min.js"></script>
-    <script src="js/main.js?v=2026052201"></script>
+    <script src="js/main.js?v=2026052312"></script>
 </body>
 
 </html>

@@ -14,6 +14,9 @@ Thumbs.db
 # Temp
 tmp/
 temp/
+node_modules/
+test-results/
+playwright-report/
 
 # Skills with custom endpoints (have their own .git)
 # Add skill names here when they use custom remotes
