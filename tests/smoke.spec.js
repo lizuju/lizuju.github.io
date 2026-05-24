@@ -51,6 +51,32 @@ test('renders portfolio content without school name or overflow', async ({ page 
     expect(mobileSystemMapIsSeparated).toBe(true);
 });
 
+test('exposes crawlable SEO metadata', async ({ page, request }) => {
+    await page.goto('/?qa=seo-smoke#top');
+
+    await expect(page).toHaveTitle('李祖钜 Gavin | AI Agent、机器人与计算机视觉作品集');
+    await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', /Gavin Lizuju/);
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', 'index,follow,max-image-preview:large');
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', 'https://lizuju.github.io/');
+    await expect(page.locator('meta[property="og:image"]')).toHaveAttribute('content', 'https://lizuju.github.io/assets/portfolio-hero.jpg');
+
+    const schema = await page.locator('script[type="application/ld+json"]').textContent();
+    const parsedSchema = JSON.parse(schema);
+    expect(parsedSchema['@type']).toBe('ProfilePage');
+    expect(parsedSchema.mainEntity.name).toBe('李祖钜');
+    expect(parsedSchema.mainEntity.sameAs).toContain('https://github.com/lizuju');
+
+    const robots = await request.get('/robots.txt');
+    expect(robots.ok()).toBe(true);
+    expect(await robots.text()).toContain('Sitemap: https://lizuju.github.io/sitemap.xml');
+
+    const sitemap = await request.get('/sitemap.xml');
+    expect(sitemap.ok()).toBe(true);
+    const sitemapText = await sitemap.text();
+    expect(sitemapText).toContain('<loc>https://lizuju.github.io/</loc>');
+    expect(sitemapText).toContain('<lastmod>2026-05-24</lastmod>');
+});
+
 test('supports language toggle and mobile menu', async ({ page, isMobile }) => {
     test.skip(!isMobile, 'mobile interaction coverage');
 

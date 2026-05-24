@@ -647,8 +647,8 @@ function applyLanguage() {
 
     document.documentElement.lang = currentLang === 'zh-CN' ? 'zh-CN' : 'en';
     document.title = currentLang === 'zh-CN'
-        ? '李祖钜 Gavin - 个人作品集'
-        : 'Gavin Lizuju - Portfolio';
+        ? '李祖钜 Gavin | AI Agent、机器人与计算机视觉作品集'
+        : 'Gavin Lizuju | AI Agent, Robotics and Computer Vision Portfolio';
 
     document.querySelectorAll('[data-i18n]').forEach((element) => {
         const key = element.getAttribute('data-i18n');
