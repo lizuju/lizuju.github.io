@@ -7,14 +7,16 @@ const SUPPORTED_LANGS = ['zh-CN', 'en'];
 
 const CONTENT = {
     'zh-CN': {
+        brandName: '李祖钜 Gavin',
         navExperience: '工作',
         navProjects: '项目',
+        navMethod: '方法',
         navSkills: '能力',
         navAwards: '荣誉',
         navContact: '联系',
         heroName: '李祖钜 Gavin',
-        heroTitle: ['AI Agent', '视觉算法', '机器人开发'],
-        heroSummary: '我关注能落地的智能系统：从语音 Agent 云端链路，到 RoboMaster 视觉算法，再到机器视觉全栈平台，把模型、设备和产品体验连接起来。',
+        heroTitle: ['智能系统', '视觉算法', '机器人开发'],
+        heroSummary: '把模型推理、视觉感知和硬件控制做成可运行的系统。',
         heroPrimary: '查看项目',
         heroSecondary: '联系我',
         heroTags: ['AI Agent', 'Computer Vision', 'Robotics', 'Full-stack'],
@@ -30,18 +32,26 @@ const CONTENT = {
         metricRank: '计算机专业综合排名',
         metricScholarship: '国家奖学金',
         metricAwards: '竞赛与创新项目荣誉',
-        metricFocus: 'AI Agent 语音机器人开发',
+        metricFocus: '语音机器人云端与设备协同',
+        methodKicker: 'Method',
+        methodTitle: '把复杂系统收束成可交付结果',
+        methodBody: '先澄清，再提炼。先跑通闭环，再加固和打磨。',
+        methodProofLabel: 'Working standard',
+        methodProofValue: '清晰边界 / 可运行实现 / 可验证交付',
         experienceKicker: 'Experience',
-        experienceTitle: '让大模型真正控制设备',
+        experienceTitle: '让模型决策落到真实设备',
         experienceCompany: '广东华南虎科技有限公司',
         experienceRole: 'AI Agent 语音陪伴机器人开发',
-        experienceBody: '负责语音机器人 Agent 系统开发，搭建云端服务与 ESP32 设备端协同链路，覆盖语音输入、LLM 推理、RAG 检索、工具调用、语音播报与硬件动作执行闭环。',
+        experienceBody: '搭建云端服务与 ESP32 设备协同链路，让语音、检索、工具调用和硬件动作形成闭环。',
+        experienceDetailLabel: '查看完整工作内容',
         mapAudio: '语音输入',
         mapReasoning: '模型推理',
         mapTools: '工具调用',
         mapDevice: '硬件执行',
         projectsKicker: 'Selected work',
         projectsTitle: '三条工程主线',
+        projectDetailLabel: '展开技术细节',
+        projectGitHub: '查看 GitHub',
         skillsKicker: 'Capability',
         skillsTitle: '从模型到产品的工程能力',
         awardsKicker: 'Proof',
@@ -52,9 +62,39 @@ const CONTENT = {
         awardOtherTitle: '综合荣誉',
         educationKicker: 'Education',
         educationTitle: '计算机科学与技术（本科）',
-        educationBody: '综合排名 3/219，两届国家奖学金，获励志榜样、大学生年度人物、学习先锋等荣誉；可使用英语、普通话和广东话工作沟通。',
+        educationBody: '综合排名 3/219；可使用英语、普通话和广东话工作沟通。',
+        educationHighlights: ['两届国家奖学金', '励志榜样', '大学生年度人物', '学习先锋'],
         contactKicker: 'Contact',
         contactTitle: '如果你需要把智能能力落到真实设备和产品里，可以联系我。',
+        footerName: '李祖钜 Gavin / Portfolio',
+        footerTop: '回到顶部',
+        methods: [
+            {
+                title: 'Clarify',
+                label: '澄清目标',
+                body: '把业务目标、硬件边界、验收标准和风险先拆清楚，避免后期返工。'
+            },
+            {
+                title: 'Distill',
+                label: '提炼路径',
+                body: '删掉不必要的复杂度，保留能最快验证核心能力的工程路径。'
+            },
+            {
+                title: 'Build',
+                label: '实现闭环',
+                body: '优先做可运行的端到端链路，再逐步补齐性能、体验和可维护性。'
+            },
+            {
+                title: 'Harden',
+                label: '加固边界',
+                body: '关注重连、长文本、多语言、移动端和异常状态，让系统经得住真实使用。'
+            },
+            {
+                title: 'Polish',
+                label: '打磨细节',
+                body: '用排版、间距、动效和浏览器回归把体验从“能用”推到“稳定好用”。'
+            }
+        ],
         experience: [
             '围绕“大模型决策 + 工具调用 + 多模态硬件执行”搭建云端服务与 ESP32 设备端协同链路，完成语音输入、LLM 推理、RAG 检索、工具调用、语音播报与硬件动作执行闭环。',
             '设计 WebSocket / MQTT 设备-云端实时通信协议，封装音频流、状态同步、控制指令与工具调用消息，支持多轮会话、设备状态机、流式音频传输与异常重连。',
@@ -73,7 +113,8 @@ const CONTENT = {
                 title: 'RoboMaster 机器人视觉算法',
                 role: '视觉组组长 / 项目负责人',
                 period: '2022.11 - 2025.04',
-                body: '负责机器人自动瞄准与射击系统整体设计、开发与测试，主导视觉方案架构、算法实现、嵌入式部署和跨模块联调。',
+                body: '面向比赛现场的实时视觉、目标识别和姿态解算。',
+                alt: 'RoboMaster 机器人视觉系统产品式渲染图',
                 details: [
                     '基于 ROS 与 OpenCV 构建完整视觉处理流程，包括去噪、滤波、图像增强、工业相机标定、畸变矫正和曝光/增益调节。',
                     '结合 YOLOv5 实现多类别目标检测与实时跟踪，提升复杂工业环境下的识别精度与系统鲁棒性。',
@@ -90,7 +131,8 @@ const CONTENT = {
                 title: '机器视觉与雷达建模货物盘点系统',
                 role: '全栈开发 / 项目负责人',
                 period: '2023.09 - 2024.06',
-                body: '负责基于机器视觉与雷达建模的货物盘点与管理系统整体架构设计和核心功能开发，实现仓储货物自动识别、数量统计与异常检测。',
+                body: '用视觉与雷达融合，让货物识别、计数和异常检测自动化。',
+                alt: '仓储货物盘点系统传感器场景图',
                 details: [
                     '基于 ROS 与 OpenCV 构建图像预处理流程，包括去噪、透视矫正、区域裁剪等，并结合 YOLOv5 完成货物目标检测与类别识别。',
                     '结合雷达数据进行空间建模与距离测量，设计视觉与雷达数据融合逻辑，提升遮挡场景下的识别准确率和库存统计可靠性。',
@@ -106,7 +148,8 @@ const CONTENT = {
                 title: 'YOLOv5 垃圾分类识别系统',
                 role: '全栈开发 / 项目负责人',
                 period: '2024.02 - 2025.03',
-                body: '负责 YOLOv5 垃圾识别系统整体架构设计与核心功能开发，将固定分类检测转化为“特征嵌入 + 向量搜索”的可扩展识别平台。',
+                body: '把固定分类检测升级为“特征嵌入 + 向量搜索”的可扩展识别平台。',
+                alt: '垃圾分类识别系统产品式静物图',
                 details: [
                     '基于 YOLOv5 构建通用目标检测流程，负责物体定位与裁剪；引入 CLIP 进行特征嵌入提取，将垃圾图像转化为高维语义向量。',
                     '设计并搭建向量检索体系，结合 Milvus 构建“垃圾指纹库”，实现海量特征向量的相似度匹配与近邻搜索。',
@@ -122,38 +165,38 @@ const CONTENT = {
         skills: [
             {
                 title: '编程语言与全栈开发',
-                body: '熟练掌握 C++ 与 Python，具备面向对象设计和工程化开发能力；熟悉 Flask、RESTful API、Vue、MySQL 与前后端分离项目实践。',
+                body: 'C++ / Python 到 Flask、Vue、MySQL，能独立做前后端闭环。',
                 items: ['C++ / STL', 'Python', 'Flask', 'Vue', 'RESTful API', 'MySQL']
             },
             {
                 title: '数据结构与算法',
-                body: '熟悉常见数据结构与常用算法，能够围绕项目性能瓶颈做复杂度优化、数据结构改进和并行计算。',
+                body: '围绕性能瓶颈做复杂度、数据结构和并行计算优化。',
                 items: ['数组', '链表', '二叉树', '快速排序', '复杂度优化']
             },
             {
                 title: '计算机视觉',
-                body: '熟悉 OpenCV、神经网络图像处理、YOLOv5 目标检测，掌握工业相机标定、畸变矫正、曝光/增益调节与视觉工程落地。',
+                body: '从 OpenCV、YOLOv5 到相机标定和视觉工程部署。',
                 items: ['OpenCV', 'YOLOv5', '工业相机', '相机标定', '图像增强']
             },
             {
                 title: '机器人开发',
-                body: '熟悉 ROS 机器人系统、视觉与电控联调、传感器数据采集与融合、姿态解算、串口传输、运动控制和 MiniPC 平台部署。',
+                body: 'ROS、传感器融合、姿态解算和 MiniPC 平台部署。',
                 items: ['ROS', '传感器融合', '姿态解算', '串口通信', 'Jetson / NUC / Raspberry Pi']
             },
             {
                 title: 'Linux 与工程工具链',
-                body: '熟悉 Linux 多线程编程、进程间通信、线程同步与互斥机制，掌握常用 Linux 命令、Shell、Vim、GCC、GDB、Git 和 Makefile。',
+                body: 'Linux、多线程、GDB、Makefile 和 Git 工程工具链。',
                 items: ['Linux', 'Shell', '多线程', 'GDB', 'Makefile', 'Git']
             },
             {
                 title: 'AI Agent 与设备工具调用',
-                body: '具备 RAG、Prompt Engineering、Function Calling / MCP Tool、流式语音交互、设备状态机和硬件能力封装经验。',
+                body: 'RAG、工具调用、流式语音和硬件能力封装。',
                 items: ['RAG', 'Prompt Engineering', 'MCP Tool', 'ASR/TTS/VAD', 'WebSocket', 'MQTT']
             },
             {
-                title: 'AI 辅助开发',
-                body: '熟悉 Codex、Claude Code、LangChain 等 AI Coding 工具，具备 GitHub AI 开源项目实践经验，能够利用 AI 工具提升开发、调试与交付效率。',
-                items: ['Codex', 'Claude Code', 'LangChain', 'AI Coding', '开源实践']
+                title: '工程化协作与交付',
+                body: '把澄清、实现、调试、文档和测试串成稳定交付流程。',
+                items: ['Clarify', 'Distill', 'Harden', 'Polish', 'Codex', 'Claude Code']
             }
         ],
         modeling: [
@@ -191,14 +234,16 @@ const CONTENT = {
         ]
     },
     en: {
+        brandName: 'Gavin Lizuju',
         navExperience: 'Experience',
         navProjects: 'Projects',
+        navMethod: 'Method',
         navSkills: 'Skills',
         navAwards: 'Proof',
         navContact: 'Contact',
         heroName: 'Gavin Lizuju',
-        heroTitle: ['AI Agent', 'Vision Systems', 'Robotics Engineer'],
-        heroSummary: 'I build practical intelligent systems, connecting voice-agent cloud services, RoboMaster vision algorithms, machine-vision platforms, device control and product experience.',
+        heroTitle: ['Intelligent Systems', 'Vision Algorithms', 'Robotics Development'],
+        heroSummary: 'Model reasoning, visual perception and device control in working systems.',
         heroPrimary: 'View projects',
         heroSecondary: 'Contact',
         heroTags: ['AI Agent', 'Computer Vision', 'Robotics', 'Full-stack'],
@@ -214,18 +259,26 @@ const CONTENT = {
         metricRank: 'CS program ranking',
         metricScholarship: 'National Scholarships',
         metricAwards: 'Awards and innovation results',
-        metricFocus: 'AI Agent voice robot work',
+        metricFocus: 'Cloud-to-device voice robot systems',
+        methodKicker: 'Method',
+        methodTitle: 'Turning complex systems into shippable work',
+        methodBody: 'Clarify first, distill the path, ship the loop, then harden and polish.',
+        methodProofLabel: 'Working standard',
+        methodProofValue: 'Clear scope / Working build / Verified delivery',
         experienceKicker: 'Experience',
-        experienceTitle: 'Making language models control real devices',
+        experienceTitle: 'Making model decisions reach real devices',
         experienceCompany: 'Guangdong South China Tiger Technology Co., Ltd.',
         experienceRole: 'AI Agent Voice Companion Robot Development',
-        experienceBody: 'Developed a voice robot Agent system and built a cloud-to-ESP32 device loop covering voice input, LLM reasoning, RAG retrieval, tool calling, speech playback and hardware actions.',
+        experienceBody: 'Built a cloud-to-ESP32 loop where voice, retrieval, tool calling and hardware actions work together.',
+        experienceDetailLabel: 'View full scope',
         mapAudio: 'Voice input',
         mapReasoning: 'Model reasoning',
         mapTools: 'Tool calling',
         mapDevice: 'Device action',
         projectsKicker: 'Selected work',
         projectsTitle: 'Three engineering tracks',
+        projectDetailLabel: 'Show technical details',
+        projectGitHub: 'View GitHub',
         skillsKicker: 'Capability',
         skillsTitle: 'Engineering from model to product',
         awardsKicker: 'Proof',
@@ -236,9 +289,39 @@ const CONTENT = {
         awardOtherTitle: 'Other Honors',
         educationKicker: 'Education',
         educationTitle: 'Computer Science and Technology, Bachelor',
-        educationBody: 'Ranked 3/219, received two National Scholarships, and earned honors including Inspirational Role Model, Annual Character of the Year and Learning Pioneer. Comfortable working in English, Mandarin and Cantonese.',
+        educationBody: 'Ranked 3/219. Comfortable working in English, Mandarin and Cantonese.',
+        educationHighlights: ['Two National Scholarships', 'Inspirational Role Model', 'Annual Student Figure', 'Learning Pioneer'],
         contactKicker: 'Contact',
         contactTitle: 'If you need intelligence deployed into real devices and products, let us talk.',
+        footerName: 'Gavin Lizuju / Portfolio',
+        footerTop: 'Back to top',
+        methods: [
+            {
+                title: 'Clarify',
+                label: 'Scope first',
+                body: 'Define goals, device boundaries, acceptance criteria and risk before writing the system.'
+            },
+            {
+                title: 'Distill',
+                label: 'Keep the path sharp',
+                body: 'Cut avoidable complexity and keep the fastest route that can validate the core capability.'
+            },
+            {
+                title: 'Build',
+                label: 'Close the loop',
+                body: 'Ship a working end-to-end path first, then deepen performance, experience and maintainability.'
+            },
+            {
+                title: 'Harden',
+                label: 'Design for reality',
+                body: 'Handle reconnects, long text, i18n, mobile layouts and exception states before delivery.'
+            },
+            {
+                title: 'Polish',
+                label: 'Refine the finish',
+                body: 'Use typography, spacing, motion and browser regression to move the experience from usable to dependable.'
+            }
+        ],
         experience: [
             'Built a cloud-to-ESP32 collaboration loop around model decision-making, tool calling and multimodal hardware execution, covering voice input, LLM reasoning, RAG retrieval, tool calls, speech playback and hardware actions.',
             'Designed WebSocket / MQTT realtime protocols for device-cloud communication, wrapping audio streams, state sync, control commands and tool-calling messages with multi-turn sessions, device state switching, streaming audio and reconnect handling.',
@@ -257,7 +340,8 @@ const CONTENT = {
                 title: 'RoboMaster Robot Vision Algorithms',
                 role: 'Vision Team Lead / Project Lead',
                 period: '2022.11 - 2025.04',
-                body: 'Led the architecture, development, testing, embedded deployment and cross-module integration of an auto-aiming and shooting vision system.',
+                body: 'Realtime vision, target recognition and pose solving for competition robots.',
+                alt: 'Premium product-style render of a RoboMaster robot vision system',
                 details: [
                     'Built a complete ROS and OpenCV vision pipeline covering denoising, filtering, image enhancement, industrial camera calibration, distortion correction and exposure/gain tuning.',
                     'Combined YOLOv5 with multi-class detection and realtime tracking to improve recognition accuracy and robustness in complex environments.',
@@ -274,7 +358,8 @@ const CONTENT = {
                 title: 'Machine Vision and Radar Inventory System',
                 role: 'Full-stack Developer / Project Lead',
                 period: '2023.09 - 2024.06',
-                body: 'Designed and developed a machine-vision and radar-modeling inventory system for automatic warehouse item recognition, counting and anomaly detection.',
+                body: 'Vision-radar fusion for automated recognition, counting and anomaly detection.',
+                alt: 'Warehouse inventory sensor scene with modular boxes',
                 details: [
                     'Built image preprocessing with ROS and OpenCV, including denoising, perspective correction and region cropping, then used YOLOv5 for item detection and category recognition.',
                     'Combined radar data for spatial modeling and distance measurement, designing vision-radar fusion to improve counting reliability under occlusion.',
@@ -290,7 +375,8 @@ const CONTENT = {
                 title: 'YOLOv5 Garbage Classification System',
                 role: 'Full-stack Developer / Project Lead',
                 period: '2024.02 - 2025.03',
-                body: 'Designed an extensible garbage recognition platform that turns fixed-category detection into feature embedding plus vector search.',
+                body: 'An extensible recognition platform using feature embeddings and vector search.',
+                alt: 'Product-style still life for garbage classification recognition',
                 details: [
                     'Used YOLOv5 for generic object localization and cropping, then introduced CLIP feature embeddings to encode garbage images as high-dimensional semantic vectors.',
                     'Designed a vector retrieval system with Milvus as a garbage fingerprint library for efficient similarity search and nearest-neighbor matching.',
@@ -306,38 +392,38 @@ const CONTENT = {
         skills: [
             {
                 title: 'Programming and Full-stack',
-                body: 'Strong C++ and Python foundations with OOP and engineering practice; experience with Flask, RESTful APIs, Vue, MySQL and separated frontend/backend systems.',
+                body: 'C++ / Python plus Flask, Vue and MySQL for end-to-end product loops.',
                 items: ['C++ / STL', 'Python', 'Flask', 'Vue', 'RESTful API', 'MySQL']
             },
             {
                 title: 'Data Structures and Algorithms',
-                body: 'Familiar with common data structures and algorithms, and able to optimize complexity, data layout and parallel computation around project bottlenecks.',
+                body: 'Complexity, data layout and parallel-computation tuning around bottlenecks.',
                 items: ['Arrays', 'Linked Lists', 'Binary Trees', 'Quick Sort', 'Complexity Tuning']
             },
             {
                 title: 'Computer Vision',
-                body: 'Experienced with OpenCV, neural-network image processing, YOLOv5 object detection, industrial camera calibration, distortion correction and vision engineering.',
+                body: 'OpenCV, YOLOv5, calibration and deployment-minded vision engineering.',
                 items: ['OpenCV', 'YOLOv5', 'Industrial Cameras', 'Calibration', 'Image Enhancement']
             },
             {
                 title: 'Robotics Development',
-                body: 'Experienced with ROS, vision-control integration, sensor acquisition and fusion, pose solving, serial communication, motion control and MiniPC deployment.',
+                body: 'ROS, sensor fusion, pose solving and MiniPC deployment.',
                 items: ['ROS', 'Sensor Fusion', 'Pose Solving', 'Serial Control', 'Jetson / NUC / Raspberry Pi']
             },
             {
                 title: 'Linux and Toolchain',
-                body: 'Familiar with Linux multithreading, inter-process communication, synchronization, shell commands, Vim, GCC, GDB, Git and Makefile-based builds.',
+                body: 'Linux, multithreading, GDB, Makefile and Git toolchains.',
                 items: ['Linux', 'Shell', 'Multithreading', 'GDB', 'Makefile', 'Git']
             },
             {
                 title: 'AI Agent and Device Tooling',
-                body: 'RAG, prompt engineering, function calling / MCP tools, streaming voice interaction, device state machines and hardware capability wrappers.',
+                body: 'RAG, tool calling, streaming voice and hardware capability wrappers.',
                 items: ['RAG', 'Prompt Engineering', 'MCP Tool', 'ASR/TTS/VAD', 'WebSocket', 'MQTT']
             },
             {
-                title: 'AI-assisted Development',
-                body: 'Hands-on with Codex, Claude Code, LangChain and GitHub AI open-source projects to improve development, debugging and delivery efficiency.',
-                items: ['Codex', 'Claude Code', 'LangChain', 'AI Coding', 'Open Source']
+                title: 'Engineering Collaboration and Delivery',
+                body: 'A workflow for scoping, implementation, debugging, docs and verified delivery.',
+                items: ['Clarify', 'Distill', 'Harden', 'Polish', 'Codex', 'Claude Code']
             }
         ],
         modeling: [
@@ -414,7 +500,7 @@ function t() {
 
 function renderList(name, items) {
     document.querySelectorAll(`[data-list="${name}"]`).forEach((container) => {
-        const tagList = name === 'heroTags';
+        const tagList = name === 'heroTags' || name === 'experienceStack' || name === 'educationHighlights';
         container.replaceChildren();
         items.forEach((item) => {
             const element = document.createElement(tagList ? 'span' : 'li');
@@ -429,29 +515,54 @@ function renderProjects(projects) {
     if (!container) return;
 
     const visualTypes = ['vision', 'inventory', 'retrieval'];
+    const visualAssets = {
+        vision: 'assets/project-vision.jpg',
+        inventory: 'assets/project-inventory.jpg',
+        retrieval: 'assets/project-retrieval.jpg'
+    };
+    const copy = t();
 
     container.replaceChildren();
     projects.forEach((project, index) => {
         const visual = visualTypes.includes(project.visual) ? project.visual : 'vision';
         const card = document.createElement('article');
-        card.className = 'project-card reveal';
+        card.className = `project-card project-card--${visual} reveal`;
 
         const meta = document.createElement('div');
         meta.className = 'project-index';
-        meta.textContent = `${String(index + 1).padStart(2, '0')} / ${project.period} / ${project.role}`;
+        meta.textContent = `${String(index + 1).padStart(2, '0')} / ${project.period}`;
+
+        const media = document.createElement('figure');
+        media.className = 'project-media';
+        const image = document.createElement('img');
+        image.src = visualAssets[visual];
+        image.alt = project.alt || project.title;
+        image.loading = index === 0 ? 'eager' : 'lazy';
+        image.width = 1672;
+        image.height = 941;
+        media.append(image);
 
         const body = document.createElement('div');
+        body.className = 'project-body';
         const title = document.createElement('h3');
         title.textContent = project.title;
+        const role = document.createElement('strong');
+        role.className = 'project-role';
+        role.textContent = project.role;
         const description = document.createElement('p');
         description.textContent = project.body;
         const tags = document.createElement('div');
         tags.className = 'tags';
-        project.tags.forEach((tag) => {
+        project.tags.slice(0, 5).forEach((tag) => {
             const tagElement = document.createElement('span');
             tagElement.textContent = tag;
             tags.append(tagElement);
         });
+
+        const detailsDrawer = document.createElement('details');
+        detailsDrawer.className = 'project-details';
+        const summary = document.createElement('summary');
+        summary.textContent = copy.projectDetailLabel;
         const details = document.createElement('ul');
         details.className = 'detail-list';
         project.details.forEach((detail) => {
@@ -459,10 +570,12 @@ function renderProjects(projects) {
             item.textContent = detail;
             details.append(item);
         });
+        detailsDrawer.append(summary, details);
+
         const result = document.createElement('p');
         result.className = 'result-line';
         result.textContent = project.result;
-        body.append(title, description, tags, details, result);
+        body.append(meta, title, role, description, tags, detailsDrawer, result);
 
         if (project.link) {
             const link = document.createElement('a');
@@ -470,19 +583,35 @@ function renderProjects(projects) {
             link.href = project.link;
             link.target = '_blank';
             link.rel = 'noreferrer';
-            link.textContent = 'GitHub';
+            link.textContent = copy.projectGitHub;
             body.append(link);
         }
 
-        const visualPanel = document.createElement('div');
-        visualPanel.className = `project-visual project-visual--${visual}`;
-        visualPanel.setAttribute('aria-hidden', 'true');
-        const visualNumber = document.createElement('span');
-        visualNumber.textContent = String(index + 1).padStart(2, '0');
-        visualPanel.append(visualNumber, document.createElement('i'), document.createElement('i'), document.createElement('i'));
-
-        card.append(meta, body, visualPanel);
+        card.append(media, body);
         container.append(card);
+    });
+}
+
+function renderMethods(methods) {
+    const container = document.querySelector('[data-methods]');
+    if (!container) return;
+
+    container.replaceChildren();
+    methods.forEach((method, index) => {
+        const step = document.createElement('article');
+        step.className = 'method-step';
+
+        const number = document.createElement('span');
+        number.textContent = String(index + 1).padStart(2, '0');
+        const title = document.createElement('h3');
+        title.textContent = method.title;
+        const label = document.createElement('strong');
+        label.textContent = method.label;
+        const body = document.createElement('p');
+        body.textContent = method.body;
+
+        step.append(number, title, label, body);
+        container.append(step);
     });
 }
 
@@ -544,6 +673,8 @@ function applyLanguage() {
     renderList('robotics', copy.robotics);
     renderList('innovation', copy.innovation);
     renderList('otherAwards', copy.otherAwards);
+    renderList('educationHighlights', copy.educationHighlights);
+    renderMethods(copy.methods);
     renderProjects(copy.projects);
     renderSkills(copy.skills);
 
@@ -602,7 +733,7 @@ function setupInteractions() {
         event.currentTarget.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
     });
 
-    document.querySelectorAll('.mobile-menu a, .desktop-nav a').forEach((link) => {
+    document.querySelectorAll('a[href^="#"]').forEach((link) => {
         link.addEventListener('click', closeMobileMenu);
     });
 }

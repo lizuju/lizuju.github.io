@@ -3,58 +3,83 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-# 🚀 李祖钜 Gavin 的个人主页
+# 李祖钜 Gavin 个人作品集
 
-欢迎来到我的个人主页开源库！这是一个精心设计、轻量级且极具现代感的主页系统。用来展示我的教育背景、全栈开发技能、项目历程以及各项省级、国家级竞赛荣誉。
+这是 [lizuju.github.io](https://lizuju.github.io/) 的源码仓库，用来展示我的 AI Agent、计算机视觉、机器人开发、全栈工程、竞赛荣誉和联系方式。
 
-你可以在这里访问我的线上主页：[lizuju.github.io](https://lizuju.github.io/)
+当前网站是放在 `docs/` 目录下的静态 GitHub Pages 站点，使用原生 HTML、CSS 和 JavaScript 实现，方便检查、部署和持续维护。
 
----
+## 主要特点
 
-## ✨ 核心特性
+- 深色高级视觉系统，配合克制的金色强调色和响应式间距。
+- 使用图片主导项目展示，覆盖 RoboMaster 视觉算法、货物盘点感知、检索式识别平台等经历。
+- 支持中文 / 英文切换。
+- 适配桌面端和移动端导航、联系方式、GitHub 入口和回到顶部交互。
+- 根据本地简历补全公开作品集内容，同时不在网站展示学校名称。
+- 使用 Playwright smoke test 覆盖关键浏览器交互和响应式回归。
 
-- **现代玻璃拟态交互 UI (Glassmorphism):** 采用原生 CSS (backdrop-filter) 与丝滑动态渐变背景打造的沉浸式极简科技风。
-- **Markdown 动态渲染技术:** 网站利用 JavaScript 动态拉取 Markdown 文件解析。如果需要更新网站的内容，你不用去改 HTML/JS 代码，只需更新 `.md` 文件并 PUSH 即可！
-- **原生中英双语支持 (i18n):** 支持在中文与英文间进行无缝、零延迟的界面语言与文章内容切换。
-- **完美响应式布局:** 从大屏双栏排版到手机端独立弹出式菜单，全屏幕尺寸兼容。
-- **动态全屏弹窗:** 提供美观顺滑的联系方式弹窗（点击右上方 Contact 呼出）。
-- **零构建依赖极简架构:** 纯正 HTML/CSS/JS 三剑客！只采用了几个基础 CDN 插件 (`marked.js`, `highlight.js`, `tocbot`)，不依赖任何如 Webpack、Vite 的繁重打包工具。
+## 项目结构
 
-## 📂 项目结构（四大基石）
+```text
+docs/
+  index.html              页面主体结构
+  css/custom.css          视觉系统和响应式样式
+  js/main.js              内容数据、双语渲染和交互逻辑
+  assets/                 作品集和项目图片
+  */SKILL*.md             随站点保留的历史内容参考
+tests/
+  smoke.spec.js           浏览器 smoke 测试
+playwright.config.js      Playwright 配置
+package.json              本地脚本和测试依赖
+```
 
-主页的内容主要储存在以下四个 Markdown 文件夹内：
+## 本地开发
 
-- 🎓 **`education/` (教育背景)**: 展示院校信息、GPA、两次国家奖学金获得记录及英中粤三语能力。
-- 💻 **`technical-skills/` (专业技能)**: 概述我对 C++、Python、CV 计算机视觉、全栈工程及机器人的掌握。
-- 📋 **`projects/` (项目经历)**: 我所主导的三个重大系统：RoboMaster 视觉中控、仓储盘点管理系统、以及 AI 垃圾分类识别系统。
-- 🏆 **`awards/` (个人荣誉)**: 包括数学建模美赛 M 奖、大创国家级项目在内的 30 多项重要奖项。
+首次运行先安装依赖：
 
-## 🛠️ 本地运行指南
+```bash
+npm install
+```
 
-如果你想在本地跑起这个项目，非常简单：
+从仓库根目录启动本地服务：
 
-1. 克隆本仓库:
-   ```bash
-   git clone https://github.com/lizuju/lizuju.github.io.git
-   cd lizuju.github.io
-   ```
+```bash
+npm run dev
+```
 
-2. 开启一个本地 Web 服务器:
-   ```bash
-   # 如果你的环境有 Node.js
-   npm run dev
+然后访问：
 
-   # 或者使用 Python 自带的服务
-   python3 -m http.server 3090
-   ```
+```text
+http://localhost:3090/docs/
+```
 
-3. 打开浏览器并访问:
-   ```
-   http://localhost:3090/docs/
-   ```
+如果要使用浏览器回归时一致的根路径，可以直接把 `docs` 目录作为站点根目录：
 
-## 📝 如何更新网站内容
-如需更改左侧栏里的文字、文章、标题等，**无需**编辑任何前端代码，直接去对应目录（如 `projects/SKILL.zh-CN.md`）修改文案即可，十分优雅！
+```bash
+python3 -m http.server 3090 --directory docs
+```
 
-## 📄 开源协议
-本项目采用 MIT 协议进行开源，欢迎参考与探索！
+然后访问：
+
+```text
+http://localhost:3090/
+```
+
+## 验证
+
+发布前建议运行：
+
+```bash
+node --check docs/js/main.js
+npm run test:smoke
+```
+
+smoke test 会检查桌面端和移动端渲染、学校名称移除、语言切换、移动菜单、主要按钮锚点、底部回到顶部、详情展开、图片渲染以及教育荣誉高亮。
+
+## 部署
+
+本仓库用于 GitHub Pages。网站内容位于 `docs/` 目录；提交到 `main` 后，GitHub Pages 可以从该目录发布最新作品集。
+
+## 开源协议
+
+本项目使用 MIT License。

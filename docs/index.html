@@ -13,18 +13,21 @@
     <link
         href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="css/custom.css?v=2026052312">
+    <link rel="preload" as="image" href="assets/portfolio-hero.jpg">
+    <link rel="stylesheet" href="css/custom.css?v=2026052402">
 </head>
 
 <body>
+    <span id="top" class="top-anchor" aria-hidden="true"></span>
     <div class="page-shell">
-        <header class="site-header" id="top">
-            <a class="brand" href="#top" aria-label="Back to top">
+        <header class="site-header">
+            <a class="brand" href="https://github.com/lizuju" target="_blank" rel="noreferrer" aria-label="Open Gavin's GitHub profile">
                 <img src="https://github.com/lizuju.png" alt="李祖钜 Gavin" class="brand-avatar">
-                <span>李祖钜 Gavin</span>
+                <span data-i18n="brandName">李祖钜 Gavin</span>
             </a>
 
             <nav class="desktop-nav" aria-label="Primary navigation">
+                <a href="#method" data-i18n="navMethod">方法</a>
                 <a href="#experience" data-i18n="navExperience">工作</a>
                 <a href="#projects" data-i18n="navProjects">项目</a>
                 <a href="#skills" data-i18n="navSkills">能力</a>
@@ -43,6 +46,7 @@
         </header>
 
         <div class="mobile-menu" id="mobile-menu" data-mobile-menu>
+            <a href="#method" data-i18n="navMethod">方法</a>
             <a href="#experience" data-i18n="navExperience">工作</a>
             <a href="#projects" data-i18n="navProjects">项目</a>
             <a href="#skills" data-i18n="navSkills">能力</a>
@@ -55,7 +59,7 @@
                 <div class="hero-copy reveal">
                     <p class="hero-name" data-i18n="heroName">李祖钜 Gavin</p>
                     <h1 id="hero-title" data-i18n-lines="heroTitle">
-                        <span>AI Agent</span>
+                        <span>智能系统</span>
                         <span>视觉算法</span>
                         <span>机器人开发</span>
                     </h1>
@@ -79,12 +83,13 @@
                     </div>
                     <div class="hero-actions">
                         <a class="primary-action" href="#projects" data-i18n="heroPrimary">查看项目</a>
-                        <a class="secondary-action" href="mailto:gavinxleele@gmail.com" data-i18n="heroSecondary">联系我</a>
+                        <a class="secondary-action" href="#contact" data-i18n="heroSecondary">联系我</a>
                     </div>
                 </div>
 
-                <div class="hero-visual reveal" aria-label="Profile visual">
-                    <img src="https://github.com/lizuju.png" alt="李祖钜 Gavin" class="portrait">
+                <div class="hero-visual reveal" aria-label="Portfolio hero visual">
+                    <img src="assets/portfolio-hero.jpg" alt="机器人视觉开发工作台" class="hero-image" width="1672"
+                        height="941">
                     <div class="signal-panel">
                         <span data-i18n="signalRole">Current focus</span>
                         <strong data-i18n="signalTitle">Voice Agent Robotics</strong>
@@ -108,7 +113,26 @@
                 </div>
                 <div class="metric reveal">
                     <span>2025</span>
-                    <p data-i18n="metricFocus">AI Agent 语音机器人开发</p>
+                    <p data-i18n="metricFocus">语音机器人云端与设备协同</p>
+                </div>
+            </section>
+
+            <section class="section method" id="method" aria-labelledby="method-title">
+                <div class="section-heading reveal">
+                    <p data-i18n="methodKicker">Method</p>
+                    <h2 id="method-title" data-i18n="methodTitle">把复杂系统收束成可交付结果</h2>
+                </div>
+                <div class="method-layout">
+                    <div class="method-copy reveal">
+                        <p data-i18n="methodBody">
+                            参考我在工程项目里的工作方式：先澄清目标，再压缩复杂度，随后实现、加固和打磨，最后用测试与浏览器回归把结果闭环。
+                        </p>
+                        <div class="method-proof">
+                            <span data-i18n="methodProofLabel">Working standard</span>
+                            <strong data-i18n="methodProofValue">清晰边界 / 可运行实现 / 可验证交付</strong>
+                        </div>
+                    </div>
+                    <div class="method-steps reveal" data-methods></div>
                 </div>
             </section>
 
@@ -128,7 +152,10 @@
                             负责语音机器人 Agent 系统开发，搭建云端服务与 ESP32 设备端协同链路，覆盖语音输入、LLM 推理、RAG 检索、工具调用、语音播报与硬件动作执行闭环。
                         </p>
                         <div class="stack-strip" data-list="experienceStack"></div>
-                        <ul class="feature-list" data-list="experience"></ul>
+                        <details class="detail-drawer">
+                            <summary data-i18n="experienceDetailLabel">查看完整工作内容</summary>
+                            <ul class="feature-list" data-list="experience"></ul>
+                        </details>
                     </div>
                 </article>
                 <div class="system-map reveal" aria-label="AI agent system flow">
@@ -198,9 +225,12 @@
                         <p data-i18n="educationKicker">Education</p>
                         <h2 id="education-title" data-i18n="educationTitle">计算机科学与技术（本科）</h2>
                     </div>
-                    <p data-i18n="educationBody">
-                        综合排名 3/219，两届国家奖学金，获励志榜样、大学生年度人物、学习先锋等荣誉；可使用英语、普通话和广东话工作沟通。
-                    </p>
+                    <div class="education-content">
+                        <p data-i18n="educationBody">
+                            综合排名 3/219；可使用英语、普通话和广东话工作沟通。
+                        </p>
+                        <div class="education-honors" data-list="educationHighlights"></div>
+                    </div>
                 </div>
             </section>
 
@@ -216,9 +246,14 @@
                 </div>
             </section>
         </main>
+
+        <footer class="site-footer section">
+            <span data-i18n="footerName">李祖钜 Gavin</span>
+            <a href="#top" data-i18n="footerTop">回到顶部</a>
+        </footer>
     </div>
 
-    <script src="js/main.js?v=2026052312"></script>
+    <script src="js/main.js?v=2026052402"></script>
 </body>
 
 </html>

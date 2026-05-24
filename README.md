@@ -3,58 +3,83 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-# 🚀 Gavin Lee's (Lizuju) Portfolio
+# Gavin Lizuju Portfolio
 
-Welcome to the source code of my personal portfolio website! This project is a uniquely designed, lightweight, and modern portfolio built to showcase my academic journey, software engineering skills, project experience, and competition awards. 
+Source code for [lizuju.github.io](https://lizuju.github.io/), a personal portfolio for presenting my work in AI agents, computer vision, robotics, full-stack engineering, awards, and contact information.
 
-You can view the live site here: [lizuju.github.io](https://lizuju.github.io/)
+The current site is a static GitHub Pages website under `docs/`. It is built with plain HTML, CSS, and JavaScript so the page stays lightweight, easy to inspect, and simple to deploy.
 
----
+## Highlights
 
-## ✨ Features
+- Premium dark visual system with restrained gold accents and responsive spacing.
+- Image-led project sections for RoboMaster vision, inventory sensing, and retrieval-based recognition work.
+- Bilingual Chinese / English content with a lightweight language toggle.
+- Mobile navigation, desktop navigation, contact links, and GitHub profile links.
+- Resume content completed from the local resume source while keeping the school name out of the public site.
+- Playwright smoke tests for layout, language switching, navigation, expandable details, and key links.
 
-- **Modern Glassmorphism UI:** A sleek, transparent, and blurry design language powered by advanced vanilla CSS (backdrop-filter) and smooth dynamic gradients.
-- **Dynamic Content Loading:** Uses JavaScript to dynamically fetch and render Markdown files. Updating the website is as simple as pushing a new `.md` file!
-- **Bilingual Support (i18n):** Flawless native translation between English and Simplified Chinese for all categories, navigation elements, and the contents within the portfolio itself.
-- **Fully Responsive Layout:** Optimized from desktop dual-column layouts all the way down to mobile viewports with a dedicated mobile drawer menu.
-- **Contact Modal:** A beautiful popup contact interface containing my email and phone info, accessible from the main navigation.
-- **Zero-Dependency Core:** Built using standard web capabilities (HTML/CSS/JS) with only lightweight plugins (`marked.js`, `highlight.js`, `tocbot`) loaded via CDN.
+## Project Structure
 
-## 📂 Project Structure (The 4 Pillars)
+```text
+docs/
+  index.html              Main page markup
+  css/custom.css          Visual system and responsive layout
+  js/main.js              Content data, i18n, rendering, and interactions
+  assets/                 Portfolio and project images
+  */SKILL*.md             Legacy content references kept with the site
+tests/
+  smoke.spec.js           Browser smoke tests
+playwright.config.js      Playwright configuration
+package.json              Local scripts and test dependency
+```
 
-The core content of my portfolio is split into four distinct Markdown folders:
+## Local Development
 
-- 🎓 **`education/`**: Academic background, National Scholarships, GPA, and trilingual capabilities.
-- 💻 **`technical-skills/`**: Expertise in C++, Python, Computer Vision, Full-Stack Development, and Robotics.
-- 📋 **`projects/`**: Three major systems led by me: RoboMaster Vision System, Inventory Management System, and Garbage Classification AI.
-- 🏆 **`awards/`**: 30+ awards across Mathematical Modeling (MCM M Prize), Robotics, and national-level entrepreneurship projects.
+Install dependencies once:
 
-## 🛠️ Local Development
+```bash
+npm install
+```
 
-If you want to run this site locally:
+Run the site from the repository root:
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/lizuju/lizuju.github.io.git
-   cd lizuju.github.io
-   ```
+```bash
+npm run dev
+```
 
-2. Start a local server:
-   ```bash
-   # If you use Node.js
-   npm run dev
+Then open:
 
-   # Or if you prefer Python
-   python3 -m http.server 3090
-   ```
+```text
+http://localhost:3090/docs/
+```
 
-3. Open your browser and navigate to:
-   ```
-   http://localhost:3090/docs/
-   ```
+For the same root URL used during browser QA, serve the `docs` folder directly:
 
-## 📝 How to Update Content
-To update what the website displays, you do **not** need to edit the HTML. Simply edit the Markdown files located within the category folders (e.g., `projects/SKILL.md` for English or `projects/SKILL.zh-CN.md` for Chinese).
+```bash
+python3 -m http.server 3090 --directory docs
+```
 
-## 📄 License
-This project is licensed under the MIT License. Feel free to explore the code!
+Then open:
+
+```text
+http://localhost:3090/
+```
+
+## Validation
+
+Run the main checks before publishing:
+
+```bash
+node --check docs/js/main.js
+npm run test:smoke
+```
+
+The smoke tests cover desktop and mobile rendering, absence of the removed school name, language switching, mobile menu behavior, CTA anchors, the footer back-to-top link, expandable detail sections, image rendering, and highlighted education honors.
+
+## Deployment
+
+This repository is intended for GitHub Pages. The published site content lives in `docs/`; after committing changes to `main`, GitHub Pages can serve the updated portfolio from that folder.
+
+## License
+
+This project is released under the MIT License.
