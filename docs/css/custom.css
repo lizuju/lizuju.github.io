@@ -1402,18 +1402,41 @@ h3 {
     }
 
     .system-map::before {
-        top: 0;
-        bottom: 0;
-        left: 1.2rem;
+        top: 1.2rem;
+        bottom: 1.2rem;
+        left: 1.55rem;
         right: auto;
         width: 1px;
         height: auto;
         background: linear-gradient(180deg, transparent, rgba(191, 162, 103, 0.62), transparent);
+        z-index: 0;
     }
 
     .system-map div {
-        min-height: 92px;
-        padding-left: 2.4rem;
+        display: grid;
+        grid-template-columns: 3rem minmax(0, 1fr);
+        gap: 0.9rem;
+        min-height: 96px;
+        align-items: center;
+        padding: 1.15rem 1rem;
+    }
+
+    .system-map span,
+    .system-map strong {
+        position: relative;
+        z-index: 1;
+    }
+
+    .system-map span {
+        justify-self: center;
+        padding: 0.22rem 0.34rem;
+        background: rgba(17, 17, 15, 0.86);
+        border-radius: 999px;
+    }
+
+    .system-map strong {
+        position: static;
+        font-size: 1.42rem;
     }
 
     .project-body {

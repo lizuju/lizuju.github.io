@@ -38,6 +38,17 @@ test('renders portfolio content without school name or overflow', async ({ page 
 
     const noHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
     expect(noHorizontalOverflow).toBe(true);
+
+    const mobileSystemMapIsSeparated = await page.evaluate(() => {
+        if (window.innerWidth > 640) return true;
+        const item = document.querySelector('.system-map div:nth-child(2)');
+        const number = item?.querySelector('span');
+        const title = item?.querySelector('strong');
+        if (!number || !title) return false;
+        return number.getBoundingClientRect().right < title.getBoundingClientRect().left
+            && getComputedStyle(title).position === 'static';
+    });
+    expect(mobileSystemMapIsSeparated).toBe(true);
 });
 
 test('supports language toggle and mobile menu', async ({ page, isMobile }) => {
@@ -71,7 +82,7 @@ test('supports primary links and expandable details', async ({ page }) => {
     await page.goto('/?qa=smoke-interactions#top');
 
     await page.locator('.primary-action').click();
-    await expect(page).toHaveURL(/#projects$/);
+    await expect(page).toHaveURL(/#experience$/);
 
     await page.locator('.secondary-action').click();
     await expect(page).toHaveURL(/#contact$/);
