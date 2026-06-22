@@ -22,6 +22,8 @@ test('renders portfolio content without school name or overflow', async ({ page 
     await expect(page.locator('h1')).toContainText('智能系统');
     await expect(page.locator('.project-card')).toHaveCount(4);
     await expect(page.locator('.project-media img')).toHaveCount(4);
+    await expect(page.locator('.project-media img').nth(0)).toHaveAttribute('src', 'assets/project-resume-agent.jpg');
+    await expect(page.locator('.project-media img').nth(2)).toHaveAttribute('src', 'assets/project-taac-recommender.jpg');
     await expect(page.locator('.method-step')).toHaveCount(5);
     await expect(page.locator('.skill-card')).toHaveCount(5);
     await expect(page.locator('.brand')).toHaveAttribute('href', 'https://github.com/lizuju');

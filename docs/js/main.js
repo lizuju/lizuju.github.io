@@ -122,7 +122,7 @@ const CONTENT = {
                 ],
                 result: '上线后累计服务上百名求职用户。',
                 tags: ['Python', 'Flask', 'React', 'PostgreSQL', 'LLM', 'AI Agent', 'RAG', 'Embedding', 'LaTeX', 'Git'],
-                visual: 'retrieval'
+                visual: 'resume'
             },
             {
                 title: 'RoboMaster 机器人计算机视觉算法',
@@ -158,7 +158,7 @@ const CONTENT = {
                 ],
                 result: '荣获腾讯广告算法大赛第 114 名（Top 7%）。',
                 tags: ['Python', 'PyTorch', 'Transformer', '推荐系统', 'CTR/CVR', 'AUC 优化', 'Parquet', 'Focal Loss', 'Git'],
-                visual: 'inventory',
+                visual: 'recommender',
                 link: 'https://github.com/lizuju/TAAC-2026'
             },
             {
@@ -176,7 +176,7 @@ const CONTENT = {
                 ],
                 result: '荣获传智杯全国 IT 技能大赛一等奖。',
                 tags: ['Python', 'Flask', 'Vue', 'MySQL', 'YOLOv5', 'CLIP', 'Milvus', 'Git'],
-                visual: 'retrieval'
+                visual: 'resume'
             }
         ],
         skills: [
@@ -392,7 +392,7 @@ const CONTENT = {
                 ],
                 result: 'Ranked 114th in the Tencent Advertising Algorithm Competition, Top 7%.',
                 tags: ['Python', 'PyTorch', 'Transformer', 'Recommender Systems', 'CTR/CVR', 'AUC Tuning', 'Parquet', 'Focal Loss', 'Git'],
-                visual: 'inventory',
+                visual: 'recommender',
                 link: 'https://github.com/lizuju/TAAC-2026'
             },
             {
@@ -528,11 +528,13 @@ function renderProjects(projects) {
     const container = document.querySelector('[data-projects]');
     if (!container) return;
 
-    const visualTypes = ['vision', 'inventory', 'retrieval'];
+    const visualTypes = ['vision', 'inventory', 'retrieval', 'resume', 'recommender'];
     const visualAssets = {
         vision: 'assets/project-vision.jpg',
         inventory: 'assets/project-inventory.jpg',
-        retrieval: 'assets/project-retrieval.jpg'
+        retrieval: 'assets/project-retrieval.jpg',
+        resume: 'assets/project-resume-agent.jpg',
+        recommender: 'assets/project-taac-recommender.jpg'
     };
     const copy = t();
 
