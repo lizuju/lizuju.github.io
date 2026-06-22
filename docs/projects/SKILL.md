@@ -1,53 +1,69 @@
-# Project Experience
+# Projects
 
 ---
 
-## RoboMaster Robot Computer Vision Algorithm Development
-**2022.11 - 2025.04** | Vision Team Leader & Project Lead
+## AI Agent Resume Generation and Optimization Platform
+**2025.10 - 2026.05** | Full-stack Developer & Project Lead
 
-**Tech Stack:** C++, OpenCV, YOLOv5, Linux, CUDA, Embedded Development (MiniPC), Industrial Camera, Pose Estimation, Model Quantization & Inference Optimization, Git
+**Tech Stack:** Python, Flask, React, PostgreSQL, SQLAlchemy, LLM, AI Agent, RAG, Embedding, Vector Search, Structured Output, LaTeX, Git
 
-### Work Description
-- As Vision Team Leader and Project Lead, responsible for the overall design, development and testing of the robot's automatic aiming and shooting system, leading the vision architecture and algorithm implementation.
-- Built a complete visual processing pipeline based on OpenCV (denoising, filtering, image enhancement, etc.), combined with YOLOv5 for multi-category object detection and real-time tracking. Completed industrial camera calibration, distortion correction, and exposure/gain adjustment to improve recognition accuracy and system robustness in complex industrial environments.
-- Responsible for integrating the vision system with the electronic control system. Designed multi-sensor data acquisition and fusion solutions (IMU, encoder, LiDAR) to achieve motion pose estimation and path planning algorithms, ensuring precise positioning and stable control of the robot.
-- Completed algorithm porting and performance optimization on MiniPC/embedded platforms through CUDA acceleration, model quantization and inference optimization to improve system real-time performance and resource utilization.
-- Used Git for code management and team collaboration. Through algorithm complexity optimization, data structure improvements and parallel computing, significantly improved system response speed and control accuracy, promoting project modularization and engineering implementation.
-- Coordinated mechanical, electronic control and other module development schedules, helping the team achieve excellent results in RoboMaster competitions.
+### Work Scope
+- Designed and implemented an AI Agent resume generation and optimization platform for job-search scenarios, connecting resume parsing, JD analysis, content rewriting, LaTeX rendering and PDF export.
+- Designed an Agentic Resume Workflow with Intent Routing and Task Orchestration, routing user input into full resume generation, JD matching, local rewriting and compression tasks.
+- Used a schema-first JSON Resume intermediate representation to decouple resume fields from LaTeX templates, forming a Structured Output and Renderer Pipeline with field-level editing, version rollback and PDF export.
+- Introduced RAG, embeddings and vector database design for user resume memory, retrieving projects, skills, historical optimization versions and target-job context for personalized continuation and edits.
+- Wrapped file parsing, AI rewriting, LaTeX compilation, PDF export, public sharing and subscription checks as Flask Agent tools, then built a React + Vite conversational editor with PDF preview.
 
-**Project Outcome:** Won multiple awards in two RoboMaster Mecha Master Competitions (Infantry Combat & 3V3 Combat)
-**GitHub:** [NOTOS_RM_AutoAim](https://github.com/notos-robomaster/NOTOS_RM_AutoAim)
+**Result:** Served hundreds of job-search users after launch
 
 ---
 
-## Machine Vision & Radar Modeling Inventory Management System
-**2023.09 - 2024.06** | Full-Stack Developer & Project Lead
+## RoboMaster Robot Computer Vision Algorithms
+**2022.11 - 2025.04** | Vision Team Lead & Project Lead
 
-**Tech Stack:** Python, Flask, Vue, MySQL, OpenCV, YOLOv5, Multi-sensor Data Fusion, Zbar, Git
+**Tech Stack:** C++, OpenCV, ROS, PnP Pose Estimation, Kalman Filter, Camera Calibration, Industrial Camera, MiniPC, Git
 
-### Work Description
-- Responsible for the overall architecture design and core function development of the inventory management system based on machine vision and radar modeling. Built a front-end/back-end separated system framework for automatic identification and counting of warehouse goods.
-- Built image preprocessing pipeline based on OpenCV (denoising, perspective correction, region cropping, etc.), combined with YOLOv5 for cargo object detection and category recognition, completing real-time inventory and anomaly detection functions.
-- Combined radar data for spatial modeling and distance measurement, designed vision and radar data fusion logic to improve recognition accuracy and inventory statistics reliability in occlusion scenarios.
-- Built backend services using Flask, implementing inventory management, data storage and RESTful API design. Used MySQL for database modeling and index optimization to improve query efficiency and system stability.
-- Built a visual management interface using Vue, implementing dynamic inventory display, statistical analysis and alert notification functions. Completed front-end/back-end interface integration and system deployment.
-- Optimized detection models and system performance through inference acceleration and data structure improvements to ensure efficient and stable operation in warehouse scenarios.
+### Work Scope
+- Led the RoboMaster robot auto-aim vision system, covering armor-plate detection, target selection, angle solving, prediction filtering and MiniPC-STM32 integration.
+- Built a traditional ROS and OpenCV armor-plate recognition pipeline using color-channel differencing, morphological dilation, contour extraction, ellipse fitting, light-bar filtering and armor matching.
+- Designed armor scoring and target-selection strategies using armor area, target priority and distance from the previous-frame target for candidate ranking and tracking.
+- Implemented AngleSolver with camera intrinsics, distortion parameters, solvePnP / PinHole models, muzzle-camera offset and ballistic gravity compensation for yaw, pitch and distance solving.
+- Introduced Kalman Filter prediction and correction for armor center points to reduce target jumps, short-term target loss and image jitter in gimbal control.
+- Handled Linux serial communication and electrical integration with termios, yaw / pitch frame design, sign bits, decimal fields and fire flags for realtime STM32 gimbal control.
 
-**Project Outcome:** Won provincial-level completion award in the National College Student Innovation and Entrepreneurship Competition
+**Result:** Won multiple RoboMaster awards across infantry combat and 3V3 competitions
+
+**GitHub:** [notos-rm-autoaim](https://github.com/lizuju/notos-rm-autoaim)
 
 ---
 
-## YOLOv5 Garbage Classification Recognition System
-**2024.02 - 2025.03** | Full-Stack Developer & Project Lead
+## TAAC 2026 Tencent Advertising Algorithm Competition
+**2026.04 - 2026.05** | Algorithm Developer
+
+**Tech Stack:** Python, PyTorch, Transformer, Recommender Systems, CTR/CVR Prediction, AUC Optimization, Parquet, Feature Engineering, Focal Loss, Git
+
+### Work Scope
+- Built PyTorch conversion-rate prediction models for advertising recommendation, modeling user features, item features, behavior sequences and time features.
+- Handled Parquet training data ingestion, schema alignment, padding, sequence truncation and feature processing for user sparse, item sparse, user dense and multi-path behavior inputs.
+- Introduced RankMixer NS Tokenizer, MultiSeqQueryGenerator and MultiSeqHyFormerBlock modules to model interactions among user sparse features, item sparse features and behavior sequences.
+- Designed dense group projectors and gate fusion for semantically mixed user dense features, grouping features such as dense 61, 87, 62-66 and 89-91 into a fused user dense token.
+- Improved Public AUC from 0.806617 to 0.830964 by adding global time features, tuning Focal Loss, improving step-level validation and checkpoint selection, and documenting 35 experiment rounds.
+
+**Result:** Ranked 114th in the Tencent Advertising Algorithm Competition, Top 7%
+
+**GitHub:** [TAAC-2026](https://github.com/lizuju/TAAC-2026)
+
+---
+
+## YOLOv5 Garbage Classification System
+**2024.02 - 2025.03** | Full-stack Developer & Project Lead
 
 **Tech Stack:** Python, Flask, Vue, MySQL, YOLOv5, CLIP, Milvus, Git
 
-### Work Description
-- Responsible for the overall architecture design and core function development of the YOLOv5 garbage recognition system. Innovatively transformed the traditional "fixed classification detection" into a "feature embedding + vector search" architecture, building an extensible garbage recognition platform that decouples models from categories.
-- Built a general object detection pipeline based on YOLOv5, responsible only for object localization and cropping. Introduced pre-trained deep networks (CLIP) for feature embedding extraction, converting garbage images into high-dimensional semantic vector representations to improve feature expression and generalization capabilities.
-- Designed and built a vector retrieval system, combined with Milvus to create a "garbage fingerprint library", enabling efficient similarity matching and nearest neighbor search for massive feature vectors, transforming category determination into a vector similarity ranking problem.
-- Built a dynamically extensible recognition mechanism - when adding new garbage types, no retraining of detection models is needed; simply adding sample vectors to the database completes the system expansion, significantly reducing model iteration costs and training overhead.
-- Built backend services using Flask, encapsulating detection and vector retrieval interfaces. Used MySQL for user and record management. Implemented Vue-based frontend for recognition display and history management, completing front-end/back-end separated architecture design and system deployment.
-- Optimized vector retrieval efficiency and inference pipeline through index structure optimization and batch feature computation to improve system response speed, achieving engineering-level scalable deployment.
+### Work Scope
+- Designed the YOLOv5 garbage recognition architecture, changing fixed-category detection into an object-detection plus semantic-vector retrieval flow to decouple the detector from the category library.
+- Used YOLOv5 for object localization and cropping, then combined CLIP embeddings to encode garbage images into high-dimensional semantic vectors for similarity matching.
+- Designed a Milvus vector retrieval module and garbage fingerprint library, using TopK nearest-neighbor search and similarity ranking for category decisions and new-category sample insertion.
+- Wrapped detection, embedding extraction and vector retrieval APIs with Flask, managed users and records with MySQL, and built image recognition, batch detection and history management in Vue.
 
-**Project Outcome:** Won First Prize in the Chuanzhi Cup National IT Skills Competition
+**Result:** Won first prize in the national Chuanzhi Cup IT Skills Competition

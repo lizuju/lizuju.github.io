@@ -1,22 +1,16 @@
 # Technical Skills
 
-## 1. Programming Languages
-Proficient in C++ and Python with object-oriented design and engineering development capabilities. Familiar with C++ modern features and STL. Experience in FastAPI / Flask-based backend development, RESTful API design and integration. Proficient in Vue frontend development with experience in front-end/back-end separation projects. Familiar with MySQL database design and optimization.
+## 1. Programming and Full-stack Development
+Proficient in C++ and Python, with STL, object-oriented design and engineering development experience. Experienced with Flask, React, Vue, PostgreSQL and MySQL in front-end/back-end separated projects, RESTful API design and interface integration.
 
-## 2. Data Structures & Algorithms
-Familiar with common data structures (arrays, linked lists, binary trees, etc.) and algorithms (quicksort, bubble sort, etc.).
+## 2. AI Agent Development
+Familiar with AI Agent workflow design, including LLM APIs, RAG, embeddings, vector search, Function Calling / Tool Calling, MCP and prompt engineering. Experienced in multi-turn dialogue, tool calling, knowledge-base question answering and structured output.
 
-## 3. Computer Vision
-Familiar with computer vision technologies, proficient in OpenCV. Understanding of neural networks and their applications in image processing. Hands-on experience with deep learning models such as YOLOv5 for object detection. Proficient in industrial camera calibration and application development.
+## 3. AI Coding Development
+Familiar with Codex, Claude Code, LangChain and other AI coding tools. Experienced with GitHub AI-related open-source projects and able to use AI tools to improve development, debugging and project delivery.
 
-## 4. Robotics Development
-Expertise in ROS robotic system debugging, with extensive experience in the co-design and synchronization of computer vision modules and electronic control systems. Proficient in sensor data acquisition, multi-sensor fusion, motion attitude estimation, serial port communication, and motion control algorithms. Skilled in development and debugging across MiniPC platforms (NVIDIA Jetson, Intel NUC, Raspberry Pi, Arduino) and ESP32, with proven capabilities in algorithm porting and performance optimization.
+## 4. Computer Vision
+Familiar with computer vision technologies, proficient with OpenCV, and familiar with neural-network applications in image processing. Experienced with YOLOv5-based object detection and industrial-camera calibration and application development.
 
-## 5. Linux
-Proficient in multi-threaded programming and Inter-process Communication (IPC) within Linux environments, with a deep understanding of thread synchronization and mutex mechanisms. Experienced in Linux system administration, including the mastery of standard command-line tools and Shell scripting for automated workflows.
-
-## 6. Toolchain
-Proficient in Vim, GCC, GDB, Git and other tools. Capable of writing Makefiles to support large-scale project compilation.
-
-## 7. AI-assisted Development
-Familiar with AI coding tools such as Codex, Claude Code, and LangChain. Experienced with large GitHub AI open-source projects and able to use AI tools to improve development, debugging, and delivery efficiency.
+## 5. Robotics Development
+Familiar with ROS robotics systems and robot debugging. Experienced in integrating computer-vision modules with electrical control systems, sensor acquisition and fusion, pose solving, serial transmission, motion control and debugging. Familiar with MiniPC platforms such as NVIDIA Jetson, Intel NUC, Raspberry Pi and Arduino, as well as ESP32 development and algorithm porting.

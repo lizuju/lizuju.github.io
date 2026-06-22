@@ -1,15 +1,15 @@
 # Work Experience
 
+---
+
 ## Guangdong South China Tiger Technology Co., Ltd.
-**2025.09 - 2026.03** | AI Agent Voice Companion Robot Development
+**2025.06 - 2026.05** | AI Agent Voice Companion Robot Development
 
-**Tech Stack:** Python, C/C++, ESP32, LLM API, RAG, Prompt Engineering, Function Calling / MCP Tool, WebSocket, MQTT, FastAPI, ASR/TTS/VAD, Opus, MySQL, Docker, Git
+**Tech Stack:** Python, C/C++, ESP32, LLM API, AI Agent, Agent Workflow, RAG, Function Calling / MCP Tool, WebSocket, MQTT, FastAPI, ASR/TTS/VAD, Opus, Git
 
-### Work Description
-- Developed an AI Agent system for an intelligent voice companion robot, building a cloud service and ESP32 device collaboration loop around LLM decision-making, tool calling, and multimodal hardware execution.
-- Designed a WebSocket / MQTT real-time communication protocol between device and cloud, covering audio streams, state synchronization, control commands, tool-calling messages, multi-turn sessions, device state transitions, streaming audio, and reconnection.
-- Integrated ASR, TTS, VAD, LLM APIs, and speaker recognition on the server side to build streaming voice conversation services with incremental recognition, generation, playback, role switching, music playback, reminders, and Agent-style capabilities.
-- Built RAG-based knowledge QA flows, including knowledge retrieval, context assembly, prompt templates, and LLM invocation, enabling the robot to answer from external knowledge bases and support role-based conversations.
-- Designed and connected device-side MCP / Tool Calling tools, exposing camera capture, screen control, volume adjustment, servo actions, and status queries for LLM-driven planning and execution.
-- Developed the speaker registration and recognition flow across mini program, backend, and voice service, including PCM upload, WebSocket registration protocol, feature extraction, user binding, and MySQL persistence.
-- Adapted ESP32 multimodal hardware capabilities, including GC2145 camera integration, JPEG upload, screen and backlight control, STS bus servo control, and gesture actions such as raise hand, wave, reset, and hug.
+### Work Scope
+- Developed an AI Agent system for a voice companion robot, building a cloud-edge architecture for LLM decisions, RAG retrieval, tool calling and ESP32 hardware execution across voice input, model reasoning, speech playback and device actions.
+- Designed WebSocket / MQTT realtime communication, wrapping audio streams, device state, control commands and tool-call messages for multi-turn sessions, streaming audio, device-state switching and reconnect handling.
+- Integrated ASR, VAD, TTS, LLM APIs and speaker recognition modules on the server side to build low-latency streaming voice dialogue with incremental recognition, generation, playback and multi-role conversations.
+- Developed RAG question answering and Agent tool routing, including knowledge retrieval, context assembly, prompt templates and callable tools for music playback, reminders, camera capture, volume adjustment and screen control.
+- Adapted ESP32 multimodal hardware, including GC2145 camera capture, JPEG upload, screen backlight control and STS bus servo choreography, allowing gestures such as raise hand, wave, reset and hug to be planned and executed by the Agent.
