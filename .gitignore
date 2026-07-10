@@ -17,6 +17,8 @@ temp/
 node_modules/
 test-results/
 playwright-report/
+.playwright-cli/
+output/
 
 # Skills with custom endpoints (have their own .git)
 # Add skill names here when they use custom remotes

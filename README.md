@@ -3,83 +3,61 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-# Gavin Lizuju Portfolio
+# Gavin Immersive Portfolio
 
-Source code for [lizuju.github.io](https://lizuju.github.io/), a personal portfolio for presenting my work in AI agents, computer vision, robotics, full-stack engineering, awards, and contact information.
+Source code for [lizuju.github.io](https://lizuju.github.io/), the bilingual portfolio of 李祖钜 Gavin. The site presents work in AI agents, robotics, computer vision, recommender systems, full-stack engineering, and applied research.
 
-The current site is a static GitHub Pages website under `docs/`. It is built with plain HTML, CSS, and JavaScript so the page stays lightweight, easy to inspect, and simple to deploy.
+Desktop visitors enter an interactive Three.js workspace with the portfolio displayed inside a retro computer. Mobile visitors receive the responsive portfolio directly, avoiding the download and rendering cost of the 3D scene. Chinese is the default language, with a complete English version available from the language control.
 
 ## Highlights
 
-- Premium dark visual system with restrained gold accents and responsive spacing.
-- Image-led project sections for RoboMaster vision, inventory sensing, and retrieval-based recognition work.
-- Bilingual Chinese / English content with a lightweight language toggle.
-- Mobile navigation, desktop navigation, contact links, and GitHub profile links.
-- Resume content completed from the local resume source while keeping the school name out of the public site.
-- Playwright smoke tests for layout, language switching, navigation, expandable details, and key links.
+- Interactive Three.js desktop environment with a local, self-contained monitor experience.
+- Lightweight mobile layout designed for touch navigation and smaller screens.
+- Five selected projects, two submitted research works, six capability areas, awards, education highlights, and contact links.
+- Resume-derived public content with the school name intentionally omitted.
+- SEO metadata, JSON-LD, sitemap, robots policy, and Playwright smoke coverage.
 
 ## Project Structure
 
 ```text
-docs/
-  index.html              Main page markup
-  css/custom.css          Visual system and responsive layout
-  js/main.js              Content data, i18n, rendering, and interactions
-  assets/                 Portfolio and project images
-  */SKILL*.md             Legacy content references kept with the site
-tests/
-  smoke.spec.js           Browser smoke tests
-playwright.config.js      Playwright configuration
-package.json              Local scripts and test dependency
+src/                       Three.js shell and desktop UI source
+static/portfolio/          Responsive bilingual portfolio source
+static/                    3D models, textures, audio, and public files
+bundler/                   Webpack development and production configuration
+docs/                      Generated GitHub Pages output
+tests/smoke.spec.js        Browser smoke tests
 ```
 
 ## Local Development
 
-Install dependencies once:
-
 ```bash
 npm install
-```
-
-Run the site from the repository root:
-
-```bash
 npm run dev
 ```
 
-Then open:
+The development server opens the site at `http://localhost:8080/` by default.
 
-```text
-http://localhost:3090/docs/
-```
-
-For the same root URL used during browser QA, serve the `docs` folder directly:
+To build and preview the GitHub Pages output:
 
 ```bash
-python3 -m http.server 3090 --directory docs
+npm run build
+npm run preview
 ```
 
-Then open:
-
-```text
-http://localhost:3090/
-```
+Then open `http://localhost:3090/`. The direct portfolio is also available at `http://localhost:3090/portfolio/`.
 
 ## Validation
 
-Run the main checks before publishing:
-
 ```bash
-node --check docs/js/main.js
+npm run build
 npm run test:smoke
+node --check static/portfolio/js/main.js
 ```
 
-The smoke tests cover desktop and mobile rendering, absence of the removed school name, language switching, mobile menu behavior, CTA anchors, the footer back-to-top link, expandable detail sections, image rendering, and highlighted education honors.
+## Attribution
 
-## Deployment
-
-This repository is intended for GitHub Pages. The published site content lives in `docs/`; after committing changes to `main`, GitHub Pages can serve the updated portfolio from that folder.
+The immersive 3D shell is adapted from [henryjeff/portfolio-website](https://github.com/henryjeff/portfolio-website), used under the MIT License. The upstream license is preserved in [`licenses/henryjeff-portfolio-website-MIT.md`](licenses/henryjeff-portfolio-website-MIT.md).
 
 ## License
 
-This project is released under the MIT License.
+This project is released under the [MIT License](LICENSE).

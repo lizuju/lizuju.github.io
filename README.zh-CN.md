@@ -3,83 +3,61 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-# 李祖钜 Gavin 个人作品集
+# 李祖钜 Gavin 沉浸式个人作品集
 
-这是 [lizuju.github.io](https://lizuju.github.io/) 的源码仓库，用来展示我的 AI Agent、计算机视觉、机器人开发、全栈工程、竞赛荣誉和联系方式。
+这是 [lizuju.github.io](https://lizuju.github.io/) 的源码仓库，用于展示李祖钜 Gavin 在 AI Agent、机器人、计算机视觉、推荐系统、全栈工程和应用研究方面的经历。
 
-当前网站是放在 `docs/` 目录下的静态 GitHub Pages 站点，使用原生 HTML、CSS 和 JavaScript 实现，方便检查、部署和持续维护。
+桌面端使用 Three.js 构建可交互的复古计算机工作台，作品集显示在电脑屏幕中；移动端会直接加载响应式作品集，避免下载和渲染较重的 3D 场景。网站默认显示中文，并提供完整英文版本。
 
 ## 主要特点
 
-- 深色高级视觉系统，配合克制的金色强调色和响应式间距。
-- 使用图片主导项目展示，覆盖 RoboMaster 视觉算法、货物盘点感知、检索式识别平台等经历。
-- 支持中文 / 英文切换。
-- 适配桌面端和移动端导航、联系方式、GitHub 入口和回到顶部交互。
-- 根据本地简历补全公开作品集内容，同时不在网站展示学校名称。
-- 使用 Playwright smoke test 覆盖关键浏览器交互和响应式回归。
+- 桌面端 Three.js 沉浸式场景，显示器内容完全使用本地资源。
+- 面向触控和小屏设备优化的轻量移动端布局。
+- 完整展示 5 个代表项目、2 项投稿中研究、6 类能力、荣誉、教育亮点和联系方式。
+- 网站内容根据最新版简历整理，按要求不公开学校名称。
+- 包含 SEO 元信息、JSON-LD、sitemap、robots 规则和 Playwright smoke test。
 
 ## 项目结构
 
 ```text
-docs/
-  index.html              页面主体结构
-  css/custom.css          视觉系统和响应式样式
-  js/main.js              内容数据、双语渲染和交互逻辑
-  assets/                 作品集和项目图片
-  */SKILL*.md             随站点保留的历史内容参考
-tests/
-  smoke.spec.js           浏览器 smoke 测试
-playwright.config.js      Playwright 配置
-package.json              本地脚本和测试依赖
+src/                       Three.js 外壳和桌面端 UI 源码
+static/portfolio/          响应式双语作品集源码
+static/                    3D 模型、纹理、音频和公开文件
+bundler/                   Webpack 开发及生产配置
+docs/                      构建生成的 GitHub Pages 文件
+tests/smoke.spec.js        浏览器 smoke test
 ```
 
 ## 本地开发
 
-首次运行先安装依赖：
-
 ```bash
 npm install
-```
-
-从仓库根目录启动本地服务：
-
-```bash
 npm run dev
 ```
 
-然后访问：
+开发服务器默认使用 `http://localhost:8080/`。
 
-```text
-http://localhost:3090/docs/
-```
-
-如果要使用浏览器回归时一致的根路径，可以直接把 `docs` 目录作为站点根目录：
+构建并预览 GitHub Pages 版本：
 
 ```bash
-python3 -m http.server 3090 --directory docs
+npm run build
+npm run preview
 ```
 
-然后访问：
-
-```text
-http://localhost:3090/
-```
+然后访问 `http://localhost:3090/`。直接查看作品集可访问 `http://localhost:3090/portfolio/`。
 
 ## 验证
 
-发布前建议运行：
-
 ```bash
-node --check docs/js/main.js
+npm run build
 npm run test:smoke
+node --check static/portfolio/js/main.js
 ```
 
-smoke test 会检查桌面端和移动端渲染、学校名称移除、语言切换、移动菜单、主要按钮锚点、底部回到顶部、详情展开、图片渲染以及教育荣誉高亮。
+## 开源来源
 
-## 部署
-
-本仓库用于 GitHub Pages。网站内容位于 `docs/` 目录；提交到 `main` 后，GitHub Pages 可以从该目录发布最新作品集。
+沉浸式 3D 外壳基于 [henryjeff/portfolio-website](https://github.com/henryjeff/portfolio-website) 二次开发，并遵循其 MIT License。上游协议保留在 [`licenses/henryjeff-portfolio-website-MIT.md`](licenses/henryjeff-portfolio-website-MIT.md)。
 
 ## 开源协议
 
-本项目使用 MIT License。
+本项目使用 [MIT License](LICENSE)。

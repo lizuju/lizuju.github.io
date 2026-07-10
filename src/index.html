@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      background-color: rgb(0, 0, 0);
+      margin: 0;
+    }
+
+    #webgl {
+      pointer-events: none;
+    }
+
+    #ui-app {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      box-sizing: border-box;
+    }
+
+    #ui {
+      position: absolute;
+      overflow: hidden;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      box-sizing: border-box;
+    }
+
+    #monitor-videos {
+      pointer-events: none;
+      position: 'absolute';
+      opacity: 0;
+      width: 0;
+      height: 0;
+      top: 0;
+      left: 0;
+
+    }
+
+    #css {
+      cursor: pointer;
+    }
+
+    #ui-interactive {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 256px;
+    }
+
+    #mobile-site {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #11110f;
+    }
+
+    #mobile-site iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+
+    .direct-entry {
+      position: fixed;
+      top: 24px;
+      right: 24px;
+      z-index: 20;
+      padding: 10px 14px;
+      border: 1px solid rgba(255, 255, 255, 0.32);
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      font: 600 13px/1.2 monospace;
+      text-decoration: none;
+      backdrop-filter: blur(10px);
+    }
+
+    .direct-entry:hover,
+    .direct-entry:focus-visible {
+      background: #fff;
+      color: #000;
+      outline: none;
+    }
+
+    body.mobile-mode #mobile-site {
+      display: block;
+    }
+
+    body.mobile-mode #css,
+    body.mobile-mode #webgl,
+    body.mobile-mode #overlay,
+    body.mobile-mode #ui-interactive,
+    body.mobile-mode #ui,
+    body.mobile-mode #monitor-videos,
+    body.mobile-mode .direct-entry {
+      display: none;
+    }
+
+    video {
+      position: absolute;
+      top: 0;
+      pointer-events: none;
+    }
+  </style>
+
+  <title>李祖钜 Gavin | AI Agent、机器人与计算机视觉作品集</title>
+  <meta name="title" content="李祖钜 Gavin | AI Agent、机器人与计算机视觉作品集">
+  <meta name="description" content="李祖钜 Gavin 的沉浸式个人作品集，展示 AI Agent、机器人、计算机视觉、推荐系统、RoboMaster、研究论文与 GitHub 项目。">
+  <meta name="author" content="李祖钜 Gavin Lizuju">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="https://lizuju.github.io/">
+
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://lizuju.github.io/">
+  <meta property="og:title" content="李祖钜 Gavin | AI Agent、机器人与计算机视觉作品集">
+  <meta property="og:description" content="AI Agent、机器人、计算机视觉、推荐系统、研究论文与工程项目。">
+  <meta property="og:image" content="https://lizuju.github.io/portfolio/assets/portfolio-hero.jpg">
+  <meta property="og:image:alt" content="李祖钜 Gavin 的机器人与计算机视觉作品集封面">
+
+  <meta property="twitter:card" content="summary_large_image">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta property="twitter:url" content="https://lizuju.github.io/">
+  <meta name="twitter:url" content="https://lizuju.github.io/">
+  <meta property="twitter:title" content="李祖钜 Gavin | AI Agent、机器人与计算机视觉作品集">
+  <meta name="twitter:title" content="李祖钜 Gavin | AI Agent、机器人与计算机视觉作品集">
+  <meta property="twitter:description" content="AI Agent、机器人、计算机视觉、推荐系统、研究论文与工程项目。">
+  <meta name="twitter:description" content="AI Agent、机器人、计算机视觉、推荐系统、研究论文与工程项目。">
+  <meta property="twitter:image" content="https://lizuju.github.io/portfolio/assets/portfolio-hero.jpg">
+  <meta name="twitter:image" content="https://lizuju.github.io/portfolio/assets/portfolio-hero.jpg">
+
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ProfilePage",
+      "url": "https://lizuju.github.io/",
+      "name": "李祖钜 Gavin Portfolio",
+      "inLanguage": ["zh-CN", "en"],
+      "mainEntity": {
+        "@type": "Person",
+        "name": "李祖钜",
+        "alternateName": ["Gavin", "Gavin Lizuju", "Lizuju"],
+        "url": "https://lizuju.github.io/",
+        "image": "https://lizuju.github.io/portfolio/assets/avatar.png",
+        "email": "mailto:gavinxleele@gmail.com",
+        "sameAs": ["https://github.com/lizuju"],
+        "jobTitle": "AI Agent and Robotics Developer",
+        "knowsAbout": ["AI Agent", "Robotics", "Computer Vision", "Recommender Systems", "Time Series Forecasting", "SLAM", "RoboMaster"]
+      }
+    }
+  </script>
+
+  <link rel="shortcut icon" href="images/favicon.ico" type="image/x-icon">
+</head>
+
+<body>
+  <a class="direct-entry" href="portfolio/">直接查看作品集 / Direct view</a>
+  <div id="mobile-site">
+    <iframe id="mobile-portfolio" src="portfolio/" title="李祖钜 Gavin 作品集"></iframe>
+  </div>
+  <div id="css"></div>
+  <div id="webgl"></div>
+  <div id="overlay"></div>
+  <div id="ui-interactive"></div>
+  <div id="ui"></div>
+  <div id="monitor-videos">
+    <video id="video-1" muted loop autoplay width="0" height="0" src="textures/monitor/video/base-static.mp4"
+      style="opacity: 0;"></video>
+    <video id="video-2" muted loop autoplay width="0" height="0"
+      src="textures/monitor/video/static-texture-layer.mp4" style="opacity: 0;"></video>
+  </div>
+  <noscript><a href="portfolio/">查看李祖钜 Gavin 作品集</a></noscript>
+</body>
+
+</html>
