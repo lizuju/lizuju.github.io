@@ -267,7 +267,7 @@ export default class MonitorScreen extends EventEmitter {
             smudge: {
                 texture: textures.monitorSmudgeTexture,
                 blending: THREE.AdditiveBlending,
-                opacity: 0.12,
+                opacity: 0.04,
                 offset: 24,
             },
             innerShadow: {
@@ -279,13 +279,13 @@ export default class MonitorScreen extends EventEmitter {
             video: {
                 texture: this.videoTextures['video-1'],
                 blending: THREE.AdditiveBlending,
-                opacity: 0.5,
+                opacity: 0.16,
                 offset: 10,
             },
             video2: {
                 texture: this.videoTextures['video-2'],
                 blending: THREE.AdditiveBlending,
-                opacity: 0.1,
+                opacity: 0.04,
                 offset: 15,
             },
         };
@@ -343,6 +343,7 @@ export default class MonitorScreen extends EventEmitter {
             side: THREE.DoubleSide,
             opacity,
             transparent: true,
+            depthWrite: false,
         });
 
         // Create geometry
@@ -452,7 +453,9 @@ export default class MonitorScreen extends EventEmitter {
             side: THREE.DoubleSide,
             color: 0x000000,
             transparent: true,
-            blending: THREE.AdditiveBlending,
+            opacity: 0,
+            blending: THREE.NormalBlending,
+            depthWrite: false,
         });
 
         const plane = new THREE.PlaneGeometry(
@@ -509,13 +512,20 @@ export default class MonitorScreen extends EventEmitter {
                     (camPos.z - dimPos.z) ** 2
             );
 
-            const opacity = 1 / (distance / 10000);
+            const distanceDim = THREE.MathUtils.clamp(
+                (distance - 2000) / 18000,
+                0,
+                1
+            );
+            const angleDim = THREE.MathUtils.clamp(1 - Math.max(dot, 0), 0, 1);
+            const material = this.dimmingPlane
+                .material as THREE.MeshBasicMaterial;
 
-            const DIM_FACTOR = 0.7;
-
-            // @ts-ignore
-            this.dimmingPlane.material.opacity =
-                (1 - opacity) * DIM_FACTOR + (1 - dot) * DIM_FACTOR;
+            material.opacity = THREE.MathUtils.clamp(
+                distanceDim * 0.18 + angleDim * 0.22,
+                0,
+                0.35
+            );
         }
     }
 }
