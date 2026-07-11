@@ -69,7 +69,7 @@
 
     <link rel="icon" id="favicon" type="image/png" href="assets/avatar.png">
     <link rel="preload" as="image" href="assets/portfolio-hero.jpg">
-    <link rel="stylesheet" href="css/custom.css?v=2026071104">
+    <link rel="stylesheet" href="css/custom.css?v=2026071105">
 </head>
 
 <body>
@@ -97,7 +97,7 @@
             </a>
         </nav>
 
-        <section class="app-window" data-app-window aria-label="Gavin portfolio window">
+        <section class="app-window is-active" data-app-window aria-label="Gavin portfolio window">
             <div class="window-titlebar" data-window-drag>
                 <div class="window-title">
                     <span class="window-app-icon" aria-hidden="true">G</span>
@@ -448,6 +448,12 @@
                 </div>
             </div>
 
+            <div class="gomoku-launcher" data-gomoku-launcher hidden aria-live="polite"
+                aria-label="Gomoku startup terminal">
+                <pre class="gomoku-launch-log" data-gomoku-launch-log></pre>
+                <span class="gomoku-launch-cursor" aria-hidden="true"></span>
+            </div>
+
             <div class="gomoku-game-area">
                 <div class="gomoku-score-panel" aria-label="Game status">
                     <div class="gomoku-counter-block">
@@ -566,9 +572,9 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=2026071104"></script>
-    <script src="js/gomoku-game.js?v=2026071104"></script>
-    <script src="js/main.js?v=2026071104"></script>
+    <script src="js/gomoku-engine.js?v=2026071105"></script>
+    <script src="js/gomoku-game.js?v=2026071105"></script>
+    <script src="js/main.js?v=2026071105"></script>
 </body>
 
 </html>

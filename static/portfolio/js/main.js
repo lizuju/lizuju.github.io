@@ -885,6 +885,8 @@ function setupDesktopShell() {
     const titlebar = document.querySelector('[data-window-drag]');
     const resizeHandle = document.querySelector('[data-window-resize]');
     const taskWindow = document.querySelector('[data-task-window]');
+    const gameWindow = document.querySelector('[data-gomoku-window]');
+    const gameTask = document.querySelector('[data-gomoku-task]');
     const startButton = document.querySelector('[data-start-toggle]');
     const startMenu = document.querySelector('[data-start-menu]');
     const shutdownButton = document.querySelector('[data-shutdown]');
@@ -897,6 +899,47 @@ function setupDesktopShell() {
     let restoreGeometry;
     let pointerInteraction;
     let shutdownTimers = [];
+    const windowEntries = [
+        { element: appWindow, task: taskWindow },
+        ...(gameWindow && gameTask ? [{ element: gameWindow, task: gameTask }] : [])
+    ];
+
+    const isWindowVisible = (element) => (
+        !element.classList.contains('is-minimized')
+        && !element.classList.contains('is-closed')
+    );
+
+    const focusWindow = (element) => {
+        const entry = windowEntries.find((candidate) => candidate.element === element);
+        if (!entry || !isWindowVisible(element)) return;
+
+        windowEntries.forEach((candidate, index) => {
+            const active = candidate === entry;
+            candidate.element.classList.toggle('is-active', active);
+            candidate.task.classList.toggle('is-active', active);
+            candidate.element.style.zIndex = String(active ? 20 : 5 + index);
+        });
+    };
+
+    const focusTopWindow = (excludedElement) => {
+        const nextEntry = windowEntries
+            .filter(({ element }) => element !== excludedElement && isWindowVisible(element))
+            .sort((first, second) => (
+                (Number.parseInt(window.getComputedStyle(first.element).zIndex, 10) || 0)
+                - (Number.parseInt(window.getComputedStyle(second.element).zIndex, 10) || 0)
+            ))
+            .at(-1);
+
+        if (nextEntry) {
+            focusWindow(nextEntry.element);
+            return;
+        }
+
+        windowEntries.forEach(({ element, task }) => {
+            element.classList.remove('is-active');
+            task.classList.remove('is-active');
+        });
+    };
 
     const closeStartMenu = () => {
         startMenu.hidden = true;
@@ -1006,7 +1049,7 @@ function setupDesktopShell() {
 
     const showWindow = (target) => {
         appWindow.classList.remove('is-minimized', 'is-closed');
-        taskWindow.classList.add('is-active');
+        focusWindow(appWindow);
         closeStartMenu();
 
         if (!target) return;
@@ -1018,7 +1061,9 @@ function setupDesktopShell() {
     const hideWindow = (state) => {
         appWindow.classList.remove('is-minimized', 'is-closed');
         appWindow.classList.add(state);
+        appWindow.classList.remove('is-active');
         taskWindow.classList.remove('is-active');
+        focusTopWindow(appWindow);
         closeStartMenu();
     };
 
@@ -1082,7 +1127,11 @@ function setupDesktopShell() {
             showWindow();
             return;
         }
-        hideWindow('is-minimized');
+        if (appWindow.classList.contains('is-active')) {
+            hideWindow('is-minimized');
+            return;
+        }
+        focusWindow(appWindow);
     });
 
     startButton.addEventListener('click', (event) => {
@@ -1128,6 +1177,20 @@ function setupDesktopShell() {
             updateMaximizeButtons();
         }
     });
+
+    desktop.addEventListener('gavin:focus-window', (event) => {
+        const targetWindow = event.target.closest?.('.app-window');
+        if (targetWindow) focusWindow(targetWindow);
+    });
+    desktop.addEventListener('gavin:window-hidden', (event) => {
+        const targetWindow = event.target.closest?.('.app-window');
+        focusTopWindow(targetWindow);
+    });
+    windowEntries.forEach(({ element }) => {
+        element.addEventListener('pointerdown', () => focusWindow(element));
+        element.addEventListener('focusin', () => focusWindow(element));
+    });
+    focusWindow(appWindow);
 
     const updateClock = () => {
         if (!clock) return;

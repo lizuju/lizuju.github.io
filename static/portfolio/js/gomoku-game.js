@@ -33,7 +33,18 @@
             helpTitle: '玩法说明',
             helpCopy: '你执黑棋先手，电脑执白棋。\n在棋盘交叉点落子，横、竖或斜线率先连成五子即可获胜。\nF2：新游戏　Ctrl+Z：悔棋　F：最大化',
             aboutTitle: '关于五子棋',
-            aboutCopy: 'GavinOS 五子棋 1.0\n采用经典 Windows 扫雷式界面。\n电脑棋力由 Gomoku minimax 引擎提供。'
+            aboutCopy: 'GavinOS 五子棋 1.0\n采用经典 Windows 扫雷式界面。\n电脑棋力由 Gomoku minimax 引擎提供。',
+            launchLines: [
+                'GavinOS 命令处理器 [版本 1.0.2026]',
+                '(C) 2026 Gavin. All rights reserved.',
+                '',
+                'C:\\GAVIN\\GAMES> gomoku.exe',
+                '[  OK  ] 正在挂载 15 x 15 棋盘',
+                '[  OK  ] 正在加载 Minimax 对弈引擎',
+                '[  OK  ] 正在初始化人机对局',
+                '',
+                'GOMOKU.EXE READY'
+            ]
         },
         en: {
             appName: 'Gomoku',
@@ -59,7 +70,18 @@
             helpTitle: 'How to Play',
             helpCopy: 'You play black and move first. The computer plays white.\nPlace stones on intersections. The first to connect five horizontally, vertically, or diagonally wins.\nF2: New game　Ctrl+Z: Undo　F: Maximize',
             aboutTitle: 'About Gomoku',
-            aboutCopy: 'GavinOS Gomoku 1.0\nA classic Windows Minesweeper-inspired interface.\nComputer moves use a Gomoku minimax engine.'
+            aboutCopy: 'GavinOS Gomoku 1.0\nA classic Windows Minesweeper-inspired interface.\nComputer moves use a Gomoku minimax engine.',
+            launchLines: [
+                'GavinOS Command Processor [Version 1.0.2026]',
+                '(C) 2026 Gavin. All rights reserved.',
+                '',
+                'C:\\GAVIN\\GAMES> gomoku.exe',
+                '[  OK  ] Mounting 15 x 15 board',
+                '[  OK  ] Loading Minimax game engine',
+                '[  OK  ] Initializing player session',
+                '',
+                'GOMOKU.EXE READY'
+            ]
         }
     };
 
@@ -68,8 +90,6 @@
     function setupGomokuGame() {
         const desktop = document.querySelector('[data-retro-desktop]');
         const gameWindow = document.querySelector('[data-gomoku-window]');
-        const portfolioWindow = document.querySelector('[data-app-window]');
-        const portfolioTask = document.querySelector('[data-task-window]');
         const gameTask = document.querySelector('[data-gomoku-task]');
         const titlebar = document.querySelector('[data-gomoku-drag]');
         const resizeHandle = document.querySelector('[data-gomoku-resize]');
@@ -82,11 +102,13 @@
         const dialog = document.querySelector('[data-gomoku-dialog]');
         const dialogTitle = document.querySelector('[data-gomoku-dialog-title]');
         const dialogCopy = document.querySelector('[data-gomoku-dialog-copy]');
+        const launcher = document.querySelector('[data-gomoku-launcher]');
+        const launchLog = document.querySelector('[data-gomoku-launch-log]');
         const Engine = window.GomokuEngine?.GomokuSolution;
 
-        if (!desktop || !gameWindow || !portfolioWindow || !portfolioTask || !gameTask || !titlebar
+        if (!desktop || !gameWindow || !gameTask || !titlebar
             || !resizeHandle || !canvas || !boardFrame || !status || !movesOutput || !turnOutput
-            || !faceButton || !dialog || !dialogTitle || !dialogCopy || !Engine) return;
+            || !faceButton || !dialog || !dialogTitle || !dialogCopy || !launcher || !launchLog || !Engine) return;
 
         const context = canvas.getContext('2d');
         let language = normalizeLanguage(document.documentElement.lang);
@@ -101,6 +123,7 @@
         let aiTimer;
         let restoreGeometry;
         let pointerInteraction;
+        let launchTimers = [];
 
         const copy = () => TEXT[language];
 
@@ -404,45 +427,90 @@
             render();
         }
 
-        function restorePortfolio() {
-            if (portfolioWindow.classList.contains('is-closed')) return;
-            portfolioWindow.classList.remove('is-minimized');
-            portfolioTask.classList.add('is-active');
+        function clearLaunchSequence() {
+            launchTimers.forEach((timer) => window.clearTimeout(timer));
+            launchTimers = [];
+            launcher.hidden = true;
+            launcher.classList.remove('is-complete');
+            gameWindow.classList.remove('is-launching');
+        }
+
+        function finishLaunchSequence() {
+            launcher.classList.add('is-complete');
+            launchTimers.push(window.setTimeout(() => {
+                launcher.hidden = true;
+                launcher.classList.remove('is-complete');
+                gameWindow.classList.remove('is-launching');
+                window.requestAnimationFrame(resizeBoard);
+            }, 180));
+        }
+
+        function startLaunchSequence() {
+            clearLaunchSequence();
+            launchLog.textContent = '';
+            launcher.hidden = false;
+            gameWindow.classList.add('is-launching');
+
+            const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const lineDelay = reducedMotion ? 1 : 140;
+            const settleDelay = reducedMotion ? 20 : 240;
+            copy().launchLines.forEach((line, index) => {
+                launchTimers.push(window.setTimeout(() => {
+                    launchLog.textContent += `${line}\n`;
+                }, lineDelay * (index + 1)));
+            });
+            launchTimers.push(window.setTimeout(
+                finishLaunchSequence,
+                lineDelay * (copy().launchLines.length + 1) + settleDelay
+            ));
+        }
+
+        function focusGame() {
+            gameWindow.dispatchEvent(new CustomEvent('gavin:focus-window', { bubbles: true }));
+        }
+
+        function notifyWindowHidden() {
+            gameWindow.dispatchEvent(new CustomEvent('gavin:window-hidden', { bubbles: true }));
         }
 
         function parkGame() {
             if (gameWindow.classList.contains('is-closed')) return;
             gameWindow.classList.add('is-minimized');
+            gameWindow.classList.remove('is-active');
             gameTask.classList.remove('is-active');
+            notifyWindowHidden();
         }
 
         function openGame() {
             const wasClosed = gameWindow.classList.contains('is-closed');
             gameWindow.classList.remove('is-minimized', 'is-closed');
             gameTask.hidden = false;
-            gameTask.classList.add('is-active');
-            portfolioWindow.classList.add('is-minimized');
-            portfolioTask.classList.remove('is-active');
             document.querySelector('[data-start-menu]')?.setAttribute('hidden', '');
             document.querySelector('[data-start-toggle]')?.setAttribute('aria-expanded', 'false');
-            if (wasClosed) newGame();
-            window.requestAnimationFrame(resizeBoard);
+            if (wasClosed) {
+                newGame();
+                startLaunchSequence();
+            } else {
+                window.requestAnimationFrame(resizeBoard);
+            }
+            focusGame();
         }
 
         function minimizeGame() {
             parkGame();
-            restorePortfolio();
         }
 
         function closeGame() {
             clearAiTimer();
+            clearLaunchSequence();
             gameWindow.classList.remove('is-minimized');
+            gameWindow.classList.remove('is-active');
             gameWindow.classList.add('is-closed');
             gameTask.hidden = true;
             gameTask.classList.remove('is-active');
             closeMenus();
             dialog.hidden = true;
-            restorePortfolio();
+            notifyWindowHidden();
         }
 
         function getWorkArea() {
@@ -557,6 +625,7 @@
                 const key = element.getAttribute('data-gomoku-i18n');
                 if (copy()[key]) element.textContent = copy()[key];
             });
+            if (gameWindow.classList.contains('is-launching')) startLaunchSequence();
             if (!dialog.hidden) showDialog(dialog.dataset.type || 'help');
             render();
         }
@@ -564,17 +633,17 @@
         document.querySelectorAll('[data-open-gomoku]').forEach((button) => {
             button.addEventListener('click', openGame);
         });
-        document.querySelectorAll('[data-open-window]').forEach((button) => {
-            button.addEventListener('click', parkGame);
-        });
-        portfolioTask.addEventListener('click', parkGame);
 
         gameTask.addEventListener('click', () => {
             if (gameWindow.classList.contains('is-minimized') || gameWindow.classList.contains('is-closed')) {
                 openGame();
                 return;
             }
-            minimizeGame();
+            if (gameWindow.classList.contains('is-active')) {
+                minimizeGame();
+                return;
+            }
+            focusGame();
         });
 
         document.querySelectorAll('[data-gomoku-window-action]').forEach((button) => {
@@ -637,7 +706,9 @@
         document.addEventListener('pointercancel', finishPointerInteraction);
 
         document.addEventListener('keydown', (event) => {
-            if (gameWindow.classList.contains('is-minimized') || gameWindow.classList.contains('is-closed')) return;
+            if (gameWindow.classList.contains('is-minimized')
+                || gameWindow.classList.contains('is-closed')
+                || !gameWindow.classList.contains('is-active')) return;
             if (event.key === 'F2') {
                 event.preventDefault();
                 newGame();
@@ -675,6 +746,7 @@
             game: 'gomoku',
             window: gameWindow.classList.contains('is-closed') ? 'closed'
                 : gameWindow.classList.contains('is-minimized') ? 'minimized' : 'open',
+            launching: gameWindow.classList.contains('is-launching'),
             coordinateSystem: 'row 0 is top, column 0 is left; both increase toward bottom-right',
             boardSize: BOARD_SIZE,
             phase,

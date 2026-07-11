@@ -326,6 +326,11 @@ summary:focus-visible {
     user-select: none;
 }
 
+.app-window:not(.is-active) > .window-titlebar {
+    color: #e5e5e5;
+    background: #7f7f7f;
+}
+
 .window-title {
     display: flex;
     min-width: 0;
@@ -625,6 +630,68 @@ summary:focus-visible {
     margin: 3px 2px;
     border-top: 1px solid #808080;
     border-bottom: 1px solid #fff;
+}
+
+.gomoku-launcher {
+    position: absolute;
+    top: 52px;
+    right: 4px;
+    bottom: 4px;
+    left: 4px;
+    z-index: 60;
+    display: block;
+    padding: 18px 20px;
+    overflow: hidden;
+    border: 2px inset #8d9b91;
+    color: #b9dec6;
+    background:
+        repeating-linear-gradient(0deg, transparent 0 3px, rgba(115, 195, 143, 0.06) 3px 4px),
+        #030705;
+    font: 14px/1.55 "Courier New", monospace;
+    opacity: 1;
+    transition: opacity 180ms linear;
+}
+
+.gomoku-launcher.is-complete {
+    opacity: 0;
+}
+
+.gomoku-launch-log {
+    display: inline;
+    margin: 0;
+    color: inherit;
+    font: inherit;
+    white-space: pre-wrap;
+}
+
+.gomoku-launch-cursor {
+    display: inline-block;
+    width: 8px;
+    height: 14px;
+    margin-left: 2px;
+    background: #b9dec6;
+    animation: gomoku-terminal-cursor 650ms step-end infinite;
+    vertical-align: -2px;
+}
+
+.gomoku-window.is-launching .gomoku-menubar {
+    pointer-events: none;
+}
+
+.gomoku-window.is-launching .gomoku-game-area {
+    visibility: hidden;
+}
+
+@keyframes gomoku-terminal-cursor {
+    0%,
+    45% {
+        opacity: 1;
+    }
+
+    46%,
+    100% {
+        opacity: 0;
+    }
 }
 
 .gomoku-game-area {
@@ -2130,6 +2197,11 @@ main {
         font-size: 21px;
     }
 
+    .gomoku-launcher {
+        padding: 14px;
+        font-size: 12px;
+    }
+
     .gomoku-statusbar {
         grid-template-columns: minmax(0, 1fr);
     }
@@ -2155,5 +2227,13 @@ main {
 @media (prefers-reduced-motion: reduce) {
     html {
         scroll-behavior: auto;
+    }
+
+    .gomoku-launcher {
+        transition: none;
+    }
+
+    .gomoku-launch-cursor {
+        animation: none;
     }
 }

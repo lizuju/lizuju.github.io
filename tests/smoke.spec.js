@@ -158,7 +158,9 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
 
     const portfolioWindow = page.locator('[data-app-window]');
     const gameWindow = page.locator('[data-gomoku-window]');
+    const portfolioTask = page.locator('[data-task-window]');
     const gameTask = page.locator('[data-gomoku-task]');
+    const launcher = page.locator('[data-gomoku-launcher]');
 
     if (isMobile) {
         await page.locator('[data-start-toggle]').click();
@@ -168,10 +170,32 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     }
 
     await expect(gameWindow).toBeVisible();
-    await expect(portfolioWindow).toHaveClass(/is-minimized/);
+    await expect(portfolioWindow).toBeVisible();
+    await expect(portfolioWindow).not.toHaveClass(/is-minimized/);
     await expect(gameTask).toBeVisible();
     await expect(gameTask).toHaveClass(/is-active/);
+    await expect(launcher).toBeVisible();
+    await expect(page.locator('[data-gomoku-launch-log]')).toContainText('C:\\GAVIN\\GAMES> gomoku.exe');
+    await expect(launcher).toBeHidden({ timeout: 3000 });
     await expect(page.locator('[data-gomoku-status]')).toContainText('轮到你落子');
+
+    await portfolioTask.click();
+    await expect(portfolioWindow).toHaveClass(/is-active/);
+    await expect(gameWindow).not.toHaveClass(/is-active/);
+    await expect(gameWindow).toBeVisible();
+    expect(await page.evaluate(() => (
+        Number(window.getComputedStyle(document.querySelector('[data-app-window]')).zIndex)
+        > Number(window.getComputedStyle(document.querySelector('[data-gomoku-window]')).zIndex)
+    ))).toBe(true);
+
+    await gameTask.click();
+    await expect(gameWindow).toHaveClass(/is-active/);
+    await expect(gameWindow).toBeVisible();
+    await expect(portfolioWindow).toBeVisible();
+    expect(await page.evaluate(() => (
+        Number(window.getComputedStyle(document.querySelector('[data-gomoku-window]')).zIndex)
+        > Number(window.getComputedStyle(document.querySelector('[data-app-window]')).zIndex)
+    ))).toBe(true);
 
     const canvas = page.locator('[data-gomoku-board]');
     const boardBox = await canvas.boundingBox();
@@ -183,6 +207,12 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     expect(gameState.currentPlayer).toBe('human-black');
     expect(gameState.moves).toHaveLength(2);
     expect(gameState.moves.map((move) => move.player)).toEqual(['human-black', 'computer-white']);
+
+    await portfolioTask.click();
+    await page.keyboard.press('Control+z');
+    gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(gameState.moves).toHaveLength(2);
+    await gameTask.click();
 
     await page.locator('[data-gomoku-menu="game"]').click();
     await page.locator('[data-gomoku-undo]').click();
