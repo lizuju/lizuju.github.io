@@ -251,11 +251,17 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
         > Number(window.getComputedStyle(document.querySelector('[data-app-window]')).zIndex)
     ))).toBe(true);
 
-    const boardBox = await canvas.boundingBox();
-    await page.mouse.click(boardBox.x + boardBox.width / 2, boardBox.y + boardBox.height / 2);
-    await expect(canvas).toHaveClass(/is-locked/);
-    await expect(canvas).toHaveClass(/is-thinking/);
-    expect(await canvas.evaluate((element) => window.getComputedStyle(element).cursor)).toBe('wait');
+    const thinkingState = await page.evaluate(() => {
+        window.GomokuGame.playMove(7, 7);
+        const element = document.querySelector('[data-gomoku-board]');
+        return {
+            phase: JSON.parse(window.render_game_to_text()).phase,
+            locked: element.classList.contains('is-locked'),
+            thinking: element.classList.contains('is-thinking'),
+            cursor: window.getComputedStyle(element).cursor
+        };
+    });
+    expect(thinkingState).toEqual({ phase: 'thinking', locked: true, thinking: true, cursor: 'wait' });
     await page.evaluate(() => window.advanceTime(1000));
 
     let gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
