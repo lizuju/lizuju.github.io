@@ -2,6 +2,7 @@
     margin: 0;
     padding: 0;
 }
+
 html,
 body {
     overflow: hidden;
@@ -274,3 +275,4 @@ br {
         padding-bottom: 32px;
     }
 }
+
