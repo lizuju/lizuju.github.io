@@ -1560,6 +1560,7 @@ main {
     z-index: 30;
     display: grid;
     width: 286px;
+    height: clamp(220px, 44vh, 330px);
     grid-template-columns: 34px 1fr;
     border: 2px outset #fff;
     background: #c0c0c0;
@@ -1578,7 +1579,8 @@ main {
 }
 
 .start-menu-items {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     padding: 4px;
 }
 
@@ -1611,6 +1613,7 @@ main {
 .start-menu-separator {
     height: 2px;
     margin: 3px 4px;
+    margin-top: auto;
     border-top: 1px solid #808080;
     border-bottom: 1px solid #fff;
 }

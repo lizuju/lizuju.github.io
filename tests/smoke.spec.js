@@ -102,9 +102,19 @@ test('supports language, navigation, and expandable details', async ({ page, isM
     }
 
     await page.locator('[data-start-toggle]').click();
-    await expect(page.locator('[data-start-menu]')).toBeVisible();
+    const startMenu = page.locator('[data-start-menu]');
+    await expect(startMenu).toBeVisible();
+    await expect(startMenu.locator('button')).toHaveCount(2);
+    await expect(startMenu.locator('a, [data-open-window], [data-open-gomoku]')).toHaveCount(0);
+    await expect(startMenu).toContainText('切换语言');
+    await expect(startMenu).toContainText('关闭计算机');
+    const startMenuBox = await startMenu.boundingBox();
+    const languageItemBox = await startMenu.locator('[data-start-lang]').boundingBox();
+    const shutdownItemBox = await startMenu.locator('[data-shutdown]').boundingBox();
+    expect(startMenuBox.height).toBeGreaterThanOrEqual(220);
+    expect(shutdownItemBox.y - languageItemBox.y).toBeGreaterThan(100);
     await page.keyboard.press('Escape');
-    await expect(page.locator('[data-start-menu]')).toBeHidden();
+    await expect(startMenu).toBeHidden();
 
     await languageButton.click();
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
@@ -163,8 +173,7 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     const launcher = page.locator('[data-gomoku-launcher]');
 
     if (isMobile) {
-        await page.locator('[data-start-toggle]').click();
-        await page.locator('.start-menu [data-open-gomoku]').click();
+        await page.evaluate(() => window.GomokuGame.open());
     } else {
         await page.locator('.desktop-shortcut[data-open-gomoku]').click();
     }
