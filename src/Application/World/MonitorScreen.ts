@@ -148,6 +148,13 @@ export default class MonitorScreen extends EventEmitter {
         iframe.onload = () => {
             if (iframe.contentWindow) {
                 window.addEventListener('message', (event) => {
+                    if (
+                        event.source !== iframe.contentWindow ||
+                        event.origin !== window.location.origin ||
+                        !['mousemove', 'mousedown', 'mouseup', 'keydown', 'keyup'].includes(event.data?.type)
+                    ) {
+                        return;
+                    }
                     var evt = new CustomEvent(event.data.type, {
                         bubbles: true,
                         cancelable: false,

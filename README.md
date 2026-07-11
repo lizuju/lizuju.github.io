@@ -7,11 +7,12 @@
 
 Source code for [lizuju.github.io](https://lizuju.github.io/), the bilingual portfolio of 李祖钜 Gavin. The site presents work in AI agents, robotics, computer vision, recommender systems, full-stack engineering, and applied research.
 
-Desktop visitors enter an interactive Three.js workspace with the portfolio displayed inside a retro computer. Mobile visitors receive the responsive portfolio directly, avoiding the download and rendering cost of the 3D scene. Chinese is the default language, with a complete English version available from the language control.
+Desktop visitors enter an interactive Three.js workspace, move toward a CRT computer, and use the portfolio through a turn-of-the-century desktop and application window. Mobile visitors receive the responsive retro desktop directly, avoiding the download and rendering cost of the 3D scene. Chinese is the default language, with a complete English version available from the language control.
 
 ## Highlights
 
-- Interactive Three.js desktop environment with a local, self-contained monitor experience.
+- Interactive Three.js workspace with a local, self-contained CRT monitor experience.
+- Functional retro desktop, taskbar, Start menu, window controls, and early-web visual system.
 - Lightweight mobile layout designed for touch navigation and smaller screens.
 - Five selected projects, two submitted research works, six capability areas, awards, education highlights, and contact links.
 - Resume-derived public content with the school name intentionally omitted.

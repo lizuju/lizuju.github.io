@@ -19,6 +19,10 @@ test('renders the complete bilingual portfolio without school name or overflow',
 
     await expect(page).toHaveTitle(/李祖钜 Gavin/);
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+    await expect(page.locator('.retro-desktop')).toBeVisible();
+    await expect(page.locator('.window-titlebar')).toContainText('李祖钜 Gavin - 个人主页');
+    await expect(page.locator('.desktop-taskbar')).toBeVisible();
+    await expect(page.locator('.app-window')).toBeVisible();
     await expect(page.locator('h1')).toContainText('智能系统');
     await expect(page.locator('.project-card')).toHaveCount(5);
     await expect(page.locator('.project-media img')).toHaveCount(5);
@@ -50,6 +54,22 @@ test('renders the complete bilingual portfolio without school name or overflow',
 test('supports language, navigation, and expandable details', async ({ page, isMobile }) => {
     await page.goto('/portfolio/');
 
+    const appWindow = page.locator('[data-app-window]');
+    await page.locator('[data-window-action="minimize"]').click();
+    await expect(appWindow).toHaveClass(/is-minimized/);
+    await page.locator('[data-task-window]').click();
+    await expect(appWindow).not.toHaveClass(/is-minimized/);
+
+    await page.locator('[data-window-action="maximize"]').click();
+    await expect(appWindow).toHaveClass(/is-maximized/);
+    await page.locator('[data-window-action="maximize"]').click();
+    await expect(appWindow).not.toHaveClass(/is-maximized/);
+
+    await page.locator('[data-start-toggle]').click();
+    await expect(page.locator('[data-start-menu]')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-start-menu]')).toBeHidden();
+
     await page.locator('[data-lang-toggle]').click();
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
     await expect(page.locator('h1')).toContainText('Intelligent Systems');
@@ -67,6 +87,11 @@ test('supports language, navigation, and expandable details', async ({ page, isM
 
     await page.locator('.project-details summary').first().click();
     await expect(page.locator('.project-details').first()).toHaveAttribute('open', '');
+
+    await page.locator('.window-controls [data-window-action="close"]').click();
+    await expect(appWindow).toHaveClass(/is-closed/);
+    await page.locator('[data-task-window]').click();
+    await expect(appWindow).not.toHaveClass(/is-closed/);
 
     if (isMobile) {
         await page.locator('[data-menu-toggle]').click();
@@ -124,4 +149,17 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
     await expect(page.locator('#computer-screen')).toHaveAttribute('src', 'portfolio/', { timeout: 45000 });
     await expect(page.frameLocator('#computer-screen').locator('h1')).toContainText('智能系统', { timeout: 45000 });
     expect(await page.locator('canvas').first().evaluate((canvas) => canvas.width > 0 && canvas.height > 0)).toBe(true);
+
+    await page.getByText('进入', { exact: true }).click();
+    const viewport = page.viewportSize();
+    await page.mouse.click(viewport.width / 2, viewport.height / 2);
+    await page.waitForTimeout(2200);
+    const screenBeforeFocus = await page.locator('#computer-screen').boundingBox();
+    await page.mouse.move(
+        screenBeforeFocus.x + screenBeforeFocus.width / 2,
+        screenBeforeFocus.y + screenBeforeFocus.height / 2
+    );
+    await expect.poll(async () => (await page.locator('#computer-screen').boundingBox()).width, {
+        timeout: 10000
+    }).toBeGreaterThan(screenBeforeFocus.width * 1.5);
 });

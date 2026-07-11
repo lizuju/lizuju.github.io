@@ -8,6 +8,25 @@ const SUPPORTED_LANGS = ['zh-CN', 'en'];
 const CONTENT = {
     'zh-CN': {
         brandName: '李祖钜 Gavin',
+        desktopPortfolio: '我的主页',
+        desktopProjects: '项目文件',
+        desktopMail: '电子邮件',
+        windowTitle: '李祖钜 Gavin - 个人主页',
+        menuFile: '文件',
+        menuEdit: '编辑',
+        menuView: '查看',
+        menuFavorites: '收藏',
+        menuHelp: '帮助',
+        addressLabel: '地址',
+        addressGo: '转到',
+        statusReady: '完成',
+        statusZone: '我的电脑',
+        startHome: '个人主页',
+        startProjects: '我的项目',
+        startLanguage: '切换语言',
+        startClose: '关闭主页窗口',
+        startButton: '开始',
+        taskWindow: '李祖钜 Gavin - 个人主页',
         navExperience: '工作',
         navProjects: '项目',
         navPublications: '论文',
@@ -275,6 +294,25 @@ const CONTENT = {
     },
     en: {
         brandName: 'Gavin Lizuju',
+        desktopPortfolio: 'My Portfolio',
+        desktopProjects: 'Project Files',
+        desktopMail: 'E-mail',
+        windowTitle: 'Gavin Lizuju - Personal Homepage',
+        menuFile: 'File',
+        menuEdit: 'Edit',
+        menuView: 'View',
+        menuFavorites: 'Favorites',
+        menuHelp: 'Help',
+        addressLabel: 'Address',
+        addressGo: 'Go',
+        statusReady: 'Done',
+        statusZone: 'My Computer',
+        startHome: 'Personal Homepage',
+        startProjects: 'My Projects',
+        startLanguage: 'Switch Language',
+        startClose: 'Close Homepage Window',
+        startButton: 'Start',
+        taskWindow: 'Gavin Lizuju - Personal Homepage',
         navExperience: 'Experience',
         navProjects: 'Projects',
         navPublications: 'Research',
@@ -801,6 +839,135 @@ function closeMobileMenu() {
     }
 }
 
+function setupDesktopShell() {
+    const appWindow = document.querySelector('[data-app-window]');
+    const windowScroll = document.querySelector('[data-window-scroll]');
+    const taskWindow = document.querySelector('[data-task-window]');
+    const startButton = document.querySelector('[data-start-toggle]');
+    const startMenu = document.querySelector('[data-start-menu]');
+    const clock = document.querySelector('[data-retro-clock]');
+    if (!appWindow || !windowScroll || !taskWindow || !startButton || !startMenu) return;
+
+    const closeStartMenu = () => {
+        startMenu.hidden = true;
+        startButton.setAttribute('aria-expanded', 'false');
+    };
+
+    const showWindow = (target) => {
+        appWindow.classList.remove('is-minimized', 'is-closed');
+        taskWindow.classList.add('is-active');
+        closeStartMenu();
+
+        if (!target) return;
+        window.requestAnimationFrame(() => {
+            if (target === '#top') {
+                windowScroll.scrollTo({ top: 0, behavior: 'smooth' });
+                return;
+            }
+            document.querySelector(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    };
+
+    const hideWindow = (state) => {
+        appWindow.classList.remove('is-minimized', 'is-closed');
+        appWindow.classList.add(state);
+        taskWindow.classList.remove('is-active');
+        closeStartMenu();
+    };
+
+    document.querySelectorAll('[data-window-action]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const action = button.getAttribute('data-window-action');
+            if (action === 'minimize') hideWindow('is-minimized');
+            if (action === 'close') hideWindow('is-closed');
+            if (action === 'maximize') {
+                appWindow.classList.toggle('is-maximized');
+                button.setAttribute('aria-pressed', String(appWindow.classList.contains('is-maximized')));
+            }
+        });
+    });
+
+    document.querySelectorAll('[data-open-window]').forEach((button) => {
+        button.addEventListener('click', () => showWindow(button.getAttribute('data-target')));
+    });
+
+    taskWindow.addEventListener('click', () => {
+        if (appWindow.classList.contains('is-minimized') || appWindow.classList.contains('is-closed')) {
+            showWindow();
+            return;
+        }
+        hideWindow('is-minimized');
+    });
+
+    startButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        startMenu.hidden = !startMenu.hidden;
+        startButton.setAttribute('aria-expanded', String(!startMenu.hidden));
+    });
+
+    startMenu.addEventListener('click', (event) => event.stopPropagation());
+    document.addEventListener('click', closeStartMenu);
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeStartMenu();
+    });
+
+    document.querySelector('[data-start-lang]')?.addEventListener('click', () => {
+        document.querySelector('[data-lang-toggle]')?.click();
+        closeStartMenu();
+    });
+
+    document.querySelector('.window-titlebar')?.addEventListener('dblclick', (event) => {
+        if (event.target.closest('.window-controls')) return;
+        appWindow.classList.toggle('is-maximized');
+    });
+
+    const updateClock = () => {
+        if (!clock) return;
+        clock.textContent = new Intl.DateTimeFormat([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        }).format(new Date());
+    };
+    updateClock();
+    window.setInterval(updateClock, 30000);
+}
+
+function setupParentEventBridge() {
+    if (window.parent === window) return;
+
+    let pendingMouseMove;
+    let animationFrame;
+    document.addEventListener('mousemove', (event) => {
+        pendingMouseMove = {
+            type: 'mousemove',
+            clientX: event.clientX,
+            clientY: event.clientY
+        };
+        if (animationFrame) return;
+        animationFrame = window.requestAnimationFrame(() => {
+            window.parent.postMessage(pendingMouseMove, window.location.origin);
+            animationFrame = null;
+        });
+    });
+
+    ['mousedown', 'mouseup'].forEach((type) => {
+        document.addEventListener(type, (event) => {
+            window.parent.postMessage({
+                type,
+                clientX: event.clientX,
+                clientY: event.clientY
+            }, window.location.origin);
+        });
+    });
+
+    ['keydown', 'keyup'].forEach((type) => {
+        document.addEventListener(type, (event) => {
+            window.parent.postMessage({ type, key: event.key }, window.location.origin);
+        });
+    });
+}
+
 function setupInteractions() {
     document.querySelector('[data-lang-toggle]')?.addEventListener('click', () => {
         currentLang = normalizeLanguage(currentLang) === 'zh-CN' ? 'en' : 'zh-CN';
@@ -838,6 +1005,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const favicon = document.getElementById('favicon');
     if (favicon) favicon.href = USER.avatar;
 
+    setupParentEventBridge();
+    setupDesktopShell();
     setupInteractions();
     applyLanguage();
     routeLegacySkillLinks();
