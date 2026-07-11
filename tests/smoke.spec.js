@@ -105,6 +105,27 @@ test('supports language, navigation, and expandable details', async ({ page, isM
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
+test('keeps the retro desktop fixed when returning to the top', async ({ page }) => {
+    await page.goto('/portfolio/');
+
+    const windowScroll = page.locator('[data-window-scroll]');
+    const desktop = page.locator('[data-retro-desktop]');
+    await windowScroll.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+    });
+    await expect.poll(() => windowScroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+    await page.locator('.site-footer a[href="#top"]').click();
+    await expect(page).toHaveURL(/#top$/);
+    await expect.poll(() => windowScroll.evaluate((element) => element.scrollTop)).toBe(0);
+
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    expect(await desktop.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.top === 0 && rect.bottom === window.innerHeight;
+    })).toBe(true);
+});
+
 test('exposes crawlable SEO metadata', async ({ page, request, isMobile }) => {
     test.skip(isMobile, 'metadata only needs one browser pass');
     await page.goto('/', { waitUntil: 'domcontentloaded' });
@@ -162,4 +183,16 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
     await expect.poll(async () => (await page.locator('#computer-screen').boundingBox()).width, {
         timeout: 10000
     }).toBeGreaterThan(screenBeforeFocus.width * 1.5);
+
+    const computerFrame = page.frameLocator('#computer-screen');
+    const windowScroll = computerFrame.locator('[data-window-scroll]');
+    await windowScroll.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+    });
+    await computerFrame.locator('.site-footer a[href="#top"]').click();
+    await expect.poll(() => windowScroll.evaluate((element) => element.scrollTop)).toBe(0);
+    expect(await computerFrame.locator('[data-retro-desktop]').evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return window.scrollY === 0 && rect.top === 0 && rect.bottom === window.innerHeight;
+    })).toBe(true);
 });

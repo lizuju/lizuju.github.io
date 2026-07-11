@@ -839,14 +839,34 @@ function closeMobileMenu() {
     }
 }
 
+function scrollPortfolioWindow(target, updateHash = false) {
+    const windowScroll = document.querySelector('[data-window-scroll]');
+    const targetElement = document.querySelector(target);
+    if (!windowScroll || !targetElement) return false;
+
+    const top = target === '#top'
+        ? 0
+        : windowScroll.scrollTop
+            + targetElement.getBoundingClientRect().top
+            - windowScroll.getBoundingClientRect().top;
+
+    window.scrollTo(0, 0);
+    windowScroll.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+
+    if (updateHash && window.location.hash !== target) {
+        window.history.pushState(null, '', target);
+    }
+
+    return true;
+}
+
 function setupDesktopShell() {
     const appWindow = document.querySelector('[data-app-window]');
-    const windowScroll = document.querySelector('[data-window-scroll]');
     const taskWindow = document.querySelector('[data-task-window]');
     const startButton = document.querySelector('[data-start-toggle]');
     const startMenu = document.querySelector('[data-start-menu]');
     const clock = document.querySelector('[data-retro-clock]');
-    if (!appWindow || !windowScroll || !taskWindow || !startButton || !startMenu) return;
+    if (!appWindow || !taskWindow || !startButton || !startMenu) return;
 
     const closeStartMenu = () => {
         startMenu.hidden = true;
@@ -860,11 +880,7 @@ function setupDesktopShell() {
 
         if (!target) return;
         window.requestAnimationFrame(() => {
-            if (target === '#top') {
-                windowScroll.scrollTo({ top: 0, behavior: 'smooth' });
-                return;
-            }
-            document.querySelector(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            scrollPortfolioWindow(target);
         });
     };
 
@@ -889,6 +905,15 @@ function setupDesktopShell() {
 
     document.querySelectorAll('[data-open-window]').forEach((button) => {
         button.addEventListener('click', () => showWindow(button.getAttribute('data-target')));
+    });
+
+    document.querySelectorAll('a[href^="#"]').forEach((link) => {
+        link.addEventListener('click', (event) => {
+            const target = link.getAttribute('href');
+            if (!target || !scrollPortfolioWindow(target, true)) return;
+            event.preventDefault();
+            closeMobileMenu();
+        });
     });
 
     taskWindow.addEventListener('click', () => {
@@ -993,7 +1018,7 @@ function routeLegacySkillLinks() {
     if (!section) return;
 
     window.requestAnimationFrame(() => {
-        document.getElementById(section)?.scrollIntoView();
+        scrollPortfolioWindow(`#${section}`, true);
     });
 }
 
