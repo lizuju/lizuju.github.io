@@ -244,6 +244,35 @@ summary:focus-visible {
     transform: rotate(45deg);
 }
 
+.shortcut-icon--gomoku {
+    border: 2px outset #f1f1f1;
+    background: #c0c0c0;
+}
+
+.shortcut-icon--gomoku::before {
+    position: absolute;
+    inset: 4px;
+    content: "";
+    border: 1px solid #404040;
+    background:
+        repeating-linear-gradient(0deg, transparent 0 5px, #707070 5px 6px),
+        repeating-linear-gradient(90deg, transparent 0 5px, #707070 5px 6px),
+        #d5d5d5;
+}
+
+.shortcut-icon--gomoku::after {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 7px;
+    height: 7px;
+    content: "";
+    border: 1px solid #000;
+    border-radius: 50%;
+    background: #111;
+    box-shadow: 11px 11px 0 -1px #fff, 11px 11px 0 0 #555;
+}
+
 .app-window {
     position: absolute;
     top: 36px;
@@ -488,6 +517,313 @@ summary:focus-visible {
 
 .app-window.is-maximized .window-resize-handle {
     display: none;
+}
+
+.gomoku-window {
+    top: 48px;
+    right: auto;
+    bottom: auto;
+    left: max(96px, calc(50% - 280px));
+    z-index: 12;
+    width: min(560px, calc(100% - 118px));
+    height: min(660px, calc(100% - 100px));
+    min-width: 420px;
+    min-height: 500px;
+}
+
+.gomoku-window.is-maximized {
+    width: auto;
+    height: auto;
+}
+
+.window-app-icon--gomoku {
+    color: #111;
+    background: #e5d36c;
+    font-family: SimSun, serif;
+}
+
+.gomoku-menubar {
+    position: relative;
+    z-index: 30;
+    display: flex;
+    min-height: 25px;
+    flex: 0 0 25px;
+    align-items: center;
+    gap: 2px;
+    padding: 1px 4px;
+    border-bottom: 1px solid #808080;
+    background: #c0c0c0;
+    font: 12px/1 var(--font-system);
+}
+
+.gomoku-menu {
+    position: relative;
+}
+
+.gomoku-menu > button {
+    min-height: 21px;
+    padding: 2px 7px;
+    border: 1px solid transparent;
+    color: #111;
+    background: transparent;
+    font: inherit;
+    cursor: default;
+}
+
+.gomoku-menu > button:hover,
+.gomoku-menu > button:focus-visible,
+.gomoku-menu > button[aria-expanded="true"] {
+    border: 1px outset #fff;
+    outline: 0;
+}
+
+.gomoku-menu-popup {
+    position: absolute;
+    top: 22px;
+    left: 0;
+    z-index: 40;
+    width: 190px;
+    padding: 3px;
+    border: 2px outset #fff;
+    background: #c0c0c0;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+}
+
+.gomoku-menu-popup--help {
+    width: 150px;
+}
+
+.gomoku-menu-popup button {
+    display: flex;
+    width: 100%;
+    min-height: 27px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 4px 18px;
+    border: 0;
+    color: #111;
+    background: transparent;
+    font: 12px/1.2 var(--font-system);
+    text-align: left;
+    cursor: default;
+}
+
+.gomoku-menu-popup button:hover,
+.gomoku-menu-popup button:focus-visible {
+    color: #fff;
+    background: #000080;
+    outline: 0;
+}
+
+.gomoku-menu-popup kbd {
+    font: 11px/1 var(--font-system);
+}
+
+.gomoku-menu-separator {
+    height: 2px;
+    margin: 3px 2px;
+    border-top: 1px solid #808080;
+    border-bottom: 1px solid #fff;
+}
+
+.gomoku-game-area {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 8px;
+    padding: 9px;
+    overflow: hidden;
+    border: 2px inset #efefef;
+    background: #c0c0c0;
+    font: 12px/1.2 var(--font-system);
+}
+
+.gomoku-score-panel {
+    display: grid;
+    min-height: 56px;
+    flex: 0 0 56px;
+    grid-template-columns: 1fr 54px 1fr;
+    align-items: center;
+    gap: 14px;
+    padding: 5px 8px;
+    border: 3px inset #efefef;
+    background: #c0c0c0;
+}
+
+.gomoku-counter-block {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 7px;
+}
+
+.gomoku-counter-block--turn {
+    justify-content: flex-end;
+}
+
+.gomoku-counter {
+    display: grid;
+    min-width: 62px;
+    min-height: 34px;
+    place-items: center;
+    padding: 2px 5px;
+    border: 2px inset #808080;
+    color: #ff2f2f;
+    background: #090909;
+    font: 700 24px/1 "Courier New", monospace;
+    text-shadow: 0 0 3px #b60000;
+}
+
+.gomoku-face {
+    display: grid;
+    width: 42px;
+    height: 42px;
+    place-items: center;
+    justify-self: center;
+    padding: 0;
+    border: 3px outset #fff;
+    color: #111;
+    background: #c0c0c0;
+    font: 700 24px/1 Arial, sans-serif;
+    cursor: default;
+}
+
+.gomoku-face:active {
+    border-style: inset;
+}
+
+.gomoku-face.is-thinking span {
+    display: inline-block;
+    transform: rotate(90deg);
+}
+
+.gomoku-board-frame {
+    display: grid;
+    min-width: 0;
+    min-height: 0;
+    flex: 1;
+    place-items: center;
+    overflow: hidden;
+    border: 3px inset #efefef;
+    background: #9f9f9f;
+}
+
+.gomoku-board {
+    display: block;
+    width: 100%;
+    max-width: 480px;
+    height: auto;
+    max-height: 480px;
+    aspect-ratio: 1;
+    cursor: crosshair;
+    touch-action: manipulation;
+}
+
+.gomoku-board.is-locked {
+    cursor: wait;
+}
+
+.gomoku-statusbar {
+    display: grid;
+    min-height: 25px;
+    flex: 0 0 25px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+}
+
+.gomoku-statusbar > span {
+    min-width: 0;
+    padding: 3px 6px;
+    overflow: hidden;
+    border: 1px inset #efefef;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gomoku-legend {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.gomoku-stone {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 1px solid #333;
+    border-radius: 50%;
+}
+
+.gomoku-stone--black {
+    background: #111;
+}
+
+.gomoku-stone--white {
+    background: #fff;
+}
+
+.gomoku-dialog {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    z-index: 80;
+    width: min(370px, calc(100% - 40px));
+    border: 2px outset #fff;
+    background: #c0c0c0;
+    box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.55);
+    transform: translate(-50%, -50%);
+    font: 12px/1.45 var(--font-system);
+}
+
+.gomoku-dialog .window-titlebar {
+    cursor: default;
+}
+
+.gomoku-dialog-body {
+    display: grid;
+    min-height: 110px;
+    grid-template-columns: 48px minmax(0, 1fr);
+    align-items: center;
+    gap: 14px;
+    padding: 18px;
+}
+
+.gomoku-dialog-body p {
+    margin: 0;
+    white-space: pre-line;
+}
+
+.gomoku-dialog-icon {
+    display: grid;
+    width: 46px;
+    height: 46px;
+    place-items: center;
+    border: 3px outset #fff;
+    color: #111;
+    background: #e5d36c;
+    font: 700 25px/1 SimSun, serif;
+}
+
+.gomoku-dialog-actions {
+    display: flex;
+    justify-content: center;
+    padding: 0 18px 16px;
+}
+
+.gomoku-dialog-actions button {
+    min-width: 82px;
+    padding: 5px 12px;
+    border: 2px outset #fff;
+    color: #111;
+    background: #c0c0c0;
+    font: 12px/1 var(--font-system);
+}
+
+.gomoku-dialog-actions button:active {
+    border-style: inset;
 }
 
 .page-shell {
@@ -1234,6 +1570,15 @@ main {
     background: #efc94b;
 }
 
+.start-icon--gomoku {
+    background:
+        radial-gradient(circle at 7px 7px, #111 0 3px, transparent 4px),
+        radial-gradient(circle at 16px 16px, #fff 0 3px, #555 4px, transparent 5px),
+        repeating-linear-gradient(0deg, transparent 0 5px, #707070 5px 6px),
+        repeating-linear-gradient(90deg, transparent 0 5px, #707070 5px 6px),
+        #d5d5d5;
+}
+
 .start-icon--github {
     border-radius: 50%;
     background: #333;
@@ -1400,6 +1745,10 @@ main {
     text-align: left;
 }
 
+.gomoku-task-button {
+    width: min(220px, 25vw);
+}
+
 .task-window-button > span:last-child {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1478,6 +1827,14 @@ main {
     }
 }
 
+@media (max-height: 620px) and (min-width: 901px) {
+    .gomoku-window {
+        top: 8px;
+        height: calc(100% - 52px);
+        min-height: 0;
+    }
+}
+
 @media (max-width: 900px) {
     .desktop-shortcuts {
         display: none;
@@ -1491,6 +1848,14 @@ main {
         left: 4px;
         border-width: 2px;
         box-shadow: none;
+    }
+
+    .gomoku-window,
+    .gomoku-window.is-maximized {
+        width: auto;
+        height: auto;
+        min-width: 0;
+        min-height: 0;
     }
 
     .window-titlebar {
@@ -1655,6 +2020,10 @@ main {
         padding: 70px 24px;
         font-size: 13px;
     }
+
+    .gomoku-game-area {
+        padding: 7px;
+    }
 }
 
 @media (max-width: 560px) {
@@ -1728,6 +2097,45 @@ main {
         width: auto;
         min-width: 0;
         flex: 1;
+    }
+
+    .gomoku-task-button {
+        width: auto;
+    }
+
+    .gomoku-score-panel {
+        grid-template-columns: 1fr 46px 1fr;
+        gap: 8px;
+        padding-right: 5px;
+        padding-left: 5px;
+    }
+
+    .gomoku-counter-block {
+        display: grid;
+        gap: 2px;
+    }
+
+    .gomoku-counter-block--turn {
+        justify-items: end;
+    }
+
+    .gomoku-counter {
+        min-width: 52px;
+        font-size: 20px;
+    }
+
+    .gomoku-face {
+        width: 38px;
+        height: 38px;
+        font-size: 21px;
+    }
+
+    .gomoku-statusbar {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .gomoku-legend {
+        display: none;
     }
 
     .taskbar-tray {

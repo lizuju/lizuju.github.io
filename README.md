@@ -13,6 +13,7 @@ Desktop visitors enter an interactive Three.js workspace, move toward a CRT comp
 
 - Interactive Three.js workspace with a local, self-contained CRT monitor experience.
 - Functional retro desktop with a draggable and resizable window, taskbar, Start menu, shutdown/restart sequence, and early-web visual system.
+- Playable bilingual Gomoku application with a Windows 2000 Minesweeper-style interface and minimax-powered computer opponent.
 - Lightweight mobile layout designed for touch navigation and smaller screens.
 - Five selected projects, two submitted research works, six capability areas, awards, education highlights, and contact links.
 - Resume-derived public content with the school name intentionally omitted.
@@ -23,6 +24,7 @@ Desktop visitors enter an interactive Three.js workspace, move toward a CRT comp
 ```text
 src/                       Three.js shell and desktop UI source
 static/portfolio/          Responsive bilingual portfolio source
+static/portfolio/js/       Portfolio and Gomoku browser logic
 static/                    3D models, textures, audio, and public files
 bundler/                   Webpack development and production configuration
 docs/                      Generated GitHub Pages output
@@ -53,11 +55,14 @@ Then open `http://localhost:3090/`. The direct portfolio is also available at `h
 npm run build
 npm run test:smoke
 node --check static/portfolio/js/main.js
+node --check static/portfolio/js/gomoku-game.js
 ```
 
 ## Attribution
 
 The immersive 3D shell is adapted from [henryjeff/portfolio-website](https://github.com/henryjeff/portfolio-website), used under the MIT License. The upstream license is preserved in [`licenses/henryjeff-portfolio-website-MIT.md`](licenses/henryjeff-portfolio-website-MIT.md).
+
+The Gomoku computer opponent uses [`@algorithm.ts/gomoku`](https://www.npmjs.com/package/@algorithm.ts/gomoku), also under the MIT License. Its license is preserved in [`static/portfolio/licenses/algorithm-ts-gomoku-MIT.txt`](static/portfolio/licenses/algorithm-ts-gomoku-MIT.txt).
 
 ## License
 

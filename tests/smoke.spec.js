@@ -20,9 +20,9 @@ test('renders the complete bilingual portfolio without school name or overflow',
     await expect(page).toHaveTitle(/李祖钜 Gavin/);
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
     await expect(page.locator('.retro-desktop')).toBeVisible();
-    await expect(page.locator('.window-titlebar')).toContainText('李祖钜 Gavin - 个人主页');
+    await expect(page.locator('[data-window-drag]')).toContainText('李祖钜 Gavin - 个人主页');
     await expect(page.locator('.desktop-taskbar')).toBeVisible();
-    await expect(page.locator('.app-window')).toBeVisible();
+    await expect(page.locator('[data-app-window]')).toBeVisible();
     await expect(page.locator('h1')).toContainText('智能系统');
     await expect(page.locator('.project-card')).toHaveCount(5);
     await expect(page.locator('.project-media img')).toHaveCount(5);
@@ -149,6 +149,111 @@ test('supports language, navigation, and expandable details', async ({ page, isM
         await expect(page).toHaveURL(/#publications$/);
     }
 
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
+test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => {
+    if (!isMobile) await page.setViewportSize({ width: 983, height: 540 });
+    await page.goto('/portfolio/');
+
+    const portfolioWindow = page.locator('[data-app-window]');
+    const gameWindow = page.locator('[data-gomoku-window]');
+    const gameTask = page.locator('[data-gomoku-task]');
+
+    if (isMobile) {
+        await page.locator('[data-start-toggle]').click();
+        await page.locator('.start-menu [data-open-gomoku]').click();
+    } else {
+        await page.locator('.desktop-shortcut[data-open-gomoku]').click();
+    }
+
+    await expect(gameWindow).toBeVisible();
+    await expect(portfolioWindow).toHaveClass(/is-minimized/);
+    await expect(gameTask).toBeVisible();
+    await expect(gameTask).toHaveClass(/is-active/);
+    await expect(page.locator('[data-gomoku-status]')).toContainText('轮到你落子');
+
+    const canvas = page.locator('[data-gomoku-board]');
+    const boardBox = await canvas.boundingBox();
+    await page.mouse.click(boardBox.x + boardBox.width / 2, boardBox.y + boardBox.height / 2);
+    await page.evaluate(() => window.advanceTime(1000));
+
+    let gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(gameState.phase).toBe('playing');
+    expect(gameState.currentPlayer).toBe('human-black');
+    expect(gameState.moves).toHaveLength(2);
+    expect(gameState.moves.map((move) => move.player)).toEqual(['human-black', 'computer-white']);
+
+    await page.locator('[data-gomoku-menu="game"]').click();
+    await page.locator('[data-gomoku-undo]').click();
+    gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(gameState.moves).toHaveLength(0);
+
+    await page.locator('[data-gomoku-menu="help"]').click();
+    await page.locator('[data-gomoku-help]').click();
+    await expect(page.locator('[data-gomoku-dialog]')).toBeVisible();
+    await expect(page.locator('[data-gomoku-dialog-copy]')).toContainText('率先连成五子');
+    await page.locator('.gomoku-dialog-actions [data-gomoku-dialog-close]').click();
+    await expect(page.locator('[data-gomoku-dialog]')).toBeHidden();
+
+    await page.locator('[data-start-toggle]').click();
+    await page.locator('[data-start-lang]').click();
+    await expect(page.locator('[data-gomoku-drag]')).toContainText('Gomoku - GavinOS Games');
+    await page.locator('[data-start-toggle]').click();
+    await page.locator('[data-start-lang]').click();
+    await expect(page.locator('[data-gomoku-drag]')).toContainText('五子棋 - GavinOS 游戏');
+
+    await page.evaluate(() => window.GomokuGame.loadPosition([
+        { row: 7, col: 3, player: 0 },
+        { row: 3, col: 3, player: 1 },
+        { row: 7, col: 4, player: 0 },
+        { row: 3, col: 5, player: 1 },
+        { row: 7, col: 5, player: 0 },
+        { row: 3, col: 7, player: 1 },
+        { row: 7, col: 6, player: 0 }
+    ], 0));
+    const winningBoardBox = await canvas.boundingBox();
+    await page.mouse.click(
+        winningBoardBox.x + winningBoardBox.width / 2,
+        winningBoardBox.y + winningBoardBox.height / 2
+    );
+    gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(gameState.phase).toBe('player-won');
+    expect(gameState.winner).toBe('human-black');
+    expect(gameState.winningLine).toHaveLength(5);
+    await expect(page.locator('[data-gomoku-status]')).toContainText('你赢了');
+
+    await page.locator('.gomoku-face').click();
+    gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(gameState.moves).toHaveLength(0);
+
+    if (!isMobile) {
+        const windowBeforeDrag = await gameWindow.boundingBox();
+        const titlebar = await page.locator('[data-gomoku-drag]').boundingBox();
+        await page.mouse.move(titlebar.x + 250, titlebar.y + titlebar.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(titlebar.x + 205, titlebar.y + 35, { steps: 4 });
+        await page.mouse.up();
+        const windowAfterDrag = await gameWindow.boundingBox();
+        expect(windowAfterDrag.x).toBeLessThan(windowBeforeDrag.x - 20);
+        expect(windowAfterDrag.y).toBeGreaterThanOrEqual(windowBeforeDrag.y + 8);
+
+        await page.locator('[data-gomoku-window-action="maximize"]').click();
+        await expect(gameWindow).toHaveClass(/is-maximized/);
+        await page.locator('[data-gomoku-window-action="maximize"]').click();
+        await expect(gameWindow).not.toHaveClass(/is-maximized/);
+    }
+
+    await page.locator('[data-gomoku-window-action="minimize"]').click();
+    await expect(gameWindow).toHaveClass(/is-minimized/);
+    await expect(portfolioWindow).not.toHaveClass(/is-minimized/);
+    await gameTask.click();
+    await expect(gameWindow).not.toHaveClass(/is-minimized/);
+
+    await page.locator('[data-gomoku-drag] [data-gomoku-window-action="close"]').click();
+    await expect(gameWindow).toHaveClass(/is-closed/);
+    await expect(gameTask).toBeHidden();
+    await expect(portfolioWindow).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 

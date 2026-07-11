@@ -817,6 +817,9 @@ function applyLanguage() {
     const langButton = document.querySelector('[data-lang-toggle]');
     if (langButton) langButton.textContent = currentLang === 'zh-CN' ? 'EN' : '中文';
 
+    window.dispatchEvent(new CustomEvent('portfolio-language-change', {
+        detail: { language: currentLang }
+    }));
     setupRevealObserver();
 }
 

@@ -69,7 +69,7 @@
 
     <link rel="icon" id="favicon" type="image/png" href="assets/avatar.png">
     <link rel="preload" as="image" href="assets/portfolio-hero.jpg">
-    <link rel="stylesheet" href="css/custom.css?v=2026071103">
+    <link rel="stylesheet" href="css/custom.css?v=2026071104">
 </head>
 
 <body>
@@ -82,6 +82,10 @@
             <button class="desktop-shortcut" type="button" data-open-window data-target="#projects">
                 <span class="shortcut-icon shortcut-icon--folder" aria-hidden="true"></span>
                 <span data-i18n="desktopProjects">项目文件</span>
+            </button>
+            <button class="desktop-shortcut" type="button" data-open-gomoku>
+                <span class="shortcut-icon shortcut-icon--gomoku" aria-hidden="true"></span>
+                <span data-gomoku-i18n="appName">五子棋</span>
             </button>
             <a class="desktop-shortcut" href="https://github.com/lizuju" target="_blank" rel="noreferrer">
                 <span class="shortcut-icon shortcut-icon--network" aria-hidden="true"></span>
@@ -403,6 +407,102 @@
                 title="Resize window"></button>
         </section>
 
+        <section class="app-window gomoku-window is-closed" data-gomoku-window aria-label="Gomoku game window">
+            <div class="window-titlebar" data-gomoku-drag>
+                <div class="window-title">
+                    <span class="window-app-icon window-app-icon--gomoku" aria-hidden="true">五</span>
+                    <span data-gomoku-i18n="windowTitle">五子棋 - GavinOS 游戏</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-gomoku-window-action="minimize" aria-label="Minimize game window"
+                        title="Minimize"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-gomoku-window-action="maximize" aria-label="Maximize game window"
+                        title="Maximize"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-gomoku-window-action="close" aria-label="Close game window"
+                        title="Close"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+
+            <div class="gomoku-menubar" data-gomoku-menubar>
+                <div class="gomoku-menu">
+                    <button type="button" data-gomoku-menu="game" data-gomoku-i18n="gameMenu"
+                        aria-expanded="false">游戏(G)</button>
+                    <div class="gomoku-menu-popup" data-gomoku-menu-popup="game" hidden>
+                        <button type="button" data-gomoku-new>
+                            <span data-gomoku-i18n="newGame">新游戏</span><kbd>F2</kbd>
+                        </button>
+                        <button type="button" data-gomoku-undo>
+                            <span data-gomoku-i18n="undo">悔棋</span><kbd>Ctrl+Z</kbd>
+                        </button>
+                        <div class="gomoku-menu-separator"></div>
+                        <button type="button" data-gomoku-window-action="close" data-gomoku-i18n="exit">退出</button>
+                    </div>
+                </div>
+                <div class="gomoku-menu">
+                    <button type="button" data-gomoku-menu="help" data-gomoku-i18n="helpMenu"
+                        aria-expanded="false">帮助(H)</button>
+                    <div class="gomoku-menu-popup gomoku-menu-popup--help" data-gomoku-menu-popup="help" hidden>
+                        <button type="button" data-gomoku-help data-gomoku-i18n="howToPlay">玩法说明</button>
+                        <button type="button" data-gomoku-about data-gomoku-i18n="about">关于五子棋</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="gomoku-game-area">
+                <div class="gomoku-score-panel" aria-label="Game status">
+                    <div class="gomoku-counter-block">
+                        <span data-gomoku-i18n="moves">步数</span>
+                        <output class="gomoku-counter" data-gomoku-moves>000</output>
+                    </div>
+                    <button class="gomoku-face" type="button" data-gomoku-new aria-label="Start a new game"
+                        title="New game"><span aria-hidden="true">☺</span></button>
+                    <div class="gomoku-counter-block gomoku-counter-block--turn">
+                        <span data-gomoku-i18n="turn">回合</span>
+                        <output class="gomoku-counter" data-gomoku-turn>●</output>
+                    </div>
+                </div>
+
+                <div class="gomoku-board-frame" data-gomoku-board-frame>
+                    <canvas class="gomoku-board" data-gomoku-board width="480" height="480"
+                        aria-label="15 by 15 Gomoku board"></canvas>
+                </div>
+
+                <div class="gomoku-statusbar">
+                    <span data-gomoku-status>轮到你落子</span>
+                    <span class="gomoku-legend">
+                        <i class="gomoku-stone gomoku-stone--black" aria-hidden="true"></i>
+                        <span data-gomoku-i18n="you">你</span>
+                        <i class="gomoku-stone gomoku-stone--white" aria-hidden="true"></i>
+                        <span data-gomoku-i18n="computer">电脑</span>
+                    </span>
+                </div>
+            </div>
+
+            <div class="gomoku-dialog" data-gomoku-dialog hidden role="dialog" aria-modal="true"
+                aria-labelledby="gomoku-dialog-title">
+                <div class="window-titlebar">
+                    <div class="window-title">
+                        <span class="window-app-icon window-app-icon--gomoku" aria-hidden="true">五</span>
+                        <span id="gomoku-dialog-title" data-gomoku-dialog-title>玩法说明</span>
+                    </div>
+                    <div class="window-controls">
+                        <button type="button" data-gomoku-dialog-close aria-label="Close dialog"><span
+                                aria-hidden="true">×</span></button>
+                    </div>
+                </div>
+                <div class="gomoku-dialog-body">
+                    <span class="gomoku-dialog-icon" aria-hidden="true">五</span>
+                    <p data-gomoku-dialog-copy></p>
+                </div>
+                <div class="gomoku-dialog-actions">
+                    <button type="button" data-gomoku-dialog-close data-gomoku-i18n="ok">确定</button>
+                </div>
+            </div>
+
+            <button class="window-resize-handle" type="button" data-gomoku-resize aria-label="Resize game window"
+                title="Resize window"></button>
+        </section>
+
         <div class="start-menu" data-start-menu hidden>
             <div class="start-menu-rail">GAVIN 2026</div>
             <div class="start-menu-items">
@@ -413,6 +513,10 @@
                 <button type="button" data-open-window data-target="#projects">
                     <span class="start-icon start-icon--projects" aria-hidden="true"></span>
                     <span data-i18n="startProjects">我的项目</span>
+                </button>
+                <button type="button" data-open-gomoku>
+                    <span class="start-icon start-icon--gomoku" aria-hidden="true"></span>
+                    <span data-gomoku-i18n="appName">五子棋</span>
                 </button>
                 <a href="https://github.com/lizuju" target="_blank" rel="noreferrer">
                     <span class="start-icon start-icon--github" aria-hidden="true"></span>
@@ -439,6 +543,10 @@
                 <span class="window-app-icon" aria-hidden="true">G</span>
                 <span data-i18n="taskWindow">李祖钜 Gavin - 个人主页</span>
             </button>
+            <button class="task-window-button gomoku-task-button" type="button" data-gomoku-task hidden>
+                <span class="window-app-icon window-app-icon--gomoku" aria-hidden="true">五</span>
+                <span data-gomoku-i18n="taskTitle">五子棋</span>
+            </button>
             <div class="taskbar-spacer"></div>
             <div class="taskbar-tray">
                 <span class="tray-network" aria-hidden="true"></span>
@@ -458,7 +566,9 @@
         </section>
     </div>
 
-    <script src="js/main.js?v=2026071103"></script>
+    <script src="js/gomoku-engine.js?v=2026071104"></script>
+    <script src="js/gomoku-game.js?v=2026071104"></script>
+    <script src="js/main.js?v=2026071104"></script>
 </body>
 
 </html>
