@@ -153,7 +153,7 @@ test('supports language, navigation, and expandable details', async ({ page, isM
 });
 
 test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => {
-    if (!isMobile) await page.setViewportSize({ width: 983, height: 540 });
+    if (!isMobile) await page.setViewportSize({ width: 983, height: 754 });
     await page.goto('/portfolio/');
 
     const portfolioWindow = page.locator('[data-app-window]');
@@ -179,6 +179,60 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     await expect(launcher).toBeHidden({ timeout: 3000 });
     await expect(page.locator('[data-gomoku-status]')).toContainText('轮到你落子');
 
+    const canvas = page.locator('[data-gomoku-board]');
+    if (isMobile) {
+        await expect(page.locator('.gomoku-statusbar')).toBeVisible();
+        await expect(page.locator('.gomoku-legend')).toBeHidden();
+    }
+
+    if (!isMobile) {
+        const boardBeforeResize = await canvas.boundingBox();
+        const resizeHandleBefore = await page.locator('[data-gomoku-resize]').boundingBox();
+        await page.mouse.move(
+            resizeHandleBefore.x + resizeHandleBefore.width / 2,
+            resizeHandleBefore.y + resizeHandleBefore.height / 2
+        );
+        await page.mouse.down();
+        await page.mouse.move(resizeHandleBefore.x - 100, resizeHandleBefore.y - 100, { steps: 5 });
+        await page.mouse.up();
+        await expect.poll(async () => (await canvas.boundingBox()).width).toBeLessThan(boardBeforeResize.width - 50);
+
+        const boardAfterShrink = await canvas.boundingBox();
+        const resizeHandleAfterShrink = await page.locator('[data-gomoku-resize]').boundingBox();
+        await page.mouse.move(
+            resizeHandleAfterShrink.x + resizeHandleAfterShrink.width / 2,
+            resizeHandleAfterShrink.y + resizeHandleAfterShrink.height / 2
+        );
+        await page.mouse.down();
+        await page.mouse.move(resizeHandleAfterShrink.x + 120, resizeHandleAfterShrink.y + 110, { steps: 5 });
+        await page.mouse.up();
+        await expect.poll(async () => (await canvas.boundingBox()).width).toBeGreaterThan(boardAfterShrink.width + 50);
+
+        const resizedBoard = await canvas.boundingBox();
+        expect(Math.abs(resizedBoard.width - resizedBoard.height)).toBeLessThan(1);
+        const gameWindowBox = await gameWindow.boundingBox();
+        const gameStatusBox = await page.locator('.gomoku-statusbar').boundingBox();
+        const portfolioStatusBox = await page.locator('.window-statusbar').boundingBox();
+        const legendBox = await page.locator('.gomoku-legend').boundingBox();
+        const computerLabelBox = await page.locator(
+            '.gomoku-legend [data-gomoku-i18n="computer"]'
+        ).boundingBox();
+        const resizeHandleBox = await page.locator('[data-gomoku-resize]').boundingBox();
+        expect(Math.abs(gameStatusBox.height - portfolioStatusBox.height)).toBeLessThan(1);
+        expect(Math.abs(gameStatusBox.x - gameWindowBox.x - 2)).toBeLessThan(1);
+        expect(Math.abs(
+            gameStatusBox.y + gameStatusBox.height - gameWindowBox.y - gameWindowBox.height + 2
+        )).toBeLessThan(1);
+        expect(Math.abs(
+            legendBox.y + legendBox.height / 2 - resizeHandleBox.y - resizeHandleBox.height / 2
+        )).toBeLessThan(1);
+        expect(Math.abs(resizeHandleBox.y - gameStatusBox.y - 3)).toBeLessThan(1);
+        expect(Math.abs(
+            gameStatusBox.y + gameStatusBox.height - resizeHandleBox.y - resizeHandleBox.height - 2
+        )).toBeLessThan(1);
+        expect(computerLabelBox.x + computerLabelBox.width).toBeLessThan(resizeHandleBox.x - 2);
+    }
+
     await portfolioTask.click();
     await expect(portfolioWindow).toHaveClass(/is-active/);
     await expect(gameWindow).not.toHaveClass(/is-active/);
@@ -197,9 +251,11 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
         > Number(window.getComputedStyle(document.querySelector('[data-app-window]')).zIndex)
     ))).toBe(true);
 
-    const canvas = page.locator('[data-gomoku-board]');
     const boardBox = await canvas.boundingBox();
     await page.mouse.click(boardBox.x + boardBox.width / 2, boardBox.y + boardBox.height / 2);
+    await expect(canvas).toHaveClass(/is-locked/);
+    await expect(canvas).toHaveClass(/is-thinking/);
+    expect(await canvas.evaluate((element) => window.getComputedStyle(element).cursor)).toBe('wait');
     await page.evaluate(() => window.advanceTime(1000));
 
     let gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
@@ -207,6 +263,8 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     expect(gameState.currentPlayer).toBe('human-black');
     expect(gameState.moves).toHaveLength(2);
     expect(gameState.moves.map((move) => move.player)).toEqual(['human-black', 'computer-white']);
+    await expect(canvas).not.toHaveClass(/is-locked|is-thinking/);
+    expect(await canvas.evaluate((element) => window.getComputedStyle(element).cursor)).toBe('crosshair');
 
     await portfolioTask.click();
     await page.keyboard.press('Control+z');
@@ -252,10 +310,15 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     expect(gameState.winner).toBe('human-black');
     expect(gameState.winningLine).toHaveLength(5);
     await expect(page.locator('[data-gomoku-status]')).toContainText('你赢了');
+    await expect(canvas).toHaveClass(/is-locked/);
+    await expect(canvas).not.toHaveClass(/is-thinking/);
+    expect(await canvas.evaluate((element) => window.getComputedStyle(element).cursor)).toBe('default');
 
     await page.locator('.gomoku-face').click();
     gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
     expect(gameState.moves).toHaveLength(0);
+    await expect(canvas).not.toHaveClass(/is-locked|is-thinking/);
+    expect(await canvas.evaluate((element) => window.getComputedStyle(element).cursor)).toBe('crosshair');
 
     if (!isMobile) {
         const windowBeforeDrag = await gameWindow.boundingBox();

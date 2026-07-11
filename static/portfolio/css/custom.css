@@ -484,18 +484,27 @@ summary:focus-visible {
     scrollbar-color: #8d8d8d #d6d6d6;
 }
 
-.window-statusbar {
+.window-statusbar,
+.gomoku-statusbar {
     display: grid;
     min-height: 22px;
     flex: 0 0 22px;
-    grid-template-columns: 1fr 160px;
     gap: 3px;
     padding: 2px;
     background: #c0c0c0;
     font: 11px/16px var(--font-system);
 }
 
-.window-statusbar span {
+.window-statusbar {
+    grid-template-columns: 1fr 160px;
+}
+
+.gomoku-statusbar {
+    grid-template-columns: minmax(0, 1fr) 160px;
+}
+
+.window-statusbar span,
+.gomoku-statusbar > span {
     min-width: 0;
     padding: 0 5px;
     overflow: hidden;
@@ -772,6 +781,7 @@ summary:focus-visible {
     min-height: 0;
     flex: 1;
     place-items: center;
+    padding: 6px;
     overflow: hidden;
     border: 3px inset #efefef;
     background: #9f9f9f;
@@ -779,35 +789,20 @@ summary:focus-visible {
 
 .gomoku-board {
     display: block;
-    width: 100%;
-    max-width: 480px;
     height: auto;
-    max-height: 480px;
+    max-width: 100%;
+    max-height: 100%;
     aspect-ratio: 1;
     cursor: crosshair;
     touch-action: manipulation;
 }
 
 .gomoku-board.is-locked {
+    cursor: default;
+}
+
+.gomoku-board.is-thinking {
     cursor: wait;
-}
-
-.gomoku-statusbar {
-    display: grid;
-    min-height: 25px;
-    flex: 0 0 25px;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 10px;
-}
-
-.gomoku-statusbar > span {
-    min-width: 0;
-    padding: 3px 6px;
-    overflow: hidden;
-    border: 1px inset #efefef;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .gomoku-legend {
@@ -1944,6 +1939,10 @@ main {
 
     .window-statusbar {
         grid-template-columns: 1fr 110px;
+    }
+
+    .gomoku-statusbar {
+        grid-template-columns: minmax(0, 1fr) auto;
     }
 
     .page-shell {

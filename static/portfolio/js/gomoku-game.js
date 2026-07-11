@@ -3,9 +3,6 @@
     const HUMAN = 0;
     const COMPUTER = 1;
     const EMPTY = -1;
-    const CANVAS_SIZE = 480;
-    const BOARD_MARGIN = 30;
-    const GRID_SIZE = 30;
     const AI_DELAY = 260;
 
     const TEXT = {
@@ -111,6 +108,11 @@
             || !faceButton || !dialog || !dialogTitle || !dialogCopy || !launcher || !launchLog || !Engine) return;
 
         const context = canvas.getContext('2d');
+        let canvasSize = 480;
+        let boardMargin = 30;
+        let gridSize = 30;
+        let stoneRadius = 13;
+        let pixelRatio = 1;
         let language = normalizeLanguage(document.documentElement.lang);
         let board = createBoard();
         let history = [];
@@ -193,6 +195,7 @@
             faceButton.classList.toggle('is-thinking', phase === 'thinking');
             faceButton.querySelector('span').textContent = phase === 'computer-won' ? '☹' : phase === 'thinking' ? '◉' : '☺';
             canvas.classList.toggle('is-locked', phase !== 'playing');
+            canvas.classList.toggle('is-thinking', phase === 'thinking');
             document.querySelectorAll('[data-gomoku-undo]').forEach((button) => {
                 button.disabled = history.length === 0 || phase === 'thinking';
             });
@@ -200,28 +203,35 @@
         }
 
         function drawBoard() {
-            context.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+            context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+            context.clearRect(0, 0, canvasSize, canvasSize);
             context.fillStyle = '#bdbdbd';
-            context.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+            context.fillRect(0, 0, canvasSize, canvasSize);
 
             context.strokeStyle = '#666';
             context.lineWidth = 1;
             for (let index = 0; index < BOARD_SIZE; index += 1) {
-                const position = BOARD_MARGIN + index * GRID_SIZE + 0.5;
+                const position = boardMargin + index * gridSize + 0.5 / pixelRatio;
                 context.beginPath();
-                context.moveTo(BOARD_MARGIN, position);
-                context.lineTo(CANVAS_SIZE - BOARD_MARGIN, position);
+                context.moveTo(boardMargin, position);
+                context.lineTo(canvasSize - boardMargin, position);
                 context.stroke();
                 context.beginPath();
-                context.moveTo(position, BOARD_MARGIN);
-                context.lineTo(position, CANVAS_SIZE - BOARD_MARGIN);
+                context.moveTo(position, boardMargin);
+                context.lineTo(position, canvasSize - boardMargin);
                 context.stroke();
             }
 
             context.fillStyle = '#555';
             [[3, 3], [3, 11], [7, 7], [11, 3], [11, 11]].forEach(([row, col]) => {
                 context.beginPath();
-                context.arc(BOARD_MARGIN + col * GRID_SIZE, BOARD_MARGIN + row * GRID_SIZE, 3, 0, Math.PI * 2);
+                context.arc(
+                    boardMargin + col * gridSize,
+                    boardMargin + row * gridSize,
+                    Math.max(2, gridSize * 0.1),
+                    0,
+                    Math.PI * 2
+                );
                 context.fill();
             });
 
@@ -233,12 +243,13 @@
 
             const lastMove = history.at(-1);
             if (lastMove) {
+                const markerSize = Math.max(4, gridSize * 0.17);
                 context.fillStyle = '#d41414';
                 context.fillRect(
-                    BOARD_MARGIN + lastMove.col * GRID_SIZE - 2,
-                    BOARD_MARGIN + lastMove.row * GRID_SIZE - 2,
-                    5,
-                    5
+                    boardMargin + lastMove.col * gridSize - markerSize / 2,
+                    boardMargin + lastMove.row * gridSize - markerSize / 2,
+                    markerSize,
+                    markerSize
                 );
             }
 
@@ -246,18 +257,25 @@
                 const first = winningLine[0];
                 const last = winningLine.at(-1);
                 context.strokeStyle = '#d41414';
-                context.lineWidth = 3;
+                context.lineWidth = Math.max(2, gridSize * 0.1);
                 context.beginPath();
-                context.moveTo(BOARD_MARGIN + first.col * GRID_SIZE, BOARD_MARGIN + first.row * GRID_SIZE);
-                context.lineTo(BOARD_MARGIN + last.col * GRID_SIZE, BOARD_MARGIN + last.row * GRID_SIZE);
+                context.moveTo(boardMargin + first.col * gridSize, boardMargin + first.row * gridSize);
+                context.lineTo(boardMargin + last.col * gridSize, boardMargin + last.row * gridSize);
                 context.stroke();
             }
         }
 
         function drawStone(row, col, player, opacity) {
-            const x = BOARD_MARGIN + col * GRID_SIZE;
-            const y = BOARD_MARGIN + row * GRID_SIZE;
-            const gradient = context.createRadialGradient(x - 5, y - 6, 2, x, y, 13);
+            const x = boardMargin + col * gridSize;
+            const y = boardMargin + row * gridSize;
+            const gradient = context.createRadialGradient(
+                x - stoneRadius * 0.38,
+                y - stoneRadius * 0.46,
+                stoneRadius * 0.15,
+                x,
+                y,
+                stoneRadius
+            );
             if (player === HUMAN) {
                 gradient.addColorStop(0, '#777');
                 gradient.addColorStop(0.28, '#222');
@@ -271,7 +289,7 @@
             context.globalAlpha = opacity;
             context.fillStyle = gradient;
             context.beginPath();
-            context.arc(x, y, 13, 0, Math.PI * 2);
+            context.arc(x, y, stoneRadius, 0, Math.PI * 2);
             context.fill();
             context.strokeStyle = player === HUMAN ? '#000' : '#666';
             context.stroke();
@@ -407,23 +425,32 @@
 
         function canvasPosition(event) {
             const rect = canvas.getBoundingClientRect();
-            const x = (event.clientX - rect.left) * CANVAS_SIZE / rect.width;
-            const y = (event.clientY - rect.top) * CANVAS_SIZE / rect.height;
-            const col = Math.round((x - BOARD_MARGIN) / GRID_SIZE);
-            const row = Math.round((y - BOARD_MARGIN) / GRID_SIZE);
+            const x = (event.clientX - rect.left) * canvasSize / rect.width;
+            const y = (event.clientY - rect.top) * canvasSize / rect.height;
+            const col = Math.round((x - boardMargin) / gridSize);
+            const row = Math.round((y - boardMargin) / gridSize);
             if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return null;
-            const targetX = BOARD_MARGIN + col * GRID_SIZE;
-            const targetY = BOARD_MARGIN + row * GRID_SIZE;
-            if (Math.hypot(x - targetX, y - targetY) > GRID_SIZE * 0.48) return null;
+            const targetX = boardMargin + col * gridSize;
+            const targetY = boardMargin + row * gridSize;
+            if (Math.hypot(x - targetX, y - targetY) > gridSize * 0.48) return null;
             return { row, col };
         }
 
         function resizeBoard() {
             if (gameWindow.classList.contains('is-minimized') || gameWindow.classList.contains('is-closed')) return;
-            const size = Math.floor(Math.min(480, boardFrame.clientWidth - 8, boardFrame.clientHeight - 8));
+            const size = Math.floor(Math.min(boardFrame.clientWidth - 12, boardFrame.clientHeight - 12));
             if (size < 160) return;
+            const nextPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+            if (size === canvasSize && nextPixelRatio === pixelRatio) return;
+            canvasSize = size;
+            boardMargin = Math.max(16, canvasSize / 16);
+            gridSize = (canvasSize - boardMargin * 2) / (BOARD_SIZE - 1);
+            stoneRadius = Math.max(6, gridSize * 0.43);
+            pixelRatio = nextPixelRatio;
             canvas.style.width = `${size}px`;
             canvas.style.height = `${size}px`;
+            canvas.width = Math.round(size * pixelRatio);
+            canvas.height = Math.round(size * pixelRatio);
             render();
         }
 
