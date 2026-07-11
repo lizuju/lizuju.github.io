@@ -52,31 +52,67 @@ test('renders the complete bilingual portfolio without school name or overflow',
 });
 
 test('supports language, navigation, and expandable details', async ({ page, isMobile }) => {
+    if (!isMobile) await page.setViewportSize({ width: 983, height: 754 });
     await page.goto('/portfolio/');
 
     const appWindow = page.locator('[data-app-window]');
+    const languageButton = page.locator('[data-lang-toggle]');
+    await expect(languageButton).toBeVisible();
+    expect(await page.locator('[data-window-scroll]').evaluate((viewport, button) => {
+        const viewportRect = viewport.getBoundingClientRect();
+        const buttonRect = button.getBoundingClientRect();
+        return buttonRect.top >= viewportRect.top && buttonRect.bottom <= viewportRect.bottom;
+    }, await languageButton.elementHandle())).toBe(true);
+
     await page.locator('[data-window-action="minimize"]').click();
     await expect(appWindow).toHaveClass(/is-minimized/);
     await page.locator('[data-task-window]').click();
     await expect(appWindow).not.toHaveClass(/is-minimized/);
 
-    await page.locator('[data-window-action="maximize"]').click();
-    await expect(appWindow).toHaveClass(/is-maximized/);
-    await page.locator('[data-window-action="maximize"]').click();
-    await expect(appWindow).not.toHaveClass(/is-maximized/);
+    if (!isMobile) {
+        const windowBeforeDrag = await appWindow.boundingBox();
+        const titlebar = await page.locator('[data-window-drag]').boundingBox();
+        await page.mouse.move(titlebar.x + 240, titlebar.y + titlebar.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(titlebar.x + 195, titlebar.y - 4, { steps: 4 });
+        await page.mouse.up();
+        const windowAfterDrag = await appWindow.boundingBox();
+        expect(windowAfterDrag.x).toBeLessThan(windowBeforeDrag.x - 20);
+        expect(windowAfterDrag.y).toBeLessThan(windowBeforeDrag.y - 10);
+
+        const windowBeforeResize = await appWindow.boundingBox();
+        const resizeHandle = await page.locator('[data-window-resize]').boundingBox();
+        await page.mouse.move(resizeHandle.x + resizeHandle.width / 2, resizeHandle.y + resizeHandle.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(resizeHandle.x - 80, resizeHandle.y - 55, { steps: 4 });
+        await page.mouse.up();
+        const windowAfterResize = await appWindow.boundingBox();
+        expect(windowAfterResize.width).toBeLessThan(windowBeforeResize.width - 50);
+        expect(windowAfterResize.height).toBeLessThan(windowBeforeResize.height - 30);
+
+        await page.locator('[data-window-action="maximize"]').click();
+        await expect(appWindow).toHaveClass(/is-maximized/);
+        await page.locator('[data-window-action="maximize"]').click();
+        await expect(appWindow).not.toHaveClass(/is-maximized/);
+        const restoredWindow = await appWindow.boundingBox();
+        expect(Math.abs(restoredWindow.x - windowAfterResize.x)).toBeLessThan(2);
+        expect(Math.abs(restoredWindow.y - windowAfterResize.y)).toBeLessThan(2);
+        expect(Math.abs(restoredWindow.width - windowAfterResize.width)).toBeLessThan(2);
+        expect(Math.abs(restoredWindow.height - windowAfterResize.height)).toBeLessThan(2);
+    }
 
     await page.locator('[data-start-toggle]').click();
     await expect(page.locator('[data-start-menu]')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-start-menu]')).toBeHidden();
 
-    await page.locator('[data-lang-toggle]').click();
+    await languageButton.click();
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
     await expect(page.locator('h1')).toContainText('Intelligent Systems');
     await expect(page.locator('.project-card')).toHaveCount(5);
     await expect(page.locator('.publication-card')).toHaveCount(2);
 
-    await page.locator('[data-lang-toggle]').click();
+    await languageButton.click();
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
 
     await page.locator('.primary-action').click();
@@ -92,6 +128,17 @@ test('supports language, navigation, and expandable details', async ({ page, isM
     await expect(appWindow).toHaveClass(/is-closed/);
     await page.locator('[data-task-window]').click();
     await expect(appWindow).not.toHaveClass(/is-closed/);
+
+    if (!isMobile) {
+        await page.locator('[data-start-toggle]').click();
+        await expect(page.locator('[data-shutdown]')).toContainText('关闭计算机');
+        await page.locator('[data-shutdown]').click();
+        await expect(page.locator('[data-shutdown-screen]')).toBeVisible();
+        await expect(page.locator('[data-shutdown-log]')).toContainText('作品集必须保持在线', { timeout: 3000 });
+        await expect(page.locator('[data-restart]')).toBeVisible();
+        await page.locator('[data-restart]').click();
+        await expect(page.locator('[data-shutdown-screen]')).toBeHidden();
+    }
 
     if (isMobile) {
         await page.locator('[data-menu-toggle]').click();

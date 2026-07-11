@@ -69,7 +69,7 @@
 
     <link rel="icon" id="favicon" type="image/png" href="assets/avatar.png">
     <link rel="preload" as="image" href="assets/portfolio-hero.jpg">
-    <link rel="stylesheet" href="css/custom.css?v=2026071102">
+    <link rel="stylesheet" href="css/custom.css?v=2026071103">
 </head>
 
 <body>
@@ -94,7 +94,7 @@
         </nav>
 
         <section class="app-window" data-app-window aria-label="Gavin portfolio window">
-            <div class="window-titlebar">
+            <div class="window-titlebar" data-window-drag>
                 <div class="window-title">
                     <span class="window-app-icon" aria-hidden="true">G</span>
                     <span data-i18n="windowTitle">李祖钜 Gavin - 个人主页</span>
@@ -399,6 +399,8 @@
                 <span data-i18n="statusReady">完成</span>
                 <span data-i18n="statusZone">我的电脑</span>
             </div>
+            <button class="window-resize-handle" type="button" data-window-resize aria-label="Resize window"
+                title="Resize window"></button>
         </section>
 
         <div class="start-menu" data-start-menu hidden>
@@ -421,9 +423,9 @@
                     <span data-i18n="startLanguage">切换语言</span>
                 </button>
                 <div class="start-menu-separator"></div>
-                <button type="button" data-window-action="close">
-                    <span class="start-icon start-icon--close" aria-hidden="true"></span>
-                    <span data-i18n="startClose">关闭主页窗口</span>
+                <button type="button" data-shutdown>
+                    <span class="start-icon start-icon--shutdown" aria-hidden="true"></span>
+                    <span data-i18n="startShutdown">关闭计算机...</span>
                 </button>
             </div>
         </div>
@@ -443,9 +445,20 @@
                 <time data-retro-clock>00:00</time>
             </div>
         </footer>
+
+        <section class="shutdown-screen" data-shutdown-screen hidden aria-live="polite" aria-label="System shutdown">
+            <div class="shutdown-console">
+                <p class="shutdown-title" data-i18n="shutdownTitle">GavinOS 正在关闭</p>
+                <pre class="shutdown-log" data-shutdown-log></pre>
+                <button class="shutdown-restart" type="button" data-restart hidden>
+                    <span class="start-icon start-icon--home" aria-hidden="true"></span>
+                    <span data-i18n="shutdownRestart">重新启动</span>
+                </button>
+            </div>
+        </section>
     </div>
 
-    <script src="js/main.js?v=2026071102"></script>
+    <script src="js/main.js?v=2026071103"></script>
 </body>
 
 </html>

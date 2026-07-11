@@ -274,6 +274,13 @@ summary:focus-visible {
     display: none;
 }
 
+.app-window.is-dragging,
+.app-window.is-resizing {
+    outline: 2px dotted #fff;
+    box-shadow: 0 0 0 1px #000, 3px 3px 0 rgba(0, 0, 0, 0.65);
+    user-select: none;
+}
+
 .window-titlebar {
     display: flex;
     flex: 0 0 27px;
@@ -284,7 +291,9 @@ summary:focus-visible {
     padding: 3px 3px 3px 5px;
     color: #fff;
     background: linear-gradient(90deg, var(--title-blue), var(--title-blue-light));
+    cursor: move;
     font: 700 13px/1 var(--font-system);
+    touch-action: none;
     user-select: none;
 }
 
@@ -317,6 +326,7 @@ summary:focus-visible {
     display: flex;
     flex: 0 0 auto;
     gap: 2px;
+    cursor: default;
 }
 
 .window-controls button {
@@ -460,6 +470,26 @@ summary:focus-visible {
     white-space: nowrap;
 }
 
+.window-resize-handle {
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    z-index: 20;
+    width: 17px;
+    height: 17px;
+    padding: 0;
+    border: 0;
+    background:
+        linear-gradient(135deg, transparent 0 48%, #fff 49% 55%, transparent 56%) 0 0 / 6px 6px,
+        linear-gradient(135deg, transparent 0 48%, #555 49% 55%, transparent 56%) 2px 2px / 6px 6px;
+    cursor: nwse-resize;
+    touch-action: none;
+}
+
+.app-window.is-maximized .window-resize-handle {
+    display: none;
+}
+
 .page-shell {
     display: grid;
     width: 100%;
@@ -522,11 +552,14 @@ summary:focus-visible {
 }
 
 .header-actions {
+    position: absolute;
+    top: 30px;
+    right: 18px;
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-top: auto;
-    padding-top: 30px;
+    margin: 0;
+    padding: 0;
 }
 
 .lang-toggle,
@@ -1210,8 +1243,30 @@ main {
     background: #6b4aa5;
 }
 
-.start-icon--close {
-    background: #bd4b47;
+.start-icon--shutdown {
+    background: #b9c5c7;
+}
+
+.start-icon--shutdown::before {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 13px;
+    height: 10px;
+    content: "";
+    border: 2px inset #fff;
+    background: #183a47;
+}
+
+.start-icon--shutdown::after {
+    position: absolute;
+    bottom: 3px;
+    left: 7px;
+    width: 8px;
+    height: 2px;
+    content: "";
+    border-bottom: 2px solid #333;
+    background: #ddd;
 }
 
 .desktop-taskbar {
@@ -1228,6 +1283,67 @@ main {
     border-top: 2px outset #fff;
     background: #c0c0c0;
     font: 12px/1 var(--font-system);
+}
+
+.shutdown-screen {
+    position: absolute;
+    inset: 0;
+    z-index: 100;
+    display: grid;
+    place-items: start center;
+    padding: 11vh 8vw;
+    overflow: hidden;
+    color: #d7d7d7;
+    background: #020707;
+    font: 15px/1.6 "Courier New", monospace;
+}
+
+.shutdown-screen::after {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    content: "";
+    opacity: 0.18;
+    background: repeating-linear-gradient(0deg, transparent 0 3px, #3a7772 3px 4px);
+}
+
+.shutdown-console {
+    position: relative;
+    z-index: 1;
+    width: min(780px, 100%);
+}
+
+.shutdown-title {
+    margin: 0 0 22px;
+    color: #f2f2f2;
+    font-weight: 700;
+}
+
+.shutdown-log {
+    min-height: 140px;
+    margin: 0;
+    color: #9fd7be;
+    font: inherit;
+    white-space: pre-wrap;
+}
+
+.shutdown-restart {
+    display: inline-grid;
+    min-height: 38px;
+    grid-template-columns: 25px auto;
+    align-items: center;
+    gap: 8px;
+    margin-top: 24px;
+    padding: 5px 12px;
+    border: 2px outset #fff;
+    color: #111;
+    background: #c0c0c0;
+    font: 12px/1 var(--font-system);
+    cursor: default;
+}
+
+.shutdown-restart:active {
+    border-style: inset;
 }
 
 .start-button,
@@ -1377,6 +1493,14 @@ main {
         box-shadow: none;
     }
 
+    .window-titlebar {
+        cursor: default;
+    }
+
+    .window-resize-handle {
+        display: none;
+    }
+
     .window-menubar {
         display: none;
     }
@@ -1430,6 +1554,7 @@ main {
     }
 
     .header-actions {
+        position: static;
         margin: 0;
         padding: 0;
     }
@@ -1524,6 +1649,11 @@ main {
         right: 4px;
         width: auto;
         max-width: 310px;
+    }
+
+    .shutdown-screen {
+        padding: 70px 24px;
+        font-size: 13px;
     }
 }
 

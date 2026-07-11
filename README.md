@@ -12,7 +12,7 @@ Desktop visitors enter an interactive Three.js workspace, move toward a CRT comp
 ## Highlights
 
 - Interactive Three.js workspace with a local, self-contained CRT monitor experience.
-- Functional retro desktop, taskbar, Start menu, window controls, and early-web visual system.
+- Functional retro desktop with a draggable and resizable window, taskbar, Start menu, shutdown/restart sequence, and early-web visual system.
 - Lightweight mobile layout designed for touch navigation and smaller screens.
 - Five selected projects, two submitted research works, six capability areas, awards, education highlights, and contact links.
 - Resume-derived public content with the school name intentionally omitted.
