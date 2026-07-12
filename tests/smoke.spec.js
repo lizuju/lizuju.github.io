@@ -584,7 +584,11 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
     await expect(page.frameLocator('#computer-screen').locator('[data-direct-return]')).toBeHidden();
     expect(await page.locator('canvas').first().evaluate((canvas) => canvas.width > 0 && canvas.height > 0)).toBe(true);
     expect(immersiveChunkRequests.length).toBeGreaterThanOrEqual(2);
-    expect(videoRequests).toHaveLength(2);
+    const loadedVideoPaths = [...new Set(videoRequests.map((requestUrl) => new URL(requestUrl).pathname))].sort();
+    expect(loadedVideoPaths).toEqual([
+        '/textures/monitor/video/base-static.mp4',
+        '/textures/monitor/video/static-texture-layer.mp4'
+    ]);
 
     await page.getByText('Enter', { exact: true }).click();
     const viewport = page.viewportSize();
