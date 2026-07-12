@@ -54,6 +54,7 @@ Then open `http://localhost:3090/`. The direct portfolio is also available at `h
 ```bash
 npm run build
 npm run test:smoke
+npm run verify:docs
 node --check static/portfolio/js/main.js
 node --check static/portfolio/js/gomoku-game.js
 ```

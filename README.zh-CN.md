@@ -54,6 +54,7 @@ npm run preview
 ```bash
 npm run build
 npm run test:smoke
+npm run verify:docs
 node --check static/portfolio/js/main.js
 node --check static/portfolio/js/gomoku-game.js
 ```

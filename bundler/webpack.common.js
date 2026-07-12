@@ -1,7 +1,13 @@
 const CopyWebpackPlugin = require('copy-webpack-plugin');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const MiniCSSExtractPlugin = require('mini-css-extract-plugin');
+const fs = require('fs');
 const path = require('path');
+const { createBuildMetadata } = require('./build-metadata');
+const TrimGeneratedTextPlugin = require('./trim-generated-text-plugin');
+
+const rootDirectory = path.resolve(__dirname, '..');
+const buildMetadata = createBuildMetadata(rootDirectory);
 
 module.exports = {
     entry: path.resolve(__dirname, '../src/script.ts'),
@@ -14,13 +20,36 @@ module.exports = {
     devtool: 'source-map',
     plugins: [
         new CopyWebpackPlugin({
-            patterns: [{ from: path.resolve(__dirname, '../static') }],
+            patterns: [{
+                from: path.resolve(rootDirectory, 'static'),
+                transform(content, absolutePath) {
+                    if (absolutePath.endsWith('portfolio/index.html')) {
+                        return content
+                            .toString()
+                            .replaceAll('__ASSET_VERSION__', buildMetadata.assetVersion);
+                    }
+                    if (absolutePath.endsWith('sitemap.xml')) {
+                        return content
+                            .toString()
+                            .replace('__LAST_MODIFIED__', buildMetadata.lastModified);
+                    }
+                    return content;
+                },
+            }],
         }),
         new HtmlWebpackPlugin({
-            template: path.resolve(__dirname, '../src/index.html'),
-            minify: true,
+            templateContent: fs
+                .readFileSync(path.resolve(__dirname, '../src/index.html'), 'utf8')
+                .replaceAll('__ASSET_VERSION__', buildMetadata.assetVersion),
+            minify: {
+                collapseWhitespace: true,
+                minifyCSS: true,
+                minifyJS: true,
+                removeComments: true,
+            },
         }),
         new MiniCSSExtractPlugin(),
+        new TrimGeneratedTextPlugin(),
     ],
     resolve: {
         alias: {

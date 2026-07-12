@@ -1,3 +1,34 @@
+.scene-link {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 30;
+    display: inline-flex;
+    max-width: calc(100vw - 48px);
+    align-items: center;
+    justify-content: center;
+    padding: 10px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.32);
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    font: 600 13px/1.2 monospace;
+    text-align: center;
+    text-decoration: none;
+    backdrop-filter: blur(10px);
+    cursor: pointer;
+}
+
+.scene-link:visited {
+    color: #fff;
+}
+
+.scene-link:hover,
+.scene-link:focus-visible {
+    background: #fff;
+    color: #000;
+    outline: none;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -89,4 +120,3 @@ body {
         transform: translate(0.075px, 0.025px) scale(1, 1);
     }
 }
-

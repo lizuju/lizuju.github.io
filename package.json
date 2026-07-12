@@ -9,7 +9,8 @@
         "build": "npm run build:gomoku && webpack --config ./bundler/webpack.prod.js",
         "dev": "npm run build:gomoku && webpack serve --config ./bundler/webpack.dev.js",
         "preview": "python3 -m http.server 3090 --directory docs",
-        "test:smoke": "playwright test"
+        "test:smoke": "playwright test",
+        "verify:docs": "node scripts/verify-docs.cjs"
     },
     "dependencies": {
         "@algorithm.ts/gomoku": "^4.0.5",

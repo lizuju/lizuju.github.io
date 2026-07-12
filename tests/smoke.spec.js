@@ -1,4 +1,8 @@
 const { test, expect } = require('@playwright/test');
+const path = require('path');
+const { createBuildMetadata } = require('../bundler/build-metadata');
+
+const buildMetadata = createBuildMetadata(path.resolve(__dirname, '..'));
 
 test.beforeEach(async ({ page }) => {
     const browserErrors = [];
@@ -481,7 +485,16 @@ test('exposes crawlable SEO metadata', async ({ page, request, isMobile }) => {
     expect(sitemap.ok()).toBe(true);
     const sitemapText = await sitemap.text();
     expect(sitemapText).toContain('<loc>https://lizuju.github.io/</loc>');
-    expect(sitemapText).toContain('<lastmod>2026-07-10</lastmod>');
+    expect(sitemapText).toContain(`<lastmod>${buildMetadata.lastModified}</lastmod>`);
+
+    await page.goto('/portfolio/');
+    await expect(page.locator('link[href^="css/custom.css"]')).toHaveAttribute(
+        'href',
+        `css/custom.css?v=${buildMetadata.assetVersion}`
+    );
+    for (const script of await page.locator('script[src]').all()) {
+        await expect(script).toHaveAttribute('src', new RegExp(`\\?v=${buildMetadata.assetVersion}$`));
+    }
 });
 
 test('serves the immersive desktop shell and lightweight mobile shell', async ({ page, isMobile }) => {
