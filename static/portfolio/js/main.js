@@ -1214,6 +1214,7 @@ function setupParentEventBridge() {
     let animationFrame;
     document.addEventListener('mousemove', (event) => {
         pendingMouseMove = {
+            source: 'gavin-portfolio',
             type: 'mousemove',
             clientX: event.clientX,
             clientY: event.clientY
@@ -1228,6 +1229,7 @@ function setupParentEventBridge() {
     ['mousedown', 'mouseup'].forEach((type) => {
         document.addEventListener(type, (event) => {
             window.parent.postMessage({
+                source: 'gavin-portfolio',
                 type,
                 clientX: event.clientX,
                 clientY: event.clientY
@@ -1237,7 +1239,11 @@ function setupParentEventBridge() {
 
     ['keydown', 'keyup'].forEach((type) => {
         document.addEventListener(type, (event) => {
-            window.parent.postMessage({ type, key: event.key }, window.location.origin);
+            window.parent.postMessage({
+                source: 'gavin-portfolio',
+                type,
+                key: event.key
+            }, window.location.origin);
         });
     });
 }

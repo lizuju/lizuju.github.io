@@ -486,6 +486,17 @@ test('exposes crawlable SEO metadata', async ({ page, request, isMobile }) => {
 
 test('serves the immersive desktop shell and lightweight mobile shell', async ({ page, isMobile }) => {
     test.setTimeout(60000);
+    const immersiveChunkRequests = [];
+    const videoRequests = [];
+    page.on('request', (request) => {
+        const path = new URL(request.url()).pathname;
+        if (/\/[a-z0-9-]+\.[a-f0-9]+\.js$/.test(path) && !path.includes('/bundle.')) {
+            immersiveChunkRequests.push(request.url());
+        }
+        if (request.url().includes('/textures/monitor/video/')) {
+            videoRequests.push(request.url());
+        }
+    });
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
     if (isMobile) {
@@ -494,6 +505,8 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
         await expect(page.locator('canvas')).toHaveCount(0);
         await expect(page.frameLocator('#mobile-portfolio').locator('h1')).toContainText('智能系统');
         await expect(page.frameLocator('#mobile-portfolio').locator('[data-direct-return]')).toBeHidden();
+        expect(immersiveChunkRequests).toHaveLength(0);
+        expect(videoRequests).toHaveLength(0);
         return;
     }
 
@@ -507,6 +520,8 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
     await expect(page.frameLocator('#computer-screen').locator('[data-app-window]')).not.toHaveClass(/is-maximized/);
     await expect(page.frameLocator('#computer-screen').locator('[data-direct-return]')).toBeHidden();
     expect(await page.locator('canvas').first().evaluate((canvas) => canvas.width > 0 && canvas.height > 0)).toBe(true);
+    expect(immersiveChunkRequests.length).toBeGreaterThanOrEqual(2);
+    expect(videoRequests).toHaveLength(2);
 
     await page.getByText('Enter', { exact: true }).click();
     const viewport = page.viewportSize();

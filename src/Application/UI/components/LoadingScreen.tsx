@@ -178,9 +178,9 @@ const LoadingScreen: React.FC = () => {
             )}
             <div
                 style={Object.assign({}, styles.popupContainer, {
-                    opacity: startPopupVisible ? 1 : 0,
-                    visibility: startPopupVisible ? 'visible' : 'hidden',
-                    pointerEvents: startPopupVisible ? 'auto' : 'none',
+                    opacity: startPopupVisible && !started ? 1 : 0,
+                    visibility: startPopupVisible && !started ? 'visible' : 'hidden',
+                    pointerEvents: startPopupVisible && !started ? 'auto' : 'none',
                 })}
             >
                 <div style={styles.startPopup}>

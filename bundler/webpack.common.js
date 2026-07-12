@@ -8,6 +8,7 @@ module.exports = {
     output: {
         hashFunction: 'xxhash64',
         filename: 'bundle.[contenthash].js',
+        chunkFilename: '[name].[contenthash].js',
         path: path.resolve(__dirname, '../docs'),
     },
     devtool: 'source-map',

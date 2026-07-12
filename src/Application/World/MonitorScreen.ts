@@ -149,8 +149,8 @@ export default class MonitorScreen extends EventEmitter {
             if (iframe.contentWindow) {
                 window.addEventListener('message', (event) => {
                     if (
-                        event.source !== iframe.contentWindow ||
                         event.origin !== window.location.origin ||
+                        event.data?.source !== 'gavin-portfolio' ||
                         !['mousemove', 'mousedown', 'mouseup', 'keydown', 'keyup'].includes(event.data?.type)
                     ) {
                         return;
@@ -256,8 +256,8 @@ export default class MonitorScreen extends EventEmitter {
     createTextureLayers() {
         const textures = this.resources.items.texture;
 
-        this.getVideoTextures('video-1');
-        this.getVideoTextures('video-2');
+        this.videoTextures['video-1'] = this.createVideoTexture('video-1');
+        this.videoTextures['video-2'] = this.createVideoTexture('video-2');
 
         // Scale factor to multiply depth offset by
         const scaleFactor = 4;
@@ -310,17 +310,13 @@ export default class MonitorScreen extends EventEmitter {
         return maxOffset;
     }
 
-    getVideoTextures(videoId: string) {
-        const video = document.getElementById(videoId);
-        if (!video) {
-            setTimeout(() => {
-                this.getVideoTextures(videoId);
-            }, 100);
-        } else {
-            this.videoTextures[videoId] = new THREE.VideoTexture(
-                video as HTMLVideoElement
-            );
-        }
+    createVideoTexture(videoId: string) {
+        const video = document.getElementById(videoId) as HTMLVideoElement;
+        video.src = video.dataset.src!;
+        video.load();
+        video.play().catch(() => undefined);
+
+        return new THREE.VideoTexture(video);
     }
 
     /**
