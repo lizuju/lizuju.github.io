@@ -51,6 +51,15 @@ test('renders the complete bilingual portfolio without school name or overflow',
     await expect(page.locator('body')).not.toContainText(/广州南方|南方学院|Nanfang College/);
     await expect(page.locator('.brand')).toHaveAttribute('href', 'https://github.com/lizuju');
     await expect(page.locator('.brand img')).toHaveAttribute('src', 'assets/avatar.png');
+    expect(await page.evaluate(() => ({
+        languages: window.PORTFOLIO_DATA.SUPPORTED_LANGS,
+        chineseProjects: window.PORTFOLIO_DATA.CONTENT['zh-CN'].projects.length,
+        englishProjects: window.PORTFOLIO_DATA.CONTENT.en.projects.length,
+    }))).toEqual({
+        languages: ['zh-CN', 'en'],
+        chineseProjects: 5,
+        englishProjects: 5,
+    });
 
     await expect.poll(async () => page.locator('.brand img').evaluate((image) => image.complete && image.naturalWidth > 0)).toBe(true);
     const imageSources = await page.locator('img').evaluateAll((images) => [...new Set(images.map((image) => image.getAttribute('src')))]);

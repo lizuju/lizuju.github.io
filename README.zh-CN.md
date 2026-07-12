@@ -24,7 +24,9 @@
 ```text
 src/                       Three.js 外壳和桌面端 UI 源码
 static/portfolio/          响应式双语作品集源码
-static/portfolio/js/       作品集与五子棋浏览器逻辑
+static/portfolio/js/content.js  中英文简历与作品集数据
+static/portfolio/js/main.js     作品集渲染和桌面交互
+static/portfolio/js/gomoku-game.js  五子棋应用逻辑
 static/                    3D 模型、纹理、音频和公开文件
 bundler/                   Webpack 开发及生产配置
 docs/                      构建生成的 GitHub Pages 文件
@@ -56,6 +58,7 @@ npm run build
 npm run test:smoke
 npm run verify:docs
 node --check static/portfolio/js/main.js
+node --check static/portfolio/js/content.js
 node --check static/portfolio/js/gomoku-game.js
 ```
 

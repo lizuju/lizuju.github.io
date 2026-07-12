@@ -24,7 +24,9 @@ Desktop visitors enter an interactive Three.js workspace, move toward a CRT comp
 ```text
 src/                       Three.js shell and desktop UI source
 static/portfolio/          Responsive bilingual portfolio source
-static/portfolio/js/       Portfolio and Gomoku browser logic
+static/portfolio/js/content.js  Bilingual resume and portfolio data
+static/portfolio/js/main.js     Portfolio rendering and desktop interactions
+static/portfolio/js/gomoku-game.js  Gomoku application behavior
 static/                    3D models, textures, audio, and public files
 bundler/                   Webpack development and production configuration
 docs/                      Generated GitHub Pages output
@@ -56,6 +58,7 @@ npm run build
 npm run test:smoke
 npm run verify:docs
 node --check static/portfolio/js/main.js
+node --check static/portfolio/js/content.js
 node --check static/portfolio/js/gomoku-game.js
 ```
 
