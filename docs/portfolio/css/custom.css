@@ -801,10 +801,6 @@ summary:focus-visible {
     cursor: default;
 }
 
-.gomoku-board.is-thinking {
-    cursor: wait;
-}
-
 .gomoku-legend {
     display: flex;
     align-items: center;

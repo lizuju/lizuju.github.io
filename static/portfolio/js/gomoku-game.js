@@ -18,7 +18,7 @@
             howToPlay: '玩法说明',
             about: '关于五子棋',
             moves: '步数',
-            turn: '回合',
+            score: '比分',
             you: '你',
             computer: '电脑',
             ok: '确定',
@@ -55,7 +55,7 @@
             howToPlay: 'How to Play',
             about: 'About Gomoku',
             moves: 'Moves',
-            turn: 'Turn',
+            score: 'Score',
             you: 'You',
             computer: 'PC',
             ok: 'OK',
@@ -94,7 +94,7 @@
         const boardFrame = document.querySelector('[data-gomoku-board-frame]');
         const status = document.querySelector('[data-gomoku-status]');
         const movesOutput = document.querySelector('[data-gomoku-moves]');
-        const turnOutput = document.querySelector('[data-gomoku-turn]');
+        const scoreOutput = document.querySelector('[data-gomoku-score]');
         const faceButton = document.querySelector('.gomoku-face');
         const dialog = document.querySelector('[data-gomoku-dialog]');
         const dialogTitle = document.querySelector('[data-gomoku-dialog-title]');
@@ -104,7 +104,7 @@
         const Engine = window.GomokuEngine?.GomokuSolution;
 
         if (!desktop || !gameWindow || !gameTask || !titlebar
-            || !resizeHandle || !canvas || !boardFrame || !status || !movesOutput || !turnOutput
+            || !resizeHandle || !canvas || !boardFrame || !status || !movesOutput || !scoreOutput
             || !faceButton || !dialog || !dialogTitle || !dialogCopy || !launcher || !launchLog || !Engine) return;
 
         const context = canvas.getContext('2d');
@@ -120,6 +120,9 @@
         let currentPlayer = HUMAN;
         let winner = null;
         let winningLine = [];
+        let humanScore = 0;
+        let computerScore = 0;
+        let roundScored = false;
         let hoverPosition = null;
         let engine;
         let aiTimer;
@@ -164,12 +167,17 @@
             return [];
         }
 
-        function updateGameResult(row, col, player) {
+        function updateGameResult(row, col, player, countScore = true) {
             winningLine = findWinningLine(row, col, player);
             if (winningLine.length >= 5) {
                 winner = player;
                 phase = player === HUMAN ? 'player-won' : 'computer-won';
                 currentPlayer = null;
+                if (countScore && !roundScored) {
+                    if (player === HUMAN) humanScore += 1;
+                    else computerScore += 1;
+                    roundScored = true;
+                }
                 return true;
             }
             if (history.length === BOARD_SIZE * BOARD_SIZE) {
@@ -191,7 +199,7 @@
         function updateInterface() {
             status.textContent = getStatusText();
             movesOutput.textContent = String(history.length).padStart(3, '0');
-            turnOutput.textContent = currentPlayer === COMPUTER ? '○' : '●';
+            scoreOutput.textContent = `${humanScore}:${computerScore}`;
             faceButton.classList.toggle('is-thinking', phase === 'thinking');
             faceButton.querySelector('span').textContent = phase === 'computer-won' ? '☹' : phase === 'thinking' ? '◉' : '☺';
             canvas.classList.toggle('is-locked', phase !== 'playing');
@@ -380,6 +388,7 @@
             currentPlayer = HUMAN;
             winner = null;
             winningLine = [];
+            roundScored = false;
             hoverPosition = null;
             createEngine();
             closeMenus();
@@ -389,6 +398,11 @@
         function undoMove() {
             if (history.length === 0 || phase === 'thinking') return;
             clearAiTimer();
+            if (roundScored) {
+                if (winner === HUMAN) humanScore -= 1;
+                else computerScore -= 1;
+                roundScored = false;
+            }
             const removeCount = history.at(-1).player === COMPUTER ? Math.min(2, history.length) : 1;
             history.splice(-removeCount, removeCount);
             board = createBoard();
@@ -417,8 +431,9 @@
             currentPlayer = nextPlayer;
             winner = null;
             winningLine = [];
+            roundScored = false;
             const lastMove = history.at(-1);
-            if (lastMove) updateGameResult(lastMove.row, lastMove.col, lastMove.player);
+            if (lastMove) updateGameResult(lastMove.row, lastMove.col, lastMove.player, false);
             createEngine();
             render();
         }
@@ -530,6 +545,10 @@
         function closeGame() {
             clearAiTimer();
             clearLaunchSequence();
+            humanScore = 0;
+            computerScore = 0;
+            roundScored = false;
+            updateInterface();
             gameWindow.classList.remove('is-minimized');
             gameWindow.classList.remove('is-active');
             gameWindow.classList.add('is-closed');
@@ -776,6 +795,7 @@
             launching: gameWindow.classList.contains('is-launching'),
             coordinateSystem: 'row 0 is top, column 0 is left; both increase toward bottom-right',
             boardSize: BOARD_SIZE,
+            score: { human: humanScore, computer: computerScore },
             phase,
             currentPlayer: currentPlayer === HUMAN ? 'human-black' : currentPlayer === COMPUTER ? 'computer-white' : null,
             winner: winner === HUMAN ? 'human-black' : winner === COMPUTER ? 'computer-white' : null,

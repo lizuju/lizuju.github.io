@@ -270,7 +270,7 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
             cursor: window.getComputedStyle(element).cursor
         };
     });
-    expect(thinkingState).toEqual({ phase: 'thinking', locked: true, thinking: true, cursor: 'wait' });
+    expect(thinkingState).toEqual({ phase: 'thinking', locked: true, thinking: true, cursor: 'default' });
     await page.evaluate(() => window.advanceTime(1000));
 
     let gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
@@ -305,6 +305,9 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     await page.locator('[data-start-toggle]').click();
     await page.locator('[data-start-lang]').click();
     await expect(page.locator('[data-gomoku-drag]')).toContainText('五子棋 - GavinOS 游戏');
+    const scoreOutput = page.locator('[data-gomoku-score]');
+    const movesOutput = page.locator('[data-gomoku-moves]');
+    await expect(scoreOutput).toHaveText('0:0');
 
     await page.evaluate(() => window.GomokuGame.loadPosition([
         { row: 7, col: 3, player: 0 },
@@ -324,14 +327,34 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     expect(gameState.phase).toBe('player-won');
     expect(gameState.winner).toBe('human-black');
     expect(gameState.winningLine).toHaveLength(5);
+    expect(gameState.score).toEqual({ human: 1, computer: 0 });
     await expect(page.locator('[data-gomoku-status]')).toContainText('你赢了');
+    await expect(movesOutput).toHaveText('008');
+    await expect(scoreOutput).toHaveText('1:0');
     await expect(canvas).toHaveClass(/is-locked/);
     await expect(canvas).not.toHaveClass(/is-thinking/);
     expect(await canvas.evaluate((element) => window.getComputedStyle(element).cursor)).toBe('default');
 
+    await page.locator('[data-gomoku-menu="game"]').click();
+    await page.locator('[data-gomoku-undo]').click();
+    gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(gameState.score).toEqual({ human: 0, computer: 0 });
+    await expect(scoreOutput).toHaveText('0:0');
+    await page.mouse.click(
+        winningBoardBox.x + winningBoardBox.width / 2,
+        winningBoardBox.y + winningBoardBox.height / 2
+    );
+    gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(gameState.score).toEqual({ human: 1, computer: 0 });
+    await expect(scoreOutput).toHaveText('1:0');
+
     await page.locator('.gomoku-face').click();
     gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(gameState.phase).toBe('playing');
     expect(gameState.moves).toHaveLength(0);
+    expect(gameState.score).toEqual({ human: 1, computer: 0 });
+    await expect(movesOutput).toHaveText('000');
+    await expect(scoreOutput).toHaveText('1:0');
     await expect(canvas).not.toHaveClass(/is-locked|is-thinking/);
     expect(await canvas.evaluate((element) => window.getComputedStyle(element).cursor)).toBe('crosshair');
 
@@ -360,6 +383,9 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
 
     await page.locator('[data-gomoku-drag] [data-gomoku-window-action="close"]').click();
     await expect(gameWindow).toHaveClass(/is-closed/);
+    gameState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(gameState.score).toEqual({ human: 0, computer: 0 });
+    await expect(scoreOutput).toHaveText('0:0');
     await expect(gameTask).toBeHidden();
     await expect(portfolioWindow).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
