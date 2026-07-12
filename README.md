@@ -35,12 +35,14 @@ tests/smoke.spec.js        Browser smoke tests
 
 ## Local Development
 
+Node.js 22.15.0 or later is required. With `nvm`, run `nvm use` to select the version declared in `.nvmrc`.
+
 ```bash
 npm install
 npm run dev
 ```
 
-The development server opens the site at `http://localhost:8080/` by default.
+The development server opens the site at `http://127.0.0.1:8080/` by default.
 
 To build and preview the GitHub Pages output:
 
@@ -49,7 +51,7 @@ npm run build
 npm run preview
 ```
 
-Then open `http://localhost:3090/`. The direct portfolio is also available at `http://localhost:3090/portfolio/`.
+Then open `http://127.0.0.1:3090/`. The direct portfolio is also available at `http://127.0.0.1:3090/portfolio/`.
 
 ## Validation
 

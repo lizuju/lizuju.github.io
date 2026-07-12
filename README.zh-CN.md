@@ -35,12 +35,14 @@ tests/smoke.spec.js        浏览器 smoke test
 
 ## 本地开发
 
+需要 Node.js 22.15.0 或更高版本。使用 `nvm` 时，执行 `nvm use` 即可切换到 `.nvmrc` 声明的版本。
+
 ```bash
 npm install
 npm run dev
 ```
 
-开发服务器默认使用 `http://localhost:8080/`。
+开发服务器默认使用 `http://127.0.0.1:8080/`。
 
 构建并预览 GitHub Pages 版本：
 
@@ -49,7 +51,7 @@ npm run build
 npm run preview
 ```
 
-然后访问 `http://localhost:3090/`。直接查看作品集可访问 `http://localhost:3090/portfolio/`。
+然后访问 `http://127.0.0.1:3090/`。直接查看作品集可访问 `http://127.0.0.1:3090/portfolio/`。
 
 ## 验证
 
