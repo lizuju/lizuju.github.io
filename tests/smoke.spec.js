@@ -319,6 +319,47 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
         > Number(window.getComputedStyle(document.querySelector('[data-app-window]')).zIndex)
     ))).toBe(true);
 
+    await canvas.focus();
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowDown');
+    let keyboardState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(keyboardState.keyboardCursor).toEqual({ row: 8, col: 8 });
+    await expect(canvas).toHaveAttribute('aria-label', /第 9 行，第 9 列，空位/);
+    await page.keyboard.press('Enter');
+    keyboardState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(keyboardState.phase).toBe('thinking');
+    expect(keyboardState.moves[0]).toEqual({ row: 8, col: 8, player: 'human-black' });
+    await page.evaluate(() => window.advanceTime(1000));
+    await page.keyboard.press('Control+z');
+    keyboardState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(keyboardState.moves).toHaveLength(0);
+
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('Space');
+    keyboardState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(keyboardState.phase).toBe('thinking');
+    expect(keyboardState.moves[0]).toEqual({ row: 8, col: 7, player: 'human-black' });
+    await page.evaluate(() => window.advanceTime(1000));
+    await page.keyboard.press('Control+z');
+    keyboardState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(keyboardState.moves).toHaveLength(0);
+
+    for (let index = 0; index < 16; index += 1) {
+        await page.keyboard.press('ArrowUp');
+        await page.keyboard.press('ArrowLeft');
+    }
+    keyboardState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(keyboardState.keyboardCursor).toEqual({ row: 0, col: 0 });
+    for (let index = 0; index < 16; index += 1) {
+        await page.keyboard.press('ArrowDown');
+        await page.keyboard.press('ArrowRight');
+    }
+    keyboardState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(keyboardState.keyboardCursor).toEqual({ row: 14, col: 14 });
+    await page.keyboard.press('F2');
+    keyboardState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
+    expect(keyboardState.keyboardCursor).toEqual({ row: 7, col: 7 });
+
     const thinkingState = await page.evaluate(() => {
         window.GomokuGame.playMove(7, 7);
         const element = document.querySelector('[data-gomoku-board]');

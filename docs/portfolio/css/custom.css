@@ -81,6 +81,18 @@ summary:focus-visible {
     display: none !important;
 }
 
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 .retro-desktop {
     position: fixed;
     inset: 0;
@@ -795,6 +807,11 @@ summary:focus-visible {
     aspect-ratio: 1;
     cursor: crosshair;
     touch-action: manipulation;
+}
+
+.gomoku-board:focus-visible {
+    outline: 2px dotted #000080;
+    outline-offset: -4px;
 }
 
 .gomoku-board.is-locked {

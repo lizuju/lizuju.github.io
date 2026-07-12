@@ -24,6 +24,10 @@
             ok: '确定',
             yourTurn: '轮到你落子（黑棋）',
             thinking: '电脑正在思考...',
+            keyboardHelp: '方向键移动光标，Enter 或空格落子。',
+            emptyPoint: '空位',
+            blackStone: '黑棋',
+            whiteStone: '白棋',
             playerWins: '你赢了！五子连珠。',
             computerWins: '电脑获胜，再来一局吧。',
             draw: '棋盘已满，本局平局。',
@@ -61,6 +65,10 @@
             ok: 'OK',
             yourTurn: 'Your turn (black)',
             thinking: 'Computer is thinking...',
+            keyboardHelp: 'Use the arrow keys to move, then press Enter or Space to place a stone.',
+            emptyPoint: 'empty intersection',
+            blackStone: 'black stone',
+            whiteStone: 'white stone',
             playerWins: 'You win! Five in a row.',
             computerWins: 'Computer wins. Try another round.',
             draw: 'The board is full. Draw game.',
@@ -124,6 +132,8 @@
         let computerScore = 0;
         let roundScored = false;
         let hoverPosition = null;
+        let keyboardPosition = { row: 7, col: 7 };
+        let keyboardMode = false;
         let engine;
         let aiTimer;
         let restoreGeometry;
@@ -207,7 +217,16 @@
             document.querySelectorAll('[data-gomoku-undo]').forEach((button) => {
                 button.disabled = history.length === 0 || phase === 'thinking';
             });
-            canvas.setAttribute('aria-label', `${copy().appName}: ${getStatusText()}`);
+            const point = board[keyboardPosition.row][keyboardPosition.col];
+            const pointState = point === EMPTY ? copy().emptyPoint
+                : point === HUMAN ? copy().blackStone : copy().whiteStone;
+            const positionText = language === 'zh-CN'
+                ? `第 ${keyboardPosition.row + 1} 行，第 ${keyboardPosition.col + 1} 列，${pointState}`
+                : `Row ${keyboardPosition.row + 1}, column ${keyboardPosition.col + 1}, ${pointState}`;
+            canvas.setAttribute(
+                'aria-label',
+                `${copy().appName}: ${getStatusText()}. ${positionText}. ${copy().keyboardHelp}`
+            );
         }
 
         function drawBoard() {
@@ -243,8 +262,10 @@
                 context.fill();
             });
 
-            if (hoverPosition && phase === 'playing' && board[hoverPosition.row][hoverPosition.col] === EMPTY) {
-                drawStone(hoverPosition.row, hoverPosition.col, HUMAN, 0.35);
+            const previewPosition = keyboardMode ? keyboardPosition : hoverPosition;
+            if (previewPosition && phase === 'playing'
+                && board[previewPosition.row][previewPosition.col] === EMPTY) {
+                drawStone(previewPosition.row, previewPosition.col, HUMAN, 0.35);
             }
 
             history.forEach((move) => drawStone(move.row, move.col, move.player, 1));
@@ -270,6 +291,23 @@
                 context.moveTo(boardMargin + first.col * gridSize, boardMargin + first.row * gridSize);
                 context.lineTo(boardMargin + last.col * gridSize, boardMargin + last.row * gridSize);
                 context.stroke();
+            }
+
+            if (keyboardMode && phase === 'playing') {
+                const cursorSize = Math.max(10, gridSize * 0.8);
+                const cursorX = boardMargin + keyboardPosition.col * gridSize;
+                const cursorY = boardMargin + keyboardPosition.row * gridSize;
+                context.save();
+                context.strokeStyle = '#000080';
+                context.lineWidth = Math.max(2, gridSize * 0.08);
+                context.setLineDash([Math.max(2, gridSize * 0.12), Math.max(2, gridSize * 0.08)]);
+                context.strokeRect(
+                    cursorX - cursorSize / 2,
+                    cursorY - cursorSize / 2,
+                    cursorSize,
+                    cursorSize
+                );
+                context.restore();
             }
         }
 
@@ -390,6 +428,7 @@
             winningLine = [];
             roundScored = false;
             hoverPosition = null;
+            keyboardPosition = { row: 7, col: 7 };
             createEngine();
             closeMenus();
             render();
@@ -726,6 +765,7 @@
         document.addEventListener('click', closeMenus);
 
         canvas.addEventListener('pointermove', (event) => {
+            keyboardMode = false;
             const position = canvasPosition(event);
             hoverPosition = position && board[position.row][position.col] === EMPTY ? position : null;
             drawBoard();
@@ -735,8 +775,13 @@
             drawBoard();
         });
         canvas.addEventListener('click', (event) => {
+            keyboardMode = false;
             const position = canvasPosition(event);
             if (position) playHumanMove(position.row, position.col);
+        });
+        canvas.addEventListener('blur', () => {
+            keyboardMode = false;
+            drawBoard();
         });
 
         titlebar.addEventListener('pointerdown', (event) => {
@@ -755,6 +800,31 @@
             if (gameWindow.classList.contains('is-minimized')
                 || gameWindow.classList.contains('is-closed')
                 || !gameWindow.classList.contains('is-active')) return;
+            if (document.activeElement === canvas) {
+                const movement = {
+                    ArrowUp: [-1, 0],
+                    ArrowRight: [0, 1],
+                    ArrowDown: [1, 0],
+                    ArrowLeft: [0, -1]
+                }[event.key];
+                if (movement) {
+                    event.preventDefault();
+                    keyboardMode = true;
+                    keyboardPosition = {
+                        row: Math.min(BOARD_SIZE - 1, Math.max(0, keyboardPosition.row + movement[0])),
+                        col: Math.min(BOARD_SIZE - 1, Math.max(0, keyboardPosition.col + movement[1]))
+                    };
+                    render();
+                    return;
+                }
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    keyboardMode = true;
+                    playHumanMove(keyboardPosition.row, keyboardPosition.col);
+                    render();
+                    return;
+                }
+            }
             if (event.key === 'F2') {
                 event.preventDefault();
                 newGame();
@@ -805,7 +875,15 @@
                 player: move.player === HUMAN ? 'human-black' : 'computer-white'
             })),
             winningLine,
-            controls: ['click intersection', 'F2 new game', 'Ctrl+Z undo', 'F maximize']
+            keyboardCursor: keyboardMode ? { ...keyboardPosition } : null,
+            controls: [
+                'click intersection',
+                'arrow keys move keyboard cursor',
+                'Enter or Space places stone',
+                'F2 new game',
+                'Ctrl+Z undo',
+                'F maximize'
+            ]
         });
         window.advanceTime = (milliseconds) => {
             if (phase === 'thinking' && milliseconds >= 0) runComputerMove();

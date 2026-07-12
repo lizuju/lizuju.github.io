@@ -69,8 +69,8 @@
 
     <link rel="icon" id="favicon" type="image/png" href="assets/avatar.png">
     <link rel="preload" as="image" href="assets/portfolio-hero.jpg">
-    <link rel="stylesheet" href="css/custom.css?v=c0a9145ef089">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=c0a9145ef089">
+    <link rel="stylesheet" href="css/custom.css?v=86b2ec2b8681">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=86b2ec2b8681">
 </head>
 
 <body>
@@ -476,13 +476,16 @@
 
                 <div class="gomoku-board-frame" data-gomoku-board-frame>
                     <canvas class="gomoku-board" data-gomoku-board width="480" height="480"
+                        tabindex="0" aria-describedby="gomoku-keyboard-help"
                         aria-label="15 by 15 Gomoku board"></canvas>
+                    <p class="visually-hidden" id="gomoku-keyboard-help"
+                        data-gomoku-i18n="keyboardHelp">方向键移动光标，Enter 或空格落子。</p>
                 </div>
 
             </div>
 
             <div class="gomoku-statusbar">
-                <span data-gomoku-status>轮到你落子</span>
+                <span data-gomoku-status role="status" aria-live="polite">轮到你落子</span>
                 <span class="gomoku-legend">
                     <i class="gomoku-stone gomoku-stone--black" aria-hidden="true"></i>
                     <span data-gomoku-i18n="you">你</span>
@@ -563,10 +566,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=c0a9145ef089"></script>
-    <script src="js/gomoku-game.js?v=c0a9145ef089"></script>
-    <script src="js/content.js?v=c0a9145ef089"></script>
-    <script src="js/main.js?v=c0a9145ef089"></script>
+    <script src="js/gomoku-engine.js?v=86b2ec2b8681"></script>
+    <script src="js/gomoku-game.js?v=86b2ec2b8681"></script>
+    <script src="js/content.js?v=86b2ec2b8681"></script>
+    <script src="js/main.js?v=86b2ec2b8681"></script>
 </body>
 
 </html>
