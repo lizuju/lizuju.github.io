@@ -72,27 +72,6 @@
       border: 0;
     }
 
-    .direct-entry {
-      position: fixed;
-      top: 24px;
-      right: 24px;
-      z-index: 20;
-      padding: 10px 14px;
-      border: 1px solid rgba(255, 255, 255, 0.32);
-      background: rgba(0, 0, 0, 0.72);
-      color: #fff;
-      font: 600 13px/1.2 monospace;
-      text-decoration: none;
-      backdrop-filter: blur(10px);
-    }
-
-    .direct-entry:hover,
-    .direct-entry:focus-visible {
-      background: #fff;
-      color: #000;
-      outline: none;
-    }
-
     body.mobile-mode #mobile-site {
       display: block;
     }
@@ -113,6 +92,8 @@
       pointer-events: none;
     }
   </style>
+
+  <link rel="stylesheet" href="shared/scene-link.css?v=2026071201">
 
   <title>Gavin Lizuju | AI Agent, Robotics &amp; Computer Vision Portfolio</title>
   <meta name="title" content="李祖钜 Gavin | AI Agent、机器人与计算机视觉作品集">
@@ -164,7 +145,7 @@
 </head>
 
 <body>
-  <a class="direct-entry" href="portfolio/">Direct View</a>
+  <a class="scene-link direct-entry" href="portfolio/">直接查看作品集 / Direct view</a>
   <div id="mobile-site">
     <iframe id="mobile-portfolio" src="portfolio/" title="李祖钜 Gavin 作品集"></iframe>
   </div>

@@ -1191,6 +1191,9 @@ function setupDesktopShell() {
         element.addEventListener('focusin', () => focusWindow(element));
     });
     focusWindow(appWindow);
+    if (document.body.classList.contains('direct-portfolio') && window.innerWidth > 900) {
+        toggleMaximize();
+    }
 
     const updateClock = () => {
         if (!clock) return;
@@ -1269,6 +1272,12 @@ function routeLegacySkillLinks() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    const directReturn = document.querySelector('[data-direct-return]');
+    if (directReturn && window.parent === window) {
+        directReturn.hidden = false;
+        document.body.classList.add('direct-portfolio');
+    }
+
     document.querySelectorAll('img[src="' + USER.avatar + '"]').forEach((img) => {
         img.alt = USER.name;
     });

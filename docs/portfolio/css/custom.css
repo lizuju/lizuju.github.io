@@ -1774,6 +1774,21 @@ main {
     background: #d4d4d4;
 }
 
+body.direct-portfolio .app-window:not(.is-maximized) {
+    top: 72px;
+}
+
+@media (min-width: 901px) {
+    body.direct-portfolio .gomoku-window:not(.is-maximized) {
+        height: min(660px, calc(100% - 124px));
+    }
+
+    body.direct-portfolio:has(.app-window.is-maximized) .scene-link {
+        top: 4px;
+        right: 96px;
+    }
+}
+
 .start-mark {
     display: block;
     flex: 0 0 18px;
@@ -1881,6 +1896,10 @@ main {
 }
 
 @media (max-width: 900px) {
+    body.direct-portfolio .app-window:not(.is-maximized) {
+        top: 88px;
+    }
+
     .desktop-shortcuts {
         display: none;
     }

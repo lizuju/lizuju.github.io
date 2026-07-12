@@ -20,6 +20,12 @@ test('renders the complete bilingual portfolio without school name or overflow',
     await expect(page).toHaveTitle(/李祖钜 Gavin/);
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
     await expect(page.locator('.retro-desktop')).toBeVisible();
+    await expect(page.locator('[data-direct-return]')).toBeVisible();
+    await expect(page.locator('[data-direct-return]')).toHaveAttribute('href', '../');
+    await expect(page.locator('[data-direct-return]')).toHaveClass(/scene-link/);
+    await expect(page.locator('[data-direct-return]')).toHaveText('返回沉浸式场景 / Back to immersive scene');
+    await expect(page.locator('.desktop-taskbar [data-direct-return]')).toHaveCount(0);
+    expect((await page.locator('[data-direct-return]').boundingBox()).y).toBeLessThan(100);
     await expect(page.locator('[data-window-drag]')).toContainText('李祖钜 Gavin - 个人主页');
     await expect(page.locator('.desktop-taskbar')).toBeVisible();
     await expect(page.locator('[data-app-window]')).toBeVisible();
@@ -51,12 +57,49 @@ test('renders the complete bilingual portfolio without school name or overflow',
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
+test('returns from the direct portfolio to the immersive shell', async ({ page, isMobile }) => {
+    await page.goto('/portfolio/');
+    await page.locator('[data-direct-return]').click();
+    await expect(page).toHaveURL(/\/$/);
+    if (isMobile) {
+        await expect(page.locator('#mobile-portfolio')).toBeVisible();
+    } else {
+        await expect(page.locator('.direct-entry')).toBeVisible();
+    }
+    await page.goto('/portfolio/');
+});
+
+test('opens the direct desktop portfolio maximized and allows restoring it', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'desktop maximize behavior is disabled on the mobile layout');
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await page.locator('.direct-entry').click();
+    await expect(page).toHaveURL(/\/portfolio\/$/);
+
+    const appWindow = page.locator('[data-app-window]');
+    const maximizeButton = page.locator('[data-window-action="maximize"]');
+    await expect(appWindow).toHaveClass(/is-maximized/);
+    await expect(maximizeButton).toHaveAttribute('aria-pressed', 'true');
+
+    await maximizeButton.click();
+    await expect(appWindow).not.toHaveClass(/is-maximized/);
+    await expect(maximizeButton).toHaveAttribute('aria-pressed', 'false');
+    const restoredWindow = await appWindow.boundingBox();
+    expect(restoredWindow.x).toBeGreaterThan(0);
+    expect(restoredWindow.y).toBeGreaterThan(0);
+    expect(restoredWindow.width).toBeLessThan(page.viewportSize().width);
+});
+
 test('supports language, navigation, and expandable details', async ({ page, isMobile }) => {
     if (!isMobile) await page.setViewportSize({ width: 983, height: 754 });
     await page.goto('/portfolio/');
 
     const appWindow = page.locator('[data-app-window]');
     const languageButton = page.locator('[data-lang-toggle]');
+    if (!isMobile) {
+        await expect(appWindow).toHaveClass(/is-maximized/);
+        await page.locator('[data-window-action="maximize"]').click();
+        await expect(appWindow).not.toHaveClass(/is-maximized/);
+    }
     await expect(languageButton).toBeVisible();
     expect(await page.locator('[data-window-scroll]').evaluate((viewport, button) => {
         const viewportRect = viewport.getBoundingClientRect();
@@ -175,6 +218,9 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     if (isMobile) {
         await page.evaluate(() => window.GomokuGame.open());
     } else {
+        await expect(portfolioWindow).toHaveClass(/is-maximized/);
+        await page.locator('[data-window-action="maximize"]').click();
+        await expect(portfolioWindow).not.toHaveClass(/is-maximized/);
         await page.locator('.desktop-shortcut[data-open-gomoku]').click();
     }
 
@@ -447,15 +493,19 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
         await expect(page.locator('#mobile-portfolio')).toBeVisible();
         await expect(page.locator('canvas')).toHaveCount(0);
         await expect(page.frameLocator('#mobile-portfolio').locator('h1')).toContainText('智能系统');
+        await expect(page.frameLocator('#mobile-portfolio').locator('[data-direct-return]')).toBeHidden();
         return;
     }
 
     await expect(page.locator('.direct-entry')).toBeVisible();
     await expect(page.locator('.direct-entry')).toHaveAttribute('href', 'portfolio/');
-    await expect(page.locator('.direct-entry')).toHaveText('Direct View');
+    await expect(page.locator('.direct-entry')).toHaveClass(/scene-link/);
+    await expect(page.locator('.direct-entry')).toHaveText('直接查看作品集 / Direct view');
     await expect(page.locator('canvas').first()).toBeVisible({ timeout: 45000 });
     await expect(page.locator('#computer-screen')).toHaveAttribute('src', 'portfolio/', { timeout: 45000 });
     await expect(page.frameLocator('#computer-screen').locator('h1')).toContainText('智能系统', { timeout: 45000 });
+    await expect(page.frameLocator('#computer-screen').locator('[data-app-window]')).not.toHaveClass(/is-maximized/);
+    await expect(page.frameLocator('#computer-screen').locator('[data-direct-return]')).toBeHidden();
     expect(await page.locator('canvas').first().evaluate((canvas) => canvas.width > 0 && canvas.height > 0)).toBe(true);
 
     await page.getByText('Enter', { exact: true }).click();
