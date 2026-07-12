@@ -17,6 +17,7 @@ import Stats from 'stats.js';
 import Loading from './Utils/Loading';
 
 import UI from './UI';
+import UIEventBus from './UI/EventBus';
 
 let instance: Application | null = null;
 
@@ -35,6 +36,7 @@ export default class Application {
     loading: Loading;
     ui: UI;
     stats: Stats | undefined;
+    eventController: AbortController;
 
     constructor() {
         // Singleton
@@ -43,6 +45,7 @@ export default class Application {
         }
 
         instance = this;
+        this.eventController = new AbortController();
 
         // Global access
         //@ts-ignore
@@ -100,27 +103,38 @@ export default class Application {
     destroy() {
         this.sizes.off('resize');
         this.time.off('tick');
+        this.resources.off('ready');
+        this.eventController.abort();
+        this.world.destroy();
+        this.camera.destroy();
+        this.ui.destroy();
+        this.time.destroy();
+        UIEventBus.clear();
 
-        // Traverse the whole scene
-        this.scene.traverse((child) => {
-            // Test if it's a mesh
-            if (child instanceof THREE.Mesh) {
-                child.geometry.dispose();
-
-                // Loop through the material properties
-                for (const key in child.material) {
-                    const value = child.material[key];
-
-                    // Test if there is a dispose function
-                    if (value && typeof value.dispose === 'function') {
-                        value.dispose();
+        for (const scene of [this.scene, this.overlayScene, this.cssScene]) {
+            scene.traverse((child) => {
+                if (child instanceof THREE.Mesh) {
+                    child.geometry.dispose();
+                    const materials = Array.isArray(child.material)
+                        ? child.material
+                        : [child.material];
+                    for (const material of materials) {
+                        for (const key in material) {
+                            const value = material[key];
+                            if (value && typeof value.dispose === 'function') {
+                                value.dispose();
+                            }
+                        }
+                        material.dispose();
                     }
                 }
-            }
-        });
+            });
+        }
 
-        this.renderer.instance.dispose();
-
+        this.renderer.destroy();
+        this.sizes.destroy();
+        this.stats?.dom.remove();
         if (this.debug.active) this.debug.ui.destroy();
+        instance = null;
     }
 }

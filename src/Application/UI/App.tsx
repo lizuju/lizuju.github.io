@@ -31,4 +31,11 @@ const createVolumeUI = () => {
     ReactDOM.render(<InterfaceUI />, document.getElementById('ui-interactive'));
 };
 
-export { createUI, createVolumeUI };
+const destroyUI = () => {
+    const ui = document.getElementById('ui');
+    const interactiveUI = document.getElementById('ui-interactive');
+    if (ui) ReactDOM.unmountComponentAtNode(ui);
+    if (interactiveUI) ReactDOM.unmountComponentAtNode(interactiveUI);
+};
+
+export { createUI, createVolumeUI, destroyUI };

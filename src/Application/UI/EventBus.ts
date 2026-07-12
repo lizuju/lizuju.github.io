@@ -26,6 +26,14 @@ const UIEventBus = {
         eventListeners?.delete(callback);
         if (eventListeners?.size === 0) listeners.delete(event);
     },
+    clear() {
+        for (const [event, eventListeners] of listeners) {
+            for (const listener of eventListeners.values()) {
+                document.removeEventListener(event, listener);
+            }
+        }
+        listeners.clear();
+    },
 };
 
 export default UIEventBus;

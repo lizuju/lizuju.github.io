@@ -6,6 +6,8 @@ export default class Time extends EventEmitter {
     current: number;
     elapsed: number;
     delta: number;
+    animationFrameId: number;
+    removeLoadingListener: () => void;
 
     constructor() {
         super();
@@ -16,11 +18,11 @@ export default class Time extends EventEmitter {
         this.elapsed = 0;
         this.delta = 16;
 
-        window.requestAnimationFrame(() => {
+        this.animationFrameId = window.requestAnimationFrame(() => {
             this.tick();
         });
 
-        UIEventBus.on('loadingScreenDone', () => {
+        this.removeLoadingListener = UIEventBus.on('loadingScreenDone', () => {
             this.start = Date.now();
         });
     }
@@ -33,8 +35,13 @@ export default class Time extends EventEmitter {
 
         this.trigger('tick');
 
-        window.requestAnimationFrame(() => {
+        this.animationFrameId = window.requestAnimationFrame(() => {
             this.tick();
         });
+    }
+
+    destroy() {
+        window.cancelAnimationFrame(this.animationFrameId);
+        this.removeLoadingListener();
     }
 }

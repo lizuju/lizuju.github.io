@@ -46,4 +46,9 @@ export default class World {
         if (this.coffeeSteam) this.coffeeSteam.update();
         if (this.audioManager) this.audioManager.update();
     }
+
+    destroy() {
+        this.monitorScreen?.destroy();
+        this.audioManager?.destroy();
+    }
 }

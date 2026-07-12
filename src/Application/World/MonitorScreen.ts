@@ -97,7 +97,7 @@ export default class MonitorScreen extends EventEmitter {
 
                 this.prevInComputer = this.inComputer;
             },
-            false
+            { signal: this.application.eventController.signal }
         );
         document.addEventListener(
             'mousedown',
@@ -109,7 +109,7 @@ export default class MonitorScreen extends EventEmitter {
                 this.mouseClickInProgress = true;
                 this.prevInComputer = this.inComputer;
             },
-            false
+            { signal: this.application.eventController.signal }
         );
         document.addEventListener(
             'mouseup',
@@ -126,7 +126,7 @@ export default class MonitorScreen extends EventEmitter {
                 this.mouseClickInProgress = false;
                 this.prevInComputer = this.inComputer;
             },
-            false
+            { signal: this.application.eventController.signal }
         );
     }
 
@@ -185,7 +185,7 @@ export default class MonitorScreen extends EventEmitter {
                     }
 
                     iframe.dispatchEvent(evt);
-                });
+                }, { signal: this.application.eventController.signal });
             }
         };
 
@@ -522,6 +522,15 @@ export default class MonitorScreen extends EventEmitter {
                 0,
                 0.35
             );
+        }
+    }
+
+    destroy() {
+        for (const texture of Object.values(this.videoTextures)) {
+            const video = texture.image as HTMLVideoElement;
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
         }
     }
 }

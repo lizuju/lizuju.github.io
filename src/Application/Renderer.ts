@@ -56,13 +56,16 @@ export default class Renderer {
 
         // Style
         this.instance.domElement.style.position = 'absolute';
-        this.instance.domElement.style.zIndex = '1px';
+        this.instance.domElement.style.zIndex = '1';
         this.instance.domElement.style.top = '0px';
 
         document.querySelector('#webgl')?.appendChild(this.instance.domElement);
 
-        this.overlayInstance = new THREE.WebGLRenderer();
+        this.overlayInstance = new THREE.WebGLRenderer({
+            powerPreference: 'high-performance',
+        });
         this.overlayInstance.setSize(this.sizes.width, this.sizes.height);
+        this.overlayInstance.setPixelRatio(this.sizes.pixelRatio);
         this.overlayInstance.domElement.style.position = 'absolute';
         this.overlayInstance.domElement.style.top = '0px';
         this.overlayInstance.domElement.style.mixBlendMode = 'soft-light';
@@ -104,12 +107,12 @@ export default class Renderer {
 
     resize() {
         this.instance.setSize(this.sizes.width, this.sizes.height);
-        this.instance.setPixelRatio(Math.min(this.sizes.pixelRatio, 2));
+        this.instance.setPixelRatio(this.sizes.pixelRatio);
 
         this.cssInstance.setSize(this.sizes.width, this.sizes.height);
 
         this.overlayInstance.setSize(this.sizes.width, this.sizes.height);
-        this.overlayInstance.setPixelRatio(Math.min(this.sizes.pixelRatio, 2));
+        this.overlayInstance.setPixelRatio(this.sizes.pixelRatio);
     }
 
     update() {
@@ -122,5 +125,13 @@ export default class Renderer {
         this.cssInstance.render(this.cssScene, this.camera.instance);
         this.overlayInstance.render(this.overlayScene, this.camera.instance);
         this.overlay.position.copy(this.camera.instance.position);
+    }
+
+    destroy() {
+        this.instance.dispose();
+        this.overlayInstance.dispose();
+        this.instance.domElement.remove();
+        this.overlayInstance.domElement.remove();
+        this.cssInstance.domElement.remove();
     }
 }

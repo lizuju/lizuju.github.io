@@ -571,6 +571,44 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
     })).toBe(true);
 });
 
+test('keeps immersive WebGL layers pixel-aligned on high-DPI screens', async ({ browser, isMobile }) => {
+    test.skip(isMobile, 'the mobile shell does not create WebGL renderers');
+    test.setTimeout(60000);
+
+    const context = await browser.newContext({
+        baseURL: 'http://127.0.0.1:3090',
+        viewport: { width: 1280, height: 720 },
+        deviceScaleFactor: 2,
+    });
+    const page = await context.newPage();
+    const browserErrors = [];
+    page.on('console', (message) => {
+        if (message.type() === 'error') browserErrors.push(`console: ${message.text()}`);
+    });
+    page.on('pageerror', (error) => browserErrors.push(`pageerror: ${error.message}`));
+
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#webgl canvas')).toBeVisible({ timeout: 45000 });
+    await expect(page.locator('#overlay canvas')).toBeVisible({ timeout: 45000 });
+
+    const readPixelRatios = () => page.evaluate(() => {
+        const ratio = (selector) => {
+            const canvas = document.querySelector(selector);
+            return canvas.width / canvas.getBoundingClientRect().width;
+        };
+        return {
+            webgl: ratio('#webgl canvas'),
+            overlay: ratio('#overlay canvas'),
+        };
+    });
+
+    await expect.poll(async () => readPixelRatios()).toEqual({ webgl: 2, overlay: 2 });
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await expect.poll(async () => readPixelRatios()).toEqual({ webgl: 2, overlay: 2 });
+    expect(browserErrors).toEqual([]);
+    await context.close();
+});
+
 test('recovers from an immersive resource loading failure', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the mobile shell does not load immersive resources');
     test.setTimeout(60000);

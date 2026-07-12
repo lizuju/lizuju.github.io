@@ -26,7 +26,7 @@ export class ComputerAudio extends AudioSource {
                     position: new THREE.Vector3(800, -300, 1200),
                 });
             }
-        });
+        }, { signal: this.manager.application.eventController.signal });
 
         document.addEventListener('mouseup', (event) => {
             // @ts-ignore
@@ -36,14 +36,14 @@ export class ComputerAudio extends AudioSource {
                     position: new THREE.Vector3(800, -300, 1200),
                 });
             }
-        });
+        }, { signal: this.manager.application.eventController.signal });
 
         document.addEventListener('keyup', (event) => {
             // @ts-ignore
             if (event.inComputer) {
                 this.lastKey = '';
             }
-        });
+        }, { signal: this.manager.application.eventController.signal });
 
         document.addEventListener('keydown', (event) => {
             if (event.key.includes('_AUTO_')) {
@@ -64,7 +64,7 @@ export class ComputerAudio extends AudioSource {
                     position: new THREE.Vector3(-300, -400, 1200),
                 });
             }
-        });
+        }, { signal: this.manager.application.eventController.signal });
     }
 }
 

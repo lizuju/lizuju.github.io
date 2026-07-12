@@ -82,7 +82,7 @@ export default class Camera extends EventEmitter {
             ) {
                 this.transition(CameraKey.IDLE);
             }
-        });
+        }, { signal: this.application.eventController.signal });
 
         this.setPostLoadTransition();
         this.setInstance();
@@ -238,5 +238,12 @@ export default class Camera extends EventEmitter {
 
         this.instance.position.copy(this.position);
         this.instance.lookAt(this.focalPoint);
+    }
+
+    destroy() {
+        TWEEN.removeAll();
+        this.orbitControls?.dispose();
+        this.off('enterMonitor');
+        this.off('leftMonitor');
     }
 }

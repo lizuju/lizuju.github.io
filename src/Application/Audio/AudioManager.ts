@@ -188,4 +188,11 @@ export default class Audio {
             this.audioSources[_key].update();
         }
     }
+
+    destroy() {
+        for (const audio of Object.values(this.audioPool)) {
+            if (audio.isPlaying) audio.stop();
+        }
+        this.context?.close();
+    }
 }

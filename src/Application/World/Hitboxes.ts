@@ -52,7 +52,7 @@ export default class Decor {
             //         hb.action();
             //     }
             // }
-        });
+        }, { signal: this.application.eventController.signal });
     }
 
     createComputerHitbox() {
