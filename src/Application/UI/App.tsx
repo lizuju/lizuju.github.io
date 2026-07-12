@@ -10,7 +10,7 @@ const App = () => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        eventBus.on('loadingScreenDone', () => {
+        return eventBus.on('loadingScreenDone', () => {
             setLoading(false);
         });
     }, []);

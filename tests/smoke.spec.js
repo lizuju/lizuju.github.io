@@ -533,3 +533,34 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
         return window.scrollY === 0 && rect.top === 0 && rect.bottom === window.innerHeight;
     })).toBe(true);
 });
+
+test('recovers from an immersive resource loading failure', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the mobile shell does not load immersive resources');
+    test.setTimeout(60000);
+
+    let failResource = true;
+    await page.route('**/models/World/environment.glb', async (route) => {
+        if (failResource) {
+            await route.fulfill({
+                status: 200,
+                contentType: 'model/gltf-binary',
+                body: 'invalid glb',
+            });
+            return;
+        }
+        await route.continue();
+    });
+
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    const errorPanel = page.locator('[data-resource-error]');
+    await expect(errorPanel).toBeVisible({ timeout: 15000 });
+    await expect(errorPanel).toContainText('3D 资源加载失败');
+    await expect(page.locator('[data-resource-direct]')).toHaveAttribute('href', 'portfolio/');
+    await expect(page.locator('[data-resource-retry]')).toBeVisible();
+
+    failResource = false;
+    await page.locator('[data-resource-retry]').click();
+    await expect(page.locator('canvas').first()).toBeVisible({ timeout: 45000 });
+    await expect(page.locator('[data-resource-error]')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Enter' })).toBeVisible({ timeout: 10000 });
+});

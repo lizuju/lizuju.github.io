@@ -119,17 +119,32 @@ br {
     background-color: #000;
     border: 4px solid #fff;
     border-width: 4px 3px 4px 3px;
-}
-
-.bios-start-button p {
     box-sizing: border-box;
     padding: 8px;
+    color: #fff;
+    font: 700 16px monospace;
+    text-decoration: none;
+    text-align: center;
 }
 
-.bios-start-button:hover p {
+.bios-start-button:hover,
+.bios-start-button:focus-visible {
     background-color: #fff;
     cursor: pointer;
     color: #000;
+}
+
+.bios-action-row {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.bios-action-row--error {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    margin-top: 24px;
 }
 
 .loading-screen-header {
