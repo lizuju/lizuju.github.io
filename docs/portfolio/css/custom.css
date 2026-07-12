@@ -924,8 +924,10 @@ summary:focus-visible {
 
 .brand {
     display: grid;
+    order: 0;
+    align-self: start;
     gap: 10px;
-    margin-bottom: 35px;
+    margin-bottom: 14px;
     color: #242424;
     font: 700 25px/1.02 var(--font-heading);
     text-decoration: none;
@@ -947,6 +949,7 @@ summary:focus-visible {
 
 .desktop-nav {
     display: grid;
+    order: 2;
     gap: 15px;
 }
 
@@ -963,13 +966,13 @@ summary:focus-visible {
 }
 
 .header-actions {
-    position: absolute;
-    top: 30px;
-    right: 18px;
+    position: static;
+    order: 1;
     display: flex;
+    align-self: start;
     align-items: center;
     gap: 6px;
-    margin: 0;
+    margin: 0 0 28px;
     padding: 0;
 }
 
