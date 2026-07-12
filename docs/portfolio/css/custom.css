@@ -1779,30 +1779,14 @@ main {
 }
 
 .start-mark {
-    display: grid;
+    display: block;
+    flex: 0 0 18px;
     width: 18px;
     height: 18px;
-    grid-template-columns: repeat(2, 7px);
-    grid-template-rows: repeat(2, 7px);
-    gap: 1px;
-    place-content: center;
-    transform: skewY(-7deg);
-}
-
-.start-mark i:nth-child(1) {
-    background: #e64135;
-}
-
-.start-mark i:nth-child(2) {
-    background: #54a94b;
-}
-
-.start-mark i:nth-child(3) {
-    background: #386db2;
-}
-
-.start-mark i:nth-child(4) {
-    background: #e7c94b;
+    background: center / 18px 18px no-repeat url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAABTUlEQVQ4jaWS4Y7jIBCDPw/QJpu+/4ueqna7Ad+PSVLttied7pCQSWAY21i2+Z8Rf3NIai71ZEkuunzvaPuPM0ozFU/EE0kMFid7yW+LWY6iETKSg8VyNRVDzgiUNJu846ziUa9Ma3DTvGnNc3U17VagAlS0m6gms8JE8GAG3RiYkXV8DHEn0OaA6rZhLW8lpN6a9CsOxeHFLiNYrBGy+pBLWH3osxSfPaNyTerrkp3KA0ZnOECdyTuDvasW3yMNG6HspsQmH+urkwWSQ2Gk9f0r5KYJO/QrXa94+GyvOl4oPpxZKvFpgIjuU2C3M9g0Q+FCsEAX4gFcXoMkrSZswl4Yh2GEPRHWac6OCtuZC8AKhfvoeolvk6NHmlbX/Bczfnwd39EDoG6RJHG7ORRH2n76AzVNLM3PIKkZddQm/HVPeWO8MPvGMuJ5wb+O313iKFEd0WMgAAAAAElFTkSuQmCC");
+    image-rendering: pixelated;
+    pointer-events: none;
+    user-select: none;
 }
 
 .task-window-button {

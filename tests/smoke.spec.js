@@ -390,7 +390,7 @@ test('exposes crawlable SEO metadata', async ({ page, request, isMobile }) => {
     test.skip(isMobile, 'metadata only needs one browser pass');
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-    await expect(page).toHaveTitle('李祖钜 Gavin | AI Agent、机器人与计算机视觉作品集');
+    await expect(page).toHaveTitle('Gavin Lizuju | AI Agent, Robotics & Computer Vision Portfolio');
     await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', /李祖钜 Gavin.*AI Agent/);
     await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', 'index,follow,max-image-preview:large');
     await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', 'https://lizuju.github.io/');
@@ -426,12 +426,13 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
 
     await expect(page.locator('.direct-entry')).toBeVisible();
     await expect(page.locator('.direct-entry')).toHaveAttribute('href', 'portfolio/');
+    await expect(page.locator('.direct-entry')).toHaveText('Direct View');
     await expect(page.locator('canvas').first()).toBeVisible({ timeout: 45000 });
     await expect(page.locator('#computer-screen')).toHaveAttribute('src', 'portfolio/', { timeout: 45000 });
     await expect(page.frameLocator('#computer-screen').locator('h1')).toContainText('智能系统', { timeout: 45000 });
     expect(await page.locator('canvas').first().evaluate((canvas) => canvas.width > 0 && canvas.height > 0)).toBe(true);
 
-    await page.getByText('进入', { exact: true }).click();
+    await page.getByText('Enter', { exact: true }).click();
     const viewport = page.viewportSize();
     await page.mouse.click(viewport.width / 2, viewport.height / 2);
     await page.waitForTimeout(2200);

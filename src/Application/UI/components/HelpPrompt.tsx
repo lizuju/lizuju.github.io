@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import UIEventBus from '../EventBus';
 
-const HELP_TEXT = '点击任意位置进入';
+const HELP_TEXT = 'Click anywhere to enter';
 
 type HelpPromptProps = {};
 

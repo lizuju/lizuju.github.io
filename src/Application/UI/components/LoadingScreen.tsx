@@ -160,15 +160,15 @@ const LoadingScreen: React.FC<LoadingProps> = () => {
                                 <div style={styles.spacer} />
                                 {showLoadingResources ? (
                                     progress == 1 ? (
-                                        <p>资源加载完成</p>
+                                        <p>Resources loaded</p>
                                     ) : (
                                         <p className="loading">
-                                            正在加载资源 ({loaded}/
+                                            Loading resources ({loaded}/
                                             {toLoad === 0 ? '-' : toLoad})
                                         </p>
                                     )
                                 ) : (
-                                    <p className="loading">请稍候</p>
+                                    <p className="loading">Please wait</p>
                                 )}
                             </>
                         )}
@@ -181,9 +181,9 @@ const LoadingScreen: React.FC<LoadingProps> = () => {
                         <div style={styles.spacer} />
                         {showLoadingResources && doneLoading && (
                             <p>
-                                内容加载完成，正在启动{' '}
+                                Content loaded. Launching{' '}
                                 <b style={styles.green}>
-                                    '李祖钜 Gavin 作品集'
+                                    'Gavin Lizuju Portfolio'
                                 </b>{' '}
                                 V1.0
                             </p>
@@ -195,9 +195,7 @@ const LoadingScreen: React.FC<LoadingProps> = () => {
                         style={styles.footer}
                         className="loading-screen-footer"
                     >
-                        <p>
-                            桌面端沉浸式体验 / Desktop immersive experience
-                        </p>
+                        <p>Desktop immersive experience</p>
                         <p>{getCurrentDate()}</p>
                     </div>
                 </div>
@@ -214,9 +212,9 @@ const LoadingScreen: React.FC<LoadingProps> = () => {
                     <p>But do enjoy what I have done so far :)</p>
                     <div style={styles.spacer} />
                     <div style={styles.spacer} /> */}
-                    <p>李祖钜 Gavin · 沉浸式作品集</p>
+                    <p>Gavin Lizuju · Immersive Portfolio</p>
                     <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-                        <p>点击进入{'\xa0'}</p>
+                        <p>Click to enter{'\xa0'}</p>
                         <span className="blinking-cursor" />
                     </div>
                     <div
@@ -228,7 +226,7 @@ const LoadingScreen: React.FC<LoadingProps> = () => {
                         }}
                     >
                         <div className="bios-start-button" onClick={start}>
-                            <p>进入</p>
+                            <p>Enter</p>
                         </div>
                     </div>
                 </div>
