@@ -200,7 +200,9 @@ test('supports language, navigation, and expandable details', async ({ page, isM
         await expect(page.locator('[data-shutdown]')).toContainText('关闭计算机');
         await page.locator('[data-shutdown]').click();
         await expect(page.locator('[data-shutdown-screen]')).toBeVisible();
-        await expect(page.locator('[data-shutdown-log]')).toContainText('作品集必须保持在线', { timeout: 3000 });
+        await expect(page.locator('[data-shutdown-screen]')).toContainText('Gavin,');
+        await expect(page.locator('[data-shutdown-screen]')).toContainText('系统已安全暂停');
+        await expect(page.locator('[data-shutdown-log]')).toContainText('作品集内容保持在线', { timeout: 3000 });
         await expect(page.locator('[data-restart]')).toBeVisible();
         await page.locator('[data-restart]').click();
         await expect(page.locator('[data-shutdown-screen]')).toBeHidden();

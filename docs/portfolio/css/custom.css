@@ -1715,13 +1715,11 @@ main {
     position: absolute;
     inset: 0;
     z-index: 100;
-    display: grid;
-    place-items: start center;
-    padding: 11vh 8vw;
+    padding: clamp(28px, 5vw, 72px);
     overflow: hidden;
-    color: #d7d7d7;
-    background: #020707;
-    font: 15px/1.6 "Courier New", monospace;
+    color: #f4f4f4;
+    background: #000;
+    font: 16px/1.45 "Courier New", monospace;
 }
 
 .shutdown-screen::after {
@@ -1729,47 +1727,110 @@ main {
     inset: 0;
     pointer-events: none;
     content: "";
-    opacity: 0.18;
-    background: repeating-linear-gradient(0deg, transparent 0 3px, #3a7772 3px 4px);
+    opacity: 0.08;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), transparent 38%);
 }
 
-.shutdown-console {
+.shutdown-bios {
     position: relative;
     z-index: 1;
-    width: min(780px, 100%);
+    display: grid;
+    width: min(980px, 100%);
+    min-height: 100%;
+    margin: 0 auto;
+    grid-template-rows: auto 1fr auto;
+}
+
+.shutdown-bios-header,
+.shutdown-bios-footer {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 28px;
+}
+
+.shutdown-wordmark p,
+.shutdown-release p,
+.shutdown-bios-footer p {
+    margin: 0;
+}
+
+.shutdown-wordmark {
+    font-size: 1.15em;
+    font-weight: 700;
+    line-height: 1.12;
+}
+
+.shutdown-release {
+    color: #b7b7b7;
+    font-size: 0.78em;
+    line-height: 1.35;
+    text-align: right;
+}
+
+.shutdown-bios-body {
+    display: flex;
+    justify-content: center;
+    flex-direction: column;
+    min-height: 260px;
+    padding: clamp(36px, 8vh, 110px) 0;
+}
+
+.shutdown-kicker {
+    margin: 0 0 12px;
+    color: #b7b7b7;
+    font-size: 0.82em;
+    letter-spacing: 0.08em;
 }
 
 .shutdown-title {
-    margin: 0 0 22px;
-    color: #f2f2f2;
-    font-weight: 700;
+    margin: 0 0 28px;
+    color: #fff;
+    font: 700 clamp(26px, 4vw, 52px)/1.04 var(--font-system);
 }
 
 .shutdown-log {
-    min-height: 140px;
+    min-height: 120px;
     margin: 0;
-    color: #9fd7be;
-    font: inherit;
+    color: #dedede;
+    font: 0.96em/1.72 "Courier New", monospace;
     white-space: pre-wrap;
 }
 
-.shutdown-restart {
-    display: inline-grid;
-    min-height: 38px;
-    grid-template-columns: 25px auto;
+.shutdown-bios-footer {
     align-items: center;
-    gap: 8px;
-    margin-top: 24px;
-    padding: 5px 12px;
-    border: 2px outset #fff;
-    color: #111;
-    background: #c0c0c0;
-    font: 12px/1 var(--font-system);
-    cursor: default;
+    padding-top: 22px;
+    border-top: 1px solid #5b5b5b;
+    color: #b7b7b7;
+    font-size: 0.82em;
+}
+
+.shutdown-bios-footer p {
+    max-width: 560px;
+}
+
+.shutdown-restart {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 18px;
+    border: 3px solid #f4f4f4;
+    color: #f4f4f4;
+    background: #000;
+    font: 700 0.9rem/1 "Courier New", monospace;
+    cursor: pointer;
+}
+
+.shutdown-restart:hover,
+.shutdown-restart:focus-visible {
+    color: #000;
+    background: #f4f4f4;
+    outline: 0;
 }
 
 .shutdown-restart:active {
-    border-style: inset;
+    transform: translate(2px, 2px);
 }
 
 .start-button,
@@ -2105,8 +2166,28 @@ body.direct-portfolio .app-window:not(.is-maximized) {
     }
 
     .shutdown-screen {
-        padding: 70px 24px;
+        padding: 28px 24px;
         font-size: 13px;
+    }
+
+    .shutdown-bios-header,
+    .shutdown-bios-footer {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .shutdown-release {
+        text-align: left;
+    }
+
+    .shutdown-bios-body {
+        min-height: 220px;
+        padding: 48px 0;
+    }
+
+    .shutdown-title {
+        font-size: clamp(24px, 9vw, 38px);
     }
 
     .gomoku-game-area {

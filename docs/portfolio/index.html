@@ -69,8 +69,8 @@
 
     <link rel="icon" id="favicon" type="image/png" href="assets/avatar.png">
     <link rel="preload" as="image" href="assets/portfolio-hero.jpg">
-    <link rel="stylesheet" href="css/custom.css?v=1ba248a8e47d">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=1ba248a8e47d">
+    <link rel="stylesheet" href="css/custom.css?v=3a44e8dd3432">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=3a44e8dd3432">
 </head>
 
 <body>
@@ -555,21 +555,36 @@
         </footer>
 
         <section class="shutdown-screen" data-shutdown-screen hidden aria-live="polite" aria-label="System shutdown">
-            <div class="shutdown-console">
-                <p class="shutdown-title" data-i18n="shutdownTitle">GavinOS 正在关闭</p>
-                <pre class="shutdown-log" data-shutdown-log></pre>
-                <button class="shutdown-restart" type="button" data-restart hidden>
-                    <span class="start-icon start-icon--home" aria-hidden="true"></span>
-                    <span data-i18n="shutdownRestart">重新启动</span>
-                </button>
+            <div class="shutdown-bios">
+                <header class="shutdown-bios-header">
+                    <div class="shutdown-wordmark">
+                        <p data-i18n="shutdownBrandName">Gavin,</p>
+                        <p data-i18n="shutdownBrandSubline">gavin inc.</p>
+                    </div>
+                    <div class="shutdown-release">
+                        <p data-i18n="shutdownRelease">GavinOS / 电源管理</p>
+                        <p data-i18n="shutdownReleaseVersion">系统会话 1.0</p>
+                    </div>
+                </header>
+                <div class="shutdown-bios-body">
+                    <p class="shutdown-kicker" data-i18n="shutdownKicker">系统状态：安全关机</p>
+                    <h2 class="shutdown-title" data-i18n="shutdownTitle">系统已安全暂停</h2>
+                    <pre class="shutdown-log" data-shutdown-log></pre>
+                </div>
+                <footer class="shutdown-bios-footer">
+                    <p data-i18n="shutdownHint">作品集内容保持在线。你可以立即重新启动，系统也会自动恢复。</p>
+                    <button class="shutdown-restart" type="button" data-restart hidden>
+                        <span data-i18n="shutdownRestart">重新启动</span>
+                    </button>
+                </footer>
             </div>
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=1ba248a8e47d"></script>
-    <script src="js/gomoku-game.js?v=1ba248a8e47d"></script>
-    <script src="js/content.js?v=1ba248a8e47d"></script>
-    <script src="js/main.js?v=1ba248a8e47d"></script>
+    <script src="js/gomoku-engine.js?v=3a44e8dd3432"></script>
+    <script src="js/gomoku-game.js?v=3a44e8dd3432"></script>
+    <script src="js/content.js?v=3a44e8dd3432"></script>
+    <script src="js/main.js?v=3a44e8dd3432"></script>
 </body>
 
 </html>
