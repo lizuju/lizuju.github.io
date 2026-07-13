@@ -626,7 +626,7 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
     })).toBe(true);
 });
 
-test('keeps immersive WebGL layers pixel-aligned on high-DPI screens', async ({ browser, isMobile }) => {
+test('keeps the scene sharp without densifying film grain on high-DPI screens', async ({ browser, isMobile }) => {
     test.skip(isMobile, 'the mobile shell does not create WebGL renderers');
     test.setTimeout(60000);
 
@@ -654,12 +654,15 @@ test('keeps immersive WebGL layers pixel-aligned on high-DPI screens', async ({ 
         return {
             webgl: ratio('#webgl canvas'),
             overlay: ratio('#overlay canvas'),
+            overlayOpacity: Number.parseFloat(
+                getComputedStyle(document.querySelector('#overlay canvas')).opacity
+            ),
         };
     });
 
-    await expect.poll(async () => readPixelRatios()).toEqual({ webgl: 2, overlay: 2 });
+    await expect.poll(async () => readPixelRatios()).toEqual({ webgl: 2, overlay: 1, overlayOpacity: 0.02 });
     await page.setViewportSize({ width: 1366, height: 768 });
-    await expect.poll(async () => readPixelRatios()).toEqual({ webgl: 2, overlay: 2 });
+    await expect.poll(async () => readPixelRatios()).toEqual({ webgl: 2, overlay: 1, overlayOpacity: 0.02 });
     expect(browserErrors).toEqual([]);
     await context.close();
 });

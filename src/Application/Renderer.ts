@@ -64,11 +64,11 @@ export default class Renderer {
             powerPreference: 'high-performance',
         });
         this.overlayInstance.setSize(this.sizes.width, this.sizes.height);
-        this.overlayInstance.setPixelRatio(this.sizes.pixelRatio);
+        this.overlayInstance.setPixelRatio(1);
         this.overlayInstance.domElement.style.position = 'absolute';
         this.overlayInstance.domElement.style.top = '0px';
         this.overlayInstance.domElement.style.mixBlendMode = 'soft-light';
-        this.overlayInstance.domElement.style.opacity = '0.12';
+        this.overlayInstance.domElement.style.opacity = '0.02';
         // this.overlayInstance.domElement.style.mixBlendMode = 'luminosity';
         // this.overlayInstance.domElement.style.opacity = '1';
         this.overlayInstance.domElement.style.pointerEvents = 'none';
@@ -111,7 +111,7 @@ export default class Renderer {
         this.cssInstance.setSize(this.sizes.width, this.sizes.height);
 
         this.overlayInstance.setSize(this.sizes.width, this.sizes.height);
-        this.overlayInstance.setPixelRatio(this.sizes.pixelRatio);
+        this.overlayInstance.setPixelRatio(1);
     }
 
     update() {
