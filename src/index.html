@@ -10,7 +10,27 @@
       margin: 0;
     }
 
+    #css,
+    #webgl,
+    #overlay {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #css {
+      z-index: 0;
+      cursor: pointer;
+    }
+
     #webgl {
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    #overlay {
+      z-index: 2;
       pointer-events: none;
     }
 
@@ -26,6 +46,7 @@
 
     #ui {
       position: absolute;
+      z-index: 4;
       overflow: hidden;
       top: 0;
       left: 0;
@@ -48,12 +69,9 @@
 
     }
 
-    #css {
-      cursor: pointer;
-    }
-
     #ui-interactive {
       position: absolute;
+      z-index: 3;
       top: 0;
       left: 0;
       width: 256px;

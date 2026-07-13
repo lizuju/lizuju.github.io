@@ -548,7 +548,7 @@ test('exposes crawlable SEO metadata', async ({ page, request, isMobile }) => {
 });
 
 test('serves the immersive desktop shell and lightweight mobile shell', async ({ page, isMobile }) => {
-    test.setTimeout(60000);
+    test.setTimeout(90000);
     const immersiveChunkRequests = [];
     const videoRequests = [];
     page.on('request', (request) => {
@@ -590,7 +590,17 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
         '/textures/monitor/video/static-texture-layer.mp4'
     ]);
 
-    await page.getByText('Enter', { exact: true }).click();
+    const layerOrder = await page.evaluate(() =>
+        ['css', 'webgl', 'overlay', 'ui-interactive', 'ui'].map((id) =>
+            Number.parseInt(getComputedStyle(document.getElementById(id)).zIndex, 10)
+        )
+    );
+    expect(layerOrder).toEqual([0, 1, 2, 3, 4]);
+
+    await page.locator('[data-start-scene]').click();
+    const helpPrompt = page.locator('[data-help-prompt]');
+    await expect(helpPrompt).toBeVisible({ timeout: 3000 });
+    await expect(helpPrompt).toContainText('Click anywhere', { timeout: 5000 });
     const viewport = page.viewportSize();
     await page.mouse.click(viewport.width / 2, viewport.height / 2);
     await page.waitForTimeout(2200);
@@ -682,5 +692,5 @@ test('recovers from an immersive resource loading failure', async ({ page, isMob
     await page.locator('[data-resource-retry]').click();
     await expect(page.locator('canvas').first()).toBeVisible({ timeout: 45000 });
     await expect(page.locator('[data-resource-error]')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Enter' })).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('[data-start-scene]')).toBeVisible({ timeout: 10000 });
 });

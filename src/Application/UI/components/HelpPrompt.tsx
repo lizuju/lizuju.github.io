@@ -55,6 +55,7 @@ const HelpPrompt: React.FC<HelpPromptProps> = () => {
 
     return helpText.length > 0 ? (
         <motion.div
+            data-help-prompt
             variants={vars}
             animate={visible ? 'visible' : 'hide'}
             style={styles.container}

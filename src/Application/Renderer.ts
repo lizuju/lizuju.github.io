@@ -56,7 +56,6 @@ export default class Renderer {
 
         // Style
         this.instance.domElement.style.position = 'absolute';
-        this.instance.domElement.style.zIndex = '1';
         this.instance.domElement.style.top = '0px';
 
         document.querySelector('#webgl')?.appendChild(this.instance.domElement);

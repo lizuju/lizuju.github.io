@@ -190,7 +190,12 @@ const LoadingScreen: React.FC = () => {
                         <span className="blinking-cursor" />
                     </div>
                     <div className="bios-action-row">
-                        <button className="bios-start-button" type="button" onClick={start}>
+                        <button
+                            className="bios-start-button"
+                            type="button"
+                            data-start-scene
+                            onClick={start}
+                        >
                             Enter
                         </button>
                     </div>
