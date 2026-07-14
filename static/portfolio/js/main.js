@@ -289,6 +289,10 @@ function setupDesktopShell() {
     const titlebar = document.querySelector('[data-window-drag]');
     const resizeHandle = document.querySelector('[data-window-resize]');
     const taskWindow = document.querySelector('[data-task-window]');
+    const projectFolderWindow = document.querySelector('[data-project-folder-window]');
+    const projectFolderTitlebar = document.querySelector('[data-project-folder-drag]');
+    const projectFolderResizeHandle = document.querySelector('[data-project-folder-resize]');
+    const projectFolderTask = document.querySelector('[data-project-folder-task]');
     const gameWindow = document.querySelector('[data-gomoku-window]');
     const gameTask = document.querySelector('[data-gomoku-task]');
     const startButton = document.querySelector('[data-start-toggle]');
@@ -298,13 +302,16 @@ function setupDesktopShell() {
     const shutdownLog = document.querySelector('[data-shutdown-log]');
     const restartButton = document.querySelector('[data-restart]');
     const clock = document.querySelector('[data-retro-clock]');
-    if (!desktop || !appWindow || !titlebar || !resizeHandle || !taskWindow || !startButton || !startMenu) return;
+    if (!desktop || !appWindow || !titlebar || !resizeHandle || !taskWindow
+        || !projectFolderWindow || !projectFolderTitlebar || !projectFolderResizeHandle || !projectFolderTask
+        || !startButton || !startMenu) return;
 
-    let restoreGeometry;
     let pointerInteraction;
     let shutdownTimers = [];
+    const restoreGeometry = new WeakMap();
     const windowEntries = [
         { element: appWindow, task: taskWindow },
+        { element: projectFolderWindow, task: projectFolderTask },
         ...(gameWindow && gameTask ? [{ element: gameWindow, task: gameTask }] : [])
     ];
 
@@ -355,9 +362,9 @@ function setupDesktopShell() {
         height: desktop.clientHeight - (document.querySelector('.desktop-taskbar')?.offsetHeight || 36)
     });
 
-    const getWindowGeometry = () => {
+    const getWindowGeometry = (element) => {
         const desktopRect = desktop.getBoundingClientRect();
-        const windowRect = appWindow.getBoundingClientRect();
+        const windowRect = element.getBoundingClientRect();
         return {
             left: windowRect.left - desktopRect.left,
             top: windowRect.top - desktopRect.top,
@@ -366,55 +373,59 @@ function setupDesktopShell() {
         };
     };
 
-    const applyWindowGeometry = ({ left, top, width, height }) => {
-        appWindow.style.left = `${Math.round(left)}px`;
-        appWindow.style.top = `${Math.round(top)}px`;
-        appWindow.style.width = `${Math.round(width)}px`;
-        appWindow.style.height = `${Math.round(height)}px`;
-        appWindow.style.right = 'auto';
-        appWindow.style.bottom = 'auto';
+    const applyWindowGeometry = (element, { left, top, width, height }) => {
+        element.style.left = `${Math.round(left)}px`;
+        element.style.top = `${Math.round(top)}px`;
+        element.style.width = `${Math.round(width)}px`;
+        element.style.height = `${Math.round(height)}px`;
+        element.style.right = 'auto';
+        element.style.bottom = 'auto';
     };
 
-    const clearWindowGeometry = () => {
+    const clearWindowGeometry = (element) => {
         ['left', 'top', 'width', 'height', 'right', 'bottom'].forEach((property) => {
-            appWindow.style.removeProperty(property);
+            element.style.removeProperty(property);
         });
     };
 
-    const updateMaximizeButtons = () => {
-        const maximized = appWindow.classList.contains('is-maximized');
-        document.querySelectorAll('[data-window-action="maximize"]').forEach((button) => {
+    const updateMaximizeButtons = (element, selector) => {
+        const maximized = element.classList.contains('is-maximized');
+        document.querySelectorAll(selector).forEach((button) => {
             button.setAttribute('aria-pressed', String(maximized));
         });
     };
 
-    const toggleMaximize = () => {
+    const toggleMaximize = (element, selector) => {
         if (window.innerWidth <= 900) return;
 
-        if (appWindow.classList.contains('is-maximized')) {
-            appWindow.classList.remove('is-maximized');
-            if (restoreGeometry) applyWindowGeometry(restoreGeometry);
+        if (element.classList.contains('is-maximized')) {
+            element.classList.remove('is-maximized');
+            const geometry = restoreGeometry.get(element);
+            if (geometry) applyWindowGeometry(element, geometry);
         } else {
-            restoreGeometry = getWindowGeometry();
-            clearWindowGeometry();
-            appWindow.classList.add('is-maximized');
+            restoreGeometry.set(element, getWindowGeometry(element));
+            clearWindowGeometry(element);
+            element.classList.add('is-maximized');
         }
-        updateMaximizeButtons();
+        updateMaximizeButtons(element, selector);
     };
 
-    const startPointerInteraction = (event, type) => {
-        if (event.button !== 0 || window.innerWidth <= 900 || appWindow.classList.contains('is-maximized')) return;
+    const startPointerInteraction = (event, type, element, minWidth, minHeight) => {
+        if (event.button !== 0 || window.innerWidth <= 900 || element.classList.contains('is-maximized')) return;
 
-        const geometry = getWindowGeometry();
-        applyWindowGeometry(geometry);
+        const geometry = getWindowGeometry(element);
+        applyWindowGeometry(element, geometry);
         pointerInteraction = {
             type,
             pointerId: event.pointerId,
             startX: event.clientX,
             startY: event.clientY,
-            geometry
+            geometry,
+            element,
+            minWidth,
+            minHeight
         };
-        appWindow.classList.add(type === 'drag' ? 'is-dragging' : 'is-resizing');
+        element.classList.add(type === 'drag' ? 'is-dragging' : 'is-resizing');
         event.currentTarget.setPointerCapture?.(event.pointerId);
         event.preventDefault();
     };
@@ -422,13 +433,13 @@ function setupDesktopShell() {
     const updatePointerInteraction = (event) => {
         if (!pointerInteraction || event.pointerId !== pointerInteraction.pointerId) return;
 
-        const { type, startX, startY, geometry } = pointerInteraction;
+        const { type, startX, startY, geometry, element, minWidth, minHeight } = pointerInteraction;
         const deltaX = event.clientX - startX;
         const deltaY = event.clientY - startY;
         const workArea = getWorkArea();
 
         if (type === 'drag') {
-            applyWindowGeometry({
+            applyWindowGeometry(element, {
                 ...geometry,
                 left: Math.min(Math.max(0, geometry.left + deltaX), Math.max(0, workArea.width - geometry.width)),
                 top: Math.min(Math.max(0, geometry.top + deltaY), Math.max(0, workArea.height - geometry.height))
@@ -436,24 +447,26 @@ function setupDesktopShell() {
             return;
         }
 
-        const minWidth = Math.min(520, workArea.width - geometry.left);
-        const minHeight = Math.min(360, workArea.height - geometry.top);
-        applyWindowGeometry({
+        const constrainedWidth = Math.min(minWidth, workArea.width - geometry.left);
+        const constrainedHeight = Math.min(minHeight, workArea.height - geometry.top);
+        applyWindowGeometry(element, {
             ...geometry,
-            width: Math.min(Math.max(minWidth, geometry.width + deltaX), workArea.width - geometry.left),
-            height: Math.min(Math.max(minHeight, geometry.height + deltaY), workArea.height - geometry.top)
+            width: Math.min(Math.max(constrainedWidth, geometry.width + deltaX), workArea.width - geometry.left),
+            height: Math.min(Math.max(constrainedHeight, geometry.height + deltaY), workArea.height - geometry.top)
         });
     };
 
     const finishPointerInteraction = (event) => {
         if (!pointerInteraction || (event?.pointerId !== undefined && event.pointerId !== pointerInteraction.pointerId)) return;
+        const { element } = pointerInteraction;
         pointerInteraction = undefined;
-        appWindow.classList.remove('is-dragging', 'is-resizing');
+        element.classList.remove('is-dragging', 'is-resizing');
     };
 
-    const showWindow = (target) => {
-        appWindow.classList.remove('is-minimized', 'is-closed');
-        focusWindow(appWindow);
+    const showWindow = (element, task, { target, revealTask = false } = {}) => {
+        element.classList.remove('is-minimized', 'is-closed');
+        if (revealTask) task.hidden = false;
+        focusWindow(element);
         closeStartMenu();
 
         if (!target) return;
@@ -462,14 +475,22 @@ function setupDesktopShell() {
         });
     };
 
-    const hideWindow = (state) => {
-        appWindow.classList.remove('is-minimized', 'is-closed');
-        appWindow.classList.add(state);
-        appWindow.classList.remove('is-active');
-        taskWindow.classList.remove('is-active');
-        focusTopWindow(appWindow);
+    const hideWindow = (element, task, state, { hideTask = false } = {}) => {
+        element.classList.remove('is-minimized', 'is-closed');
+        element.classList.add(state);
+        element.classList.remove('is-active');
+        task.classList.remove('is-active');
+        if (hideTask) task.hidden = true;
+        focusTopWindow(element);
         closeStartMenu();
     };
+
+    const showPortfolioWindow = (target) => showWindow(appWindow, taskWindow, { target });
+    const hidePortfolioWindow = (state) => hideWindow(appWindow, taskWindow, state);
+    const showProjectFolder = () => showWindow(projectFolderWindow, projectFolderTask, { revealTask: true });
+    const hideProjectFolder = (state) => hideWindow(projectFolderWindow, projectFolderTask, state, {
+        hideTask: state === 'is-closed'
+    });
 
     const clearShutdownTimers = () => {
         shutdownTimers.forEach((timer) => window.clearTimeout(timer));
@@ -481,7 +502,7 @@ function setupDesktopShell() {
         if (shutdownScreen) shutdownScreen.hidden = true;
         if (shutdownLog) shutdownLog.textContent = '';
         if (restartButton) restartButton.hidden = true;
-        showWindow('#top');
+        showPortfolioWindow('#top');
     };
 
     const startShutdown = () => {
@@ -507,14 +528,18 @@ function setupDesktopShell() {
     document.querySelectorAll('[data-window-action]').forEach((button) => {
         button.addEventListener('click', () => {
             const action = button.getAttribute('data-window-action');
-            if (action === 'minimize') hideWindow('is-minimized');
-            if (action === 'close') hideWindow('is-closed');
-            if (action === 'maximize') toggleMaximize();
+            if (action === 'minimize') hidePortfolioWindow('is-minimized');
+            if (action === 'close') hidePortfolioWindow('is-closed');
+            if (action === 'maximize') toggleMaximize(appWindow, '[data-window-action="maximize"]');
         });
     });
 
     document.querySelectorAll('[data-open-window]').forEach((button) => {
-        button.addEventListener('click', () => showWindow(button.getAttribute('data-target')));
+        button.addEventListener('click', () => showPortfolioWindow(button.getAttribute('data-target')));
+    });
+
+    document.querySelectorAll('[data-open-project-folder]').forEach((button) => {
+        button.addEventListener('click', showProjectFolder);
     });
 
     document.querySelectorAll('a[href^="#"]').forEach((link) => {
@@ -528,14 +553,37 @@ function setupDesktopShell() {
 
     taskWindow.addEventListener('click', () => {
         if (appWindow.classList.contains('is-minimized') || appWindow.classList.contains('is-closed')) {
-            showWindow();
+            showPortfolioWindow();
             return;
         }
         if (appWindow.classList.contains('is-active')) {
-            hideWindow('is-minimized');
+            hidePortfolioWindow('is-minimized');
             return;
         }
         focusWindow(appWindow);
+    });
+
+    projectFolderTask.addEventListener('click', () => {
+        if (projectFolderWindow.classList.contains('is-minimized') || projectFolderWindow.classList.contains('is-closed')) {
+            showProjectFolder();
+            return;
+        }
+        if (projectFolderWindow.classList.contains('is-active')) {
+            hideProjectFolder('is-minimized');
+            return;
+        }
+        focusWindow(projectFolderWindow);
+    });
+
+    document.querySelectorAll('[data-project-folder-action]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const action = button.getAttribute('data-project-folder-action');
+            if (action === 'minimize') hideProjectFolder('is-minimized');
+            if (action === 'close') hideProjectFolder('is-closed');
+            if (action === 'maximize') {
+                toggleMaximize(projectFolderWindow, '[data-project-folder-action="maximize"]');
+            }
+        });
     });
 
     startButton.addEventListener('click', (event) => {
@@ -560,25 +608,43 @@ function setupDesktopShell() {
 
     titlebar.addEventListener('pointerdown', (event) => {
         if (event.target.closest('.window-controls')) return;
-        startPointerInteraction(event, 'drag');
+        startPointerInteraction(event, 'drag', appWindow, 520, 360);
     });
-    resizeHandle.addEventListener('pointerdown', (event) => startPointerInteraction(event, 'resize'));
+    resizeHandle.addEventListener('pointerdown', (event) => {
+        startPointerInteraction(event, 'resize', appWindow, 520, 360);
+    });
+    projectFolderTitlebar.addEventListener('pointerdown', (event) => {
+        if (event.target.closest('.window-controls')) return;
+        startPointerInteraction(event, 'drag', projectFolderWindow, 440, 320);
+    });
+    projectFolderResizeHandle.addEventListener('pointerdown', (event) => {
+        startPointerInteraction(event, 'resize', projectFolderWindow, 440, 320);
+    });
     document.addEventListener('pointermove', updatePointerInteraction);
     document.addEventListener('pointerup', finishPointerInteraction);
     document.addEventListener('pointercancel', finishPointerInteraction);
 
     titlebar.addEventListener('dblclick', (event) => {
         if (event.target.closest('.window-controls')) return;
-        toggleMaximize();
+        toggleMaximize(appWindow, '[data-window-action="maximize"]');
+    });
+    projectFolderTitlebar.addEventListener('dblclick', (event) => {
+        if (event.target.closest('.window-controls')) return;
+        toggleMaximize(projectFolderWindow, '[data-project-folder-action="maximize"]');
     });
 
     window.addEventListener('resize', () => {
         if (window.innerWidth <= 900) {
             finishPointerInteraction();
-            appWindow.classList.remove('is-maximized');
-            restoreGeometry = undefined;
-            clearWindowGeometry();
-            updateMaximizeButtons();
+            [
+                [appWindow, '[data-window-action="maximize"]'],
+                [projectFolderWindow, '[data-project-folder-action="maximize"]']
+            ].forEach(([element, selector]) => {
+                element.classList.remove('is-maximized');
+                restoreGeometry.delete(element);
+                clearWindowGeometry(element);
+                updateMaximizeButtons(element, selector);
+            });
         }
     });
 
@@ -596,7 +662,7 @@ function setupDesktopShell() {
     });
     focusWindow(appWindow);
     if (document.body.classList.contains('direct-portfolio') && window.innerWidth > 900) {
-        toggleMaximize();
+        toggleMaximize(appWindow, '[data-window-action="maximize"]');
     }
 
     const updateClock = () => {

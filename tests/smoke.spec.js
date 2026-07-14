@@ -220,6 +220,65 @@ test('supports language, navigation, and expandable details', async ({ page, isM
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
+test('opens Project Files as a desktop folder window without navigating the portfolio', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'desktop folder interactions are not shown in the mobile layout');
+    await page.setViewportSize({ width: 983, height: 754 });
+    await page.goto('/portfolio/');
+
+    const folderWindow = page.locator('[data-project-folder-window]');
+    const folderTask = page.locator('[data-project-folder-task]');
+    const portfolioWindow = page.locator('[data-app-window]');
+
+    await expect(folderWindow).toHaveClass(/is-closed/);
+    await expect(folderTask).toBeHidden();
+    await page.locator('[data-window-action="minimize"]').click();
+    await expect(portfolioWindow).toHaveClass(/is-minimized/);
+    await page.locator('[data-open-project-folder]').click();
+
+    await expect(page).toHaveURL(/\/portfolio\/$/);
+    await expect(folderWindow).toBeVisible();
+    await expect(folderWindow).toContainText('C:\\GAVIN\\PROJECTS');
+    await expect(folderWindow).toContainText('AI Agent');
+    await expect(folderTask).toBeVisible();
+    await expect(folderTask).toHaveClass(/is-active/);
+    await expect(portfolioWindow).toHaveClass(/is-minimized/);
+
+    const beforeDrag = await folderWindow.boundingBox();
+    const titlebar = await page.locator('[data-project-folder-drag]').boundingBox();
+    await page.mouse.move(titlebar.x + 180, titlebar.y + titlebar.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(titlebar.x + 140, titlebar.y + titlebar.height / 2 + 24, { steps: 4 });
+    await page.mouse.up();
+    const afterDrag = await folderWindow.boundingBox();
+    expect(afterDrag.x).toBeLessThan(beforeDrag.x - 25);
+    expect(afterDrag.y).toBeGreaterThan(beforeDrag.y + 15);
+
+    const beforeResize = await folderWindow.boundingBox();
+    const resizeHandle = await page.locator('[data-project-folder-resize]').boundingBox();
+    await page.mouse.move(resizeHandle.x + resizeHandle.width / 2, resizeHandle.y + resizeHandle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(resizeHandle.x - 60, resizeHandle.y - 45, { steps: 4 });
+    await page.mouse.up();
+    const afterResize = await folderWindow.boundingBox();
+    expect(afterResize.width).toBeLessThan(beforeResize.width - 40);
+    expect(afterResize.height).toBeLessThan(beforeResize.height - 30);
+
+    const maximizeButton = page.locator('[data-project-folder-action="maximize"]');
+    await maximizeButton.click();
+    await expect(folderWindow).toHaveClass(/is-maximized/);
+    await maximizeButton.click();
+    await expect(folderWindow).not.toHaveClass(/is-maximized/);
+
+    await page.locator('[data-project-folder-action="minimize"]').click();
+    await expect(folderWindow).toHaveClass(/is-minimized/);
+    await folderTask.click();
+    await expect(folderWindow).not.toHaveClass(/is-minimized/);
+
+    await page.locator('[data-project-folder-action="close"]').click();
+    await expect(folderWindow).toHaveClass(/is-closed/);
+    await expect(folderTask).toBeHidden();
+});
+
 test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => {
     if (!isMobile) await page.setViewportSize({ width: 983, height: 754 });
     await page.goto('/portfolio/');
@@ -282,7 +341,7 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
         expect(Math.abs(resizedBoard.width - resizedBoard.height)).toBeLessThan(1);
         const gameWindowBox = await gameWindow.boundingBox();
         const gameStatusBox = await page.locator('.gomoku-statusbar').boundingBox();
-        const portfolioStatusBox = await page.locator('.window-statusbar').boundingBox();
+        const portfolioStatusBox = await page.locator('[data-app-window] .window-statusbar').boundingBox();
         const legendBox = await page.locator('.gomoku-legend').boundingBox();
         const computerLabelBox = await page.locator(
             '.gomoku-legend [data-gomoku-i18n="computer"]'

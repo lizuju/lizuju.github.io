@@ -69,8 +69,8 @@
 
     <link rel="icon" id="favicon" type="image/png" href="assets/avatar.png">
     <link rel="preload" as="image" href="assets/portfolio-hero.jpg">
-    <link rel="stylesheet" href="css/custom.css?v=3a44e8dd3432">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=3a44e8dd3432">
+    <link rel="stylesheet" href="css/custom.css?v=d253cc70743b">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=d253cc70743b">
 </head>
 
 <body>
@@ -85,7 +85,7 @@
                 <span class="shortcut-icon shortcut-icon--computer" aria-hidden="true"></span>
                 <span data-i18n="desktopPortfolio">我的主页</span>
             </button>
-            <button class="desktop-shortcut" type="button" data-open-window data-target="#projects">
+            <button class="desktop-shortcut" type="button" data-open-project-folder>
                 <span class="shortcut-icon shortcut-icon--folder" aria-hidden="true"></span>
                 <span data-i18n="desktopProjects">项目文件</span>
             </button>
@@ -413,6 +413,76 @@
                 title="Resize window"></button>
         </section>
 
+        <section class="app-window project-folder-window is-closed" data-project-folder-window
+            aria-label="Project files window">
+            <div class="window-titlebar" data-project-folder-drag>
+                <div class="window-title">
+                    <span class="window-app-icon window-app-icon--folder" aria-hidden="true"></span>
+                    <span data-i18n="folderWindowTitle">项目文件 - 资源管理器</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-project-folder-action="minimize" aria-label="Minimize folder window"
+                        title="Minimize"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-project-folder-action="maximize" aria-label="Maximize folder window"
+                        title="Maximize"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-project-folder-action="close" aria-label="Close folder window"
+                        title="Close"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+
+            <div class="window-menubar" aria-hidden="true">
+                <span data-i18n="menuFile">文件</span>
+                <span data-i18n="menuEdit">编辑</span>
+                <span data-i18n="menuView">查看</span>
+                <span data-i18n="menuHelp">帮助</span>
+            </div>
+
+            <div class="address-toolbar">
+                <span class="address-label" data-i18n="addressLabel">地址</span>
+                <div class="address-field">
+                    <span class="address-page-icon address-page-icon--folder" aria-hidden="true"></span>
+                    <span data-i18n="folderAddress">C:\\GAVIN\\PROJECTS</span>
+                </div>
+            </div>
+
+            <div class="project-folder-scroll">
+                <div class="project-folder-grid">
+                    <div class="project-folder-item">
+                        <span class="folder-item-icon" aria-hidden="true"></span>
+                        <strong data-i18n="folderAgent">AI Agent</strong>
+                    </div>
+                    <div class="project-folder-item">
+                        <span class="folder-item-icon" aria-hidden="true"></span>
+                        <strong data-i18n="folderVision">计算机视觉</strong>
+                    </div>
+                    <div class="project-folder-item">
+                        <span class="folder-item-icon" aria-hidden="true"></span>
+                        <strong data-i18n="folderRobotics">机器人系统</strong>
+                    </div>
+                    <div class="project-folder-item">
+                        <span class="folder-item-icon" aria-hidden="true"></span>
+                        <strong data-i18n="folderResearch">研究文档</strong>
+                    </div>
+                    <div class="project-folder-item">
+                        <span class="folder-item-icon" aria-hidden="true"></span>
+                        <strong data-i18n="folderMedia">图片资料</strong>
+                    </div>
+                    <div class="project-folder-item project-folder-item--readme">
+                        <span class="text-file-icon" aria-hidden="true"></span>
+                        <strong data-i18n="folderReadme">README.TXT</strong>
+                        <small data-i18n="folderReadmeBody">个人项目、研究与视觉素材归档。</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="window-statusbar project-folder-statusbar">
+                <span data-i18n="folderStatus">6 个对象</span>
+                <span data-i18n="statusZone">我的电脑</span>
+            </div>
+            <button class="window-resize-handle" type="button" data-project-folder-resize aria-label="Resize folder window"
+                title="Resize folder window"></button>
+        </section>
+
         <section class="app-window gomoku-window is-closed" data-gomoku-window aria-label="Gomoku game window">
             <div class="window-titlebar" data-gomoku-drag>
                 <div class="window-title">
@@ -547,6 +617,10 @@
                 <span class="window-app-icon window-app-icon--gomoku" aria-hidden="true">五</span>
                 <span data-gomoku-i18n="taskTitle">五子棋</span>
             </button>
+            <button class="task-window-button project-folder-task-button" type="button" data-project-folder-task hidden>
+                <span class="window-app-icon window-app-icon--folder" aria-hidden="true"></span>
+                <span data-i18n="folderTaskTitle">项目文件</span>
+            </button>
             <div class="taskbar-spacer"></div>
             <div class="taskbar-tray">
                 <span class="tray-network" aria-hidden="true"></span>
@@ -581,10 +655,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=3a44e8dd3432"></script>
-    <script src="js/gomoku-game.js?v=3a44e8dd3432"></script>
-    <script src="js/content.js?v=3a44e8dd3432"></script>
-    <script src="js/main.js?v=3a44e8dd3432"></script>
+    <script src="js/gomoku-engine.js?v=d253cc70743b"></script>
+    <script src="js/gomoku-game.js?v=d253cc70743b"></script>
+    <script src="js/content.js?v=d253cc70743b"></script>
+    <script src="js/main.js?v=d253cc70743b"></script>
 </body>
 
 </html>
