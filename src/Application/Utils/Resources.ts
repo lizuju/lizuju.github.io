@@ -3,11 +3,14 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import Application from '../Application';
 import EventEmitter from './EventEmitter';
 import Loading from './Loading';
+import UIEventBus from '../UI/EventBus';
 
 const RESOURCE_TIMEOUT_MS = 30000;
 
 export default class Resources extends EventEmitter {
     sources: Resource[];
+    criticalSources: Resource[];
+    deferredSources: Resource[];
     // Not sure about this one
     items: {
         texture: { [name: string]: LoadedTexture };
@@ -20,7 +23,12 @@ export default class Resources extends EventEmitter {
     completed: number;
     failed: Resource[];
     pending: Map<string, Resource>;
-    timeoutId: number;
+    timeoutId: number | undefined;
+    deferredPending: Map<string, Resource>;
+    deferredFailed: Resource[];
+    deferredTimeoutId: number | undefined;
+    deferredStarted: boolean;
+    removeDeferredLoadingListener: () => void;
     loaders: {
         gltfLoader: GLTFLoader;
         textureLoader: THREE.TextureLoader;
@@ -34,15 +42,31 @@ export default class Resources extends EventEmitter {
         super();
 
         this.sources = sources;
+        this.criticalSources = sources.filter(
+            (source) => source.stage !== 'deferred'
+        );
+        this.deferredSources = sources.filter(
+            (source) => source.stage === 'deferred'
+        );
 
         this.items = { texture: {}, cubeTexture: {}, gltfModel: {}, audio: {} };
-        this.toLoad = this.sources.length;
+        this.toLoad = this.criticalSources.length;
         this.loaded = 0;
         this.completed = 0;
         this.failed = [];
-        this.pending = new Map(this.sources.map((source) => [source.name, source]));
+        this.pending = new Map(
+            this.criticalSources.map((source) => [source.name, source])
+        );
+        this.deferredPending = new Map();
+        this.deferredFailed = [];
+        this.deferredStarted = false;
         this.application = new Application();
         this.loading = this.application.loading;
+
+        this.removeDeferredLoadingListener = UIEventBus.on(
+            'loadingScreenDone',
+            () => this.startDeferredLoading()
+        );
 
         this.setLoaders();
         this.startLoading();
@@ -64,37 +88,49 @@ export default class Resources extends EventEmitter {
             }
         }, RESOURCE_TIMEOUT_MS);
 
-        for (const source of this.sources) {
+        this.loadSources(
+            this.criticalSources,
+            this.sourceLoaded.bind(this),
+            this.sourceFailed.bind(this)
+        );
+    }
+
+    loadSources(
+        sources: Resource[],
+        onLoad: (source: Resource, file: LoadedResource) => void,
+        onError: (source: Resource, error: unknown) => void
+    ) {
+        for (const source of sources) {
             if (source.type === 'gltfModel') {
                 this.loaders.gltfLoader.load(
                     source.path,
-                    (file) => this.sourceLoaded(source, file),
+                    (file) => onLoad(source, file),
                     undefined,
-                    (error) => this.sourceFailed(source, error)
+                    (error) => onError(source, error)
                 );
             } else if (source.type === 'texture') {
                 this.loaders.textureLoader.load(
                     source.path,
                     (file) => {
                         file.encoding = THREE.sRGBEncoding;
-                        this.sourceLoaded(source, file);
+                        onLoad(source, file);
                     },
                     undefined,
-                    (error) => this.sourceFailed(source, error)
+                    (error) => onError(source, error)
                 );
             } else if (source.type === 'cubeTexture') {
                 this.loaders.cubeTextureLoader.load(
                     source.path,
-                    (file) => this.sourceLoaded(source, file),
+                    (file) => onLoad(source, file),
                     undefined,
-                    (error) => this.sourceFailed(source, error)
+                    (error) => onError(source, error)
                 );
             } else if (source.type === 'audio') {
                 this.loaders.audioLoader.load(
                     source.path,
-                    (buffer) => this.sourceLoaded(source, buffer),
+                    (buffer) => onLoad(source, buffer),
                     undefined,
-                    (error) => this.sourceFailed(source, error)
+                    (error) => onError(source, error)
                 );
             }
         }
@@ -134,12 +170,83 @@ export default class Resources extends EventEmitter {
     finishLoading() {
         if (this.completed !== this.toLoad) return;
 
-        window.clearTimeout(this.timeoutId);
+        if (this.timeoutId !== undefined) {
+            window.clearTimeout(this.timeoutId);
+            this.timeoutId = undefined;
+        }
 
         if (this.failed.length === 0) {
             this.trigger('ready');
         } else {
             this.trigger('failed', [this.failed]);
+        }
+    }
+
+    startDeferredLoading() {
+        if (this.deferredStarted) return;
+        this.deferredStarted = true;
+
+        if (this.deferredSources.length === 0) {
+            this.trigger('deferredReady');
+            return;
+        }
+
+        this.deferredPending = new Map(
+            this.deferredSources.map((source) => [source.name, source])
+        );
+        this.deferredTimeoutId = window.setTimeout(() => {
+            for (const source of [...this.deferredPending.values()]) {
+                this.deferredSourceFailed(
+                    source,
+                    new Error('Deferred resource load timed out')
+                );
+            }
+        }, RESOURCE_TIMEOUT_MS);
+
+        this.loadSources(
+            this.deferredSources,
+            this.deferredSourceLoaded.bind(this),
+            this.deferredSourceFailed.bind(this)
+        );
+    }
+
+    deferredSourceLoaded(source: Resource, file: LoadedResource) {
+        if (!this.deferredPending.delete(source.name)) return;
+
+        this.items[source.type][source.name] = file;
+        this.finishDeferredLoading();
+    }
+
+    deferredSourceFailed(source: Resource, error: unknown) {
+        if (!this.deferredPending.delete(source.name)) return;
+
+        this.deferredFailed.push(source);
+        console.warn(`Failed to load deferred resource: ${source.name}`, error);
+        this.finishDeferredLoading();
+    }
+
+    finishDeferredLoading() {
+        if (this.deferredPending.size !== 0) return;
+
+        if (this.deferredTimeoutId !== undefined) {
+            window.clearTimeout(this.deferredTimeoutId);
+            this.deferredTimeoutId = undefined;
+        }
+
+        this.trigger('deferredReady', [this.deferredFailed]);
+    }
+
+    destroy() {
+        this.removeDeferredLoadingListener();
+
+        if (this.timeoutId !== undefined) {
+            window.clearTimeout(this.timeoutId);
+            this.timeoutId = undefined;
+        }
+
+        if (this.deferredTimeoutId !== undefined) {
+            window.clearTimeout(this.deferredTimeoutId);
+            this.deferredTimeoutId = undefined;
         }
     }
 }

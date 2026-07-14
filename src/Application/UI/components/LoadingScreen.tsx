@@ -147,7 +147,7 @@ const LoadingScreen: React.FC = () => {
                         {toLoad === 0 ? (
                             <p className="loading">Please wait</p>
                         ) : progress >= 1 ? (
-                            <p>Resources loaded</p>
+                            <p>Core scene loaded</p>
                         ) : (
                             <p className="loading" data-loading-progress>
                                 Loading resources ({completed}/{toLoad})
@@ -162,7 +162,7 @@ const LoadingScreen: React.FC = () => {
                         <div style={styles.spacer} />
                         {progress >= 1 && (
                             <p>
-                                Content loaded. Launching{' '}
+                                Core scene loaded. Launching{' '}
                                 <b style={styles.green}>'Gavin Lizuju Portfolio'</b>{' '}
                                 V1.0
                             </p>

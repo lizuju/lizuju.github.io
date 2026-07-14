@@ -12,24 +12,28 @@ type TextureResource = {
     name: string;
     type: 'texture';
     path: string;
+    stage?: 'critical' | 'deferred';
 };
 
 type CubeTextureResource = {
     name: string;
     type: 'cubeTexture';
     path: string[];
+    stage?: 'critical' | 'deferred';
 };
 
 type ModelResource = {
     name: string;
     type: 'gltfModel';
     path: string;
+    stage?: 'critical' | 'deferred';
 };
 
 type AudioResource = {
     name: string;
     type: 'audio';
     path: string;
+    stage?: 'critical' | 'deferred';
 };
 
 type EnclosingPlane = {
@@ -57,4 +61,4 @@ type LoadedCubeTexture = THREE.CubeTexture;
 
 type LoadedAudio = AudioBuffer;
 
-type ResourceType = 'texture' | 'cubeTexture' | 'gltfModel';
+type ResourceType = 'texture' | 'cubeTexture' | 'gltfModel' | 'audio';

@@ -10,7 +10,7 @@ module.exports = defineConfig({
     testDir: './tests',
     timeout: 30000,
     retries: process.env.CI ? 1 : 0,
-    workers: process.env.CI ? 1 : undefined,
+    workers: 1,
     reporter: process.env.CI
         ? [['line'], ['html', { open: 'never' }]]
         : 'list',

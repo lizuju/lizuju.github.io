@@ -30,6 +30,10 @@ export default class Audio {
             ambience: new AmbienceAudio(this),
         };
 
+        this.application.resources.on('deferredReady', () => {
+            this.audioSources.ambience.start();
+        });
+
         UIEventBus.on('loadingScreenDone', () => {
             setTimeout(() => {
                 const AudioContext =
@@ -68,6 +72,7 @@ export default class Audio {
 
         // Setup
         const buffer = this.loadedAudio[sourceName];
+        if (!sourceName || !buffer) return '';
         const poolKey = sourceName + '_' + Object.keys(this.audioPool).length;
 
         let audio: THREE.Audio<any> | THREE.PositionalAudio = new THREE.Audio(

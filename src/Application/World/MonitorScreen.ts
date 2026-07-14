@@ -144,50 +144,48 @@ export default class MonitorScreen extends EventEmitter {
         // Create iframe
         const iframe = document.createElement('iframe');
 
-        // Bubble mouse move events to the main application, so we can affect the camera
-        iframe.onload = () => {
-            if (iframe.contentWindow) {
-                window.addEventListener('message', (event) => {
-                    if (
-                        event.origin !== window.location.origin ||
-                        event.data?.source !== 'gavin-portfolio' ||
-                        !['mousemove', 'mousedown', 'mouseup', 'keydown', 'keyup'].includes(event.data?.type)
-                    ) {
-                        return;
-                    }
-                    var evt = new CustomEvent(event.data.type, {
-                        bubbles: true,
-                        cancelable: false,
-                    });
-
-                    // @ts-ignore
-                    evt.inComputer = true;
-                    if (event.data.type === 'mousemove') {
-                        var clRect = iframe.getBoundingClientRect();
-                        const { top, left, width, height } = clRect;
-                        const widthRatio = width / IFRAME_SIZE.w;
-                        const heightRatio = height / IFRAME_SIZE.h;
-
-                        // @ts-ignore
-                        evt.clientX = Math.round(
-                            event.data.clientX * widthRatio + left
-                        );
-                        //@ts-ignore
-                        evt.clientY = Math.round(
-                            event.data.clientY * heightRatio + top
-                        );
-                    } else if (event.data.type === 'keydown') {
-                        // @ts-ignore
-                        evt.key = event.data.key;
-                    } else if (event.data.type === 'keyup') {
-                        // @ts-ignore
-                        evt.key = event.data.key;
-                    }
-
-                    iframe.dispatchEvent(evt);
-                }, { signal: this.application.eventController.signal });
+        // Bubble iframe input to the main application without duplicating the bridge on reload.
+        window.addEventListener('message', (event) => {
+            if (
+                event.origin !== window.location.origin ||
+                event.source !== iframe.contentWindow ||
+                event.data?.source !== 'gavin-portfolio' ||
+                !['mousemove', 'mousedown', 'mouseup', 'keydown', 'keyup'].includes(event.data?.type)
+            ) {
+                return;
             }
-        };
+
+            var evt = new CustomEvent(event.data.type, {
+                bubbles: true,
+                cancelable: false,
+            });
+
+            // @ts-ignore
+            evt.inComputer = true;
+            if (event.data.type === 'mousemove') {
+                var clRect = iframe.getBoundingClientRect();
+                const { top, left, width, height } = clRect;
+                const widthRatio = width / IFRAME_SIZE.w;
+                const heightRatio = height / IFRAME_SIZE.h;
+
+                // @ts-ignore
+                evt.clientX = Math.round(
+                    event.data.clientX * widthRatio + left
+                );
+                //@ts-ignore
+                evt.clientY = Math.round(
+                    event.data.clientY * heightRatio + top
+                );
+            } else if (event.data.type === 'keydown') {
+                // @ts-ignore
+                evt.key = event.data.key;
+            } else if (event.data.type === 'keyup') {
+                // @ts-ignore
+                evt.key = event.data.key;
+            }
+
+            iframe.dispatchEvent(evt);
+        }, { signal: this.application.eventController.signal });
 
         // Keep the portfolio local so the immersive shell is self-contained.
         iframe.src = 'portfolio/';

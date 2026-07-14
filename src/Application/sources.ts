@@ -43,56 +43,67 @@ const sources: Resource[] = [
         name: 'mouseDown',
         type: 'audio',
         path: 'audio/mouse/mouse_down.mp3',
+        stage: 'deferred',
     },
     {
         name: 'mouseUp',
         type: 'audio',
         path: 'audio/mouse/mouse_up.mp3',
+        stage: 'deferred',
     },
     {
         name: 'keyboardKeydown1',
         type: 'audio',
         path: 'audio/keyboard/key_1.mp3',
+        stage: 'deferred',
     },
     {
         name: 'keyboardKeydown2',
         type: 'audio',
         path: 'audio/keyboard/key_2.mp3',
+        stage: 'deferred',
     },
     {
         name: 'keyboardKeydown3',
         type: 'audio',
         path: 'audio/keyboard/key_3.mp3',
+        stage: 'deferred',
     },
     {
         name: 'keyboardKeydown4',
         type: 'audio',
         path: 'audio/keyboard/key_4.mp3',
+        stage: 'deferred',
     },
     {
         name: 'keyboardKeydown5',
         type: 'audio',
         path: 'audio/keyboard/key_5.mp3',
+        stage: 'deferred',
     },
     {
         name: 'keyboardKeydown6',
         type: 'audio',
         path: 'audio/keyboard/key_6.mp3',
+        stage: 'deferred',
     },
     {
         name: 'startup',
         type: 'audio',
         path: 'audio/startup/startup.mp3',
+        stage: 'deferred',
     },
     {
         name: 'office',
         type: 'audio',
         path: 'audio/atmosphere/office.mp3',
+        stage: 'deferred',
     },
     {
         name: 'ccType',
         type: 'audio',
         path: 'audio/cc/type.mp3',
+        stage: 'deferred',
     },
 ];
 

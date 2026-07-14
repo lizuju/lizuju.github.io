@@ -103,7 +103,8 @@ export default class Application {
     destroy() {
         this.sizes.off('resize');
         this.time.off('tick');
-        this.resources.off('ready');
+        this.resources.off('ready deferredReady');
+        this.resources.destroy();
         this.eventController.abort();
         this.world.destroy();
         this.camera.destroy();

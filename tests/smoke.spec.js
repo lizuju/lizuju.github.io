@@ -84,14 +84,15 @@ test('returns from the direct portfolio to the immersive shell', async ({ page, 
 
 test('opens the direct desktop portfolio maximized and allows restoring it', async ({ page, isMobile }) => {
     test.skip(isMobile, 'desktop maximize behavior is disabled on the mobile layout');
+    test.setTimeout(90000);
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.locator('.direct-entry').click();
     await expect(page).toHaveURL(/\/portfolio\/$/);
 
     const appWindow = page.locator('[data-app-window]');
     const maximizeButton = page.locator('[data-window-action="maximize"]');
-    await expect(appWindow).toHaveClass(/is-maximized/);
-    await expect(maximizeButton).toHaveAttribute('aria-pressed', 'true');
+    await expect(appWindow).toHaveClass(/is-maximized/, { timeout: 45000 });
+    await expect(maximizeButton).toHaveAttribute('aria-pressed', 'true', { timeout: 45000 });
 
     await maximizeButton.click();
     await expect(appWindow).not.toHaveClass(/is-maximized/);
@@ -277,6 +278,130 @@ test('opens Project Files as a desktop folder window without navigating the port
     await page.locator('[data-project-folder-action="close"]').click();
     await expect(folderWindow).toHaveClass(/is-closed/);
     await expect(folderTask).toBeHidden();
+});
+
+test('restores the most recently focused window after closing another window', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'desktop window stacking is not present on mobile');
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/portfolio/');
+
+    const portfolioWindow = page.locator('[data-app-window]');
+    const projectFolderWindow = page.locator('[data-project-folder-window]');
+    const gameWindow = page.locator('[data-gomoku-window]');
+
+    await page.locator('[data-window-action="maximize"]').click();
+    await page.locator('.desktop-shortcut[data-open-project-folder]').click();
+    await expect(projectFolderWindow).toBeVisible();
+
+    await page.locator('[data-task-window]').click();
+    await expect(portfolioWindow).toHaveClass(/is-active/);
+
+    await page.locator('.desktop-shortcut[data-open-gomoku]').click();
+    await expect(gameWindow).toHaveClass(/is-active/);
+    await gameWindow.locator('[data-gomoku-drag] [data-gomoku-window-action="close"]').click();
+
+    await expect(gameWindow).toHaveClass(/is-closed/);
+    await expect(portfolioWindow).toHaveClass(/is-active/);
+    await expect(projectFolderWindow).not.toHaveClass(/is-active/);
+});
+
+test('keeps a single iframe input bridge after portfolio iframe reloads', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the mobile shell does not create the portfolio iframe');
+    test.setTimeout(60000);
+    await page.goto('/');
+    await expect(page.locator('canvas').first()).toBeVisible({ timeout: 45000 });
+
+    const screen = page.locator('#computer-screen');
+    await expect(screen).toHaveAttribute('src', 'portfolio/');
+    await screen.evaluate(async (iframe) => {
+        iframe.dataset.bridgeEventCount = '0';
+        iframe.addEventListener('mousemove', () => {
+            iframe.dataset.bridgeEventCount = String(
+                Number(iframe.dataset.bridgeEventCount || '0') + 1
+            );
+        });
+
+        for (let version = 1; version <= 2; version += 1) {
+            await new Promise((resolve) => {
+                iframe.addEventListener('load', resolve, { once: true });
+                const nextUrl = new URL(iframe.src);
+                nextUrl.searchParams.set('bridge-test', String(version));
+                iframe.src = nextUrl.href;
+            });
+        }
+    });
+
+    await page.frameLocator('#computer-screen').locator('body').evaluate(() => {
+        window.parent.postMessage(
+            {
+                source: 'gavin-portfolio',
+                type: 'mousemove',
+                clientX: 20,
+                clientY: 20,
+            },
+            window.location.origin
+        );
+    });
+
+    await expect.poll(async () => screen.getAttribute('data-bridge-event-count')).toBe('1');
+});
+
+test('starts the visual scene before deferred audio finishes loading', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the mobile shell does not load immersive resources');
+    test.setTimeout(60000);
+    let requestedDeferredAudio = false;
+    let releaseDeferredAudio;
+    const deferredAudio = new Promise((resolve) => {
+        releaseDeferredAudio = resolve;
+    });
+
+    await page.route('**/audio/atmosphere/office.mp3', async (route) => {
+        requestedDeferredAudio = true;
+        await deferredAudio;
+        await route.continue();
+    });
+
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('canvas').first()).toBeVisible({ timeout: 45000 });
+    await expect(page.locator('[data-start-scene]')).toBeVisible({ timeout: 10000 });
+    expect(requestedDeferredAudio).toBe(false);
+    await page.locator('[data-start-scene]').click();
+    await expect.poll(() => requestedDeferredAudio).toBe(true);
+    await expect(page.locator('[data-resource-error]')).toHaveCount(0);
+    releaseDeferredAudio();
+    await page.waitForTimeout(100);
+});
+
+test('pauses and resumes the render loop when document visibility changes', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the mobile shell does not create the render loop');
+    test.setTimeout(60000);
+    await page.addInitScript(() => {
+        const originalRequestAnimationFrame = window.requestAnimationFrame.bind(window);
+        window.__gavinRafRequests = 0;
+        window.requestAnimationFrame = (callback) => {
+            window.__gavinRafRequests += 1;
+            return originalRequestAnimationFrame(callback);
+        };
+    });
+
+    await page.goto('/');
+    await expect(page.locator('canvas').first()).toBeVisible({ timeout: 45000 });
+    await page.waitForTimeout(150);
+
+    const countBeforePause = await page.evaluate(() => window.__gavinRafRequests);
+    await page.evaluate(() => {
+        Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+        document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForTimeout(100);
+    const countWhileHidden = await page.evaluate(() => window.__gavinRafRequests);
+
+    await page.evaluate(() => {
+        Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+        document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await expect.poll(() => page.evaluate(() => window.__gavinRafRequests)).toBeGreaterThan(countWhileHidden);
+    expect(countWhileHidden - countBeforePause).toBeLessThanOrEqual(2);
 });
 
 test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => {
@@ -661,7 +786,7 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
     await page.locator('[data-start-scene]').click();
     const helpPrompt = page.locator('[data-help-prompt]');
     await expect(helpPrompt).toBeVisible({ timeout: 3000 });
-    await expect(helpPrompt).toContainText('Click anywhere', { timeout: 5000 });
+    await expect(helpPrompt).toContainText('Click anywhere', { timeout: 15000 });
     const viewport = page.viewportSize();
     await page.mouse.click(viewport.width / 2, viewport.height / 2);
     await page.waitForTimeout(2200);

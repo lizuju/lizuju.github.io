@@ -320,25 +320,32 @@ function setupDesktopShell() {
         && !element.classList.contains('is-closed')
     );
 
+    const getWindowZIndex = (element) => Number.parseInt(window.getComputedStyle(element).zIndex, 10) || 0;
+
     const focusWindow = (element) => {
         const entry = windowEntries.find((candidate) => candidate.element === element);
         if (!entry || !isWindowVisible(element)) return;
 
-        windowEntries.forEach((candidate, index) => {
+        const windowStack = windowEntries
+            .filter((candidate) => isWindowVisible(candidate.element) && candidate !== entry)
+            .sort((first, second) => getWindowZIndex(first.element) - getWindowZIndex(second.element));
+        windowStack.push(entry);
+
+        windowEntries.forEach((candidate) => {
             const active = candidate === entry;
             candidate.element.classList.toggle('is-active', active);
             candidate.task.classList.toggle('is-active', active);
-            candidate.element.style.zIndex = String(active ? 20 : 5 + index);
+        });
+
+        windowStack.forEach((candidate, index) => {
+            candidate.element.style.zIndex = String(10 + index);
         });
     };
 
     const focusTopWindow = (excludedElement) => {
         const nextEntry = windowEntries
             .filter(({ element }) => element !== excludedElement && isWindowVisible(element))
-            .sort((first, second) => (
-                (Number.parseInt(window.getComputedStyle(first.element).zIndex, 10) || 0)
-                - (Number.parseInt(window.getComputedStyle(second.element).zIndex, 10) || 0)
-            ))
+            .sort((first, second) => getWindowZIndex(first.element) - getWindowZIndex(second.element))
             .at(-1);
 
         if (nextEntry) {

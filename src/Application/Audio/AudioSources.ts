@@ -70,23 +70,42 @@ export class ComputerAudio extends AudioSource {
 
 export class AmbienceAudio extends AudioSource {
     poolKey: string;
+    shouldStart: boolean;
+    started: boolean;
 
     constructor(manager: AudioManager) {
         super(manager);
+        this.shouldStart = false;
+        this.started = false;
         UIEventBus.on('loadingScreenDone', () => {
-            this.poolKey = this.manager.playAudio('office', {
-                volume: 1,
-                loop: true,
-                randDetuneScale: 0,
-                filter: {
-                    type: 'lowpass',
-                    frequency: 1000,
-                },
-            });
-            this.manager.playAudio('startup', {
-                volume: 0.4,
-                randDetuneScale: 0,
-            });
+            this.shouldStart = true;
+            this.start();
+        });
+    }
+
+    start() {
+        if (
+            this.started ||
+            !this.shouldStart ||
+            !this.manager.loadedAudio.office ||
+            !this.manager.loadedAudio.startup
+        ) {
+            return;
+        }
+
+        this.started = true;
+        this.poolKey = this.manager.playAudio('office', {
+            volume: 1,
+            loop: true,
+            randDetuneScale: 0,
+            filter: {
+                type: 'lowpass',
+                frequency: 1000,
+            },
+        });
+        this.manager.playAudio('startup', {
+            volume: 0.4,
+            randDetuneScale: 0,
         });
     }
 
