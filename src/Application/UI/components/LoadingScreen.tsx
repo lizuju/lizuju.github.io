@@ -37,6 +37,7 @@ const LoadingScreen: React.FC = () => {
 
     const start = useCallback(() => {
         setStarted(true);
+        document.querySelector('.direct-entry')?.classList.add('is-visible');
         eventBus.dispatch('loadingScreenDone', {});
         const ui = document.getElementById('ui');
         if (ui) ui.style.pointerEvents = 'none';

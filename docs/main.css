@@ -18,6 +18,10 @@
     cursor: pointer;
 }
 
+.direct-entry:not(.is-visible) {
+    display: none;
+}
+
 .scene-link:visited {
     color: #fff;
 }

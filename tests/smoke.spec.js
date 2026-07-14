@@ -77,7 +77,7 @@ test('returns from the direct portfolio to the immersive shell', async ({ page, 
     if (isMobile) {
         await expect(page.locator('#mobile-portfolio')).toBeVisible();
     } else {
-        await expect(page.locator('.direct-entry')).toBeVisible();
+        await expect(page.locator('.direct-entry')).toBeHidden();
     }
     await page.goto('/portfolio/');
 });
@@ -86,6 +86,9 @@ test('opens the direct desktop portfolio maximized and allows restoring it', asy
     test.skip(isMobile, 'desktop maximize behavior is disabled on the mobile layout');
     test.setTimeout(90000);
     await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('.direct-entry')).toBeHidden();
+    await page.locator('[data-start-scene]').click();
+    await expect(page.locator('.direct-entry')).toBeVisible();
     await page.locator('.direct-entry').click();
     await expect(page).toHaveURL(/\/portfolio\/$/);
 
@@ -759,7 +762,7 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
         return;
     }
 
-    await expect(page.locator('.direct-entry')).toBeVisible();
+    await expect(page.locator('.direct-entry')).toBeHidden();
     await expect(page.locator('.direct-entry')).toHaveAttribute('href', 'portfolio/');
     await expect(page.locator('.direct-entry')).toHaveClass(/scene-link/);
     await expect(page.locator('.direct-entry')).toHaveText('直接查看作品集 / Direct view');
@@ -784,6 +787,7 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
     expect(layerOrder).toEqual([0, 1, 2, 3, 4]);
 
     await page.locator('[data-start-scene]').click();
+    await expect(page.locator('.direct-entry')).toBeVisible();
     const helpPrompt = page.locator('[data-help-prompt]');
     await expect(helpPrompt).toBeVisible({ timeout: 3000 });
     await expect(helpPrompt).toContainText('Click anywhere', { timeout: 15000 });
