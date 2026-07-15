@@ -293,6 +293,21 @@ function setupDesktopShell() {
     const projectFolderTitlebar = document.querySelector('[data-project-folder-drag]');
     const projectFolderResizeHandle = document.querySelector('[data-project-folder-resize]');
     const projectFolderTask = document.querySelector('[data-project-folder-task]');
+    const projectFolderTitle = document.querySelector('[data-project-folder-window-title]');
+    const projectFolderAddress = document.querySelector('[data-project-folder-address]');
+    const projectFolderStatus = document.querySelector('[data-project-folder-status]');
+    const projectFolderRoot = document.querySelector('[data-project-folder-root]');
+    const robomasterFolderView = document.querySelector('[data-robomaster-folder-view]');
+    const projectFolderBack = document.querySelector('[data-project-folder-back]');
+    const imagePreviewWindow = document.querySelector('[data-image-preview-window]');
+    const imagePreviewTitle = document.querySelector('[data-image-preview-title]');
+    const imagePreviewImage = document.querySelector('[data-image-preview-image]');
+    const imagePreviewCaption = document.querySelector('[data-image-preview-caption]');
+    const imagePreviewStatus = document.querySelector('[data-image-preview-status]');
+    const imagePreviewTitlebar = document.querySelector('[data-image-preview-drag]');
+    const imagePreviewResizeHandle = document.querySelector('[data-image-preview-resize]');
+    const imagePreviewTask = document.querySelector('[data-image-preview-task]');
+    const imagePreviewTaskTitle = document.querySelector('[data-image-preview-task-title]');
     const gameWindow = document.querySelector('[data-gomoku-window]');
     const gameTask = document.querySelector('[data-gomoku-task]');
     const startButton = document.querySelector('[data-start-toggle]');
@@ -304,14 +319,21 @@ function setupDesktopShell() {
     const clock = document.querySelector('[data-retro-clock]');
     if (!desktop || !appWindow || !titlebar || !resizeHandle || !taskWindow
         || !projectFolderWindow || !projectFolderTitlebar || !projectFolderResizeHandle || !projectFolderTask
+        || !projectFolderTitle || !projectFolderAddress || !projectFolderStatus || !projectFolderRoot
+        || !robomasterFolderView || !projectFolderBack || !imagePreviewWindow || !imagePreviewTitle
+        || !imagePreviewImage || !imagePreviewCaption || !imagePreviewStatus || !imagePreviewTitlebar
+        || !imagePreviewResizeHandle || !imagePreviewTask || !imagePreviewTaskTitle
         || !startButton || !startMenu) return;
 
     let pointerInteraction;
     let shutdownTimers = [];
+    let robomasterFolderOpen = false;
+    let selectedImageButton;
     const restoreGeometry = new WeakMap();
     const windowEntries = [
         { element: appWindow, task: taskWindow },
         { element: projectFolderWindow, task: projectFolderTask },
+        { element: imagePreviewWindow, task: imagePreviewTask },
         ...(gameWindow && gameTask ? [{ element: gameWindow, task: gameTask }] : [])
     ];
 
@@ -498,6 +520,76 @@ function setupDesktopShell() {
     const hideProjectFolder = (state) => hideWindow(projectFolderWindow, projectFolderTask, state, {
         hideTask: state === 'is-closed'
     });
+    const showImagePreview = () => showWindow(imagePreviewWindow, imagePreviewTask, { revealTask: true });
+    const hideImagePreview = (state) => hideWindow(imagePreviewWindow, imagePreviewTask, state, {
+        hideTask: state === 'is-closed'
+    });
+
+    const getPhotoCopy = (button, key) => {
+        const suffix = document.documentElement.lang === 'en' ? 'En' : 'Zh';
+        return button.dataset[`${key}${suffix}`] || '';
+    };
+
+    const updatePhotoCopy = () => {
+        const copy = t();
+        document.querySelectorAll('[data-robomaster-image]').forEach((button) => {
+            const label = getPhotoCopy(button, 'photoLabel');
+            const alt = getPhotoCopy(button, 'photoAlt');
+            button.querySelector('[data-photo-label]').textContent = label;
+            button.querySelector('[data-photo-type]').textContent = copy.previewImageType;
+            button.querySelector('[data-robomaster-thumbnail]').alt = alt;
+        });
+
+        if (!selectedImageButton) {
+            imagePreviewTitle.textContent = copy.previewWindowTitle;
+            imagePreviewTaskTitle.textContent = copy.previewTaskTitle;
+            imagePreviewStatus.textContent = copy.previewStatus;
+            return;
+        }
+
+        const label = getPhotoCopy(selectedImageButton, 'photoLabel');
+        imagePreviewTitle.textContent = `${copy.previewWindowTitle} - ${label}`;
+        imagePreviewTaskTitle.textContent = `${copy.previewTaskTitle}: ${label}`;
+        imagePreviewCaption.textContent = label;
+        imagePreviewStatus.textContent = copy.previewImageType;
+        imagePreviewImage.alt = getPhotoCopy(selectedImageButton, 'photoAlt');
+    };
+
+    const setProjectFolderView = (showRoboMaster) => {
+        robomasterFolderOpen = showRoboMaster;
+        const copy = t();
+        projectFolderRoot.hidden = showRoboMaster;
+        robomasterFolderView.hidden = !showRoboMaster;
+        projectFolderBack.hidden = !showRoboMaster;
+        projectFolderTitle.textContent = showRoboMaster ? copy.folderPhotoWindowTitle : copy.folderWindowTitle;
+        projectFolderAddress.textContent = showRoboMaster ? copy.folderPhotoAddress : copy.folderAddress;
+        projectFolderStatus.textContent = showRoboMaster ? copy.folderPhotoStatus : copy.folderStatus;
+
+        if (showRoboMaster) {
+            document.querySelectorAll('[data-robomaster-thumbnail]').forEach((thumbnail) => {
+                if (!thumbnail.getAttribute('src')) thumbnail.src = thumbnail.dataset.thumbnailSrc;
+            });
+        }
+
+        updatePhotoCopy();
+    };
+
+    const openRoboMasterFolder = () => {
+        setProjectFolderView(true);
+        showProjectFolder();
+    };
+
+    const openImagePreview = (button) => {
+        selectedImageButton = button;
+        imagePreviewImage.src = button.dataset.imageSrc;
+        updatePhotoCopy();
+        showImagePreview();
+    };
+
+    const openProjectFolder = () => {
+        setProjectFolderView(false);
+        showProjectFolder();
+    };
 
     const clearShutdownTimers = () => {
         shutdownTimers.forEach((timer) => window.clearTimeout(timer));
@@ -546,7 +638,12 @@ function setupDesktopShell() {
     });
 
     document.querySelectorAll('[data-open-project-folder]').forEach((button) => {
-        button.addEventListener('click', showProjectFolder);
+        button.addEventListener('click', openProjectFolder);
+    });
+    document.querySelector('[data-open-robomaster-folder]')?.addEventListener('click', openRoboMasterFolder);
+    projectFolderBack.addEventListener('click', () => setProjectFolderView(false));
+    document.querySelectorAll('[data-robomaster-image]').forEach((button) => {
+        button.addEventListener('click', () => openImagePreview(button));
     });
 
     document.querySelectorAll('a[href^="#"]').forEach((link) => {
@@ -582,6 +679,18 @@ function setupDesktopShell() {
         focusWindow(projectFolderWindow);
     });
 
+    imagePreviewTask.addEventListener('click', () => {
+        if (imagePreviewWindow.classList.contains('is-minimized') || imagePreviewWindow.classList.contains('is-closed')) {
+            showImagePreview();
+            return;
+        }
+        if (imagePreviewWindow.classList.contains('is-active')) {
+            hideImagePreview('is-minimized');
+            return;
+        }
+        focusWindow(imagePreviewWindow);
+    });
+
     document.querySelectorAll('[data-project-folder-action]').forEach((button) => {
         button.addEventListener('click', () => {
             const action = button.getAttribute('data-project-folder-action');
@@ -589,6 +698,17 @@ function setupDesktopShell() {
             if (action === 'close') hideProjectFolder('is-closed');
             if (action === 'maximize') {
                 toggleMaximize(projectFolderWindow, '[data-project-folder-action="maximize"]');
+            }
+        });
+    });
+
+    document.querySelectorAll('[data-image-preview-action]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const action = button.getAttribute('data-image-preview-action');
+            if (action === 'minimize') hideImagePreview('is-minimized');
+            if (action === 'close') hideImagePreview('is-closed');
+            if (action === 'maximize') {
+                toggleMaximize(imagePreviewWindow, '[data-image-preview-action="maximize"]');
             }
         });
     });
@@ -627,6 +747,13 @@ function setupDesktopShell() {
     projectFolderResizeHandle.addEventListener('pointerdown', (event) => {
         startPointerInteraction(event, 'resize', projectFolderWindow, 440, 320);
     });
+    imagePreviewTitlebar.addEventListener('pointerdown', (event) => {
+        if (event.target.closest('.window-controls')) return;
+        startPointerInteraction(event, 'drag', imagePreviewWindow, 380, 300);
+    });
+    imagePreviewResizeHandle.addEventListener('pointerdown', (event) => {
+        startPointerInteraction(event, 'resize', imagePreviewWindow, 380, 300);
+    });
     document.addEventListener('pointermove', updatePointerInteraction);
     document.addEventListener('pointerup', finishPointerInteraction);
     document.addEventListener('pointercancel', finishPointerInteraction);
@@ -639,13 +766,18 @@ function setupDesktopShell() {
         if (event.target.closest('.window-controls')) return;
         toggleMaximize(projectFolderWindow, '[data-project-folder-action="maximize"]');
     });
+    imagePreviewTitlebar.addEventListener('dblclick', (event) => {
+        if (event.target.closest('.window-controls')) return;
+        toggleMaximize(imagePreviewWindow, '[data-image-preview-action="maximize"]');
+    });
 
     window.addEventListener('resize', () => {
         if (window.innerWidth <= 900) {
             finishPointerInteraction();
             [
                 [appWindow, '[data-window-action="maximize"]'],
-                [projectFolderWindow, '[data-project-folder-action="maximize"]']
+                [projectFolderWindow, '[data-project-folder-action="maximize"]'],
+                [imagePreviewWindow, '[data-image-preview-action="maximize"]']
             ].forEach(([element, selector]) => {
                 element.classList.remove('is-maximized');
                 restoreGeometry.delete(element);
@@ -666,6 +798,9 @@ function setupDesktopShell() {
     windowEntries.forEach(({ element }) => {
         element.addEventListener('pointerdown', () => focusWindow(element));
         element.addEventListener('focusin', () => focusWindow(element));
+    });
+    window.addEventListener('portfolio-language-change', () => {
+        setProjectFolderView(robomasterFolderOpen);
     });
     focusWindow(appWindow);
     if (document.body.classList.contains('direct-portfolio') && window.innerWidth > 900) {

@@ -62,7 +62,9 @@ test('renders the complete bilingual portfolio without school name or overflow',
     });
 
     await expect.poll(async () => page.locator('.brand img').evaluate((image) => image.complete && image.naturalWidth > 0)).toBe(true);
-    const imageSources = await page.locator('img').evaluateAll((images) => [...new Set(images.map((image) => image.getAttribute('src')))]);
+    const imageSources = await page.locator('img').evaluateAll((images) => [...new Set(images
+        .map((image) => image.getAttribute('src'))
+        .filter(Boolean))]);
     for (const source of imageSources) {
         const response = await request.get(new URL(source, page.url()).href);
         expect(response.ok(), `image request failed: ${source}`).toBe(true);
@@ -281,6 +283,78 @@ test('opens Project Files as a desktop folder window without navigating the port
     await page.locator('[data-project-folder-action="close"]').click();
     await expect(folderWindow).toHaveClass(/is-closed/);
     await expect(folderTask).toBeHidden();
+});
+
+test('opens RoboMaster match records in a movable image preview window', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'desktop image windows are not shown in the mobile layout');
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/portfolio/');
+
+    const folderWindow = page.locator('[data-project-folder-window]');
+    const previewWindow = page.locator('[data-image-preview-window]');
+    const previewTask = page.locator('[data-image-preview-task]');
+
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('[data-open-project-folder]').click();
+    await page.locator('[data-open-robomaster-folder]').click();
+
+    await expect(folderWindow).toContainText('C:\\GAVIN\\PROJECTS\\ROBOMASTER_RECORDS');
+    await expect(folderWindow.locator('[data-robomaster-image]')).toHaveCount(13);
+    await expect(folderWindow).toContainText('13 视觉.jpg');
+    await expect(folderWindow.locator('[data-robomaster-thumbnail]').first()).toHaveAttribute(
+        'src',
+        'assets/robomaster-match-records/01-match-multi-robot.jpg'
+    );
+
+    await folderWindow.locator('[data-robomaster-image]').nth(8).click();
+    await expect(previewWindow).toBeVisible();
+    await expect(previewWindow).toContainText('09 3号.jpg');
+    await expect(previewWindow.locator('[data-image-preview-image]')).toHaveAttribute(
+        'src',
+        'assets/robomaster-match-records/09-no3-infantry-front.jpg'
+    );
+    await expect(previewTask).toBeVisible();
+    await expect(previewTask).toHaveClass(/is-active/);
+
+    const beforeDrag = await previewWindow.boundingBox();
+    const titlebar = await previewWindow.locator('[data-image-preview-drag]').boundingBox();
+    await page.mouse.move(titlebar.x + 160, titlebar.y + titlebar.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(titlebar.x + 118, titlebar.y + titlebar.height / 2 + 26, { steps: 4 });
+    await page.mouse.up();
+    const afterDrag = await previewWindow.boundingBox();
+    expect(afterDrag.x).toBeLessThan(beforeDrag.x - 25);
+    expect(afterDrag.y).toBeGreaterThan(beforeDrag.y + 15);
+
+    const beforeResize = await previewWindow.boundingBox();
+    const resizeHandle = await previewWindow.locator('[data-image-preview-resize]').boundingBox();
+    await page.mouse.move(resizeHandle.x + resizeHandle.width / 2, resizeHandle.y + resizeHandle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(resizeHandle.x - 70, resizeHandle.y - 55, { steps: 4 });
+    await page.mouse.up();
+    const afterResize = await previewWindow.boundingBox();
+    expect(afterResize.width).toBeLessThan(beforeResize.width - 45);
+    expect(afterResize.height).toBeLessThan(beforeResize.height - 35);
+
+    const maximizeButton = previewWindow.locator('[data-image-preview-action="maximize"]');
+    await maximizeButton.click();
+    await expect(previewWindow).toHaveClass(/is-maximized/);
+    await maximizeButton.click();
+    await expect(previewWindow).not.toHaveClass(/is-maximized/);
+
+    await previewWindow.locator('[data-image-preview-action="minimize"]').click();
+    await expect(previewWindow).toHaveClass(/is-minimized/);
+    await previewTask.click();
+    await expect(previewWindow).not.toHaveClass(/is-minimized/);
+
+    await previewWindow.locator('[data-image-preview-action="close"]').click();
+    await expect(previewWindow).toHaveClass(/is-closed/);
+    await expect(previewTask).toBeHidden();
+    await expect(folderWindow).toHaveClass(/is-active/);
+
+    await page.locator('[data-project-folder-back]').click();
+    await expect(folderWindow).toContainText('C:\\GAVIN\\PROJECTS');
+    await expect(folderWindow.locator('[data-open-robomaster-folder]')).toBeVisible();
 });
 
 test('restores the most recently focused window after closing another window', async ({ page, isMobile }) => {
