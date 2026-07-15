@@ -244,7 +244,8 @@ test('opens Project Files as a desktop folder window without navigating the port
     await expect(page).toHaveURL(/\/portfolio\/$/);
     await expect(folderWindow).toBeVisible();
     await expect(folderWindow).toContainText('C:\\GAVIN\\PROJECTS');
-    await expect(folderWindow).toContainText('AI Agent');
+    await expect(folderWindow).toContainText(/ROBOMASTER_\s*RECORDS/);
+    await expect(folderWindow).not.toContainText('AI Agent');
     await expect(folderTask).toBeVisible();
     await expect(folderTask).toHaveClass(/is-active/);
     await expect(portfolioWindow).toHaveClass(/is-minimized/);
