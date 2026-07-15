@@ -347,6 +347,37 @@ test('opens RoboMaster match records in a movable image preview window', async (
     expect(originalImageResponse.status()).toBe(404);
     await expect(previewTask).toBeVisible();
     await expect(previewTask).toHaveClass(/is-active/);
+    await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText('09 3号.jpg');
+
+    const nextPreviewPath = '/portfolio/assets/robomaster-match-records/previews/10-operator-console.jpg';
+    const nextImageRequest = page.waitForRequest(
+        (request) => new URL(request.url()).pathname === nextPreviewPath
+    );
+    await page.keyboard.press('ArrowRight');
+    await nextImageRequest;
+    await expect(previewWindow).toContainText('10 调试.jpg');
+    await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText('10 调试.jpg');
+
+    await page.keyboard.press('ArrowLeft');
+    await expect(previewWindow).toContainText('09 3号.jpg');
+    await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText('09 3号.jpg');
+
+    const imageButtons = folderWindow.locator('[data-robomaster-image]');
+    const aboveIndex = await imageButtons.evaluateAll((buttons) => {
+        const firstRowTop = buttons[0].offsetTop;
+        const columnCount = buttons.findIndex((button, index) => index > 0 && button.offsetTop !== firstRowTop);
+        return 8 - (columnCount === -1 ? buttons.length : columnCount);
+    });
+    const aboveLabel = await imageButtons.nth(aboveIndex).locator('[data-photo-label]').textContent();
+    const abovePreviewPath = await imageButtons.nth(aboveIndex).getAttribute('data-image-src');
+    await page.keyboard.press('ArrowUp');
+    await expect(previewWindow).toContainText(aboveLabel);
+    await expect(previewWindow.locator('[data-image-preview-image]')).toHaveAttribute('src', abovePreviewPath);
+    await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText(aboveLabel);
+
+    await page.keyboard.press('ArrowDown');
+    await expect(previewWindow).toContainText('09 3号.jpg');
+    await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText('09 3号.jpg');
 
     const beforeDrag = await previewWindow.boundingBox();
     const titlebar = await previewWindow.locator('[data-image-preview-drag]').boundingBox();
@@ -383,6 +414,16 @@ test('opens RoboMaster match records in a movable image preview window', async (
     await expect(previewWindow).toHaveClass(/is-closed/);
     await expect(previewTask).toBeHidden();
     await expect(folderWindow).toHaveClass(/is-active/);
+
+    await page.keyboard.press('ArrowRight');
+    await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText('10 调试.jpg');
+    await expect(previewWindow).toHaveClass(/is-closed/);
+
+    await page.keyboard.press('Enter');
+    await expect(previewWindow).toContainText('10 调试.jpg');
+    await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText('10 调试.jpg');
+    await previewWindow.locator('[data-image-preview-action="close"]').click();
+    await expect(previewWindow).toHaveClass(/is-closed/);
 
     await page.locator('[data-project-folder-back]').click();
     await expect(folderWindow).toContainText('C:\\GAVIN\\PROJECTS');

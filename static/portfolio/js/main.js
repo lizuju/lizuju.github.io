@@ -329,6 +329,7 @@ function setupDesktopShell() {
     let shutdownTimers = [];
     let robomasterFolderOpen = false;
     let selectedImageButton;
+    const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
     const restoreGeometry = new WeakMap();
     const windowEntries = [
         { element: appWindow, task: taskWindow },
@@ -530,9 +531,59 @@ function setupDesktopShell() {
         return button.dataset[`${key}${suffix}`] || '';
     };
 
+    const selectPhoto = (button) => {
+        if (!button) return;
+        selectedImageButton = button;
+        robomasterImageButtons.forEach((candidate) => {
+            candidate.classList.toggle('is-selected', candidate === button);
+        });
+    };
+
+    const getPhotoColumnCount = () => {
+        if (!robomasterImageButtons.length) return 1;
+
+        const firstRowTop = robomasterImageButtons[0].offsetTop;
+        const nextRowIndex = robomasterImageButtons.findIndex((button, index) => (
+            index > 0 && button.offsetTop !== firstRowTop
+        ));
+        return nextRowIndex === -1 ? robomasterImageButtons.length : nextRowIndex;
+    };
+
+    const getPhotoNavigationTarget = (key) => {
+        if (!robomasterImageButtons.length) return null;
+        if (!selectedImageButton) return robomasterImageButtons[0];
+
+        const currentIndex = robomasterImageButtons.indexOf(selectedImageButton);
+        const columnCount = getPhotoColumnCount();
+        if (currentIndex < 0) return robomasterImageButtons[0];
+
+        if (key === 'ArrowLeft') {
+            return currentIndex % columnCount === 0
+                ? selectedImageButton
+                : robomasterImageButtons[currentIndex - 1];
+        }
+        if (key === 'ArrowRight') {
+            return currentIndex % columnCount === columnCount - 1
+                || currentIndex === robomasterImageButtons.length - 1
+                ? selectedImageButton
+                : robomasterImageButtons[currentIndex + 1];
+        }
+        if (key === 'ArrowUp') {
+            return currentIndex < columnCount
+                ? selectedImageButton
+                : robomasterImageButtons[currentIndex - columnCount];
+        }
+        if (key === 'ArrowDown') {
+            return currentIndex + columnCount >= robomasterImageButtons.length
+                ? selectedImageButton
+                : robomasterImageButtons[currentIndex + columnCount];
+        }
+        return null;
+    };
+
     const updatePhotoCopy = () => {
         const copy = t();
-        document.querySelectorAll('[data-robomaster-image]').forEach((button) => {
+        robomasterImageButtons.forEach((button) => {
             const label = getPhotoCopy(button, 'photoLabel');
             const alt = getPhotoCopy(button, 'photoAlt');
             button.querySelector('[data-photo-label]').textContent = label;
@@ -579,11 +630,15 @@ function setupDesktopShell() {
         showProjectFolder();
     };
 
-    const openImagePreview = (button) => {
-        selectedImageButton = button;
+    const updateImagePreview = (button) => {
+        selectPhoto(button);
         imagePreviewImage.decoding = 'async';
         imagePreviewImage.src = button.dataset.imageSrc;
         updatePhotoCopy();
+    };
+
+    const openImagePreview = (button) => {
+        updateImagePreview(button);
         showImagePreview();
     };
 
@@ -643,7 +698,7 @@ function setupDesktopShell() {
     });
     document.querySelector('[data-open-robomaster-folder]')?.addEventListener('click', openRoboMasterFolder);
     projectFolderBack.addEventListener('click', () => setProjectFolderView(false));
-    document.querySelectorAll('[data-robomaster-image]').forEach((button) => {
+    robomasterImageButtons.forEach((button) => {
         button.addEventListener('click', () => openImagePreview(button));
     });
 
@@ -724,6 +779,37 @@ function setupDesktopShell() {
     document.addEventListener('click', closeStartMenu);
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') closeStartMenu();
+
+        if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+        if (!robomasterFolderOpen || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter'].includes(event.key)) {
+            return;
+        }
+        if (event.target instanceof HTMLElement && event.target.matches('input, textarea, select, [contenteditable="true"]')) {
+            return;
+        }
+
+        const previewActive = isWindowVisible(imagePreviewWindow) && imagePreviewWindow.classList.contains('is-active');
+        const folderActive = isWindowVisible(projectFolderWindow) && projectFolderWindow.classList.contains('is-active');
+        if (!previewActive && !folderActive) return;
+
+        if (event.key === 'Enter') {
+            if (previewActive || !selectedImageButton) return;
+            event.preventDefault();
+            openImagePreview(selectedImageButton);
+            return;
+        }
+
+        const targetPhoto = getPhotoNavigationTarget(event.key);
+        if (!targetPhoto) return;
+        event.preventDefault();
+
+        if (previewActive) {
+            updateImagePreview(targetPhoto);
+            return;
+        }
+
+        selectPhoto(targetPhoto);
+        targetPhoto.focus({ preventScroll: true });
     });
 
     document.querySelector('[data-start-lang]')?.addEventListener('click', () => {

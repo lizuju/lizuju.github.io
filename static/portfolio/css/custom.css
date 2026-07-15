@@ -765,6 +765,22 @@ summary:focus-visible {
     white-space: nowrap;
 }
 
+.project-folder-item--image.is-selected,
+.project-folder-item--image.is-selected:hover,
+.project-folder-item--image.is-selected:focus-visible {
+    background: transparent;
+}
+
+.project-folder-item--image.is-selected strong,
+.project-folder-item--image.is-selected small {
+    width: fit-content;
+    max-width: calc(100% - 4px);
+    margin-inline: auto;
+    padding-inline: 2px;
+    color: #fff;
+    background: #000080;
+}
+
 .photo-file-icon {
     position: relative;
     display: grid;
