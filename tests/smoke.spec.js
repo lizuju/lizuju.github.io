@@ -289,6 +289,23 @@ test('opens Project Files as a desktop folder window without navigating the port
 test('opens RoboMaster match records in a movable image preview window', async ({ page, isMobile }) => {
     test.skip(isMobile, 'desktop image windows are not shown in the mobile layout');
     await page.setViewportSize({ width: 1280, height: 900 });
+
+    const thumbnailRequests = new Set();
+    const previewImageRequests = new Set();
+    const originalImageRequests = new Set();
+    page.on('request', (request) => {
+        const pathname = new URL(request.url()).pathname;
+        if (!pathname.includes('/portfolio/assets/robomaster-match-records/')) return;
+
+        if (pathname.includes('/thumbs/')) {
+            thumbnailRequests.add(pathname);
+        } else if (pathname.includes('/previews/')) {
+            previewImageRequests.add(pathname);
+        } else if (pathname.endsWith('.jpg')) {
+            originalImageRequests.add(pathname);
+        }
+    });
+
     await page.goto('/portfolio/');
 
     const folderWindow = page.locator('[data-project-folder-window]');
@@ -304,16 +321,30 @@ test('opens RoboMaster match records in a movable image preview window', async (
     await expect(folderWindow).toContainText('13 视觉.jpg');
     await expect(folderWindow.locator('[data-robomaster-thumbnail]').first()).toHaveAttribute(
         'src',
-        'assets/robomaster-match-records/01-match-multi-robot.jpg'
+        'assets/robomaster-match-records/thumbs/01-match-multi-robot.jpg'
     );
+    await expect.poll(() => thumbnailRequests.size).toBe(13);
+    expect(previewImageRequests).toEqual(new Set());
+    expect(originalImageRequests).toEqual(new Set());
 
+    const selectedPreviewPath = '/portfolio/assets/robomaster-match-records/previews/09-no3-infantry-front.jpg';
+    const selectedImageRequest = page.waitForRequest(
+        (request) => new URL(request.url()).pathname === selectedPreviewPath
+    );
     await folderWindow.locator('[data-robomaster-image]').nth(8).click();
+    await selectedImageRequest;
     await expect(previewWindow).toBeVisible();
     await expect(previewWindow).toContainText('09 3号.jpg');
     await expect(previewWindow.locator('[data-image-preview-image]')).toHaveAttribute(
         'src',
-        'assets/robomaster-match-records/09-no3-infantry-front.jpg'
+        'assets/robomaster-match-records/previews/09-no3-infantry-front.jpg'
     );
+    expect(previewImageRequests).toEqual(new Set([selectedPreviewPath]));
+    expect(originalImageRequests).toEqual(new Set());
+    const originalImageResponse = await page.request.get(
+        '/portfolio/assets/robomaster-match-records/09-no3-infantry-front.jpg'
+    );
+    expect(originalImageResponse.status()).toBe(404);
     await expect(previewTask).toBeVisible();
     await expect(previewTask).toHaveClass(/is-active/);
 
@@ -809,6 +840,36 @@ test('exposes crawlable SEO metadata', async ({ page, request, isMobile }) => {
     for (const script of await page.locator('script[src]').all()) {
         await expect(script).toHaveAttribute('src', new RegExp(`\\?v=${buildMetadata.assetVersion}$`));
     }
+});
+
+test('restarts the appropriate shell when crossing the responsive breakpoint', async ({ page, isMobile }) => {
+    test.setTimeout(90000);
+
+    if (isMobile) {
+        await page.setViewportSize({ width: 844, height: 390 });
+        await page.goto('/', { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('body')).toHaveClass(/mobile-mode/);
+        await expect(page.locator('#mobile-portfolio')).toBeVisible();
+        await expect(page.locator('canvas')).toHaveCount(0);
+        return;
+    }
+
+    await page.setViewportSize({ width: 983, height: 754 });
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('body')).not.toHaveClass(/mobile-mode/);
+
+    const mobileReload = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+    await page.setViewportSize({ width: 820, height: 754 });
+    await mobileReload;
+    await expect(page.locator('body')).toHaveClass(/mobile-mode/);
+    await expect(page.locator('#mobile-portfolio')).toBeVisible();
+    await expect(page.locator('canvas')).toHaveCount(0);
+
+    const desktopReload = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+    await page.setViewportSize({ width: 983, height: 754 });
+    await desktopReload;
+    await expect(page.locator('body')).not.toHaveClass(/mobile-mode/);
+    await expect(page.locator('#computer-screen')).toHaveAttribute('src', 'portfolio/', { timeout: 45000 });
 });
 
 test('serves the immersive desktop shell and lightweight mobile shell', async ({ page, isMobile }) => {

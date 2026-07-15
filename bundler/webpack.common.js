@@ -22,6 +22,12 @@ module.exports = {
         new CopyWebpackPlugin({
             patterns: [{
                 from: path.resolve(rootDirectory, 'static'),
+                globOptions: {
+                    ignore: [path.resolve(
+                        rootDirectory,
+                        'static/portfolio/assets/robomaster-match-records/*.jpg'
+                    )],
+                },
                 transform(content, absolutePath) {
                     if (absolutePath.endsWith('portfolio/index.html')) {
                         return content

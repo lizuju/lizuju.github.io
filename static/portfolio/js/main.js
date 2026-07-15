@@ -581,6 +581,7 @@ function setupDesktopShell() {
 
     const openImagePreview = (button) => {
         selectedImageButton = button;
+        imagePreviewImage.decoding = 'async';
         imagePreviewImage.src = button.dataset.imageSrc;
         updatePhotoCopy();
         showImagePreview();
