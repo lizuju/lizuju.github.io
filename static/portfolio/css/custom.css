@@ -1071,6 +1071,14 @@ summary:focus-visible {
     background: #111;
 }
 
+.image-preview-figure picture {
+    display: block;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+}
+
 .image-preview-figure img {
     display: block;
     width: 100%;

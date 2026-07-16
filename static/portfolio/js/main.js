@@ -325,6 +325,7 @@ function setupDesktopShell() {
     const projectFolderBack = document.querySelector('[data-project-folder-back]');
     const imagePreviewWindow = document.querySelector('[data-image-preview-window]');
     const imagePreviewTitle = document.querySelector('[data-image-preview-title]');
+    const imagePreviewSource = document.querySelector('[data-image-preview-source]');
     const imagePreviewImage = document.querySelector('[data-image-preview-image]');
     const imagePreviewCaption = document.querySelector('[data-image-preview-caption]');
     const imagePreviewStatus = document.querySelector('[data-image-preview-status]');
@@ -728,6 +729,7 @@ function setupDesktopShell() {
 
     const updateImagePreview = (button) => {
         selectPhoto(button);
+        imagePreviewSource.srcset = button.dataset.imageSrc.replace(/\.jpg$/i, '.webp');
         imagePreviewImage.decoding = 'async';
         imagePreviewImage.src = button.dataset.imageSrc;
         updatePhotoCopy();

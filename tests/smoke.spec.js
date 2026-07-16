@@ -329,7 +329,7 @@ test('opens RoboMaster match records in a movable image preview window', async (
     expect(previewImageRequests).toEqual(new Set());
     expect(originalImageRequests).toEqual(new Set());
 
-    const selectedPreviewPath = '/portfolio/assets/robomaster-match-records/previews/09-no3-infantry-front.jpg';
+    const selectedPreviewPath = '/portfolio/assets/robomaster-match-records/previews/09-no3-infantry-front.webp';
     const selectedImageRequest = page.waitForRequest(
         (request) => new URL(request.url()).pathname === selectedPreviewPath
     );
@@ -341,6 +341,18 @@ test('opens RoboMaster match records in a movable image preview window', async (
         'src',
         'assets/robomaster-match-records/previews/09-no3-infantry-front.jpg'
     );
+    await expect(previewWindow.locator('[data-image-preview-source]')).toHaveAttribute(
+        'srcset',
+        'assets/robomaster-match-records/previews/09-no3-infantry-front.webp'
+    );
+    const previewImage = previewWindow.locator('[data-image-preview-image]');
+    const previewResource = await previewImage.evaluate((image) => ({
+        currentSrc: image.currentSrc,
+        width: image.naturalWidth,
+        height: image.naturalHeight
+    }));
+    expect(new URL(previewResource.currentSrc).pathname).toBe(selectedPreviewPath);
+    expect(Math.max(previewResource.width, previewResource.height)).toBeLessThanOrEqual(1600);
     expect(previewImageRequests).toEqual(new Set([selectedPreviewPath]));
     expect(originalImageRequests).toEqual(new Set());
     const originalImageResponse = await page.request.get(
@@ -351,7 +363,7 @@ test('opens RoboMaster match records in a movable image preview window', async (
     await expect(previewTask).toHaveClass(/is-active/);
     await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText('09 3号.jpg');
 
-    const nextPreviewPath = '/portfolio/assets/robomaster-match-records/previews/10-operator-console.jpg';
+    const nextPreviewPath = '/portfolio/assets/robomaster-match-records/previews/10-operator-console.webp';
     const nextImageRequest = page.waitForRequest(
         (request) => new URL(request.url()).pathname === nextPreviewPath
     );
