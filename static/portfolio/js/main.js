@@ -195,6 +195,11 @@ function applyLanguage() {
         if (copy[key]) element.textContent = copy[key];
     });
 
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((element) => {
+        const key = element.getAttribute('data-i18n-placeholder');
+        if (copy[key]) element.setAttribute('placeholder', copy[key]);
+    });
+
     document.querySelectorAll('[data-i18n-lines]').forEach((element) => {
         const key = element.getAttribute('data-i18n-lines');
         if (!Array.isArray(copy[key])) return;
@@ -308,6 +313,13 @@ function setupDesktopShell() {
     const imagePreviewResizeHandle = document.querySelector('[data-image-preview-resize]');
     const imagePreviewTask = document.querySelector('[data-image-preview-task]');
     const imagePreviewTaskTitle = document.querySelector('[data-image-preview-task-title]');
+    const mailWindow = document.querySelector('[data-mail-window]');
+    const mailTitlebar = document.querySelector('[data-mail-drag]');
+    const mailResizeHandle = document.querySelector('[data-mail-resize]');
+    const mailTask = document.querySelector('[data-mail-task]');
+    const mailForm = document.querySelector('[data-mail-form]');
+    const mailSendButton = document.querySelector('[data-mail-send]');
+    const mailStatus = document.querySelector('[data-mail-status]');
     const gameWindow = document.querySelector('[data-gomoku-window]');
     const gameTask = document.querySelector('[data-gomoku-task]');
     const startButton = document.querySelector('[data-start-toggle]');
@@ -323,18 +335,22 @@ function setupDesktopShell() {
         || !robomasterFolderView || !projectFolderBack || !imagePreviewWindow || !imagePreviewTitle
         || !imagePreviewImage || !imagePreviewCaption || !imagePreviewStatus || !imagePreviewTitlebar
         || !imagePreviewResizeHandle || !imagePreviewTask || !imagePreviewTaskTitle
+        || !mailWindow || !mailTitlebar || !mailResizeHandle || !mailTask || !mailForm || !mailSendButton || !mailStatus
         || !startButton || !startMenu) return;
 
     let pointerInteraction;
     let shutdownTimers = [];
     let robomasterFolderOpen = false;
     let selectedImageButton;
+    let mailStatusKey = 'mailStatusReady';
+    let mailStatusState = '';
     const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
     const restoreGeometry = new WeakMap();
     const windowEntries = [
         { element: appWindow, task: taskWindow },
         { element: projectFolderWindow, task: projectFolderTask },
         { element: imagePreviewWindow, task: imagePreviewTask },
+        { element: mailWindow, task: mailTask },
         ...(gameWindow && gameTask ? [{ element: gameWindow, task: gameTask }] : [])
     ];
 
@@ -525,6 +541,17 @@ function setupDesktopShell() {
     const hideImagePreview = (state) => hideWindow(imagePreviewWindow, imagePreviewTask, state, {
         hideTask: state === 'is-closed'
     });
+    const showMailWindow = () => showWindow(mailWindow, mailTask, { revealTask: true });
+    const hideMailWindow = (state) => hideWindow(mailWindow, mailTask, state, {
+        hideTask: state === 'is-closed'
+    });
+
+    const setMailStatus = (key, state = mailStatusState) => {
+        mailStatusKey = key;
+        mailStatusState = state;
+        mailStatus.dataset.state = state;
+        mailStatus.textContent = t()[key];
+    };
 
     const getPhotoCopy = (button, key) => {
         const suffix = document.documentElement.lang === 'en' ? 'En' : 'Zh';
@@ -647,6 +674,39 @@ function setupDesktopShell() {
         showProjectFolder();
     };
 
+    const sendMail = async (event) => {
+        event.preventDefault();
+        if (!mailForm.reportValidity()) return;
+
+        const formData = new FormData(mailForm);
+        const payload = Object.fromEntries(formData.entries());
+        payload._replyto = payload.email;
+        payload._subject = t().mailSubject;
+        payload._url = window.location.href;
+
+        mailSendButton.disabled = true;
+        setMailStatus('mailStatusSending', 'sending');
+
+        try {
+            const response = await fetch(mailForm.dataset.mailEndpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) throw new Error('Mail delivery failed');
+
+            mailForm.reset();
+            setMailStatus('mailStatusSuccess', 'success');
+        } catch {
+            setMailStatus('mailStatusError', 'error');
+        } finally {
+            mailSendButton.disabled = false;
+        }
+    };
+
     const clearShutdownTimers = () => {
         shutdownTimers.forEach((timer) => window.clearTimeout(timer));
         shutdownTimers = [];
@@ -696,11 +756,15 @@ function setupDesktopShell() {
     document.querySelectorAll('[data-open-project-folder]').forEach((button) => {
         button.addEventListener('click', openProjectFolder);
     });
+    document.querySelectorAll('[data-open-mail-window]').forEach((button) => {
+        button.addEventListener('click', showMailWindow);
+    });
     document.querySelector('[data-open-robomaster-folder]')?.addEventListener('click', openRoboMasterFolder);
     projectFolderBack.addEventListener('click', () => setProjectFolderView(false));
     robomasterImageButtons.forEach((button) => {
         button.addEventListener('click', () => openImagePreview(button));
     });
+    mailForm.addEventListener('submit', sendMail);
 
     document.querySelectorAll('a[href^="#"]').forEach((link) => {
         link.addEventListener('click', (event) => {
@@ -747,6 +811,18 @@ function setupDesktopShell() {
         focusWindow(imagePreviewWindow);
     });
 
+    mailTask.addEventListener('click', () => {
+        if (mailWindow.classList.contains('is-minimized') || mailWindow.classList.contains('is-closed')) {
+            showMailWindow();
+            return;
+        }
+        if (mailWindow.classList.contains('is-active')) {
+            hideMailWindow('is-minimized');
+            return;
+        }
+        focusWindow(mailWindow);
+    });
+
     document.querySelectorAll('[data-project-folder-action]').forEach((button) => {
         button.addEventListener('click', () => {
             const action = button.getAttribute('data-project-folder-action');
@@ -766,6 +842,15 @@ function setupDesktopShell() {
             if (action === 'maximize') {
                 toggleMaximize(imagePreviewWindow, '[data-image-preview-action="maximize"]');
             }
+        });
+    });
+
+    document.querySelectorAll('[data-mail-action]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const action = button.getAttribute('data-mail-action');
+            if (action === 'minimize') hideMailWindow('is-minimized');
+            if (action === 'close') hideMailWindow('is-closed');
+            if (action === 'maximize') toggleMaximize(mailWindow, '[data-mail-action="maximize"]');
         });
     });
 
@@ -841,6 +926,13 @@ function setupDesktopShell() {
     imagePreviewResizeHandle.addEventListener('pointerdown', (event) => {
         startPointerInteraction(event, 'resize', imagePreviewWindow, 380, 300);
     });
+    mailTitlebar.addEventListener('pointerdown', (event) => {
+        if (event.target.closest('.window-controls')) return;
+        startPointerInteraction(event, 'drag', mailWindow, 420, 410);
+    });
+    mailResizeHandle.addEventListener('pointerdown', (event) => {
+        startPointerInteraction(event, 'resize', mailWindow, 420, 410);
+    });
     document.addEventListener('pointermove', updatePointerInteraction);
     document.addEventListener('pointerup', finishPointerInteraction);
     document.addEventListener('pointercancel', finishPointerInteraction);
@@ -857,6 +949,10 @@ function setupDesktopShell() {
         if (event.target.closest('.window-controls')) return;
         toggleMaximize(imagePreviewWindow, '[data-image-preview-action="maximize"]');
     });
+    mailTitlebar.addEventListener('dblclick', (event) => {
+        if (event.target.closest('.window-controls')) return;
+        toggleMaximize(mailWindow, '[data-mail-action="maximize"]');
+    });
 
     window.addEventListener('resize', () => {
         if (window.innerWidth <= 900) {
@@ -864,7 +960,8 @@ function setupDesktopShell() {
             [
                 [appWindow, '[data-window-action="maximize"]'],
                 [projectFolderWindow, '[data-project-folder-action="maximize"]'],
-                [imagePreviewWindow, '[data-image-preview-action="maximize"]']
+                [imagePreviewWindow, '[data-image-preview-action="maximize"]'],
+                [mailWindow, '[data-mail-action="maximize"]']
             ].forEach(([element, selector]) => {
                 element.classList.remove('is-maximized');
                 restoreGeometry.delete(element);
@@ -888,6 +985,7 @@ function setupDesktopShell() {
     });
     window.addEventListener('portfolio-language-change', () => {
         setProjectFolderView(robomasterFolderOpen);
+        setMailStatus(mailStatusKey, mailStatusState);
     });
     focusWindow(appWindow);
     if (document.body.classList.contains('direct-portfolio') && window.innerWidth > 900) {

@@ -69,8 +69,8 @@
 
     <link rel="icon" id="favicon" type="image/png" href="assets/avatar.png">
     <link rel="preload" as="image" href="assets/portfolio-hero.jpg">
-    <link rel="stylesheet" href="css/custom.css?v=50f6e3152da8">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=50f6e3152da8">
+    <link rel="stylesheet" href="css/custom.css?v=e5bb902d76a6">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=e5bb902d76a6">
 </head>
 
 <body>
@@ -97,10 +97,10 @@
                 <span class="shortcut-icon shortcut-icon--network" aria-hidden="true"></span>
                 <span>GitHub</span>
             </a>
-            <a class="desktop-shortcut" href="mailto:gavinxleele@gmail.com">
+            <button class="desktop-shortcut" type="button" data-open-mail-window>
                 <span class="shortcut-icon shortcut-icon--mail" aria-hidden="true"></span>
                 <span data-i18n="desktopMail">电子邮件</span>
-            </a>
+            </button>
         </nav>
 
         <section class="app-window is-active" data-app-window aria-label="Gavin portfolio window">
@@ -649,6 +649,68 @@
                 title="Resize image preview"></button>
         </section>
 
+        <section class="app-window mail-window is-closed" data-mail-window aria-label="Email compose window">
+            <div class="window-titlebar" data-mail-drag>
+                <div class="window-title">
+                    <span class="window-app-icon window-app-icon--mail" aria-hidden="true"></span>
+                    <span data-i18n="mailWindowTitle">新建邮件</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-mail-action="minimize" aria-label="Minimize email window"
+                        title="Minimize"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-mail-action="maximize" aria-label="Maximize email window"
+                        title="Maximize"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-mail-action="close" aria-label="Close email window"
+                        title="Close"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+
+            <div class="window-menubar" aria-hidden="true">
+                <span data-i18n="menuFile">文件</span>
+                <span data-i18n="menuEdit">编辑</span>
+                <span data-i18n="menuView">查看</span>
+                <span data-i18n="menuHelp">帮助</span>
+            </div>
+
+            <form class="mail-compose" data-mail-form data-mail-endpoint="https://formsubmit.co/ajax/gavinxleele@gmail.com"
+                method="post">
+                <p class="mail-recipient"><strong data-i18n="mailRecipientLabel">收件人:</strong> gavinxleele@gmail.com</p>
+                <label class="mail-field">
+                    <span data-i18n="mailNameLabel">* 姓名:</span>
+                    <input name="name" type="text" autocomplete="name" required data-i18n-placeholder="mailNamePlaceholder"
+                        placeholder="你的姓名">
+                </label>
+                <label class="mail-field">
+                    <span data-i18n="mailEmailLabel">* 邮箱:</span>
+                    <input name="email" type="email" autocomplete="email" required data-i18n-placeholder="mailEmailPlaceholder"
+                        placeholder="你的邮箱">
+                </label>
+                <label class="mail-field">
+                    <span data-i18n="mailCompanyLabel">公司（可选）:</span>
+                    <input name="company" type="text" autocomplete="organization"
+                        data-i18n-placeholder="mailCompanyPlaceholder" placeholder="公司或团队">
+                </label>
+                <label class="mail-field mail-field--message">
+                    <span data-i18n="mailMessageLabel">* 留言:</span>
+                    <textarea name="message" required data-i18n-placeholder="mailMessagePlaceholder"
+                        placeholder="写下你的留言..."></textarea>
+                </label>
+                <input class="mail-honeypot" type="text" name="_honey" tabindex="-1" autocomplete="off" aria-hidden="true">
+                <div class="mail-compose-footer">
+                    <button class="mail-send-button" type="submit" data-mail-send data-i18n="mailSend">发送邮件</button>
+                    <p data-i18n="mailForwarding">消息将直接发送至 Gavin 的邮箱。</p>
+                </div>
+                <p class="mail-status" data-mail-status role="status" aria-live="polite" data-i18n="mailStatusReady">请填写信息后发送。</p>
+            </form>
+
+            <div class="window-statusbar">
+                <span data-i18n="statusReady">完成</span>
+                <span data-i18n="statusZone">我的电脑</span>
+            </div>
+            <button class="window-resize-handle" type="button" data-mail-resize aria-label="Resize email window"
+                title="Resize email window"></button>
+        </section>
+
         <section class="app-window gomoku-window is-closed" data-gomoku-window aria-label="Gomoku game window">
             <div class="window-titlebar" data-gomoku-drag>
                 <div class="window-title">
@@ -791,6 +853,10 @@
                 <span class="window-app-icon window-app-icon--image" aria-hidden="true"></span>
                 <span data-image-preview-task-title data-i18n="previewTaskTitle">图片预览</span>
             </button>
+            <button class="task-window-button mail-task-button" type="button" data-mail-task hidden>
+                <span class="window-app-icon window-app-icon--mail" aria-hidden="true"></span>
+                <span data-i18n="mailTaskTitle">电子邮件</span>
+            </button>
             <div class="taskbar-spacer"></div>
             <div class="taskbar-tray">
                 <span class="tray-network" aria-hidden="true"></span>
@@ -825,10 +891,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=50f6e3152da8"></script>
-    <script src="js/gomoku-game.js?v=50f6e3152da8"></script>
-    <script src="js/content.js?v=50f6e3152da8"></script>
-    <script src="js/main.js?v=50f6e3152da8"></script>
+    <script src="js/gomoku-engine.js?v=e5bb902d76a6"></script>
+    <script src="js/gomoku-game.js?v=e5bb902d76a6"></script>
+    <script src="js/content.js?v=e5bb902d76a6"></script>
+    <script src="js/main.js?v=e5bb902d76a6"></script>
 </body>
 
 </html>

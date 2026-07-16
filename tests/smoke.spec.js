@@ -430,6 +430,68 @@ test('opens RoboMaster match records in a movable image preview window', async (
     await expect(folderWindow.locator('[data-open-robomaster-folder]')).toBeVisible();
 });
 
+test('opens a retro email composer and sends without leaving the portfolio', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'desktop shortcuts are not shown in the mobile layout');
+    await page.setViewportSize({ width: 983, height: 754 });
+    await page.goto('/portfolio/');
+
+    const mailWindow = page.locator('[data-mail-window]');
+    const mailTask = page.locator('[data-mail-task]');
+    const mailForm = page.locator('[data-mail-form]');
+    const mailStatus = page.locator('[data-mail-status]');
+    const endpoint = 'https://formsubmit.co/ajax/gavinxleele@gmail.com';
+
+    await expect(mailWindow).toHaveClass(/is-closed/);
+    await expect(mailTask).toBeHidden();
+    await expect(page.locator('.desktop-shortcut[href^="mailto:"]')).toHaveCount(0);
+    await page.locator('[data-window-action="minimize"]').click();
+    await expect(page.locator('[data-app-window]')).toHaveClass(/is-minimized/);
+    await page.locator('.desktop-shortcut[data-open-mail-window]').click();
+    await expect(mailWindow).toBeVisible();
+    await expect(mailWindow).toContainText('收件人:');
+    await expect(mailWindow).toContainText('gavinxleele@gmail.com');
+    await expect(mailTask).toBeVisible();
+    await expect(mailTask).toHaveClass(/is-active/);
+
+    await page.route(endpoint, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: 'true' })
+    }));
+    await mailForm.locator('input[name="name"]').fill('Portfolio visitor');
+    await mailForm.locator('input[name="email"]').fill('visitor@example.com');
+    await mailForm.locator('input[name="company"]').fill('Gavin Labs');
+    await mailForm.locator('textarea[name="message"]').fill('Hello from the retro desktop.');
+    const sentRequest = page.waitForRequest((request) => request.url() === endpoint);
+    await mailForm.locator('[data-mail-send]').click();
+    expect((await sentRequest).postDataJSON()).toMatchObject({
+        name: 'Portfolio visitor',
+        email: 'visitor@example.com',
+        company: 'Gavin Labs',
+        message: 'Hello from the retro desktop.',
+        _replyto: 'visitor@example.com'
+    });
+    await expect(mailStatus).toContainText('已发送');
+    await expect(mailForm.locator('input[name="name"]')).toHaveValue('');
+    await expect(page).toHaveURL(/\/portfolio\/$/);
+
+    await page.locator('[data-task-window]').click();
+    await expect(page.locator('[data-app-window]')).not.toHaveClass(/is-minimized/);
+    await page.locator('[data-lang-toggle]').click();
+    await expect(mailWindow).toContainText('New Message');
+    await expect(mailForm.locator('input[name="name"]')).toHaveAttribute('placeholder', 'Your name');
+
+    await page.locator('[data-window-action="minimize"]').click();
+    await expect(page.locator('[data-app-window]')).toHaveClass(/is-minimized/);
+    await page.locator('[data-mail-action="minimize"]').click();
+    await expect(mailWindow).toHaveClass(/is-minimized/);
+    await mailTask.click();
+    await expect(mailWindow).not.toHaveClass(/is-minimized/);
+    await page.locator('[data-mail-action="close"]').click();
+    await expect(mailWindow).toHaveClass(/is-closed/);
+    await expect(mailTask).toBeHidden();
+});
+
 test('restores the most recently focused window after closing another window', async ({ page, isMobile }) => {
     test.skip(isMobile, 'desktop window stacking is not present on mobile');
     await page.setViewportSize({ width: 1280, height: 900 });
