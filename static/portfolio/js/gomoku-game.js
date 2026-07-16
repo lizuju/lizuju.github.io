@@ -4,6 +4,26 @@
     const COMPUTER = 1;
     const EMPTY = -1;
     const AI_DELAY = 260;
+    const SESSION_STORAGE_KEY = 'gavin-gomoku-session';
+
+    const getSessionContext = () => window.parent === window ? 'direct' : 'embedded';
+
+    const readGameSession = () => {
+        try {
+            const value = sessionStorage.getItem(SESSION_STORAGE_KEY);
+            return value ? JSON.parse(value) : null;
+        } catch {
+            return null;
+        }
+    };
+
+    const storeGameSession = (session) => {
+        try {
+            sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+        } catch {
+            // Session recovery is optional; the game can restart normally without browser storage.
+        }
+    };
 
     const TEXT = {
         'zh-CN': {
@@ -631,6 +651,100 @@
             });
         }
 
+        function restoreWindowGeometry(geometry) {
+            if (!geometry || !['left', 'top', 'width', 'height'].every((key) => Number.isFinite(geometry[key]))) {
+                return;
+            }
+
+            const workArea = getWorkArea();
+            const width = Math.min(Math.max(1, geometry.width), workArea.width);
+            const height = Math.min(Math.max(1, geometry.height), workArea.height);
+            applyWindowGeometry({
+                left: Math.min(Math.max(0, geometry.left), Math.max(0, workArea.width - width)),
+                top: Math.min(Math.max(0, geometry.top), Math.max(0, workArea.height - height)),
+                width,
+                height
+            });
+        }
+
+        function saveGameSession() {
+            const previousSession = readGameSession();
+            const maximized = gameWindow.classList.contains('is-maximized');
+            const canMeasure = window.innerWidth > 900
+                && !maximized
+                && !gameWindow.classList.contains('is-minimized')
+                && !gameWindow.classList.contains('is-closed');
+            const desktop = window.innerWidth > 900
+                ? {
+                    geometry: canMeasure ? getWindowGeometry() : previousSession?.desktop?.geometry || null,
+                    maximized
+                }
+                : previousSession?.desktop || null;
+
+            storeGameSession({
+                version: 1,
+                context: getSessionContext(),
+                history,
+                phase,
+                humanScore,
+                computerScore,
+                winner,
+                winningLine,
+                roundScored,
+                keyboardPosition,
+                keyboardMode,
+                desktop
+            });
+        }
+
+        function restoreGameSession() {
+            const savedSession = readGameSession();
+            if (!savedSession || savedSession.version !== 1 || savedSession.context !== getSessionContext()) return false;
+
+            board = createBoard();
+            history = [];
+            (Array.isArray(savedSession.history) ? savedSession.history : []).forEach((move) => {
+                if (!Number.isInteger(move?.row) || !Number.isInteger(move?.col)
+                    || ![HUMAN, COMPUTER].includes(move?.player)
+                    || board[move.row]?.[move.col] !== EMPTY) return;
+                board[move.row][move.col] = move.player;
+                history.push({ row: move.row, col: move.col, player: move.player });
+            });
+
+            humanScore = Number.isFinite(savedSession.humanScore) ? Math.max(0, savedSession.humanScore) : 0;
+            computerScore = Number.isFinite(savedSession.computerScore) ? Math.max(0, savedSession.computerScore) : 0;
+            roundScored = Boolean(savedSession.roundScored);
+            winner = [HUMAN, COMPUTER].includes(savedSession.winner) ? savedSession.winner : null;
+            winningLine = Array.isArray(savedSession.winningLine) ? savedSession.winningLine : [];
+            phase = ['playing', 'thinking', 'player-won', 'computer-won', 'draw'].includes(savedSession.phase)
+                ? savedSession.phase
+                : 'playing';
+            currentPlayer = phase === 'thinking' ? COMPUTER : phase === 'playing' ? HUMAN : null;
+            if (Number.isInteger(savedSession.keyboardPosition?.row) && Number.isInteger(savedSession.keyboardPosition?.col)) {
+                keyboardPosition = {
+                    row: Math.min(BOARD_SIZE - 1, Math.max(0, savedSession.keyboardPosition.row)),
+                    col: Math.min(BOARD_SIZE - 1, Math.max(0, savedSession.keyboardPosition.col))
+                };
+            }
+            keyboardMode = Boolean(savedSession.keyboardMode);
+            createEngine();
+
+            if (window.innerWidth > 900 && savedSession.desktop) {
+                if (savedSession.desktop.maximized) {
+                    clearWindowGeometry();
+                    gameWindow.classList.add('is-maximized');
+                } else {
+                    gameWindow.classList.remove('is-maximized');
+                    restoreWindowGeometry(savedSession.desktop.geometry);
+                }
+                document.querySelectorAll('[data-gomoku-window-action="maximize"]').forEach((button) => {
+                    button.setAttribute('aria-pressed', String(gameWindow.classList.contains('is-maximized')));
+                });
+            }
+
+            return true;
+        }
+
         function toggleMaximize() {
             if (window.innerWidth <= 900) return;
             if (gameWindow.classList.contains('is-maximized')) {
@@ -856,6 +970,8 @@
             }
             window.requestAnimationFrame(resizeBoard);
         });
+        window.addEventListener('pagehide', saveGameSession);
+        window.addEventListener('gavin:save-session-state', saveGameSession);
         new ResizeObserver(resizeBoard).observe(boardFrame);
 
         window.render_game_to_text = () => JSON.stringify({
@@ -891,9 +1007,14 @@
         };
         window.GomokuGame = { open: openGame, newGame, undo: undoMove, playMove: playHumanMove, loadPosition };
 
-        createEngine();
+        const restoredSession = restoreGameSession();
+        if (!restoredSession) createEngine();
         applyLanguage();
         render();
+        if (restoredSession && phase === 'thinking') {
+            clearAiTimer();
+            aiTimer = window.setTimeout(runComputerMove, AI_DELAY);
+        }
     }
 
     document.addEventListener('DOMContentLoaded', setupGomokuGame);

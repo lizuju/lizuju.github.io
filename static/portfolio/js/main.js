@@ -22,6 +22,25 @@ function storeLanguage(lang) {
     }
 }
 
+const DESKTOP_SESSION_KEY = 'gavin-portfolio-desktop-session';
+
+function readDesktopSession() {
+    try {
+        const value = sessionStorage.getItem(DESKTOP_SESSION_KEY);
+        return value ? JSON.parse(value) : null;
+    } catch {
+        return null;
+    }
+}
+
+function storeDesktopSession(session) {
+    try {
+        sessionStorage.setItem(DESKTOP_SESSION_KEY, JSON.stringify(session));
+    } catch {
+        // Session recovery is optional; the portfolio remains usable without browser storage.
+    }
+}
+
 const legacyRouteMap = {
     education: 'education',
     experience: 'experience',
@@ -347,11 +366,11 @@ function setupDesktopShell() {
     const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
     const restoreGeometry = new WeakMap();
     const windowEntries = [
-        { element: appWindow, task: taskWindow },
-        { element: projectFolderWindow, task: projectFolderTask },
-        { element: imagePreviewWindow, task: imagePreviewTask },
-        { element: mailWindow, task: mailTask },
-        ...(gameWindow && gameTask ? [{ element: gameWindow, task: gameTask }] : [])
+        { id: 'portfolio', element: appWindow, task: taskWindow },
+        { id: 'project-folder', element: projectFolderWindow, task: projectFolderTask },
+        { id: 'image-preview', element: imagePreviewWindow, task: imagePreviewTask },
+        { id: 'mail', element: mailWindow, task: mailTask },
+        ...(gameWindow && gameTask ? [{ id: 'gomoku', element: gameWindow, task: gameTask }] : [])
     ];
 
     const isWindowVisible = (element) => (
@@ -363,7 +382,7 @@ function setupDesktopShell() {
 
     const focusWindow = (element) => {
         const entry = windowEntries.find((candidate) => candidate.element === element);
-        if (!entry || !isWindowVisible(element)) return;
+        if (!entry || !isWindowVisible(element)) return null;
 
         const windowStack = windowEntries
             .filter((candidate) => isWindowVisible(candidate.element) && candidate !== entry)
@@ -379,6 +398,39 @@ function setupDesktopShell() {
         windowStack.forEach((candidate, index) => {
             candidate.element.style.zIndex = String(10 + index);
         });
+
+        return entry;
+    };
+
+    const isFocusable = (element) => (
+        element instanceof HTMLElement
+        && !element.hidden
+        && !element.matches(':disabled')
+        && element.getClientRects().length > 0
+    );
+
+    const getWindowFocusTarget = (element) => {
+        const preferred = element === appWindow
+            ? appWindow.querySelector('[data-lang-toggle]')
+            : element === projectFolderWindow
+                ? isFocusable(selectedImageButton)
+                    ? selectedImageButton
+                    : projectFolderBack.hidden
+                        ? projectFolderWindow.querySelector('[data-open-robomaster-folder]')
+                        : projectFolderBack
+                : element === imagePreviewWindow
+                    ? imagePreviewWindow.querySelector('[data-image-preview-action="close"]')
+                    : element === mailWindow
+                        ? mailForm.querySelector('input[name="name"]')
+                        : element === gameWindow
+                            ? gameWindow.querySelector('[data-gomoku-board]')
+                            : null;
+
+        if (isFocusable(preferred)) return preferred;
+
+        return Array.from(element.querySelectorAll(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )).find(isFocusable) || null;
     };
 
     const focusTopWindow = (excludedElement) => {
@@ -389,12 +441,29 @@ function setupDesktopShell() {
 
         if (nextEntry) {
             focusWindow(nextEntry.element);
-            return;
+            return nextEntry;
         }
 
         windowEntries.forEach(({ element, task }) => {
             element.classList.remove('is-active');
             task.classList.remove('is-active');
+        });
+
+        return null;
+    };
+
+    const restoreFocusAfterWindowHidden = (hiddenElement, fallbackTask) => {
+        const nextEntry = focusTopWindow(hiddenElement);
+        const target = nextEntry
+            ? getWindowFocusTarget(nextEntry.element)
+            : fallbackTask && !fallbackTask.hidden
+                ? fallbackTask
+                : startButton;
+
+        window.requestAnimationFrame(() => {
+            if (nextEntry && !nextEntry.element.classList.contains('is-active')) return;
+            if (!nextEntry && windowEntries.some(({ element }) => element.classList.contains('is-active'))) return;
+            if (isFocusable(target)) target.focus({ preventScroll: true });
         });
     };
 
@@ -527,7 +596,7 @@ function setupDesktopShell() {
         element.classList.remove('is-active');
         task.classList.remove('is-active');
         if (hideTask) task.hidden = true;
-        focusTopWindow(element);
+        restoreFocusAfterWindowHidden(element, task);
         closeStartMenu();
     };
 
@@ -672,6 +741,127 @@ function setupDesktopShell() {
     const openProjectFolder = () => {
         setProjectFolderView(false);
         showProjectFolder();
+    };
+
+    const getSessionContext = () => window.parent === window ? 'direct' : 'embedded';
+
+    const getWindowSessionState = ({ element, task }) => ({
+        minimized: element.classList.contains('is-minimized'),
+        closed: element.classList.contains('is-closed'),
+        taskHidden: task.hidden,
+        zIndex: element.style.zIndex || null
+    });
+
+    const getDesktopWindowState = (entry, previousState) => {
+        const maximized = entry.element.classList.contains('is-maximized');
+        const previousWindow = previousState?.windows?.[entry.id];
+        const geometry = window.innerWidth > 900 && isWindowVisible(entry.element) && !maximized
+            ? getWindowGeometry(entry.element)
+            : previousWindow?.geometry || null;
+
+        return {
+            geometry,
+            maximized: window.innerWidth > 900 ? maximized : Boolean(previousWindow?.maximized)
+        };
+    };
+
+    const saveDesktopSession = () => {
+        const previousState = readDesktopSession();
+        const activeEntry = windowEntries.find(({ element }) => element.classList.contains('is-active'));
+        const fields = ['name', 'email', 'company', 'message'].reduce((values, name) => {
+            const field = mailForm.querySelector(`[name="${name}"]`);
+            values[name] = field?.value || '';
+            return values;
+        }, {});
+        const desktopState = window.innerWidth > 900
+            ? {
+                windows: Object.fromEntries(windowEntries
+                    .filter((entry) => entry.id !== 'gomoku')
+                    .map((entry) => [entry.id, getDesktopWindowState(entry, previousState?.desktop)]))
+            }
+            : previousState?.desktop || null;
+
+        storeDesktopSession({
+            version: 1,
+            context: getSessionContext(),
+            activeWindowId: activeEntry?.id || null,
+            windows: Object.fromEntries(windowEntries.map((entry) => [entry.id, getWindowSessionState(entry)])),
+            folderOpen: robomasterFolderOpen,
+            selectedImageIndex: selectedImageButton ? robomasterImageButtons.indexOf(selectedImageButton) : null,
+            mail: {
+                fields,
+                statusKey: mailStatusKey,
+                statusState: mailStatusState
+            },
+            desktop: desktopState
+        });
+    };
+
+    const restoreWindowGeometry = (element, geometry) => {
+        if (!geometry || !['left', 'top', 'width', 'height'].every((key) => Number.isFinite(geometry[key]))) return;
+
+        const workArea = getWorkArea();
+        const width = Math.min(Math.max(1, geometry.width), workArea.width);
+        const height = Math.min(Math.max(1, geometry.height), workArea.height);
+        applyWindowGeometry(element, {
+            left: Math.min(Math.max(0, geometry.left), Math.max(0, workArea.width - width)),
+            top: Math.min(Math.max(0, geometry.top), Math.max(0, workArea.height - height)),
+            width,
+            height
+        });
+    };
+
+    const restoreDesktopSession = () => {
+        const savedState = readDesktopSession();
+        if (!savedState || savedState.version !== 1 || savedState.context !== getSessionContext()) return null;
+
+        windowEntries.forEach((entry) => {
+            const state = savedState.windows?.[entry.id];
+            if (!state) return;
+
+            entry.element.classList.toggle('is-minimized', Boolean(state.minimized));
+            entry.element.classList.toggle('is-closed', Boolean(state.closed));
+            entry.task.hidden = Boolean(state.taskHidden);
+            if (state.zIndex) entry.element.style.zIndex = state.zIndex;
+        });
+
+        if (window.innerWidth > 900) {
+            [
+                { id: 'portfolio', element: appWindow, selector: '[data-window-action="maximize"]' },
+                { id: 'project-folder', element: projectFolderWindow, selector: '[data-project-folder-action="maximize"]' },
+                { id: 'image-preview', element: imagePreviewWindow, selector: '[data-image-preview-action="maximize"]' },
+                { id: 'mail', element: mailWindow, selector: '[data-mail-action="maximize"]' }
+            ].forEach(({ id, element, selector }) => {
+                const state = savedState.desktop?.windows?.[id];
+                if (!state) return;
+
+                if (state.maximized) {
+                    clearWindowGeometry(element);
+                    element.classList.add('is-maximized');
+                } else {
+                    element.classList.remove('is-maximized');
+                    restoreWindowGeometry(element, state.geometry);
+                }
+                updateMaximizeButtons(element, selector);
+            });
+        }
+
+        setProjectFolderView(Boolean(savedState.folderOpen));
+        const selectedImage = robomasterImageButtons[savedState.selectedImageIndex];
+        if (selectedImage) updateImagePreview(selectedImage);
+
+        Object.entries(savedState.mail?.fields || {}).forEach(([name, value]) => {
+            const field = mailForm.querySelector(`[name="${name}"]`);
+            if (field && typeof value === 'string') field.value = value;
+        });
+        if (savedState.mail?.statusKey && t()[savedState.mail.statusKey]) {
+            setMailStatus(savedState.mail.statusKey, savedState.mail.statusState || '');
+        }
+
+        const activeEntry = windowEntries.find(({ id, element }) => (
+            id === savedState.activeWindowId && isWindowVisible(element)
+        ));
+        return activeEntry || null;
     };
 
     const sendMail = async (event) => {
@@ -977,7 +1167,8 @@ function setupDesktopShell() {
     });
     desktop.addEventListener('gavin:window-hidden', (event) => {
         const targetWindow = event.target.closest?.('.app-window');
-        focusTopWindow(targetWindow);
+        const entry = windowEntries.find((candidate) => candidate.element === targetWindow);
+        restoreFocusAfterWindowHidden(targetWindow, entry?.task);
     });
     windowEntries.forEach(({ element }) => {
         element.addEventListener('pointerdown', () => focusWindow(element));
@@ -987,8 +1178,16 @@ function setupDesktopShell() {
         setProjectFolderView(robomasterFolderOpen);
         setMailStatus(mailStatusKey, mailStatusState);
     });
-    focusWindow(appWindow);
-    if (document.body.classList.contains('direct-portfolio') && window.innerWidth > 900) {
+    window.addEventListener('pagehide', saveDesktopSession);
+    window.addEventListener('gavin:save-session-state', saveDesktopSession);
+
+    const restoredActiveEntry = restoreDesktopSession();
+    if (restoredActiveEntry) {
+        focusWindow(restoredActiveEntry.element);
+    } else {
+        focusWindow(appWindow);
+    }
+    if (!restoredActiveEntry && document.body.classList.contains('direct-portfolio') && window.innerWidth > 900) {
         toggleMaximize(appWindow, '[data-window-action="maximize"]');
     }
 

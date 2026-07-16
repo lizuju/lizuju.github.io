@@ -39,6 +39,17 @@ function startShell(mobileMode: boolean) {
 
 startShell(mobileModeQuery.matches);
 
+function savePortfolioSession() {
+    document.querySelectorAll<HTMLIFrameElement>('#computer-screen, #mobile-portfolio').forEach((portfolio) => {
+        const portfolioWindow = portfolio.contentWindow;
+        if (!portfolioWindow) return;
+        const sessionEvent = portfolioWindow.document.createEvent('Event');
+        sessionEvent.initEvent('gavin:save-session-state', false, false);
+        portfolioWindow.dispatchEvent(sessionEvent);
+    });
+}
+
 mobileModeQuery.addEventListener('change', () => {
+    savePortfolioSession();
     window.location.reload();
 });

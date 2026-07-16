@@ -525,6 +525,75 @@ test('restores the most recently focused window after closing another window', a
     await expect(projectFolderWindow).not.toHaveClass(/is-active/);
 });
 
+test('restores keyboard focus after closing or minimizing a desktop window', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'desktop window focus behavior is not present on mobile');
+    await page.setViewportSize({ width: 983, height: 754 });
+    await page.goto('/portfolio/');
+
+    const portfolioWindow = page.locator('[data-app-window]');
+    const projectFolderWindow = page.locator('[data-project-folder-window]');
+    await page.locator('[data-window-action="maximize"]').click();
+    await page.locator('.desktop-shortcut[data-open-project-folder]').click();
+    await expect(projectFolderWindow).toBeVisible();
+
+    await projectFolderWindow.locator('[data-project-folder-action="close"]').click();
+    await expect.poll(() => page.evaluate(() => (
+        document.activeElement === document.querySelector('[data-lang-toggle]')
+    ))).toBe(true);
+
+    await portfolioWindow.locator('[data-window-action="minimize"]').click();
+    await expect.poll(() => page.evaluate(() => (
+        document.activeElement === document.querySelector('[data-task-window]')
+    ))).toBe(true);
+});
+
+test('restores desktop session state after a portfolio reload', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'desktop window geometry is not present on mobile');
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/portfolio/');
+
+    const portfolioWindow = page.locator('[data-app-window]');
+    const projectFolderWindow = page.locator('[data-project-folder-window]');
+    const mailWindow = page.locator('[data-mail-window]');
+    await portfolioWindow.locator('[data-window-action="maximize"]').click();
+
+    await page.locator('.desktop-shortcut[data-open-project-folder]').click();
+    await page.locator('[data-open-robomaster-folder]').click();
+    await expect(projectFolderWindow).toContainText('C:\\GAVIN\\PROJECTS\\ROBOMASTER_RECORDS');
+    await projectFolderWindow.evaluate((element) => {
+        element.style.left = '168px';
+        element.style.top = '96px';
+    });
+
+    await page.locator('.desktop-shortcut[data-open-mail-window]').click();
+    await mailWindow.locator('input[name="name"]').fill('Session visitor');
+    await mailWindow.locator('input[name="email"]').fill('session@example.com');
+    await mailWindow.locator('textarea[name="message"]').fill('Keep this draft after reload.');
+
+    await page.locator('.desktop-shortcut[data-open-gomoku]').click();
+    await expect(page.locator('[data-gomoku-launcher]')).toBeHidden({ timeout: 3000 });
+    await page.evaluate(() => window.GomokuGame.loadPosition([
+        { row: 7, col: 7, player: 0 },
+        { row: 7, col: 8, player: 1 }
+    ], 0));
+
+    await page.reload();
+
+    await expect(projectFolderWindow).toContainText('C:\\GAVIN\\PROJECTS\\ROBOMASTER_RECORDS');
+    await expect(projectFolderWindow).toBeVisible();
+    expect(await projectFolderWindow.evaluate((element) => ({ left: element.style.left, top: element.style.top }))).toEqual({
+        left: '168px',
+        top: '96px'
+    });
+    await expect(mailWindow.locator('input[name="name"]')).toHaveValue('Session visitor');
+    await expect(mailWindow.locator('input[name="email"]')).toHaveValue('session@example.com');
+    await expect(mailWindow.locator('textarea[name="message"]')).toHaveValue('Keep this draft after reload.');
+    expect(JSON.parse(await page.evaluate(() => window.render_game_to_text())).moves).toEqual([
+        { row: 7, col: 7, player: 'human-black' },
+        { row: 7, col: 8, player: 'computer-white' }
+    ]);
+});
+
 test('keeps a single iframe input bridge after portfolio iframe reloads', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the mobile shell does not create the portfolio iframe');
     test.setTimeout(60000);
@@ -969,6 +1038,23 @@ test('restarts the appropriate shell when crossing the responsive breakpoint', a
     await page.setViewportSize({ width: 983, height: 754 });
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await expect(page.locator('body')).not.toHaveClass(/mobile-mode/);
+    await expect(page.locator('#computer-screen')).toHaveAttribute('src', 'portfolio/', { timeout: 45000 });
+
+    const desktopPortfolio = page.frameLocator('#computer-screen');
+    await desktopPortfolio.locator('[data-window-action="minimize"]').evaluate((button) => button.click());
+    await desktopPortfolio.locator('.desktop-shortcut[data-open-mail-window]').evaluate((button) => button.click());
+    await desktopPortfolio.locator('[data-mail-form] input[name="name"]').evaluate((field) => {
+        field.value = 'Breakpoint visitor';
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await desktopPortfolio.locator('[data-mail-form] input[name="email"]').evaluate((field) => {
+        field.value = 'breakpoint@example.com';
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await desktopPortfolio.locator('[data-mail-form] textarea[name="message"]').evaluate((field) => {
+        field.value = 'Keep this across a shell reload.';
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
 
     const mobileReload = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
     await page.setViewportSize({ width: 820, height: 754 });
@@ -977,6 +1063,12 @@ test('restarts the appropriate shell when crossing the responsive breakpoint', a
     await expect(page.locator('#mobile-entry')).toBeVisible();
     await expect(page.locator('#mobile-site')).toBeHidden();
     await expect(page.locator('canvas')).toHaveCount(0);
+    await page.locator('[data-mobile-enter]').click();
+    await expect(page.locator('#mobile-portfolio')).toHaveAttribute('src', 'portfolio/');
+    const mobilePortfolio = page.frameLocator('#mobile-portfolio');
+    await expect(mobilePortfolio.locator('[data-mail-form] input[name="name"]')).toHaveValue('Breakpoint visitor');
+    await expect(mobilePortfolio.locator('[data-mail-form] input[name="email"]')).toHaveValue('breakpoint@example.com');
+    await expect(mobilePortfolio.locator('[data-mail-form] textarea[name="message"]')).toHaveValue('Keep this across a shell reload.');
 
     const desktopReload = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
     await page.setViewportSize({ width: 983, height: 754 });
