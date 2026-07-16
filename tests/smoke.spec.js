@@ -444,6 +444,7 @@ test('opens a retro email composer and sends without leaving the portfolio', asy
     await expect(mailWindow).toHaveClass(/is-closed/);
     await expect(mailTask).toBeHidden();
     await expect(page.locator('.desktop-shortcut[href^="mailto:"]')).toHaveCount(0);
+    await expect(page.locator('.contact-links a[href^="mailto:"]')).toHaveCount(0);
     await page.locator('[data-window-action="minimize"]').click();
     await expect(page.locator('[data-app-window]')).toHaveClass(/is-minimized/);
     await page.locator('.desktop-shortcut[data-open-mail-window]').click();
@@ -490,6 +491,11 @@ test('opens a retro email composer and sends without leaving the portfolio', asy
     await page.locator('[data-mail-action="close"]').click();
     await expect(mailWindow).toHaveClass(/is-closed/);
     await expect(mailTask).toBeHidden();
+    await page.locator('[data-task-window]').click();
+    const contactEmail = page.locator('.contact-email-link');
+    await contactEmail.scrollIntoViewIfNeeded();
+    await contactEmail.click();
+    await expect(mailWindow).toBeVisible();
 });
 
 test('restores the most recently focused window after closing another window', async ({ page, isMobile }) => {

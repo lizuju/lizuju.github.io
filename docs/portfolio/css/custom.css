@@ -2078,11 +2078,22 @@ main {
     border-top: 1px solid #555;
 }
 
-.contact-links a {
+.contact-links :is(a, button) {
     padding: 8px 4px;
     overflow-wrap: anywhere;
     border-bottom: 1px solid #777;
     font-weight: 700;
+}
+
+.contact-email-link {
+    color: var(--link);
+    border-top: 0;
+    border-right: 0;
+    border-left: 0;
+    background: transparent;
+    text-align: left;
+    text-decoration: underline;
+    cursor: pointer;
 }
 
 .site-footer {
