@@ -90,6 +90,82 @@
       border: 0;
     }
 
+    #mobile-entry {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      padding: 28px;
+      background: #000;
+      color: #fff;
+      font: 700 clamp(16px, 4.7vw, 22px)/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      letter-spacing: 0.04em;
+    }
+
+    .mobile-entry-dialog {
+      width: min(100%, 620px);
+      box-sizing: border-box;
+      border: 7px solid #fff;
+      padding: clamp(26px, 8vw, 46px);
+      background: #000;
+    }
+
+    .mobile-entry-dialog p {
+      margin: 0;
+    }
+
+    .mobile-entry-warning {
+      margin-top: clamp(30px, 8vw, 52px) !important;
+      color: #ffff2d;
+    }
+
+    .mobile-entry-prompt {
+      display: flex;
+      align-items: flex-end;
+      margin-top: clamp(30px, 8vw, 52px);
+    }
+
+    .mobile-entry-cursor {
+      display: inline-block;
+      width: 0.7em;
+      height: 0.15em;
+      margin-left: 0.28em;
+      background: #fff;
+      animation: mobile-entry-blink 0.65s step-end infinite;
+    }
+
+    @keyframes mobile-entry-blink {
+      0%,
+      100% {
+        background: transparent;
+      }
+
+      50% {
+        background: #fff;
+      }
+    }
+
+    .mobile-entry-button {
+      display: block;
+      margin: clamp(32px, 8vw, 52px) auto 0;
+      border: 4px solid #fff;
+      padding: 10px 14px;
+      background: #000;
+      color: #fff;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .mobile-entry-button:active,
+    .mobile-entry-button:focus-visible {
+      outline: 0;
+      background: #fff;
+      color: #000;
+    }
+
     #shell-error {
       position: fixed;
       inset: 50% auto auto 50%;
@@ -112,7 +188,15 @@
       color: #fff;
     }
 
-    body.mobile-mode #mobile-site {
+    body.mobile-mode #mobile-entry {
+      display: flex;
+    }
+
+    body.mobile-mode.mobile-portfolio-started #mobile-entry {
+      display: none;
+    }
+
+    body.mobile-mode.mobile-portfolio-started #mobile-site {
       display: block;
     }
 
@@ -184,8 +268,18 @@
 
 <body>
   <a class="scene-link direct-entry" href="portfolio/">直接查看作品集 / Direct view</a>
+  <section id="mobile-entry" aria-labelledby="mobile-entry-title">
+    <div class="mobile-entry-dialog">
+      <p id="mobile-entry-title">Gavin Lizuju · Immersive Portfolio</p>
+      <p class="mobile-entry-warning">WARNING: This experience is best viewed on a desktop or laptop computer.</p>
+      <div class="mobile-entry-prompt">
+        Click to enter<span class="mobile-entry-cursor" aria-hidden="true"></span>
+      </div>
+      <button class="mobile-entry-button" type="button" data-mobile-enter>Enter</button>
+    </div>
+  </section>
   <div id="mobile-site">
-    <iframe id="mobile-portfolio" src="portfolio/" title="李祖钜 Gavin 作品集"></iframe>
+    <iframe id="mobile-portfolio" data-src="portfolio/" title="李祖钜 Gavin 作品集"></iframe>
   </div>
   <div id="shell-error" role="alert" hidden>
     3D 场景启动失败 / Immersive shell unavailable

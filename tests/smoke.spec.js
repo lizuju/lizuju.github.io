@@ -77,6 +77,8 @@ test('returns from the direct portfolio to the immersive shell', async ({ page, 
     await page.locator('[data-direct-return]').click();
     await expect(page).toHaveURL(/\/$/);
     if (isMobile) {
+        await expect(page.locator('#mobile-entry')).toBeVisible();
+        await page.locator('[data-mobile-enter]').click();
         await expect(page.locator('#mobile-portfolio')).toBeVisible();
     } else {
         await expect(page.locator('.direct-entry')).toBeHidden();
@@ -958,7 +960,8 @@ test('restarts the appropriate shell when crossing the responsive breakpoint', a
         await page.setViewportSize({ width: 844, height: 390 });
         await page.goto('/', { waitUntil: 'domcontentloaded' });
         await expect(page.locator('body')).toHaveClass(/mobile-mode/);
-        await expect(page.locator('#mobile-portfolio')).toBeVisible();
+        await expect(page.locator('#mobile-entry')).toBeVisible();
+        await expect(page.locator('#mobile-site')).toBeHidden();
         await expect(page.locator('canvas')).toHaveCount(0);
         return;
     }
@@ -971,7 +974,8 @@ test('restarts the appropriate shell when crossing the responsive breakpoint', a
     await page.setViewportSize({ width: 820, height: 754 });
     await mobileReload;
     await expect(page.locator('body')).toHaveClass(/mobile-mode/);
-    await expect(page.locator('#mobile-portfolio')).toBeVisible();
+    await expect(page.locator('#mobile-entry')).toBeVisible();
+    await expect(page.locator('#mobile-site')).toBeHidden();
     await expect(page.locator('canvas')).toHaveCount(0);
 
     const desktopReload = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
@@ -998,6 +1002,10 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
 
     if (isMobile) {
         await expect(page.locator('body')).toHaveClass(/mobile-mode/);
+        await expect(page.locator('#mobile-entry')).toBeVisible();
+        await expect(page.locator('#mobile-entry')).toContainText('WARNING: This experience is best viewed on a desktop or laptop computer.');
+        await expect(page.locator('#mobile-portfolio')).not.toHaveAttribute('src');
+        await page.locator('[data-mobile-enter]').click();
         await expect(page.locator('#mobile-portfolio')).toBeVisible();
         await expect(page.locator('canvas')).toHaveCount(0);
         await expect(page.frameLocator('#mobile-portfolio').locator('h1')).toContainText('智能系统');
