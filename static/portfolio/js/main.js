@@ -1408,7 +1408,9 @@ function setupDesktopShell() {
     window.addEventListener('gavin:save-session-state', saveDesktopSession);
 
     const restoredActiveEntry = restoreDesktopSession();
-    if (restoredActiveEntry) {
+    if (document.body.classList.contains('mobile-homepage')) {
+        showPortfolioWindow('#top');
+    } else if (restoredActiveEntry) {
         focusWindow(restoredActiveEntry.element);
     } else {
         focusWindow(appWindow);
@@ -1501,7 +1503,10 @@ function routeLegacySkillLinks() {
 
 document.addEventListener('DOMContentLoaded', () => {
     const directReturn = document.querySelector('[data-direct-return]');
-    if (directReturn && window.parent === window) {
+    const mobileHomepage = new URLSearchParams(window.location.search).get('view') === 'mobile-homepage';
+    document.body.classList.toggle('mobile-homepage', mobileHomepage);
+
+    if (directReturn && window.parent === window && !mobileHomepage) {
         directReturn.hidden = false;
         document.body.classList.add('direct-portfolio');
     }
