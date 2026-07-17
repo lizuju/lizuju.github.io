@@ -68,6 +68,14 @@ export default class Application {
 
         this.ui = new UI();
 
+        document.querySelector<HTMLAnchorElement>('.direct-entry')?.addEventListener('click', (event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            this.time.pause();
+        }, { signal: this.eventController.signal });
+        window.addEventListener('pageshow', () => {
+            this.time.resume();
+        }, { signal: this.eventController.signal });
+
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('debug')) {
             this.stats = new Stats();

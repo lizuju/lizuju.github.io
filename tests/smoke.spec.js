@@ -775,6 +775,47 @@ test('pauses and resumes the render loop when document visibility changes', asyn
     expect(countWhileHidden - countBeforePause).toBeLessThanOrEqual(2);
 });
 
+test('pauses the immersive render loop when direct view opens and resumes after returning', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the mobile shell does not create the render loop');
+    test.setTimeout(60000);
+    await page.addInitScript(() => {
+        window.__gavinDrawCalls = 0;
+        [window.WebGLRenderingContext, window.WebGL2RenderingContext].forEach((Context) => {
+            if (!Context) return;
+            ['drawArrays', 'drawElements'].forEach((method) => {
+                if (!Object.prototype.hasOwnProperty.call(Context.prototype, method)) return;
+                const original = Context.prototype[method];
+                Context.prototype[method] = function (...args) {
+                    window.__gavinDrawCalls += 1;
+                    return original.apply(this, args);
+                };
+            });
+        });
+    });
+
+    await page.goto('/');
+    await expect(page.locator('canvas').first()).toBeVisible({ timeout: 45000 });
+    await page.locator('[data-start-scene]').click();
+    const directEntry = page.locator('.direct-entry');
+    await expect(directEntry).toBeVisible();
+    await page.waitForTimeout(150);
+
+    await directEntry.evaluate((link) => {
+        link.addEventListener('click', (event) => event.preventDefault(), { once: true });
+        link.click();
+    });
+    await page.waitForTimeout(50);
+    const countAfterPause = await page.evaluate(() => window.__gavinDrawCalls);
+    await page.waitForTimeout(100);
+    const countWhileDirect = await page.evaluate(() => window.__gavinDrawCalls);
+
+    await page.evaluate(() => {
+        window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    });
+    await expect.poll(() => page.evaluate(() => window.__gavinDrawCalls)).toBeGreaterThan(countWhileDirect);
+    expect(countWhileDirect).toBe(countAfterPause);
+});
+
 test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => {
     if (!isMobile) await page.setViewportSize({ width: 983, height: 754 });
     await page.goto('/portfolio/');

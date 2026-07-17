@@ -47,16 +47,16 @@ export default class Time extends EventEmitter {
         });
     }
 
-    handleVisibilityChange = () => {
-        if (document.hidden) {
-            if (this.isPaused) return;
-            this.isPaused = true;
-            this.pausedAt = Date.now();
-            window.cancelAnimationFrame(this.animationFrameId);
-            return;
-        }
+    pause() {
+        if (this.isPaused) return;
 
-        if (!this.isPaused) return;
+        this.isPaused = true;
+        this.pausedAt = Date.now();
+        window.cancelAnimationFrame(this.animationFrameId);
+    }
+
+    resume() {
+        if (!this.isPaused || document.hidden) return;
 
         const currentTime = Date.now();
         this.start += currentTime - this.pausedAt;
@@ -66,6 +66,15 @@ export default class Time extends EventEmitter {
         this.animationFrameId = window.requestAnimationFrame(() => {
             this.tick();
         });
+    }
+
+    handleVisibilityChange = () => {
+        if (document.hidden) {
+            this.pause();
+            return;
+        }
+
+        this.resume();
     };
 
     destroy() {
