@@ -2548,7 +2548,10 @@ body.direct-portfolio .app-window:not(.is-maximized) {
     }
 
     .desktop-shortcuts {
-        display: none;
+        top: 12px;
+        left: 8px;
+        display: grid;
+        gap: 12px;
     }
 
     .app-window,
@@ -2578,10 +2581,6 @@ body.direct-portfolio .app-window:not(.is-maximized) {
     }
 
     .window-menubar {
-        display: none;
-    }
-
-    .gomoku-menubar {
         display: flex;
     }
 

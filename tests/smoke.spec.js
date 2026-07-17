@@ -1232,11 +1232,18 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
         await expect(mobilePortfolio.locator('body')).toHaveClass(/mobile-homepage/);
         await expect(mobilePortfolio.locator('[data-app-window]')).toBeVisible();
         await expect(mobilePortfolio.locator('[data-app-window]')).not.toHaveClass(/is-minimized|is-closed/);
+        await expect(mobilePortfolio.locator('[data-app-window] > .window-menubar')).toBeVisible();
+        await expect(mobilePortfolio.locator('[data-app-window] > .window-menubar [data-window-menu]')).toHaveCount(5);
         await expect(mobilePortfolio.locator('h1')).toContainText('智能系统');
         await expect(mobilePortfolio.locator('[data-direct-return]')).toBeHidden();
 
         await mobilePortfolio.locator('[data-window-action="minimize"]').click();
         await expect(mobilePortfolio.locator('[data-app-window]')).toHaveClass(/is-minimized/);
+        await expect(mobilePortfolio.locator('.desktop-shortcuts')).toBeVisible();
+        await expect(mobilePortfolio.locator('.desktop-shortcut')).toHaveCount(5);
+        for (const icon of await mobilePortfolio.locator('.desktop-shortcut .shortcut-icon').all()) {
+            await expect(icon).toBeVisible();
+        }
         await mobilePortfolio.locator('body').evaluate(() => window.dispatchEvent(new Event('pageshow')));
         await expect(mobilePortfolio.locator('[data-app-window]')).toBeVisible();
         await expect(mobilePortfolio.locator('[data-app-window]')).not.toHaveClass(/is-minimized|is-closed|is-maximized/);
