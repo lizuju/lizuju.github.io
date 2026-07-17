@@ -1234,6 +1234,12 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
         await expect(mobilePortfolio.locator('[data-app-window]')).not.toHaveClass(/is-minimized|is-closed/);
         await expect(mobilePortfolio.locator('h1')).toContainText('智能系统');
         await expect(mobilePortfolio.locator('[data-direct-return]')).toBeHidden();
+
+        await mobilePortfolio.locator('[data-window-action="minimize"]').click();
+        await expect(mobilePortfolio.locator('[data-app-window]')).toHaveClass(/is-minimized/);
+        await mobilePortfolio.locator('body').evaluate(() => window.dispatchEvent(new Event('pageshow')));
+        await expect(mobilePortfolio.locator('[data-app-window]')).toBeVisible();
+        await expect(mobilePortfolio.locator('[data-app-window]')).not.toHaveClass(/is-minimized|is-closed|is-maximized/);
         expect(immersiveChunkRequests).toHaveLength(0);
         expect(videoRequests).toHaveLength(0);
         return;

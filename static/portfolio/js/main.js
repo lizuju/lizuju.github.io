@@ -350,6 +350,7 @@ function setupDesktopShell() {
     const shutdownLog = document.querySelector('[data-shutdown-log]');
     const restartButton = document.querySelector('[data-restart]');
     const clock = document.querySelector('[data-retro-clock]');
+    const mobileHomepage = document.body.classList.contains('mobile-homepage');
     if (!desktop || !appWindow || !titlebar || !resizeHandle || !taskWindow
         || !projectFolderWindow || !projectFolderTitlebar || !projectFolderResizeHandle || !projectFolderTask
         || !projectFolderTitle || !projectFolderAddress || !projectFolderStatus || !projectFolderRoot
@@ -724,6 +725,12 @@ function setupDesktopShell() {
     };
 
     const showPortfolioWindow = (target) => showWindow(appWindow, taskWindow, { target, revealTask: true });
+    const showMobileHomepage = () => {
+        appWindow.classList.remove('is-maximized');
+        clearWindowGeometry(appWindow);
+        updateMaximizeButtons(appWindow, '[data-window-action="maximize"]');
+        showPortfolioWindow('#top');
+    };
     const hidePortfolioWindow = (state) => hideWindow(appWindow, taskWindow, state, {
         hideTask: state === 'is-closed'
     });
@@ -959,6 +966,7 @@ function setupDesktopShell() {
         windowEntries.forEach((entry) => {
             const state = savedState.windows?.[entry.id];
             if (!state) return;
+            if (mobileHomepage && entry.id === 'portfolio') return;
 
             entry.element.classList.toggle('is-minimized', Boolean(state.minimized));
             entry.element.classList.toggle('is-closed', Boolean(state.closed));
@@ -1408,8 +1416,9 @@ function setupDesktopShell() {
     window.addEventListener('gavin:save-session-state', saveDesktopSession);
 
     const restoredActiveEntry = restoreDesktopSession();
-    if (document.body.classList.contains('mobile-homepage')) {
-        showPortfolioWindow('#top');
+    if (mobileHomepage) {
+        showMobileHomepage();
+        window.addEventListener('pageshow', showMobileHomepage);
     } else if (restoredActiveEntry) {
         focusWindow(restoredActiveEntry.element);
     } else {
