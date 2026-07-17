@@ -368,12 +368,7 @@
         }
 
         function closeMenus() {
-            document.querySelectorAll('[data-gomoku-menu-popup]').forEach((popup) => {
-                popup.hidden = true;
-            });
-            document.querySelectorAll('[data-gomoku-menu]').forEach((button) => {
-                button.setAttribute('aria-expanded', 'false');
-            });
+            document.dispatchEvent(new CustomEvent('gavin:close-window-menus'));
         }
 
         function clearAiTimer() {
@@ -863,20 +858,6 @@
                 dialog.hidden = true;
             });
         });
-
-        document.querySelectorAll('[data-gomoku-menu]').forEach((button) => {
-            button.addEventListener('click', (event) => {
-                event.stopPropagation();
-                const name = button.getAttribute('data-gomoku-menu');
-                const popup = document.querySelector(`[data-gomoku-menu-popup="${name}"]`);
-                const open = popup.hidden;
-                closeMenus();
-                popup.hidden = !open;
-                button.setAttribute('aria-expanded', String(open));
-            });
-        });
-        document.querySelector('[data-gomoku-menubar]')?.addEventListener('click', (event) => event.stopPropagation());
-        document.addEventListener('click', closeMenus);
 
         canvas.addEventListener('pointermove', (event) => {
             keyboardMode = false;

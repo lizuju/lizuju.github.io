@@ -322,6 +322,7 @@ function setupDesktopShell() {
     const projectFolderStatus = document.querySelector('[data-project-folder-status]');
     const projectFolderRoot = document.querySelector('[data-project-folder-root]');
     const robomasterFolderView = document.querySelector('[data-robomaster-folder-view]');
+    const robomasterFolderButton = document.querySelector('[data-open-robomaster-folder]');
     const projectFolderBack = document.querySelector('[data-project-folder-back]');
     const imagePreviewWindow = document.querySelector('[data-image-preview-window]');
     const imagePreviewTitle = document.querySelector('[data-image-preview-title]');
@@ -352,7 +353,7 @@ function setupDesktopShell() {
     if (!desktop || !appWindow || !titlebar || !resizeHandle || !taskWindow
         || !projectFolderWindow || !projectFolderTitlebar || !projectFolderResizeHandle || !projectFolderTask
         || !projectFolderTitle || !projectFolderAddress || !projectFolderStatus || !projectFolderRoot
-        || !robomasterFolderView || !projectFolderBack || !imagePreviewWindow || !imagePreviewTitle
+        || !robomasterFolderView || !robomasterFolderButton || !projectFolderBack || !imagePreviewWindow || !imagePreviewTitle
         || !imagePreviewImage || !imagePreviewCaption || !imagePreviewStatus || !imagePreviewTitlebar
         || !imagePreviewResizeHandle || !imagePreviewTask || !imagePreviewTaskTitle
         || !mailWindow || !mailTitlebar || !mailResizeHandle || !mailTask || !mailForm || !mailSendButton || !mailStatus
@@ -364,7 +365,9 @@ function setupDesktopShell() {
     let selectedImageButton;
     let mailStatusKey = 'mailStatusReady';
     let mailStatusState = '';
+    let lastMailField = mailForm.querySelector('input[name="name"]');
     const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
+    const menuTriggers = Array.from(document.querySelectorAll('[data-window-menu]'));
     const restoreGeometry = new WeakMap();
     const windowEntries = [
         { id: 'portfolio', element: appWindow, task: taskWindow },
@@ -468,9 +471,126 @@ function setupDesktopShell() {
         });
     };
 
+    const getMenuPopup = (trigger) => document.querySelector(
+        `[data-window-menu-popup="${trigger.dataset.windowMenu}"]`
+    );
+
+    const getMenuItems = (popup) => Array.from(popup.querySelectorAll('[role="menuitem"]'))
+        .filter((item) => !item.disabled && !item.hidden);
+
+    const closeWindowMenus = () => {
+        document.querySelectorAll('[data-window-menu-popup]').forEach((popup) => {
+            popup.hidden = true;
+        });
+        menuTriggers.forEach((trigger) => {
+            trigger.setAttribute('aria-expanded', 'false');
+        });
+    };
+
+    const openWindowMenu = (trigger, focusPosition) => {
+        const popup = getMenuPopup(trigger);
+        if (!popup) return;
+
+        closeWindowMenus();
+        popup.hidden = false;
+        trigger.setAttribute('aria-expanded', 'true');
+
+        if (!focusPosition) return;
+        const items = getMenuItems(popup);
+        const target = focusPosition === 'last' ? items.at(-1) : items[0];
+        target?.focus({ preventScroll: true });
+    };
+
+    const getAdjacentMenuTrigger = (trigger, offset) => {
+        const menubar = trigger.closest('[data-window-menubar]');
+        const triggers = Array.from(menubar?.querySelectorAll('[data-window-menu]') || []);
+        const index = triggers.indexOf(trigger);
+        if (index < 0 || !triggers.length) return null;
+        return triggers[(index + offset + triggers.length) % triggers.length];
+    };
+
+    const moveToAdjacentMenu = (trigger, offset, openMenu) => {
+        const nextTrigger = getAdjacentMenuTrigger(trigger, offset);
+        if (!nextTrigger) return;
+        closeWindowMenus();
+        nextTrigger.focus({ preventScroll: true });
+        if (openMenu) openWindowMenu(nextTrigger, 'first');
+    };
+
+    menuTriggers.forEach((trigger) => {
+        trigger.addEventListener('click', (event) => {
+            event.stopPropagation();
+            trigger.focus({ preventScroll: true });
+            const shouldOpen = trigger.getAttribute('aria-expanded') !== 'true';
+            closeWindowMenus();
+            if (shouldOpen) openWindowMenu(trigger);
+        });
+        trigger.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                openWindowMenu(trigger, event.key === 'ArrowUp' ? 'last' : 'first');
+                return;
+            }
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                event.preventDefault();
+                const openMenu = trigger.getAttribute('aria-expanded') === 'true';
+                moveToAdjacentMenu(trigger, event.key === 'ArrowLeft' ? -1 : 1, openMenu);
+                return;
+            }
+            if (event.key === 'Escape') {
+                closeWindowMenus();
+                trigger.focus({ preventScroll: true });
+            }
+        });
+    });
+
+    document.querySelectorAll('[data-window-menu-popup]').forEach((popup) => {
+        popup.addEventListener('keydown', (event) => {
+            const item = event.target.closest?.('[role="menuitem"]');
+            if (!item) return;
+
+            const items = getMenuItems(popup);
+            const index = items.indexOf(item);
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                const offset = event.key === 'ArrowDown' ? 1 : -1;
+                items[(index + offset + items.length) % items.length]?.focus({ preventScroll: true });
+                return;
+            }
+            if (event.key === 'Home' || event.key === 'End') {
+                event.preventDefault();
+                (event.key === 'Home' ? items[0] : items.at(-1))?.focus({ preventScroll: true });
+                return;
+            }
+
+            const trigger = popup.closest('.window-menu')?.querySelector('[data-window-menu]');
+            if (!trigger) return;
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                event.preventDefault();
+                moveToAdjacentMenu(trigger, event.key === 'ArrowLeft' ? -1 : 1, true);
+                return;
+            }
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                closeWindowMenus();
+                trigger.focus({ preventScroll: true });
+            }
+        });
+    });
+
+    document.querySelectorAll('[data-window-menubar]').forEach((menubar) => {
+        menubar.addEventListener('click', (event) => event.stopPropagation());
+    });
+    document.addEventListener('gavin:close-window-menus', closeWindowMenus);
+    document.addEventListener('click', closeWindowMenus);
+    document.addEventListener('focusin', (event) => {
+        if (!event.target.closest?.('[data-window-menubar]')) closeWindowMenus();
+    });
+
     const closeStartMenu = () => {
         startMenu.hidden = true;
         startButton.setAttribute('aria-expanded', 'false');
+        closeWindowMenus();
     };
 
     const getWorkArea = () => ({
@@ -580,6 +700,7 @@ function setupDesktopShell() {
     };
 
     const showWindow = (element, task, { target, revealTask = false } = {}) => {
+        closeWindowMenus();
         element.classList.remove('is-minimized', 'is-closed');
         if (revealTask) task.hidden = false;
         focusWindow(element);
@@ -592,6 +713,7 @@ function setupDesktopShell() {
     };
 
     const hideWindow = (element, task, state, { hideTask = false } = {}) => {
+        closeWindowMenus();
         element.classList.remove('is-minimized', 'is-closed');
         element.classList.add(state);
         element.classList.remove('is-active');
@@ -634,6 +756,21 @@ function setupDesktopShell() {
         robomasterImageButtons.forEach((candidate) => {
             candidate.classList.toggle('is-selected', candidate === button);
         });
+    };
+
+    const selectAllFolderItems = () => {
+        if (robomasterFolderOpen) {
+            robomasterImageButtons.forEach((button) => button.classList.add('is-selected'));
+            selectedImageButton = robomasterImageButtons[0];
+            return;
+        }
+        robomasterFolderButton.classList.add('is-selected');
+    };
+
+    const clearFolderSelection = () => {
+        robomasterFolderButton.classList.remove('is-selected');
+        robomasterImageButtons.forEach((button) => button.classList.remove('is-selected'));
+        selectedImageButton = undefined;
     };
 
     const getPhotoColumnCount = () => {
@@ -932,6 +1069,86 @@ function setupDesktopShell() {
         });
     };
 
+    const selectPortfolioContent = () => {
+        const content = appWindow.querySelector('.page-shell');
+        const selection = window.getSelection();
+        if (!content || !selection) return;
+
+        const range = document.createRange();
+        range.selectNodeContents(content);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    };
+
+    const clearTextSelection = () => window.getSelection()?.removeAllRanges();
+
+    const openSelectedFolderItem = () => {
+        if (!robomasterFolderOpen) {
+            openRoboMasterFolder();
+            return;
+        }
+        openImagePreview(selectedImageButton || robomasterImageButtons[0]);
+    };
+
+    const focusMailField = (selector) => {
+        const field = mailForm.querySelector(selector);
+        if (!field) return;
+        lastMailField = field;
+        field.focus({ preventScroll: true });
+    };
+
+    const menuActionHandlers = {
+        'portfolio-project-files': openProjectFolder,
+        'portfolio-print': () => window.print(),
+        'portfolio-close': () => hidePortfolioWindow('is-closed'),
+        'portfolio-select-all': selectPortfolioContent,
+        'clear-selection': clearTextSelection,
+        'portfolio-top': () => scrollPortfolioWindow('#top', true),
+        'portfolio-projects': () => scrollPortfolioWindow('#projects', true),
+        'portfolio-contact': () => scrollPortfolioWindow('#contact', true),
+        'portfolio-toggle-size': () => toggleMaximize(appWindow, '[data-window-action="maximize"]'),
+        'portfolio-github': () => window.open('https://github.com/lizuju', '_blank', 'noopener,noreferrer'),
+        'portfolio-robomaster': openRoboMasterFolder,
+        'portfolio-about': () => scrollPortfolioWindow('#top', true),
+        'folder-open': openSelectedFolderItem,
+        'folder-up': () => setProjectFolderView(false),
+        'folder-close': () => hideProjectFolder('is-closed'),
+        'folder-select-all': selectAllFolderItems,
+        'folder-clear-selection': clearFolderSelection,
+        'folder-refresh': () => setProjectFolderView(robomasterFolderOpen),
+        'folder-toggle-size': () => toggleMaximize(
+            projectFolderWindow,
+            '[data-project-folder-action="maximize"]'
+        ),
+        'folder-info': () => {
+            projectFolderStatus.textContent = t().folderHelpStatus;
+        },
+        'mail-send': () => mailForm.requestSubmit(),
+        'mail-clear-draft': () => {
+            mailForm.reset();
+            setMailStatus('mailStatusReady', '');
+            focusMailField('input[name="name"]');
+        },
+        'mail-close': () => hideMailWindow('is-closed'),
+        'mail-select-field': () => lastMailField?.select(),
+        'mail-clear-field': () => {
+            if (lastMailField) lastMailField.value = '';
+            lastMailField?.focus({ preventScroll: true });
+        },
+        'mail-focus-name': () => focusMailField('input[name="name"]'),
+        'mail-focus-message': () => focusMailField('textarea[name="message"]'),
+        'mail-toggle-size': () => toggleMaximize(mailWindow, '[data-mail-action="maximize"]'),
+        'mail-help': () => setMailStatus('mailStatusHelp', '')
+    };
+
+    document.querySelectorAll('[data-menu-action]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const handler = menuActionHandlers[button.dataset.menuAction];
+            closeWindowMenus();
+            handler?.();
+        });
+    });
+
     document.querySelectorAll('[data-window-action]').forEach((button) => {
         button.addEventListener('click', () => {
             const action = button.getAttribute('data-window-action');
@@ -951,12 +1168,17 @@ function setupDesktopShell() {
     document.querySelectorAll('[data-open-mail-window]').forEach((button) => {
         button.addEventListener('click', showMailWindow);
     });
-    document.querySelector('[data-open-robomaster-folder]')?.addEventListener('click', openRoboMasterFolder);
+    robomasterFolderButton.addEventListener('click', openRoboMasterFolder);
     projectFolderBack.addEventListener('click', () => setProjectFolderView(false));
     robomasterImageButtons.forEach((button) => {
         button.addEventListener('click', () => openImagePreview(button));
     });
     mailForm.addEventListener('submit', sendMail);
+    mailForm.querySelectorAll('input:not(.mail-honeypot), textarea').forEach((field) => {
+        field.addEventListener('focus', () => {
+            lastMailField = field;
+        });
+    });
 
     document.querySelectorAll('a[href^="#"]').forEach((link) => {
         link.addEventListener('click', (event) => {

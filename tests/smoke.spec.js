@@ -512,6 +512,72 @@ test('opens a retro email composer and sends without leaving the portfolio', asy
     await expect(mailWindow).toBeVisible();
 });
 
+test('runs consistent keyboard menus with window-specific commands', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'desktop application menus are hidden in the mobile layout');
+    await page.setViewportSize({ width: 1100, height: 800 });
+    await page.goto('/portfolio/');
+
+    const fileMenu = page.locator('[data-window-menu="portfolio-file"]');
+    const editMenu = page.locator('[data-window-menu="portfolio-edit"]');
+    await fileMenu.click();
+    await expect(page.locator('[data-window-menu-popup="portfolio-file"]')).toBeVisible();
+    await page.keyboard.press('ArrowRight');
+    await expect(editMenu).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('[data-window-menu-popup="portfolio-edit"]')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-window-menu-popup="portfolio-edit"]')).toBeHidden();
+    await expect(editMenu).toBeFocused();
+
+    await page.locator('[data-window-menu="portfolio-view"]').click();
+    await page.locator('[data-menu-action="portfolio-projects"]').click();
+    await expect(page).toHaveURL(/#projects$/);
+    await expect.poll(() => page.locator('[data-window-scroll]').evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+    await fileMenu.click();
+    await page.locator('[data-menu-action="portfolio-project-files"]').click();
+    const folderWindow = page.locator('[data-project-folder-window]');
+    await expect(folderWindow).toBeVisible();
+
+    await folderWindow.locator('[data-window-menu="folder-help"]').click();
+    await folderWindow.locator('[data-menu-action="folder-info"]').click();
+    await expect(folderWindow.locator('[data-project-folder-status]')).toContainText('13 张 RoboMaster');
+
+    await folderWindow.locator('[data-window-menu="folder-edit"]').click();
+    await folderWindow.locator('[data-menu-action="folder-select-all"]').click();
+    await expect(folderWindow.locator('[data-open-robomaster-folder]')).toHaveClass(/is-selected/);
+    await folderWindow.locator('[data-window-menu="folder-file"]').click();
+    await folderWindow.locator('[data-menu-action="folder-open"]').click();
+    await expect(folderWindow).toContainText('C:\\GAVIN\\PROJECTS\\ROBOMASTER_RECORDS');
+
+    await folderWindow.locator('[data-window-menu="folder-edit"]').click();
+    await folderWindow.locator('[data-menu-action="folder-select-all"]').click();
+    await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toHaveCount(13);
+    await folderWindow.locator('[data-window-menu="folder-edit"]').click();
+    await folderWindow.locator('[data-menu-action="folder-clear-selection"]').click();
+    await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toHaveCount(0);
+
+    await folderWindow.locator('[data-window-menu="folder-file"]').click();
+    await folderWindow.locator('[data-menu-action="folder-close"]').click();
+    await expect(folderWindow).toHaveClass(/is-closed/);
+    await fileMenu.click();
+    await page.locator('[data-menu-action="portfolio-close"]').click();
+    await expect(page.locator('[data-app-window]')).toHaveClass(/is-closed/);
+
+    await page.locator('.desktop-shortcut[data-open-mail-window]').click();
+    const mailWindow = page.locator('[data-mail-window]');
+    const messageField = mailWindow.locator('textarea[name="message"]');
+    await messageField.fill('Draft message');
+    await mailWindow.locator('[data-window-menu="mail-edit"]').click();
+    await mailWindow.locator('[data-menu-action="mail-clear-field"]').click();
+    await expect(messageField).toHaveValue('');
+    await mailWindow.locator('[data-window-menu="mail-view"]').click();
+    await mailWindow.locator('[data-menu-action="mail-focus-message"]').click();
+    await expect(messageField).toBeFocused();
+    await mailWindow.locator('[data-window-menu="mail-help"]').click();
+    await mailWindow.locator('[data-menu-action="mail-help"]').click();
+    await expect(mailWindow.locator('[data-mail-status]')).toContainText('消息会转发至 Gavin');
+});
+
 test('restores the most recently focused window after closing another window', async ({ page, isMobile }) => {
     test.skip(isMobile, 'desktop window stacking is not present on mobile');
     await page.setViewportSize({ width: 1280, height: 900 });

@@ -69,8 +69,8 @@
 
     <link rel="icon" id="favicon" type="image/png" href="assets/avatar.png">
     <link rel="preload" as="image" href="assets/portfolio-hero.jpg">
-    <link rel="stylesheet" href="css/custom.css?v=ae1485f734d3">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=ae1485f734d3">
+    <link rel="stylesheet" href="css/custom.css?v=042939d06913">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=042939d06913">
 </head>
 
 <body>
@@ -122,12 +122,79 @@
                 </div>
             </div>
 
-            <div class="window-menubar" aria-hidden="true">
-                <span data-i18n="menuFile">文件</span>
-                <span data-i18n="menuEdit">编辑</span>
-                <span data-i18n="menuView">查看</span>
-                <span data-i18n="menuFavorites">收藏</span>
-                <span data-i18n="menuHelp">帮助</span>
+            <div class="window-menubar" data-window-menubar role="menubar" aria-label="Homepage commands">
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="portfolio-file"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuFile">文件</button>
+                    <div class="window-menu-popup" data-window-menu-popup="portfolio-file" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="portfolio-project-files">
+                            <span data-i18n="desktopProjects">项目文件</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="portfolio-print">
+                            <span data-i18n="menuPrint">打印...</span>
+                        </button>
+                        <div class="window-menu-separator" role="separator"></div>
+                        <button type="button" role="menuitem" data-menu-action="portfolio-close">
+                            <span data-i18n="menuClose">关闭</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="portfolio-edit"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuEdit">编辑</button>
+                    <div class="window-menu-popup" data-window-menu-popup="portfolio-edit" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="portfolio-select-all">
+                            <span data-i18n="menuSelectAll">全选</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="clear-selection">
+                            <span data-i18n="menuClearSelection">取消选择</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="portfolio-view"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuView">查看</button>
+                    <div class="window-menu-popup" data-window-menu-popup="portfolio-view" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="portfolio-top">
+                            <span data-i18n="menuGoTop">回到顶部</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="portfolio-projects">
+                            <span data-i18n="navProjects">项目</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="portfolio-contact">
+                            <span data-i18n="navContact">联系</span>
+                        </button>
+                        <div class="window-menu-separator" role="separator"></div>
+                        <button type="button" role="menuitem" data-menu-action="portfolio-toggle-size">
+                            <span data-i18n="menuToggleWindowSize">最大化 / 还原</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="portfolio-favorites"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuFavorites">收藏</button>
+                    <div class="window-menu-popup" data-window-menu-popup="portfolio-favorites" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="portfolio-github">
+                            <span data-i18n="menuGitHub">GitHub 主页</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="portfolio-robomaster">
+                            <span data-i18n="folderRoboMasterRecords">ROBOMASTER_RECORDS</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="portfolio-help"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuHelp">帮助</button>
+                    <div class="window-menu-popup window-menu-popup--compact" data-window-menu-popup="portfolio-help"
+                        role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="portfolio-about">
+                            <span data-i18n="menuAboutGavin">关于 Gavin</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="portfolio-contact">
+                            <span data-i18n="navContact">联系</span>
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <div class="address-toolbar">
@@ -430,11 +497,58 @@
                 </div>
             </div>
 
-            <div class="window-menubar" aria-hidden="true">
-                <span data-i18n="menuFile">文件</span>
-                <span data-i18n="menuEdit">编辑</span>
-                <span data-i18n="menuView">查看</span>
-                <span data-i18n="menuHelp">帮助</span>
+            <div class="window-menubar" data-window-menubar role="menubar" aria-label="Project folder commands">
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="folder-file"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuFile">文件</button>
+                    <div class="window-menu-popup" data-window-menu-popup="folder-file" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="folder-open">
+                            <span data-i18n="menuOpen">打开</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="folder-up">
+                            <span data-i18n="folderUp">上一级</span>
+                        </button>
+                        <div class="window-menu-separator" role="separator"></div>
+                        <button type="button" role="menuitem" data-menu-action="folder-close">
+                            <span data-i18n="menuClose">关闭</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="folder-edit"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuEdit">编辑</button>
+                    <div class="window-menu-popup" data-window-menu-popup="folder-edit" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="folder-select-all">
+                            <span data-i18n="menuSelectAll">全选</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="folder-clear-selection">
+                            <span data-i18n="menuClearSelection">取消选择</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="folder-view"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuView">查看</button>
+                    <div class="window-menu-popup window-menu-popup--compact" data-window-menu-popup="folder-view"
+                        role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="folder-refresh">
+                            <span data-i18n="menuRefresh">刷新</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="folder-toggle-size">
+                            <span data-i18n="menuToggleWindowSize">最大化 / 还原</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="folder-help"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuHelp">帮助</button>
+                    <div class="window-menu-popup window-menu-popup--compact" data-window-menu-popup="folder-help"
+                        role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="folder-info">
+                            <span data-i18n="menuFolderInfo">关于此文件夹</span>
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <div class="address-toolbar">
@@ -668,11 +782,60 @@
                 </div>
             </div>
 
-            <div class="window-menubar" aria-hidden="true">
-                <span data-i18n="menuFile">文件</span>
-                <span data-i18n="menuEdit">编辑</span>
-                <span data-i18n="menuView">查看</span>
-                <span data-i18n="menuHelp">帮助</span>
+            <div class="window-menubar" data-window-menubar role="menubar" aria-label="E-mail commands">
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="mail-file"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuFile">文件</button>
+                    <div class="window-menu-popup" data-window-menu-popup="mail-file" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="mail-send">
+                            <span data-i18n="mailSend">发送邮件</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="mail-clear-draft">
+                            <span data-i18n="menuClearDraft">清空草稿</span>
+                        </button>
+                        <div class="window-menu-separator" role="separator"></div>
+                        <button type="button" role="menuitem" data-menu-action="mail-close">
+                            <span data-i18n="menuClose">关闭</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="mail-edit"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuEdit">编辑</button>
+                    <div class="window-menu-popup" data-window-menu-popup="mail-edit" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="mail-select-field">
+                            <span data-i18n="menuSelectField">全选当前字段</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="mail-clear-field">
+                            <span data-i18n="menuClearField">清空当前字段</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="mail-view"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuView">查看</button>
+                    <div class="window-menu-popup" data-window-menu-popup="mail-view" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="mail-focus-name">
+                            <span data-i18n="menuFocusName">定位到姓名</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="mail-focus-message">
+                            <span data-i18n="menuFocusMessage">定位到留言</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="mail-toggle-size">
+                            <span data-i18n="menuToggleWindowSize">最大化 / 还原</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="mail-help"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuHelp">帮助</button>
+                    <div class="window-menu-popup window-menu-popup--compact" data-window-menu-popup="mail-help"
+                        role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="mail-help">
+                            <span data-i18n="menuDeliveryHelp">发送说明</span>
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <form class="mail-compose" data-mail-form data-mail-endpoint="https://formsubmit.co/ajax/gavinxleele@gmail.com"
@@ -730,27 +893,35 @@
                 </div>
             </div>
 
-            <div class="gomoku-menubar" data-gomoku-menubar>
-                <div class="gomoku-menu">
-                    <button type="button" data-gomoku-menu="game" data-gomoku-i18n="gameMenu"
+            <div class="window-menubar gomoku-menubar" data-window-menubar data-gomoku-menubar role="menubar"
+                aria-label="Gomoku commands">
+                <div class="window-menu gomoku-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="gomoku-game"
+                        data-gomoku-menu="game" data-gomoku-i18n="gameMenu" aria-haspopup="true"
                         aria-expanded="false">游戏(G)</button>
-                    <div class="gomoku-menu-popup" data-gomoku-menu-popup="game" hidden>
-                        <button type="button" data-gomoku-new>
+                    <div class="window-menu-popup gomoku-menu-popup" data-window-menu-popup="gomoku-game"
+                        data-gomoku-menu-popup="game" role="menu" hidden>
+                        <button type="button" role="menuitem" data-gomoku-new>
                             <span data-gomoku-i18n="newGame">新游戏</span><kbd>F2</kbd>
                         </button>
-                        <button type="button" data-gomoku-undo>
+                        <button type="button" role="menuitem" data-gomoku-undo>
                             <span data-gomoku-i18n="undo">悔棋</span><kbd>Ctrl+Z</kbd>
                         </button>
-                        <div class="gomoku-menu-separator"></div>
-                        <button type="button" data-gomoku-window-action="close" data-gomoku-i18n="exit">退出</button>
+                        <div class="window-menu-separator gomoku-menu-separator" role="separator"></div>
+                        <button type="button" role="menuitem" data-gomoku-window-action="close"
+                            data-gomoku-i18n="exit">退出</button>
                     </div>
                 </div>
-                <div class="gomoku-menu">
-                    <button type="button" data-gomoku-menu="help" data-gomoku-i18n="helpMenu"
+                <div class="window-menu gomoku-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="gomoku-help"
+                        data-gomoku-menu="help" data-gomoku-i18n="helpMenu" aria-haspopup="true"
                         aria-expanded="false">帮助(H)</button>
-                    <div class="gomoku-menu-popup gomoku-menu-popup--help" data-gomoku-menu-popup="help" hidden>
-                        <button type="button" data-gomoku-help data-gomoku-i18n="howToPlay">玩法说明</button>
-                        <button type="button" data-gomoku-about data-gomoku-i18n="about">关于五子棋</button>
+                    <div class="window-menu-popup window-menu-popup--compact gomoku-menu-popup gomoku-menu-popup--help"
+                        data-window-menu-popup="gomoku-help" data-gomoku-menu-popup="help" role="menu" hidden>
+                        <button type="button" role="menuitem" data-gomoku-help
+                            data-gomoku-i18n="howToPlay">玩法说明</button>
+                        <button type="button" role="menuitem" data-gomoku-about
+                            data-gomoku-i18n="about">关于五子棋</button>
                     </div>
                 </div>
             </div>
@@ -894,10 +1065,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=ae1485f734d3"></script>
-    <script src="js/gomoku-game.js?v=ae1485f734d3"></script>
-    <script src="js/content.js?v=ae1485f734d3"></script>
-    <script src="js/main.js?v=ae1485f734d3"></script>
+    <script src="js/gomoku-engine.js?v=042939d06913"></script>
+    <script src="js/gomoku-game.js?v=042939d06913"></script>
+    <script src="js/content.js?v=042939d06913"></script>
+    <script src="js/main.js?v=042939d06913"></script>
 </body>
 
 </html>

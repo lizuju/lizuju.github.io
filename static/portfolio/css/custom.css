@@ -398,19 +398,106 @@ summary:focus-visible {
 }
 
 .window-menubar {
+    position: relative;
+    z-index: 30;
     display: flex;
+    min-height: 25px;
     flex: 0 0 25px;
     align-items: center;
-    gap: 20px;
-    padding: 0 9px;
+    gap: 2px;
+    padding: 1px 4px;
     border-bottom: 1px solid #808080;
     color: #111;
     background: #c0c0c0;
-    font: 13px/1 var(--font-system);
+    font: 12px/1 var(--font-system);
 }
 
-.window-menubar span::first-letter {
+.window-menu {
+    position: relative;
+}
+
+.window-menu-trigger {
+    min-height: 21px;
+    padding: 2px 7px;
+    border: 1px solid transparent;
+    color: #111;
+    background: transparent;
+    font: inherit;
+    cursor: default;
+}
+
+.window-menu-trigger::first-letter {
     text-decoration: underline;
+}
+
+.window-menubar > span {
+    padding: 2px 7px;
+}
+
+.window-menubar > span::first-letter {
+    text-decoration: underline;
+}
+
+.window-menu-trigger:hover,
+.window-menu-trigger:focus-visible,
+.window-menu-trigger[aria-expanded="true"] {
+    border: 1px outset #fff;
+    outline: 0;
+}
+
+.window-menu-popup {
+    position: absolute;
+    top: 22px;
+    left: 0;
+    z-index: 40;
+    width: 205px;
+    max-width: calc(100vw - 16px);
+    padding: 3px;
+    border: 2px outset #fff;
+    background: #c0c0c0;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+}
+
+.window-menu-popup[hidden] {
+    display: none;
+}
+
+.window-menu-popup--compact {
+    width: 170px;
+}
+
+.window-menu-popup button {
+    display: flex;
+    width: 100%;
+    min-height: 27px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 4px 16px;
+    border: 0;
+    color: #111;
+    background: transparent;
+    font: 12px/1.2 var(--font-system);
+    text-align: left;
+    cursor: default;
+}
+
+.window-menu-popup button:hover,
+.window-menu-popup button:focus-visible {
+    color: #fff;
+    background: #000080;
+    outline: 0;
+}
+
+.window-menu-popup kbd {
+    font: 11px/1 var(--font-system);
+}
+
+.window-menu-separator {
+    height: 2px;
+    margin: 3px 2px;
+    border-top: 1px solid #808080;
+    border-bottom: 1px solid #fff;
 }
 
 .address-toolbar {
@@ -781,6 +868,15 @@ summary:focus-visible {
     background: #000080;
 }
 
+.project-folder-item--records.is-selected strong,
+.project-folder-item--records.is-selected small {
+    width: fit-content;
+    max-width: calc(100% - 4px);
+    padding-inline: 2px;
+    color: #fff;
+    background: #000080;
+}
+
 .photo-file-icon {
     position: relative;
     display: grid;
@@ -1102,91 +1198,6 @@ summary:focus-visible {
 
 .image-preview-statusbar {
     grid-template-columns: 1fr 160px;
-}
-
-.gomoku-menubar {
-    position: relative;
-    z-index: 30;
-    display: flex;
-    min-height: 25px;
-    flex: 0 0 25px;
-    align-items: center;
-    gap: 2px;
-    padding: 1px 4px;
-    border-bottom: 1px solid #808080;
-    background: #c0c0c0;
-    font: 12px/1 var(--font-system);
-}
-
-.gomoku-menu {
-    position: relative;
-}
-
-.gomoku-menu > button {
-    min-height: 21px;
-    padding: 2px 7px;
-    border: 1px solid transparent;
-    color: #111;
-    background: transparent;
-    font: inherit;
-    cursor: default;
-}
-
-.gomoku-menu > button:hover,
-.gomoku-menu > button:focus-visible,
-.gomoku-menu > button[aria-expanded="true"] {
-    border: 1px outset #fff;
-    outline: 0;
-}
-
-.gomoku-menu-popup {
-    position: absolute;
-    top: 22px;
-    left: 0;
-    z-index: 40;
-    width: 190px;
-    padding: 3px;
-    border: 2px outset #fff;
-    background: #c0c0c0;
-    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
-}
-
-.gomoku-menu-popup--help {
-    width: 150px;
-}
-
-.gomoku-menu-popup button {
-    display: flex;
-    width: 100%;
-    min-height: 27px;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 4px 18px;
-    border: 0;
-    color: #111;
-    background: transparent;
-    font: 12px/1.2 var(--font-system);
-    text-align: left;
-    cursor: default;
-}
-
-.gomoku-menu-popup button:hover,
-.gomoku-menu-popup button:focus-visible {
-    color: #fff;
-    background: #000080;
-    outline: 0;
-}
-
-.gomoku-menu-popup kbd {
-    font: 11px/1 var(--font-system);
-}
-
-.gomoku-menu-separator {
-    height: 2px;
-    margin: 3px 2px;
-    border-top: 1px solid #808080;
-    border-bottom: 1px solid #fff;
 }
 
 .gomoku-launcher {
@@ -2568,6 +2579,10 @@ body.direct-portfolio .app-window:not(.is-maximized) {
 
     .window-menubar {
         display: none;
+    }
+
+    .gomoku-menubar {
+        display: flex;
     }
 
     .address-label,
