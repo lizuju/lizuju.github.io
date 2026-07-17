@@ -130,6 +130,7 @@ test('supports language, navigation, and expandable details', async ({ page, isM
 
     await page.locator('[data-window-action="minimize"]').click();
     await expect(appWindow).toHaveClass(/is-minimized/);
+    await expect(page.locator('[data-task-window]')).toBeVisible();
     await page.locator('[data-task-window]').click();
     await expect(appWindow).not.toHaveClass(/is-minimized/);
 
@@ -200,8 +201,10 @@ test('supports language, navigation, and expandable details', async ({ page, isM
 
     await page.locator('.window-controls [data-window-action="close"]').click();
     await expect(appWindow).toHaveClass(/is-closed/);
-    await page.locator('[data-task-window]').click();
+    await expect(page.locator('[data-task-window]')).toBeHidden();
+    await page.locator('[data-open-window]').first().evaluate((button) => button.click());
     await expect(appWindow).not.toHaveClass(/is-closed/);
+    await expect(page.locator('[data-task-window]')).toBeVisible();
 
     if (!isMobile) {
         await page.locator('[data-start-toggle]').click();
@@ -562,6 +565,7 @@ test('runs consistent keyboard menus with window-specific commands', async ({ pa
     await fileMenu.click();
     await page.locator('[data-menu-action="portfolio-close"]').click();
     await expect(page.locator('[data-app-window]')).toHaveClass(/is-closed/);
+    await expect(page.locator('[data-task-window]')).toBeHidden();
 
     await page.locator('.desktop-shortcut[data-open-mail-window]').click();
     const mailWindow = page.locator('[data-mail-window]');

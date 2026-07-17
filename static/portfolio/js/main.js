@@ -723,8 +723,10 @@ function setupDesktopShell() {
         closeStartMenu();
     };
 
-    const showPortfolioWindow = (target) => showWindow(appWindow, taskWindow, { target });
-    const hidePortfolioWindow = (state) => hideWindow(appWindow, taskWindow, state);
+    const showPortfolioWindow = (target) => showWindow(appWindow, taskWindow, { target, revealTask: true });
+    const hidePortfolioWindow = (state) => hideWindow(appWindow, taskWindow, state, {
+        hideTask: state === 'is-closed'
+    });
     const showProjectFolder = () => showWindow(projectFolderWindow, projectFolderTask, { revealTask: true });
     const hideProjectFolder = (state) => hideWindow(projectFolderWindow, projectFolderTask, state, {
         hideTask: state === 'is-closed'
