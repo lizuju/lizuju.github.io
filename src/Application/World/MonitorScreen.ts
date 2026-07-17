@@ -349,6 +349,24 @@ export default class MonitorScreen extends EventEmitter {
         // Create mesh
         const mesh = new THREE.Mesh(geometry, material);
 
+        if (texture instanceof THREE.VideoTexture) {
+            const video = texture.image as HTMLVideoElement;
+            mesh.visible = video.readyState >= video.HAVE_CURRENT_DATA;
+
+            if (!mesh.visible) {
+                video.addEventListener(
+                    'loadeddata',
+                    () => {
+                        mesh.visible = true;
+                    },
+                    {
+                        once: true,
+                        signal: this.application.eventController.signal,
+                    }
+                );
+            }
+        }
+
         // Copy position and apply the depth offset
         mesh.position.copy(
             this.offsetPosition(this.position, new THREE.Vector3(0, 0, offset))
