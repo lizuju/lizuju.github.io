@@ -1122,7 +1122,7 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
     await expect(page.locator('.direct-entry')).toBeHidden();
     await expect(page.locator('.direct-entry')).toHaveAttribute('href', 'portfolio/');
     await expect(page.locator('.direct-entry')).toHaveClass(/scene-link/);
-    await expect(page.locator('.direct-entry')).toHaveText('直接查看作品集 / Direct view');
+    await expect(page.locator('.direct-entry')).toHaveText('直接访问主页 / Visit homepage');
     await expect(page.locator('canvas').first()).toBeVisible({ timeout: 45000 });
     await expect(page.locator('#computer-screen')).toHaveAttribute('src', 'portfolio/', { timeout: 45000 });
     await expect(page.frameLocator('#computer-screen').locator('h1')).toContainText('智能系统', { timeout: 45000 });

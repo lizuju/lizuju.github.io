@@ -220,7 +220,7 @@ const LoadingScreen: React.FC = () => {
                                 重试 / Retry
                             </button>
                             <a className="bios-start-button" data-resource-direct href="portfolio/">
-                                直接查看作品集 / Direct view
+                                直接访问主页 / Visit homepage
                             </a>
                         </div>
                     </div>
