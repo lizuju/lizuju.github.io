@@ -580,6 +580,13 @@
         function openGame() {
             const wasClosed = gameWindow.classList.contains('is-closed');
             gameWindow.classList.remove('is-minimized', 'is-closed');
+            if (window.innerWidth <= 900 && !gameWindow.style.width) {
+                clearWindowGeometry();
+                gameWindow.classList.add('is-maximized');
+                document.querySelectorAll('[data-gomoku-window-action="maximize"]').forEach((button) => {
+                    button.setAttribute('aria-pressed', 'true');
+                });
+            }
             gameTask.hidden = false;
             document.querySelector('[data-start-menu]')?.setAttribute('hidden', '');
             document.querySelector('[data-start-toggle]')?.setAttribute('aria-expanded', 'false');
@@ -741,9 +748,19 @@
         }
 
         function toggleMaximize() {
-            if (window.innerWidth <= 900) return;
             if (gameWindow.classList.contains('is-maximized')) {
                 gameWindow.classList.remove('is-maximized');
+                if (!restoreGeometry && window.innerWidth <= 900) {
+                    const workArea = getWorkArea();
+                    const width = Math.min(workArea.width, Math.max(250, Math.round(workArea.width * 0.82)));
+                    const height = Math.min(workArea.height, Math.max(380, Math.round(workArea.height * 0.78)));
+                    restoreGeometry = {
+                        left: Math.round((workArea.width - width) / 2),
+                        top: Math.round((workArea.height - height) / 2),
+                        width,
+                        height
+                    };
+                }
                 if (restoreGeometry) applyWindowGeometry(restoreGeometry);
             } else {
                 restoreGeometry = getWindowGeometry();
@@ -757,7 +774,7 @@
         }
 
         function startPointerInteraction(event, type) {
-            if (event.button !== 0 || window.innerWidth <= 900 || gameWindow.classList.contains('is-maximized')) return;
+            if (event.button !== 0 || gameWindow.classList.contains('is-maximized')) return;
             const geometry = getWindowGeometry();
             applyWindowGeometry(geometry);
             pointerInteraction = {
@@ -786,8 +803,9 @@
                 });
                 return;
             }
-            const minWidth = Math.min(420, workArea.width - geometry.left);
-            const minHeight = Math.min(500, workArea.height - geometry.top);
+            const mobileWindow = window.innerWidth <= 900;
+            const minWidth = Math.min(mobileWindow ? 240 : 420, workArea.width - geometry.left);
+            const minHeight = Math.min(mobileWindow ? 360 : 500, workArea.height - geometry.top);
             applyWindowGeometry({
                 ...geometry,
                 width: Math.min(Math.max(minWidth, geometry.width + deltaX), workArea.width - geometry.left),
@@ -943,12 +961,9 @@
             applyLanguage(event.detail?.language);
         });
         window.addEventListener('resize', () => {
-            if (window.innerWidth <= 900) {
-                finishPointerInteraction();
-                gameWindow.classList.remove('is-maximized');
-                restoreGeometry = undefined;
-                clearWindowGeometry();
-            }
+            finishPointerInteraction();
+            if (gameWindow.classList.contains('is-maximized')) clearWindowGeometry();
+            else if (gameWindow.style.width) restoreWindowGeometry(getWindowGeometry());
             window.requestAnimationFrame(resizeBoard);
         });
         window.addEventListener('pagehide', saveGameSession);
