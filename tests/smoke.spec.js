@@ -849,6 +849,14 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     if (isMobile) {
         await expect(page.locator('.gomoku-statusbar')).toBeVisible();
         await expect(page.locator('.gomoku-legend')).toBeHidden();
+        const scorePanelBox = await page.locator('.gomoku-score-panel').boundingBox();
+        for (const counter of await page.locator('.gomoku-counter').all()) {
+            const counterBox = await counter.boundingBox();
+            expect(counterBox.y).toBeGreaterThanOrEqual(scorePanelBox.y);
+            expect(counterBox.y + counterBox.height).toBeLessThanOrEqual(
+                scorePanelBox.y + scorePanelBox.height
+            );
+        }
     }
 
     if (!isMobile) {

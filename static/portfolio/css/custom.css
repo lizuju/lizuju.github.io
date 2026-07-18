@@ -2862,6 +2862,8 @@ body.direct-portfolio .app-window:not(.is-maximized) {
     }
 
     .gomoku-score-panel {
+        min-height: 70px;
+        flex-basis: 70px;
         grid-template-columns: 1fr 46px 1fr;
         gap: 8px;
         padding-right: 5px;
