@@ -2560,6 +2560,10 @@ body.direct-portfolio .app-window:not(.is-maximized) {
         right: 4px;
         bottom: 39px;
         left: 4px;
+        width: auto;
+        height: auto;
+        min-width: 0;
+        min-height: 0;
         border-width: 2px;
         box-shadow: none;
     }
@@ -2573,11 +2577,12 @@ body.direct-portfolio .app-window:not(.is-maximized) {
     }
 
     .window-titlebar {
-        cursor: default;
+        cursor: move;
     }
 
     .window-resize-handle {
-        display: none;
+        width: 24px;
+        height: 24px;
     }
 
     .window-menubar {

@@ -633,8 +633,6 @@ function setupDesktopShell() {
     };
 
     const toggleMaximize = (element, selector) => {
-        if (window.innerWidth <= 900) return;
-
         if (element.classList.contains('is-maximized')) {
             element.classList.remove('is-maximized');
             const geometry = restoreGeometry.get(element);
@@ -648,10 +646,11 @@ function setupDesktopShell() {
     };
 
     const startPointerInteraction = (event, type, element, minWidth, minHeight) => {
-        if (event.button !== 0 || window.innerWidth <= 900 || element.classList.contains('is-maximized')) return;
+        if (event.button !== 0 || element.classList.contains('is-maximized')) return;
 
         const geometry = getWindowGeometry(element);
         applyWindowGeometry(element, geometry);
+        const mobileWindow = window.innerWidth <= 900;
         pointerInteraction = {
             type,
             pointerId: event.pointerId,
@@ -659,8 +658,8 @@ function setupDesktopShell() {
             startY: event.clientY,
             geometry,
             element,
-            minWidth,
-            minHeight
+            minWidth: mobileWindow ? Math.min(minWidth, 260) : minWidth,
+            minHeight: mobileWindow ? Math.min(minHeight, 280) : minHeight
         };
         element.classList.add(type === 'drag' ? 'is-dragging' : 'is-resizing');
         event.currentTarget.setPointerCapture?.(event.pointerId);

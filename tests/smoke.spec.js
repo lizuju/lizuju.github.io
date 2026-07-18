@@ -1244,6 +1244,35 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
         for (const icon of await mobilePortfolio.locator('.desktop-shortcut .shortcut-icon').all()) {
             await expect(icon).toBeVisible();
         }
+
+        await mobilePortfolio.locator('[data-open-project-folder]').click();
+        const folderWindow = mobilePortfolio.locator('[data-project-folder-window]');
+        const desktop = mobilePortfolio.locator('[data-retro-desktop]');
+        await expect(folderWindow).toBeVisible();
+        const desktopBox = await desktop.boundingBox();
+        const initialFolderBox = await folderWindow.boundingBox();
+        expect(initialFolderBox.x).toBeGreaterThanOrEqual(desktopBox.x);
+        expect(initialFolderBox.x + initialFolderBox.width).toBeLessThanOrEqual(desktopBox.x + desktopBox.width);
+
+        const resizeBox = await mobilePortfolio.locator('[data-project-folder-resize]').boundingBox();
+        await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + resizeBox.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(resizeBox.x - 70, resizeBox.y - 90);
+        await page.mouse.up();
+        const resizedFolderBox = await folderWindow.boundingBox();
+        expect(resizedFolderBox.width).toBeLessThan(initialFolderBox.width);
+        expect(resizedFolderBox.height).toBeLessThan(initialFolderBox.height);
+
+        const folderTitlebar = mobilePortfolio.locator('[data-project-folder-drag]');
+        const titlebarBox = await folderTitlebar.boundingBox();
+        await page.mouse.move(titlebarBox.x + 80, titlebarBox.y + titlebarBox.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(titlebarBox.x + 110, titlebarBox.y + 30);
+        await page.mouse.up();
+        const movedFolderBox = await folderWindow.boundingBox();
+        expect(movedFolderBox.x).toBeGreaterThan(resizedFolderBox.x);
+        expect(movedFolderBox.y).toBeGreaterThan(resizedFolderBox.y);
+
         await mobilePortfolio.locator('body').evaluate(() => window.dispatchEvent(new Event('pageshow')));
         await expect(mobilePortfolio.locator('[data-app-window]')).toBeVisible();
         await expect(mobilePortfolio.locator('[data-app-window]')).not.toHaveClass(/is-minimized|is-closed|is-maximized/);
