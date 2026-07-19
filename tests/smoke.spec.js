@@ -858,24 +858,10 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
             );
         }
 
-        await expect(gameWindow).toHaveClass(/is-maximized/);
-        await page.locator('[data-gomoku-window-action="maximize"]').click();
         await expect(gameWindow).not.toHaveClass(/is-maximized/);
 
-        const restoredBox = await gameWindow.boundingBox();
-        expect(restoredBox.width).toBeLessThan(page.viewportSize().width);
-        const titlebarBox = await page.locator('[data-gomoku-drag]').boundingBox();
-        await page.mouse.move(titlebarBox.x + titlebarBox.width / 2, titlebarBox.y + titlebarBox.height / 2);
-        await page.mouse.down();
-        await page.mouse.move(
-            titlebarBox.x + titlebarBox.width / 2 + 20,
-            titlebarBox.y + titlebarBox.height / 2 + 24,
-            { steps: 4 }
-        );
-        await page.mouse.up();
-        const draggedBox = await gameWindow.boundingBox();
-        expect(draggedBox.x).toBeGreaterThan(restoredBox.x);
-        expect(draggedBox.y).toBeGreaterThan(restoredBox.y);
+        const initialBox = await gameWindow.boundingBox();
+        expect(initialBox.width).toBeGreaterThan(page.viewportSize().width - 16);
 
         const boardBeforeResize = await canvas.boundingBox();
         const resizeHandleBox = await page.locator('[data-gomoku-resize]').boundingBox();
@@ -891,6 +877,21 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
         );
         await page.mouse.up();
         await expect.poll(async () => (await canvas.boundingBox()).width).toBeLessThan(boardBeforeResize.width);
+
+        const restoredBox = await gameWindow.boundingBox();
+        expect(restoredBox.width).toBeLessThan(page.viewportSize().width);
+        const titlebarBox = await page.locator('[data-gomoku-drag]').boundingBox();
+        await page.mouse.move(titlebarBox.x + titlebarBox.width / 2, titlebarBox.y + titlebarBox.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(
+            titlebarBox.x + titlebarBox.width / 2 + 20,
+            titlebarBox.y + titlebarBox.height / 2 + 24,
+            { steps: 4 }
+        );
+        await page.mouse.up();
+        const draggedBox = await gameWindow.boundingBox();
+        expect(draggedBox.x).toBeGreaterThan(restoredBox.x);
+        expect(draggedBox.y).toBeGreaterThan(restoredBox.y);
 
         await page.locator('[data-gomoku-window-action="maximize"]').click();
         await expect(gameWindow).toHaveClass(/is-maximized/);

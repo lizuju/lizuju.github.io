@@ -580,13 +580,6 @@
         function openGame() {
             const wasClosed = gameWindow.classList.contains('is-closed');
             gameWindow.classList.remove('is-minimized', 'is-closed');
-            if (window.innerWidth <= 900 && !gameWindow.style.width) {
-                clearWindowGeometry();
-                gameWindow.classList.add('is-maximized');
-                document.querySelectorAll('[data-gomoku-window-action="maximize"]').forEach((button) => {
-                    button.setAttribute('aria-pressed', 'true');
-                });
-            }
             gameTask.hidden = false;
             document.querySelector('[data-start-menu]')?.setAttribute('hidden', '');
             document.querySelector('[data-start-toggle]')?.setAttribute('aria-expanded', 'false');
