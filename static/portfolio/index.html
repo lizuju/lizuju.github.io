@@ -968,23 +968,51 @@
                         <p class="satellite-empty" data-satellite-empty data-i18n="satelliteNoSelection">
                             搜索或点击一个光点查看卫星信息。
                         </p>
-                        <dl class="satellite-details" data-satellite-details hidden>
-                            <div><dt data-i18n="satelliteNameLabel">名称</dt><dd data-satellite-name>-</dd></div>
-                            <div><dt data-i18n="satelliteNoradLabel">NORAD</dt><dd data-satellite-norad>-</dd></div>
-                            <div><dt data-i18n="satelliteAltitudeLabel">高度</dt><dd data-satellite-altitude>-</dd></div>
-                            <div><dt data-i18n="satellitePositionLabel">位置</dt><dd data-satellite-position>-</dd></div>
-                            <div><dt data-i18n="satelliteGroupLabel">类别</dt><dd data-satellite-group>-</dd></div>
-                        </dl>
+                        <div class="satellite-details" data-satellite-details hidden>
+                            <div class="satellite-detail-header">
+                                <div>
+                                    <strong data-satellite-name>-</strong>
+                                    <small><span data-i18n="satelliteNoradLabel">NORAD</span> #<span data-satellite-norad>-</span></small>
+                                </div>
+                                <span class="satellite-group-tag" data-satellite-group-tag data-category="other">
+                                    <span data-satellite-group>-</span>
+                                </span>
+                            </div>
+                            <dl class="satellite-detail-table">
+                                <div><dt data-i18n="satelliteAltitudeLabel">高度</dt><dd data-satellite-altitude>-</dd></div>
+                                <div><dt data-i18n="satelliteSpeedLabel">速度</dt><dd data-satellite-speed>-</dd></div>
+                                <div><dt data-i18n="satellitePositionLabel">纬度 / 经度</dt><dd data-satellite-position>-</dd></div>
+                                <div><dt data-i18n="satellitePeriodLabel">轨道周期</dt><dd data-satellite-period>-</dd></div>
+                                <div><dt data-i18n="satelliteInclinationLabel">轨道倾角</dt><dd data-satellite-inclination>-</dd></div>
+                                <div><dt data-i18n="satelliteAgeLabel">TLE 龄期</dt><dd data-satellite-age>-</dd></div>
+                            </dl>
+                            <p class="satellite-detail-note" data-i18n="satelliteDetailNote">
+                                实时位置与完整轨道线由 SGP4 在浏览器本地推算。
+                            </p>
+                        </div>
                     </div>
                     <div class="satellite-panel-section satellite-legend" aria-label="Satellite groups">
+                        <h2 data-i18n="satelliteGroupsTitle">星座分组</h2>
                         <p><i class="satellite-swatch satellite-swatch--starlink" aria-hidden="true"></i>
-                            <span data-i18n="satelliteStarlink">Starlink</span><strong data-satellite-group-count="starlink">0</strong></p>
-                        <p><i class="satellite-swatch satellite-swatch--navigation" aria-hidden="true"></i>
-                            <span data-i18n="satelliteNavigation">导航卫星</span><strong data-satellite-group-count="navigation">0</strong></p>
-                        <p><i class="satellite-swatch satellite-swatch--crewed" aria-hidden="true"></i>
-                            <span data-i18n="satelliteCrewed">载人平台</span><strong data-satellite-group-count="crewed">0</strong></p>
+                            <span><strong data-i18n="satelliteStarlink">星链</strong><small>Starlink</small></span><b data-satellite-group-count="starlink">0</b></p>
+                        <p><i class="satellite-swatch satellite-swatch--oneweb" aria-hidden="true"></i>
+                            <span><strong data-i18n="satelliteOneweb">一网</strong><small>OneWeb</small></span><b data-satellite-group-count="oneweb">0</b></p>
+                        <p><i class="satellite-swatch satellite-swatch--stations" aria-hidden="true"></i>
+                            <span><strong data-i18n="satelliteStations">空间站</strong><small>Stations</small></span><b data-satellite-group-count="stations">0</b></p>
+                        <p><i class="satellite-swatch satellite-swatch--gps" aria-hidden="true"></i>
+                            <span><strong>GPS</strong><small>GPS</small></span><b data-satellite-group-count="gps">0</b></p>
+                        <p><i class="satellite-swatch satellite-swatch--beidou" aria-hidden="true"></i>
+                            <span><strong data-i18n="satelliteBeidou">北斗</strong><small>BeiDou</small></span><b data-satellite-group-count="beidou">0</b></p>
+                        <p><i class="satellite-swatch satellite-swatch--glonass" aria-hidden="true"></i>
+                            <span><strong data-i18n="satelliteGlonass">格洛纳斯</strong><small>GLONASS</small></span><b data-satellite-group-count="glonass">0</b></p>
+                        <p><i class="satellite-swatch satellite-swatch--galileo" aria-hidden="true"></i>
+                            <span><strong data-i18n="satelliteGalileo">伽利略</strong><small>Galileo</small></span><b data-satellite-group-count="galileo">0</b></p>
+                        <p><i class="satellite-swatch satellite-swatch--iridium" aria-hidden="true"></i>
+                            <span><strong data-i18n="satelliteIridium">铱星</strong><small>Iridium</small></span><b data-satellite-group-count="iridium">0</b></p>
+                        <p><i class="satellite-swatch satellite-swatch--weather" aria-hidden="true"></i>
+                            <span><strong data-i18n="satelliteWeather">气象</strong><small>Weather</small></span><b data-satellite-group-count="weather">0</b></p>
                         <p><i class="satellite-swatch satellite-swatch--other" aria-hidden="true"></i>
-                            <span data-i18n="satelliteOther">其他卫星</span><strong data-satellite-group-count="other">0</strong></p>
+                            <span><strong data-i18n="satelliteOther">其他</strong><small>Others</small></span><b data-satellite-group-count="other">0</b></p>
                     </div>
                 </aside>
             </div>

@@ -21,7 +21,10 @@ function toScenePosition(satrec, date) {
         z: -radius * latitudeCosine * Math.sin(geodetic.longitude),
         latitude: geodetic.latitude * 180 / Math.PI,
         longitude: geodetic.longitude * 180 / Math.PI,
-        altitude
+        altitude,
+        speed: state.velocity
+            ? Math.hypot(state.velocity.x, state.velocity.y, state.velocity.z)
+            : 0
     };
 }
 
@@ -56,7 +59,8 @@ function propagateSatellites(timestamp, selectedIndex) {
             selected = {
                 latitude: position.latitude,
                 longitude: position.longitude,
-                altitude: position.altitude
+                altitude: position.altitude,
+                speed: position.speed
             };
         }
     });

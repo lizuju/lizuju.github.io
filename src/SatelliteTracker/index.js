@@ -7,9 +7,15 @@ const CACHE_TIMESTAMP_KEY = 'gavin-satellite-data-timestamp';
 const CACHE_TTL = 2 * 60 * 60 * 1000;
 const COLORS = {
     starlink: new THREE.Color('#65d6ff'),
-    navigation: new THREE.Color('#ffd34e'),
-    crewed: new THREE.Color('#ff6961'),
-    other: new THREE.Color('#f0f3ff')
+    oneweb: new THREE.Color('#c17cff'),
+    stations: new THREE.Color('#ffffff'),
+    gps: new THREE.Color('#55dc91'),
+    beidou: new THREE.Color('#ffd34e'),
+    glonass: new THREE.Color('#ff9949'),
+    galileo: new THREE.Color('#7d8cff'),
+    iridium: new THREE.Color('#ff70ad'),
+    weather: new THREE.Color('#39d0c3'),
+    other: new THREE.Color('#9fb5d0')
 };
 
 const windowElement = document.querySelector('[data-satellite-window]');
@@ -28,6 +34,11 @@ const noradField = document.querySelector('[data-satellite-norad]');
 const altitudeField = document.querySelector('[data-satellite-altitude]');
 const positionField = document.querySelector('[data-satellite-position]');
 const groupField = document.querySelector('[data-satellite-group]');
+const speedField = document.querySelector('[data-satellite-speed]');
+const periodField = document.querySelector('[data-satellite-period]');
+const inclinationField = document.querySelector('[data-satellite-inclination]');
+const ageField = document.querySelector('[data-satellite-age]');
+const groupTag = document.querySelector('[data-satellite-group-tag]');
 
 let renderer;
 let scene;
@@ -62,9 +73,38 @@ function copy() {
 function classifySatellite(record) {
     const name = String(record.OBJECT_NAME || '').toUpperCase();
     if (name.includes('STARLINK')) return 'starlink';
-    if (/\b(GPS|NAVSTAR|GALILEO|GLONASS|BEIDOU|QZS|IRNSS)\b/.test(name)) return 'navigation';
-    if (/\b(ISS|TIANGONG|CSS)\b/.test(name)) return 'crewed';
+    if (/\bONEWEB\b/.test(name)) return 'oneweb';
+    if (/\b(ISS|TIANGONG|CSS)\b|SPACE STATION/.test(name)) return 'stations';
+    if (/\b(GPS|NAVSTAR)\b/.test(name)) return 'gps';
+    if (/\b(BEIDOU|BEI DOU|BDS)\b/.test(name)) return 'beidou';
+    if (/\bGLONASS\b/.test(name)) return 'glonass';
+    if (/\bGALILEO\b/.test(name)) return 'galileo';
+    if (/\bIRIDIUM\b/.test(name)) return 'iridium';
+    if (/\b(NOAA|GOES|METOP|METEOR|HIMAWARI|FENGYUN|FENG YUN|FY-\d|ELEKTRO|SUOMI NPP|JPSS)\b/.test(name)) {
+        return 'weather';
+    }
     return 'other';
+}
+
+function formatCoordinate(value, positive, negative) {
+    return `${Math.abs(value).toFixed(2)}° ${value >= 0 ? positive : negative}`;
+}
+
+function formatPeriod(record) {
+    const meanMotion = Number(record.MEAN_MOTION);
+    return meanMotion > 0 ? `${(1440 / meanMotion).toFixed(1)} min` : '-';
+}
+
+function formatInclination(record) {
+    const inclination = Number(record.INCLINATION);
+    return Number.isFinite(inclination) ? `${inclination.toFixed(2)}°` : '-';
+}
+
+function formatElementAge(record) {
+    const epoch = Date.parse(record.EPOCH);
+    if (!Number.isFinite(epoch)) return '-';
+    const age = Math.max(0, (Date.now() - epoch) / 86400000);
+    return `${age.toFixed(1)} ${copy().satelliteAgeUnit}`;
 }
 
 function isActive() {
@@ -306,7 +346,7 @@ async function fetchRecords() {
 function initializePoints() {
     pointPositions = new Float32Array(records.length * 3);
     const colorValues = new Float32Array(records.length * 3);
-    const categoryCounts = { starlink: 0, navigation: 0, crewed: 0, other: 0 };
+    const categoryCounts = Object.fromEntries(Object.keys(COLORS).map((category) => [category, 0]));
 
     records.forEach((record, index) => {
         record.category = classifySatellite(record);
@@ -351,10 +391,15 @@ function updateSelectedDetails() {
     nameField.textContent = record.OBJECT_NAME || '-';
     noradField.textContent = String(record.NORAD_CAT_ID || '-');
     groupField.textContent = copy()[`satellite${record.category[0].toUpperCase()}${record.category.slice(1)}`];
-    altitudeField.textContent = selectedState ? `${Math.round(selectedState.altitude).toLocaleString()} km` : '-';
+    groupTag.dataset.category = record.category;
+    altitudeField.textContent = selectedState ? `${selectedState.altitude.toFixed(1)} km` : '-';
+    speedField.textContent = selectedState ? `${selectedState.speed.toFixed(2)} km/s` : '-';
     positionField.textContent = selectedState
-        ? `${selectedState.latitude.toFixed(2)}°, ${selectedState.longitude.toFixed(2)}°`
+        ? `${formatCoordinate(selectedState.latitude, 'N', 'S')} / ${formatCoordinate(selectedState.longitude, 'E', 'W')}`
         : '-';
+    periodField.textContent = formatPeriod(record);
+    inclinationField.textContent = formatInclination(record);
+    ageField.textContent = formatElementAge(record);
 }
 
 function selectSatellite(index) {

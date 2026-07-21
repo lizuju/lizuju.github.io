@@ -49,6 +49,72 @@ const satelliteRecords = [
         ARG_OF_PERICENTER: 130,
         MEAN_ANOMALY: 210,
     },
+    {
+        OBJECT_NAME: 'ONEWEB-0123',
+        OBJECT_ID: '2020-020A',
+        NORAD_CAT_ID: 46001,
+        MEAN_MOTION: 13.4,
+        ECCENTRICITY: 0.0002,
+        INCLINATION: 87.9,
+        RA_OF_ASC_NODE: 20,
+        ARG_OF_PERICENTER: 80,
+        MEAN_ANOMALY: 110,
+    },
+    {
+        OBJECT_NAME: 'BEIDOU-3 M25',
+        OBJECT_ID: '2021-040A',
+        NORAD_CAT_ID: 48001,
+        MEAN_MOTION: 1.0027,
+        ECCENTRICITY: 0.001,
+        INCLINATION: 55,
+        RA_OF_ASC_NODE: 70,
+        ARG_OF_PERICENTER: 15,
+        MEAN_ANOMALY: 60,
+    },
+    {
+        OBJECT_NAME: 'COSMOS 2544 (GLONASS)',
+        OBJECT_ID: '2019-075A',
+        NORAD_CAT_ID: 44500,
+        MEAN_MOTION: 2.13,
+        ECCENTRICITY: 0.001,
+        INCLINATION: 64.8,
+        RA_OF_ASC_NODE: 110,
+        ARG_OF_PERICENTER: 25,
+        MEAN_ANOMALY: 90,
+    },
+    {
+        OBJECT_NAME: 'GALILEO 27',
+        OBJECT_ID: '2021-060A',
+        NORAD_CAT_ID: 49001,
+        MEAN_MOTION: 1.7,
+        ECCENTRICITY: 0.0004,
+        INCLINATION: 56,
+        RA_OF_ASC_NODE: 150,
+        ARG_OF_PERICENTER: 30,
+        MEAN_ANOMALY: 130,
+    },
+    {
+        OBJECT_NAME: 'IRIDIUM 180',
+        OBJECT_ID: '2019-030A',
+        NORAD_CAT_ID: 44001,
+        MEAN_MOTION: 14.34,
+        ECCENTRICITY: 0.0002,
+        INCLINATION: 86.4,
+        RA_OF_ASC_NODE: 190,
+        ARG_OF_PERICENTER: 45,
+        MEAN_ANOMALY: 170,
+    },
+    {
+        OBJECT_NAME: 'NOAA 21',
+        OBJECT_ID: '2022-150A',
+        NORAD_CAT_ID: 54001,
+        MEAN_MOTION: 14.2,
+        ECCENTRICITY: 0.0003,
+        INCLINATION: 98.7,
+        RA_OF_ASC_NODE: 210,
+        ARG_OF_PERICENTER: 55,
+        MEAN_ANOMALY: 200,
+    },
 ].map((record) => ({
     ...record,
     EPOCH: '2026-07-20T00:00:00.000000',
@@ -600,10 +666,16 @@ test('runs the live satellite tracker as a lazy GavinOS window', async ({ page, 
     await expect(satelliteTask).toBeVisible();
     await expect(satelliteTask).toHaveClass(/is-active/);
     await expect.poll(() => satelliteBundleRequests.length).toBeGreaterThan(0);
-    await expect(page.locator('[data-satellite-count]')).toHaveText('4', { timeout: 30000 });
+    await expect(page.locator('[data-satellite-count]')).toHaveText('10', { timeout: 30000 });
     await expect(page.locator('[data-satellite-group-count="starlink"]')).toHaveText('1');
-    await expect(page.locator('[data-satellite-group-count="navigation"]')).toHaveText('1');
-    await expect(page.locator('[data-satellite-group-count="crewed"]')).toHaveText('1');
+    await expect(page.locator('[data-satellite-group-count="oneweb"]')).toHaveText('1');
+    await expect(page.locator('[data-satellite-group-count="stations"]')).toHaveText('1');
+    await expect(page.locator('[data-satellite-group-count="gps"]')).toHaveText('1');
+    await expect(page.locator('[data-satellite-group-count="beidou"]')).toHaveText('1');
+    await expect(page.locator('[data-satellite-group-count="glonass"]')).toHaveText('1');
+    await expect(page.locator('[data-satellite-group-count="galileo"]')).toHaveText('1');
+    await expect(page.locator('[data-satellite-group-count="iridium"]')).toHaveText('1');
+    await expect(page.locator('[data-satellite-group-count="weather"]')).toHaveText('1');
     await expect(page.locator('[data-satellite-group-count="other"]')).toHaveText('1');
 
     await page.locator('[data-satellite-search]').fill('25544');
@@ -611,6 +683,13 @@ test('runs the live satellite tracker as a lazy GavinOS window', async ({ page, 
     await expect(page.locator('[data-satellite-name]')).toHaveText('ISS (ZARYA)');
     await expect(page.locator('[data-satellite-norad]')).toHaveText('25544');
     await expect(page.locator('[data-satellite-altitude]')).not.toHaveText('-');
+    await expect(page.locator('[data-satellite-speed]')).toContainText('km/s');
+    await expect(page.locator('[data-satellite-position]')).toContainText('/');
+    await expect(page.locator('[data-satellite-period]')).toHaveText(/min$/);
+    await expect(page.locator('[data-satellite-inclination]')).toHaveText('51.64°');
+    await expect(page.locator('[data-satellite-age]')).toHaveText(/天$/);
+    await expect(page.locator('[data-satellite-group]')).toHaveText('空间站');
+    await expect(page.locator('[data-satellite-group-tag]')).toHaveAttribute('data-category', 'stations');
 
     const canvas = page.locator('[data-satellite-canvas]');
     await expect(canvas).toHaveAttribute('data-rendered', 'true');
