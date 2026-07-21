@@ -341,6 +341,11 @@ function setupDesktopShell() {
     const mailForm = document.querySelector('[data-mail-form]');
     const mailSendButton = document.querySelector('[data-mail-send]');
     const mailStatus = document.querySelector('[data-mail-status]');
+    const satelliteWindow = document.querySelector('[data-satellite-window]');
+    const satelliteTitlebar = document.querySelector('[data-satellite-drag]');
+    const satelliteResizeHandle = document.querySelector('[data-satellite-resize]');
+    const satelliteTask = document.querySelector('[data-satellite-task]');
+    const satelliteStatus = document.querySelector('[data-satellite-status]');
     const gameWindow = document.querySelector('[data-gomoku-window]');
     const gameTask = document.querySelector('[data-gomoku-task]');
     const startButton = document.querySelector('[data-start-toggle]');
@@ -358,6 +363,7 @@ function setupDesktopShell() {
         || !imagePreviewImage || !imagePreviewCaption || !imagePreviewStatus || !imagePreviewTitlebar
         || !imagePreviewResizeHandle || !imagePreviewTask || !imagePreviewTaskTitle
         || !mailWindow || !mailTitlebar || !mailResizeHandle || !mailTask || !mailForm || !mailSendButton || !mailStatus
+        || !satelliteWindow || !satelliteTitlebar || !satelliteResizeHandle || !satelliteTask || !satelliteStatus
         || !startButton || !startMenu) return;
 
     let pointerInteraction;
@@ -375,6 +381,7 @@ function setupDesktopShell() {
         { id: 'project-folder', element: projectFolderWindow, task: projectFolderTask },
         { id: 'image-preview', element: imagePreviewWindow, task: imagePreviewTask },
         { id: 'mail', element: mailWindow, task: mailTask },
+        { id: 'satellite', element: satelliteWindow, task: satelliteTask },
         ...(gameWindow && gameTask ? [{ id: 'gomoku', element: gameWindow, task: gameTask }] : [])
     ];
 
@@ -427,6 +434,8 @@ function setupDesktopShell() {
                     ? imagePreviewWindow.querySelector('[data-image-preview-action="close"]')
                     : element === mailWindow
                         ? mailForm.querySelector('input[name="name"]')
+                        : element === satelliteWindow
+                            ? satelliteWindow.querySelector('[data-satellite-search]')
                         : element === gameWindow
                             ? gameWindow.querySelector('[data-gomoku-board]')
                             : null;
@@ -745,6 +754,37 @@ function setupDesktopShell() {
     const hideMailWindow = (state) => hideWindow(mailWindow, mailTask, state, {
         hideTask: state === 'is-closed'
     });
+    let satelliteTrackerPromise;
+    const loadSatelliteTracker = () => {
+        if (window.SatelliteTracker) return Promise.resolve(window.SatelliteTracker);
+        if (satelliteTrackerPromise) return satelliteTrackerPromise;
+
+        satelliteTrackerPromise = new Promise((resolve, reject) => {
+            const mainScript = Array.from(document.scripts).find((script) => script.src.includes('/main.js'));
+            const version = mainScript ? new URL(mainScript.src).search : '';
+            const script = document.createElement('script');
+            script.src = `js/satellite-tracker.js${version}`;
+            script.onload = () => resolve(window.SatelliteTracker);
+            script.onerror = reject;
+            document.head.append(script);
+        }).catch((error) => {
+            satelliteTrackerPromise = null;
+            throw error;
+        });
+        return satelliteTrackerPromise;
+    };
+    const showSatelliteWindow = () => {
+        showWindow(satelliteWindow, satelliteTask, { revealTask: true });
+        satelliteStatus.textContent = t().satelliteLoading;
+        loadSatelliteTracker()
+            .then((tracker) => tracker.open())
+            .catch(() => {
+                satelliteStatus.textContent = t().satelliteLoadError;
+            });
+    };
+    const hideSatelliteWindow = (state) => hideWindow(satelliteWindow, satelliteTask, state, {
+        hideTask: state === 'is-closed'
+    });
 
     const setMailStatus = (key, state = mailStatusState) => {
         mailStatusKey = key;
@@ -978,7 +1018,8 @@ function setupDesktopShell() {
                 { id: 'portfolio', element: appWindow, selector: '[data-window-action="maximize"]' },
                 { id: 'project-folder', element: projectFolderWindow, selector: '[data-project-folder-action="maximize"]' },
                 { id: 'image-preview', element: imagePreviewWindow, selector: '[data-image-preview-action="maximize"]' },
-                { id: 'mail', element: mailWindow, selector: '[data-mail-action="maximize"]' }
+                { id: 'mail', element: mailWindow, selector: '[data-mail-action="maximize"]' },
+                { id: 'satellite', element: satelliteWindow, selector: '[data-satellite-action="maximize"]' }
             ].forEach(({ id, element, selector }) => {
                 const state = savedState.desktop?.windows?.[id];
                 if (!state) return;
@@ -1147,7 +1188,16 @@ function setupDesktopShell() {
         'mail-focus-name': () => focusMailField('input[name="name"]'),
         'mail-focus-message': () => focusMailField('textarea[name="message"]'),
         'mail-toggle-size': () => toggleMaximize(mailWindow, '[data-mail-action="maximize"]'),
-        'mail-help': () => setMailStatus('mailStatusHelp', '')
+        'mail-help': () => setMailStatus('mailStatusHelp', ''),
+        'satellite-refresh': () => window.SatelliteTracker?.refresh(),
+        'satellite-close': () => hideSatelliteWindow('is-closed'),
+        'satellite-reset-view': () => window.SatelliteTracker?.resetView(),
+        'satellite-toggle-orbit': () => window.SatelliteTracker?.toggleOrbit(),
+        'satellite-toggle-size': () => toggleMaximize(
+            satelliteWindow,
+            '[data-satellite-action="maximize"]'
+        ),
+        'satellite-about': () => window.SatelliteTracker?.about()
     };
 
     document.querySelectorAll('[data-menu-action]').forEach((button) => {
@@ -1176,6 +1226,9 @@ function setupDesktopShell() {
     });
     document.querySelectorAll('[data-open-mail-window]').forEach((button) => {
         button.addEventListener('click', showMailWindow);
+    });
+    document.querySelectorAll('[data-open-satellite]').forEach((button) => {
+        button.addEventListener('click', showSatelliteWindow);
     });
     robomasterFolderButton.addEventListener('click', openRoboMasterFolder);
     projectFolderBack.addEventListener('click', () => setProjectFolderView(false));
@@ -1246,6 +1299,18 @@ function setupDesktopShell() {
         focusWindow(mailWindow);
     });
 
+    satelliteTask.addEventListener('click', () => {
+        if (satelliteWindow.classList.contains('is-minimized') || satelliteWindow.classList.contains('is-closed')) {
+            showSatelliteWindow();
+            return;
+        }
+        if (satelliteWindow.classList.contains('is-active')) {
+            hideSatelliteWindow('is-minimized');
+            return;
+        }
+        focusWindow(satelliteWindow);
+    });
+
     document.querySelectorAll('[data-project-folder-action]').forEach((button) => {
         button.addEventListener('click', () => {
             const action = button.getAttribute('data-project-folder-action');
@@ -1274,6 +1339,17 @@ function setupDesktopShell() {
             if (action === 'minimize') hideMailWindow('is-minimized');
             if (action === 'close') hideMailWindow('is-closed');
             if (action === 'maximize') toggleMaximize(mailWindow, '[data-mail-action="maximize"]');
+        });
+    });
+
+    document.querySelectorAll('[data-satellite-action]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const action = button.getAttribute('data-satellite-action');
+            if (action === 'minimize') hideSatelliteWindow('is-minimized');
+            if (action === 'close') hideSatelliteWindow('is-closed');
+            if (action === 'maximize') {
+                toggleMaximize(satelliteWindow, '[data-satellite-action="maximize"]');
+            }
         });
     });
 
@@ -1356,6 +1432,13 @@ function setupDesktopShell() {
     mailResizeHandle.addEventListener('pointerdown', (event) => {
         startPointerInteraction(event, 'resize', mailWindow, 420, 410);
     });
+    satelliteTitlebar.addEventListener('pointerdown', (event) => {
+        if (event.target.closest('.window-controls')) return;
+        startPointerInteraction(event, 'drag', satelliteWindow, 520, 390);
+    });
+    satelliteResizeHandle.addEventListener('pointerdown', (event) => {
+        startPointerInteraction(event, 'resize', satelliteWindow, 520, 390);
+    });
     document.addEventListener('pointermove', updatePointerInteraction);
     document.addEventListener('pointerup', finishPointerInteraction);
     document.addEventListener('pointercancel', finishPointerInteraction);
@@ -1376,6 +1459,10 @@ function setupDesktopShell() {
         if (event.target.closest('.window-controls')) return;
         toggleMaximize(mailWindow, '[data-mail-action="maximize"]');
     });
+    satelliteTitlebar.addEventListener('dblclick', (event) => {
+        if (event.target.closest('.window-controls')) return;
+        toggleMaximize(satelliteWindow, '[data-satellite-action="maximize"]');
+    });
 
     window.addEventListener('resize', () => {
         if (window.innerWidth <= 900) {
@@ -1384,7 +1471,8 @@ function setupDesktopShell() {
                 [appWindow, '[data-window-action="maximize"]'],
                 [projectFolderWindow, '[data-project-folder-action="maximize"]'],
                 [imagePreviewWindow, '[data-image-preview-action="maximize"]'],
-                [mailWindow, '[data-mail-action="maximize"]']
+                [mailWindow, '[data-mail-action="maximize"]'],
+                [satelliteWindow, '[data-satellite-action="maximize"]']
             ].forEach(([element, selector]) => {
                 element.classList.remove('is-maximized');
                 restoreGeometry.delete(element);
@@ -1422,6 +1510,13 @@ function setupDesktopShell() {
         focusWindow(restoredActiveEntry.element);
     } else {
         focusWindow(appWindow);
+    }
+    if (isWindowVisible(satelliteWindow)) {
+        loadSatelliteTracker()
+            .then((tracker) => tracker.open())
+            .catch(() => {
+                satelliteStatus.textContent = t().satelliteLoadError;
+            });
     }
     if (!restoredActiveEntry && document.body.classList.contains('direct-portfolio') && window.innerWidth > 900) {
         toggleMaximize(appWindow, '[data-window-action="maximize"]');

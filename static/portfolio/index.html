@@ -89,6 +89,10 @@
                 <span class="shortcut-icon shortcut-icon--folder" aria-hidden="true"></span>
                 <span data-i18n="desktopProjects">项目文件</span>
             </button>
+            <button class="desktop-shortcut" type="button" data-open-satellite>
+                <span class="shortcut-icon shortcut-icon--satellite" aria-hidden="true"></span>
+                <span data-i18n="desktopSatellite">卫星轨迹</span>
+            </button>
             <button class="desktop-shortcut" type="button" data-open-gomoku>
                 <span class="shortcut-icon shortcut-icon--gomoku" aria-hidden="true"></span>
                 <span data-gomoku-i18n="appName">五子棋</span>
@@ -877,6 +881,122 @@
                 title="Resize email window"></button>
         </section>
 
+        <section class="app-window satellite-window is-closed" data-satellite-window
+            aria-label="Satellite tracker window">
+            <div class="window-titlebar" data-satellite-drag>
+                <div class="window-title">
+                    <span class="window-app-icon window-app-icon--satellite" aria-hidden="true"></span>
+                    <span data-i18n="satelliteWindowTitle">卫星轨迹 - 实时演示</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-satellite-action="minimize" aria-label="Minimize satellite window"
+                        title="Minimize"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-satellite-action="maximize" aria-label="Maximize satellite window"
+                        title="Maximize"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-satellite-action="close" aria-label="Close satellite window"
+                        title="Close"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+
+            <div class="window-menubar" data-window-menubar role="menubar" aria-label="Satellite tracker commands">
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="satellite-data"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="satelliteMenuData">数据</button>
+                    <div class="window-menu-popup" data-window-menu-popup="satellite-data" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="satellite-refresh">
+                            <span data-i18n="satelliteRefresh">刷新数据</span>
+                        </button>
+                        <div class="window-menu-separator" role="separator"></div>
+                        <button type="button" role="menuitem" data-menu-action="satellite-close">
+                            <span data-i18n="menuClose">关闭</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="satellite-view"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuView">查看</button>
+                    <div class="window-menu-popup" data-window-menu-popup="satellite-view" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="satellite-reset-view">
+                            <span data-i18n="satelliteResetView">重置地球视角</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="satellite-toggle-orbit">
+                            <span data-i18n="satelliteToggleOrbit">显示 / 隐藏轨道</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="satellite-toggle-size">
+                            <span data-i18n="menuToggleWindowSize">最大化 / 还原</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="satellite-help"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuHelp">帮助</button>
+                    <div class="window-menu-popup window-menu-popup--compact" data-window-menu-popup="satellite-help"
+                        role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="satellite-about">
+                            <span data-i18n="satelliteAbout">关于卫星轨迹</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="satellite-toolbar">
+                <label class="satellite-search">
+                    <span class="visually-hidden" data-i18n="satelliteSearchPlaceholder">搜索卫星名称或 NORAD 编号</span>
+                    <input type="search" data-satellite-search data-i18n-placeholder="satelliteSearchPlaceholder"
+                        placeholder="搜索卫星名称或 NORAD 编号" autocomplete="off" spellcheck="false">
+                </label>
+                <button type="button" data-satellite-search-button data-i18n="satelliteSearch">查找</button>
+                <output class="satellite-clock" data-satellite-clock>UTC --:--:--</output>
+            </div>
+
+            <div class="satellite-workspace">
+                <div class="satellite-viewport" data-satellite-viewport>
+                    <canvas data-satellite-canvas tabindex="0" aria-label="Interactive 3D Earth and live satellite positions"></canvas>
+                    <div class="satellite-loading" data-satellite-loading role="status" aria-live="polite">
+                        <span class="satellite-loading-mark" aria-hidden="true"></span>
+                        <strong data-i18n="satelliteLoading">正在载入 CelesTrak 轨道数据...</strong>
+                    </div>
+                    <div class="satellite-metrics" aria-live="polite">
+                        <span><strong data-satellite-count>0</strong> <span data-i18n="satelliteCountLabel">在轨卫星</span></span>
+                        <span data-i18n="satelliteSource">CelesTrak OMM · satellite.js SGP4</span>
+                    </div>
+                </div>
+
+                <aside class="satellite-panel">
+                    <div class="satellite-panel-section">
+                        <h2 data-i18n="satelliteSelectedTitle">卫星信息</h2>
+                        <p class="satellite-empty" data-satellite-empty data-i18n="satelliteNoSelection">
+                            搜索或点击一个光点查看卫星信息。
+                        </p>
+                        <dl class="satellite-details" data-satellite-details hidden>
+                            <div><dt data-i18n="satelliteNameLabel">名称</dt><dd data-satellite-name>-</dd></div>
+                            <div><dt data-i18n="satelliteNoradLabel">NORAD</dt><dd data-satellite-norad>-</dd></div>
+                            <div><dt data-i18n="satelliteAltitudeLabel">高度</dt><dd data-satellite-altitude>-</dd></div>
+                            <div><dt data-i18n="satellitePositionLabel">位置</dt><dd data-satellite-position>-</dd></div>
+                            <div><dt data-i18n="satelliteGroupLabel">类别</dt><dd data-satellite-group>-</dd></div>
+                        </dl>
+                    </div>
+                    <div class="satellite-panel-section satellite-legend" aria-label="Satellite groups">
+                        <p><i class="satellite-swatch satellite-swatch--starlink" aria-hidden="true"></i>
+                            <span data-i18n="satelliteStarlink">Starlink</span><strong data-satellite-group-count="starlink">0</strong></p>
+                        <p><i class="satellite-swatch satellite-swatch--navigation" aria-hidden="true"></i>
+                            <span data-i18n="satelliteNavigation">导航卫星</span><strong data-satellite-group-count="navigation">0</strong></p>
+                        <p><i class="satellite-swatch satellite-swatch--crewed" aria-hidden="true"></i>
+                            <span data-i18n="satelliteCrewed">载人平台</span><strong data-satellite-group-count="crewed">0</strong></p>
+                        <p><i class="satellite-swatch satellite-swatch--other" aria-hidden="true"></i>
+                            <span data-i18n="satelliteOther">其他卫星</span><strong data-satellite-group-count="other">0</strong></p>
+                    </div>
+                </aside>
+            </div>
+
+            <div class="window-statusbar satellite-statusbar">
+                <span data-satellite-status data-i18n="satelliteLoading">正在载入 CelesTrak 轨道数据...</span>
+                <span data-i18n="satelliteSource">CelesTrak OMM · satellite.js SGP4</span>
+            </div>
+            <button class="window-resize-handle" type="button" data-satellite-resize
+                aria-label="Resize satellite tracker window" title="Resize satellite tracker window"></button>
+        </section>
+
         <section class="app-window gomoku-window is-closed" data-gomoku-window aria-label="Gomoku game window">
             <div class="window-titlebar" data-gomoku-drag>
                 <div class="window-title">
@@ -1018,6 +1138,10 @@
             <button class="task-window-button gomoku-task-button" type="button" data-gomoku-task hidden>
                 <span class="window-app-icon window-app-icon--gomoku" aria-hidden="true">五</span>
                 <span data-gomoku-i18n="taskTitle">五子棋</span>
+            </button>
+            <button class="task-window-button satellite-task-button" type="button" data-satellite-task hidden>
+                <span class="window-app-icon window-app-icon--satellite" aria-hidden="true"></span>
+                <span data-i18n="satelliteTaskTitle">卫星轨迹</span>
             </button>
             <button class="task-window-button project-folder-task-button" type="button" data-project-folder-task hidden>
                 <span class="window-app-icon window-app-icon--folder" aria-hidden="true"></span>

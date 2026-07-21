@@ -285,6 +285,27 @@ summary:focus-visible {
     box-shadow: 11px 11px 0 -1px #fff, 11px 11px 0 0 #555;
 }
 
+.shortcut-icon--satellite::before {
+    position: absolute;
+    inset: 5px;
+    content: "";
+    border: 2px solid #d9edf7;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 34%, #86d8e8 0 18%, #217e9c 19% 53%, #0e3c68 54%);
+}
+
+.shortcut-icon--satellite::after {
+    position: absolute;
+    top: 11px;
+    left: 0;
+    width: 34px;
+    height: 12px;
+    content: "";
+    border: 2px solid #f0d267;
+    border-radius: 50%;
+    transform: rotate(-22deg);
+}
+
 .app-window {
     position: absolute;
     top: 36px;
@@ -672,6 +693,269 @@ summary:focus-visible {
     width: auto;
     height: auto;
 }
+
+.satellite-window {
+    top: 54px;
+    right: auto;
+    bottom: auto;
+    left: max(98px, calc(50% - 390px));
+    z-index: 13;
+    width: min(780px, calc(100% - 122px));
+    height: min(600px, calc(100% - 108px));
+    min-width: 520px;
+    min-height: 390px;
+}
+
+.satellite-window.is-maximized {
+    width: auto;
+    height: auto;
+}
+
+.window-app-icon--satellite {
+    position: relative;
+    border-color: #d8ebf4;
+    background: #163b72;
+}
+
+.window-app-icon--satellite::before {
+    width: 9px;
+    height: 9px;
+    content: "";
+    border: 1px solid #f2f7fa;
+    border-radius: 50%;
+    background: #3ba5bc;
+}
+
+.window-app-icon--satellite::after {
+    position: absolute;
+    width: 14px;
+    height: 5px;
+    content: "";
+    border: 1px solid #f1d263;
+    border-radius: 50%;
+    transform: rotate(-25deg);
+}
+
+.satellite-toolbar {
+    display: flex;
+    min-width: 0;
+    min-height: 34px;
+    flex: 0 0 34px;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border-top: 1px solid #fff;
+    border-bottom: 1px solid #777;
+    background: #c0c0c0;
+    font: 12px/1 var(--font-system);
+}
+
+.satellite-search {
+    min-width: 0;
+    flex: 1;
+}
+
+.satellite-search input {
+    width: 100%;
+    height: 24px;
+    padding: 2px 6px;
+    border: 2px inset #fff;
+    border-radius: 0;
+    color: #111;
+    background: #fff;
+    font: inherit;
+}
+
+.satellite-toolbar > button {
+    height: 24px;
+    padding: 0 10px;
+    border: 2px outset #fff;
+    color: #111;
+    background: #c0c0c0;
+    font: inherit;
+}
+
+.satellite-toolbar > button:active {
+    border-style: inset;
+}
+
+.satellite-clock {
+    min-width: 92px;
+    padding: 4px 6px;
+    border: 1px inset #eee;
+    color: #111;
+    background: #d6d6d6;
+    font: 11px/1 "Courier New", monospace;
+    text-align: center;
+}
+
+.satellite-workspace {
+    display: grid;
+    min-width: 0;
+    min-height: 0;
+    flex: 1;
+    grid-template-columns: minmax(0, 1fr) 205px;
+    overflow: hidden;
+    border: 2px inset #efefef;
+    background: #020713;
+}
+
+.satellite-viewport {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: #020713;
+}
+
+.satellite-viewport canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+    outline: 0;
+    touch-action: none;
+}
+
+.satellite-loading {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 12px;
+    padding: 20px;
+    color: #dcebf7;
+    background: rgba(2, 7, 19, 0.84);
+    font: 12px/1.4 "Courier New", monospace;
+    text-align: center;
+}
+
+.satellite-loading[hidden] {
+    display: none;
+}
+
+.satellite-loading-mark {
+    position: relative;
+    width: 52px;
+    height: 52px;
+    border: 1px solid #6c9bb6;
+    border-radius: 50%;
+}
+
+.satellite-loading-mark::before {
+    position: absolute;
+    inset: 15px;
+    content: "";
+    border-radius: 50%;
+    background: #3fa3b7;
+    box-shadow: 0 0 13px #56c9df;
+}
+
+.satellite-loading-mark::after {
+    position: absolute;
+    top: 20px;
+    left: 4px;
+    width: 42px;
+    height: 10px;
+    content: "";
+    border: 1px solid #e5cc68;
+    border-radius: 50%;
+    transform: rotate(-24deg);
+}
+
+.satellite-metrics {
+    position: absolute;
+    right: 7px;
+    bottom: 7px;
+    left: 7px;
+    z-index: 2;
+    display: flex;
+    min-width: 0;
+    justify-content: space-between;
+    gap: 8px;
+    color: #d8e8f4;
+    font: 10px/1.2 "Courier New", monospace;
+    pointer-events: none;
+    text-shadow: 1px 1px #000;
+}
+
+.satellite-panel {
+    min-width: 0;
+    overflow: auto;
+    border-left: 2px ridge #efefef;
+    color: #111;
+    background: #d6d6d6;
+    font: 11px/1.35 var(--font-system);
+}
+
+.satellite-panel-section {
+    padding: 10px;
+    border-bottom: 1px solid #808080;
+}
+
+.satellite-panel h2 {
+    margin: 0 0 8px;
+    font: 700 13px/1.2 var(--font-system);
+}
+
+.satellite-empty {
+    margin: 0;
+    color: #444;
+}
+
+.satellite-details {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+}
+
+.satellite-details[hidden] {
+    display: none;
+}
+
+.satellite-details > div {
+    display: grid;
+    grid-template-columns: 57px minmax(0, 1fr);
+    gap: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px dotted #888;
+}
+
+.satellite-details dt {
+    color: #555;
+}
+
+.satellite-details dd {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.satellite-legend {
+    display: grid;
+    gap: 6px;
+}
+
+.satellite-legend p {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+}
+
+.satellite-swatch {
+    width: 8px;
+    height: 8px;
+    border: 1px solid #555;
+}
+
+.satellite-swatch--starlink { background: #65d6ff; }
+.satellite-swatch--navigation { background: #ffd34e; }
+.satellite-swatch--crewed { background: #ff6961; }
+.satellite-swatch--other { background: #f0f3ff; }
 
 .window-app-icon--gomoku {
     color: #111;
@@ -2535,7 +2819,8 @@ body.direct-portfolio .app-window:not(.is-maximized) {
 }
 
 @media (max-height: 620px) and (min-width: 901px) {
-    .gomoku-window {
+    .gomoku-window,
+    .satellite-window {
         top: 8px;
         height: calc(100% - 52px);
         min-height: 0;
@@ -2569,11 +2854,37 @@ body.direct-portfolio .app-window:not(.is-maximized) {
     }
 
     .gomoku-window,
-    .gomoku-window.is-maximized {
+    .gomoku-window.is-maximized,
+    .satellite-window,
+    .satellite-window.is-maximized {
         width: auto;
         height: auto;
         min-width: 0;
         min-height: 0;
+    }
+
+    .satellite-workspace {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(250px, 1fr) auto;
+    }
+
+    .satellite-panel {
+        display: grid;
+        max-height: 152px;
+        grid-template-columns: minmax(0, 1.35fr) minmax(120px, 1fr);
+        border-top: 2px ridge #efefef;
+        border-left: 0;
+    }
+
+    .satellite-panel-section {
+        padding: 7px 9px;
+        border-right: 1px solid #808080;
+        border-bottom: 0;
+    }
+
+    .satellite-legend {
+        padding-right: 30px;
+        padding-bottom: 28px;
     }
 
     .window-titlebar {
@@ -2844,6 +3155,14 @@ body.direct-portfolio .app-window:not(.is-maximized) {
 
     .gomoku-task-button {
         width: auto;
+    }
+
+    .satellite-clock {
+        display: none;
+    }
+
+    .satellite-metrics > span:last-child {
+        display: none;
     }
 
     .mail-field {

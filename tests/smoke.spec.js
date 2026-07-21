@@ -4,6 +4,63 @@ const { createBuildMetadata } = require('../bundler/build-metadata');
 
 const buildMetadata = createBuildMetadata(path.resolve(__dirname, '..'));
 
+const satelliteRecords = [
+    {
+        OBJECT_NAME: 'ISS (ZARYA)',
+        OBJECT_ID: '1998-067A',
+        NORAD_CAT_ID: 25544,
+        MEAN_MOTION: 15.49,
+        ECCENTRICITY: 0.0005,
+        INCLINATION: 51.64,
+        RA_OF_ASC_NODE: 100,
+        ARG_OF_PERICENTER: 20,
+        MEAN_ANOMALY: 340,
+    },
+    {
+        OBJECT_NAME: 'STARLINK-1234',
+        OBJECT_ID: '2020-001A',
+        NORAD_CAT_ID: 45000,
+        MEAN_MOTION: 15.06,
+        ECCENTRICITY: 0.0002,
+        INCLINATION: 53,
+        RA_OF_ASC_NODE: 180,
+        ARG_OF_PERICENTER: 60,
+        MEAN_ANOMALY: 120,
+    },
+    {
+        OBJECT_NAME: 'GPS BIIR-2',
+        OBJECT_ID: '1997-035A',
+        NORAD_CAT_ID: 24876,
+        MEAN_MOTION: 2.0056,
+        ECCENTRICITY: 0.006,
+        INCLINATION: 55.4,
+        RA_OF_ASC_NODE: 230,
+        ARG_OF_PERICENTER: 95,
+        MEAN_ANOMALY: 250,
+    },
+    {
+        OBJECT_NAME: 'HST',
+        OBJECT_ID: '1990-037B',
+        NORAD_CAT_ID: 20580,
+        MEAN_MOTION: 15.09,
+        ECCENTRICITY: 0.0003,
+        INCLINATION: 28.47,
+        RA_OF_ASC_NODE: 45,
+        ARG_OF_PERICENTER: 130,
+        MEAN_ANOMALY: 210,
+    },
+].map((record) => ({
+    ...record,
+    EPOCH: '2026-07-20T00:00:00.000000',
+    MEAN_MOTION_DOT: 0.00001,
+    MEAN_MOTION_DDOT: 0,
+    BSTAR: 0.0001,
+    EPHEMERIS_TYPE: 0,
+    CLASSIFICATION_TYPE: 'U',
+    ELEMENT_SET_NO: 999,
+    REV_AT_EPOCH: 50000,
+}));
+
 test.beforeEach(async ({ page }) => {
     const browserErrors = [];
     page.on('console', (message) => {
@@ -513,6 +570,94 @@ test('opens a retro email composer and sends without leaving the portfolio', asy
     await contactEmail.scrollIntoViewIfNeeded();
     await contactEmail.click();
     await expect(mailWindow).toBeVisible();
+});
+
+test('runs the live satellite tracker as a lazy GavinOS window', async ({ page, isMobile }) => {
+    test.setTimeout(90000);
+    const satelliteBundleRequests = [];
+    page.on('request', (request) => {
+        if (request.url().includes('/portfolio/js/satellite-tracker.js')) {
+            satelliteBundleRequests.push(request.url());
+        }
+    });
+    await page.route(/celestrak\.org\/NORAD\/elements\/gp\.php\?GROUP=active&FORMAT=json$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(satelliteRecords),
+    }));
+    await page.goto(isMobile ? '/portfolio/?view=mobile-homepage' : '/portfolio/');
+
+    const satelliteWindow = page.locator('[data-satellite-window]');
+    const satelliteTask = page.locator('[data-satellite-task]');
+    const desktop = page.locator('[data-retro-desktop]');
+    await expect(satelliteWindow).toHaveClass(/is-closed/);
+    expect(satelliteBundleRequests).toHaveLength(0);
+
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-satellite]').click();
+    await expect(satelliteWindow).toBeVisible();
+    await expect(satelliteWindow).not.toHaveClass(/is-closed|is-minimized/);
+    await expect(satelliteTask).toBeVisible();
+    await expect(satelliteTask).toHaveClass(/is-active/);
+    await expect.poll(() => satelliteBundleRequests.length).toBeGreaterThan(0);
+    await expect(page.locator('[data-satellite-count]')).toHaveText('4', { timeout: 30000 });
+    await expect(page.locator('[data-satellite-group-count="starlink"]')).toHaveText('1');
+    await expect(page.locator('[data-satellite-group-count="navigation"]')).toHaveText('1');
+    await expect(page.locator('[data-satellite-group-count="crewed"]')).toHaveText('1');
+    await expect(page.locator('[data-satellite-group-count="other"]')).toHaveText('1');
+
+    await page.locator('[data-satellite-search]').fill('25544');
+    await page.locator('[data-satellite-search-button]').click();
+    await expect(page.locator('[data-satellite-name]')).toHaveText('ISS (ZARYA)');
+    await expect(page.locator('[data-satellite-norad]')).toHaveText('25544');
+    await expect(page.locator('[data-satellite-altitude]')).not.toHaveText('-');
+
+    const canvas = page.locator('[data-satellite-canvas]');
+    await expect(canvas).toHaveAttribute('data-rendered', 'true');
+    const pixelSums = await canvas.evaluate((element) => {
+        window.SatelliteTracker.renderNow();
+        const context = element.getContext('webgl2') || element.getContext('webgl');
+        const points = [
+            [0.5, 0.5],
+            [0.2, 0.2],
+            [0.8, 0.2],
+            [0.2, 0.8],
+            [0.8, 0.8],
+        ];
+        return points.map(([x, y]) => {
+            const pixel = new Uint8Array(4);
+            context.readPixels(
+                Math.floor(element.width * x),
+                Math.floor(element.height * y),
+                1,
+                1,
+                context.RGBA,
+                context.UNSIGNED_BYTE,
+                pixel
+            );
+            return pixel[0] + pixel[1] + pixel[2];
+        });
+    });
+    expect(Math.max(...pixelSums) - Math.min(...pixelSums)).toBeGreaterThan(20);
+
+    const desktopBox = await desktop.boundingBox();
+    const windowBox = await satelliteWindow.boundingBox();
+    expect(windowBox.x).toBeGreaterThanOrEqual(desktopBox.x);
+    expect(windowBox.y).toBeGreaterThanOrEqual(desktopBox.y);
+    expect(windowBox.x + windowBox.width).toBeLessThanOrEqual(desktopBox.x + desktopBox.width + 1);
+    expect(windowBox.y + windowBox.height).toBeLessThanOrEqual(desktopBox.y + desktopBox.height + 1);
+
+    await satelliteWindow.locator('[data-satellite-action="maximize"]').click();
+    await expect(satelliteWindow).toHaveClass(/is-maximized/);
+    await satelliteWindow.locator('[data-satellite-action="maximize"]').click();
+    await expect(satelliteWindow).not.toHaveClass(/is-maximized/);
+    await satelliteWindow.locator('[data-satellite-action="minimize"]').click();
+    await expect(satelliteWindow).toHaveClass(/is-minimized/);
+    await satelliteTask.click();
+    await expect(satelliteWindow).not.toHaveClass(/is-minimized/);
+    await satelliteWindow.locator('[data-satellite-action="close"]').click();
+    await expect(satelliteWindow).toHaveClass(/is-closed/);
+    await expect(satelliteTask).toBeHidden();
 });
 
 test('runs consistent keyboard menus with window-specific commands', async ({ page, isMobile }) => {
@@ -1288,7 +1433,7 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
         await mobilePortfolio.locator('[data-window-action="minimize"]').click();
         await expect(mobilePortfolio.locator('[data-app-window]')).toHaveClass(/is-minimized/);
         await expect(mobilePortfolio.locator('.desktop-shortcuts')).toBeVisible();
-        await expect(mobilePortfolio.locator('.desktop-shortcut')).toHaveCount(5);
+        await expect(mobilePortfolio.locator('.desktop-shortcut')).toHaveCount(6);
         for (const icon of await mobilePortfolio.locator('.desktop-shortcut .shortcut-icon').all()) {
             await expect(icon).toBeVisible();
         }

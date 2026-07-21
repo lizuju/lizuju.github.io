@@ -1,0 +1,21 @@
+Satellite tracker credits
+=========================
+
+Orbital data
+------------
+CelesTrak General Perturbations data
+https://celestrak.org/NORAD/elements/
+Usage policy: https://celestrak.org/usage-policy.php
+
+Orbit propagation
+-----------------
+satellite.js, Copyright (c) 2013-2026 Shashwat Kandadai and contributors
+Licensed under the MIT License
+https://github.com/shashwatak/satellite-js
+
+Earth texture
+-------------
+NASA Earth Observatory, The Blue Marble: Land Surface, Ocean Color,
+Sea Ice and Clouds. Image by Reto Stockli with enhancements by
+Robert Simmon and data support from the MODIS Land Group.
+https://science.nasa.gov/earth/earth-observatory/the-blue-marble-true-color-global-imagery-at-1km-resolution/

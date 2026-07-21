@@ -9,8 +9,9 @@
     },
     "scripts": {
         "build:gomoku": "webpack --config ./bundler/webpack.gomoku.js",
-        "build": "npm run build:gomoku && webpack --config ./bundler/webpack.prod.js",
-        "dev": "npm run build:gomoku && webpack serve --config ./bundler/webpack.dev.js",
+        "build:satellite": "webpack --config ./bundler/webpack.satellite.js",
+        "build": "npm run build:gomoku && npm run build:satellite && webpack --config ./bundler/webpack.prod.js",
+        "dev": "npm run build:gomoku && npm run build:satellite && webpack serve --config ./bundler/webpack.dev.js",
         "preview": "python3 -m http.server 3090 --directory docs",
         "test:smoke": "playwright test",
         "verify:docs": "node scripts/verify-docs.cjs"
@@ -42,6 +43,7 @@
         "raw-loader": "^4.0.2",
         "react": "^17.0.2",
         "react-dom": "^17.0.2",
+        "satellite.js": "^7.0.1",
         "stats.js": "^0.17.0",
         "style-loader": "^3.3.1",
         "three": "^0.137.5",
