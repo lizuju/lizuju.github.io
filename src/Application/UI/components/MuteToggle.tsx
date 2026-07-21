@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import UIEventBus from '../EventBus';
 import { Easing } from '../Animation';
+import { getMuteState, toggleMuteState } from '../../Audio/MuteState';
 // @ts-ignore
 import volumeOn from '../../../../static/textures/UI/volume_on.svg';
 // @ts-ignore
@@ -12,13 +13,13 @@ interface MuteToggleProps {}
 const MuteToggle: React.FC<MuteToggleProps> = ({}) => {
     const [isHovering, setIsHovering] = useState(false);
     const [isActive, setIsActive] = useState(false);
-    const [muted, setMuted] = useState(false);
+    const [muted, setMuted] = useState(getMuteState);
 
     const onMouseDownHandler = useCallback(
         (event) => {
             setIsActive(true);
             event.preventDefault();
-            setMuted(!muted);
+            toggleMuteState();
         },
         [muted]
     );
@@ -27,9 +28,7 @@ const MuteToggle: React.FC<MuteToggleProps> = ({}) => {
         setIsActive(false);
     }, []);
 
-    useEffect(() => {
-        UIEventBus.dispatch('muteToggle', muted);
-    }, [muted]);
+    useEffect(() => UIEventBus.on('muteToggle', setMuted), []);
 
     return (
         <div
@@ -39,6 +38,9 @@ const MuteToggle: React.FC<MuteToggleProps> = ({}) => {
             onMouseDown={onMouseDownHandler}
             onMouseUp={onMouseUpHandler}
             className="icon-control-container"
+            data-audio-mute-toggle
+            aria-label={muted ? 'Unmute background music' : 'Mute background music'}
+            aria-pressed={muted}
             id="prevent-click"
         >
             <motion.img

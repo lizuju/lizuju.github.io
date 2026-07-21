@@ -941,6 +941,34 @@ test('keeps a single iframe input bridge after portfolio iframe reloads', async 
     await expect.poll(async () => screen.getAttribute('data-bridge-event-count')).toBe('1');
 });
 
+test('syncs the desktop taskbar background music mute control with the immersive shell', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the mobile shell does not load background audio');
+    test.setTimeout(60000);
+    await page.goto('/');
+    await expect(page.locator('canvas').first()).toBeVisible({ timeout: 45000 });
+
+    await page.evaluate(() => {
+        window.__lastMuteState = null;
+        document.addEventListener('muteToggle', (event) => {
+            window.__lastMuteState = event.detail;
+        });
+    });
+
+    const taskbarAudio = page.frameLocator('#computer-screen').locator('[data-audio-toggle]');
+    await expect(taskbarAudio).toBeVisible({ timeout: 45000 });
+    await expect(taskbarAudio).toHaveAttribute('aria-pressed', 'false');
+    await taskbarAudio.evaluate((button) => button.click());
+
+    await expect(taskbarAudio).toHaveAttribute('aria-pressed', 'true');
+    await expect(taskbarAudio.locator('img')).toHaveAttribute('src', '../textures/UI/volume_off.svg');
+    await expect.poll(() => page.evaluate(() => window.__lastMuteState)).toBe(true);
+
+    await taskbarAudio.evaluate((button) => button.click());
+    await expect(taskbarAudio).toHaveAttribute('aria-pressed', 'false');
+    await expect(taskbarAudio.locator('img')).toHaveAttribute('src', '../textures/UI/volume_on.svg');
+    await expect.poll(() => page.evaluate(() => window.__lastMuteState)).toBe(false);
+});
+
 test('starts the visual scene before deferred audio finishes loading', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the mobile shell does not load immersive resources');
     test.setTimeout(60000);

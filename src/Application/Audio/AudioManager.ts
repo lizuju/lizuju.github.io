@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import Application from '../Application';
 import { AmbienceAudio, ComputerAudio } from './AudioSources';
 import UIEventBus from '../UI/EventBus';
+import { getMuteState } from './MuteState';
 
 const POS_DEBUG = false;
 const DEFAULT_REF_DISTANCE = 10000;
@@ -47,6 +48,7 @@ export default class Audio {
         UIEventBus.on('muteToggle', (mute: boolean) => {
             this.listener.setMasterVolume(mute ? 0 : 1);
         });
+        this.listener.setMasterVolume(getMuteState() ? 0 : 1);
     }
 
     playAudio(

@@ -1535,7 +1535,49 @@ function setupDesktopShell() {
 }
 
 function setupParentEventBridge() {
-    if (window.parent === window) return;
+    const audioToggle = document.querySelector('[data-audio-toggle]');
+    const audioToggleIcon = document.querySelector('[data-audio-toggle-icon]');
+    const mobileHomepage = document.body.classList.contains('mobile-homepage');
+    if (window.parent === window || mobileHomepage) return;
+
+    let muted = false;
+    const updateAudioToggle = (nextMuted) => {
+        muted = Boolean(nextMuted);
+        if (!audioToggle || !audioToggleIcon) return;
+        const label = muted ? t().taskbarAudioUnmute : t().taskbarAudioMute;
+        audioToggle.hidden = false;
+        audioToggle.classList.toggle('is-muted', muted);
+        audioToggle.setAttribute('aria-pressed', String(muted));
+        audioToggle.setAttribute('aria-label', label);
+        audioToggle.setAttribute('title', label);
+        audioToggleIcon.setAttribute('src', muted
+            ? '../textures/UI/volume_off.svg'
+            : '../textures/UI/volume_on.svg');
+    };
+
+    audioToggle?.addEventListener('click', () => {
+        window.parent.postMessage({
+            source: 'gavin-portfolio',
+            type: 'audio-mute-toggle'
+        }, window.location.origin);
+    });
+
+    window.addEventListener('message', (event) => {
+        if (
+            event.origin !== window.location.origin
+            || event.source !== window.parent
+            || event.data?.source !== 'gavin-shell'
+            || event.data?.type !== 'audio-mute-state'
+        ) return;
+
+        updateAudioToggle(event.data.muted);
+    });
+
+    window.addEventListener('portfolio-language-change', () => updateAudioToggle(muted));
+    window.parent.postMessage({
+        source: 'gavin-portfolio',
+        type: 'audio-mute-ready'
+    }, window.location.origin);
 
     let pendingMouseMove;
     let animationFrame;

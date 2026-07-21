@@ -7,6 +7,8 @@ import Resources from '../Utils/Resources';
 import Sizes from '../Utils/Sizes';
 import Camera from '../Camera/Camera';
 import EventEmitter from '../Utils/EventEmitter';
+import UIEventBus from '../UI/EventBus';
+import { getMuteState, toggleMuteState } from '../Audio/MuteState';
 
 const SCREEN_SIZE = { w: 1280, h: 1024 };
 const IFRAME_PADDING = 32;
@@ -144,14 +146,45 @@ export default class MonitorScreen extends EventEmitter {
         // Create iframe
         const iframe = document.createElement('iframe');
 
+        UIEventBus.on('muteToggle', (nextMuted: boolean) => {
+            iframe.contentWindow?.postMessage(
+                {
+                    source: 'gavin-shell',
+                    type: 'audio-mute-state',
+                    muted: nextMuted,
+                },
+                window.location.origin
+            );
+        });
+
         // Bubble iframe input to the main application without duplicating the bridge on reload.
         window.addEventListener('message', (event) => {
             if (
                 event.origin !== window.location.origin ||
                 event.source !== iframe.contentWindow ||
-                event.data?.source !== 'gavin-portfolio' ||
-                !['mousemove', 'mousedown', 'mouseup', 'keydown', 'keyup'].includes(event.data?.type)
+                event.data?.source !== 'gavin-portfolio'
             ) {
+                return;
+            }
+
+            if (event.data.type === 'audio-mute-ready') {
+                iframe.contentWindow?.postMessage(
+                    {
+                        source: 'gavin-shell',
+                        type: 'audio-mute-state',
+                        muted: getMuteState(),
+                    },
+                    window.location.origin
+                );
+                return;
+            }
+
+            if (event.data.type === 'audio-mute-toggle') {
+                toggleMuteState();
+                return;
+            }
+
+            if (!['mousemove', 'mousedown', 'mouseup', 'keydown', 'keyup'].includes(event.data?.type)) {
                 return;
             }
 

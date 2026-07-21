@@ -2865,6 +2865,39 @@ body.direct-portfolio .app-window:not(.is-maximized) {
     white-space: nowrap;
 }
 
+.taskbar-audio-toggle {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    place-items: center;
+    padding: 3px;
+    border: 1px solid transparent;
+    color: #111;
+    background: transparent;
+    cursor: default;
+}
+
+.taskbar-audio-toggle[hidden] {
+    display: none;
+}
+
+.taskbar-audio-toggle:hover,
+.taskbar-audio-toggle:focus-visible {
+    padding: 2px;
+    border: 2px outset #efefef;
+    outline: 0;
+}
+
+.taskbar-audio-toggle:active {
+    border-style: inset;
+}
+
+.taskbar-audio-toggle img {
+    width: 15px;
+    height: 13px;
+    filter: invert(1);
+}
+
 .tray-network {
     position: relative;
     width: 15px;
