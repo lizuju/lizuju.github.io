@@ -57,7 +57,12 @@ function t() {
 
 function renderList(name, items) {
     document.querySelectorAll(`[data-list="${name}"]`).forEach((container) => {
-        const tagList = name === 'heroTags' || name === 'experienceStack' || name === 'educationHighlights';
+        const tagList = [
+            'heroTags',
+            'navigationExperienceStack',
+            'stemmExperienceStack',
+            'educationHighlights'
+        ].includes(name);
         container.replaceChildren();
         items.forEach((item) => {
             const element = document.createElement(tagList ? 'span' : 'li');
@@ -71,8 +76,18 @@ function renderProjects(projects) {
     const container = document.querySelector('[data-projects]');
     if (!container) return;
 
-    const visualTypes = ['vision', 'inventory', 'retrieval', 'resume', 'recommender'];
+    const visualTypes = [
+        'robomasterAutoAim',
+        'robomasterNavigation',
+        'vision',
+        'inventory',
+        'retrieval',
+        'resume',
+        'recommender'
+    ];
     const visualAssets = {
+        robomasterAutoAim: 'assets/project-robomaster-autoaim.jpg',
+        robomasterNavigation: 'assets/project-robomaster-navigation.jpg',
         vision: 'assets/project-vision.jpg',
         inventory: 'assets/project-inventory.jpg',
         retrieval: 'assets/project-retrieval.jpg',
@@ -230,8 +245,10 @@ function applyLanguage() {
         });
     });
 
-    renderList('experience', copy.experience);
-    renderList('experienceStack', copy.experienceStack);
+    renderList('navigationExperience', copy.navigationExperience);
+    renderList('navigationExperienceStack', copy.navigationExperienceStack);
+    renderList('stemmExperience', copy.stemmExperience);
+    renderList('stemmExperienceStack', copy.stemmExperienceStack);
     renderList('heroTags', copy.heroTags);
     renderList('modeling', copy.modeling);
     renderList('robotics', copy.robotics);

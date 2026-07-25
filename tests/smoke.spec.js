@@ -157,16 +157,27 @@ test('renders the complete bilingual portfolio without school name or overflow',
     await expect(page.locator('.desktop-taskbar')).toBeVisible();
     await expect(page.locator('[data-app-window]')).toBeVisible();
     await expect(page.locator('h1')).toContainText('智能系统');
+    await expect(page.locator('.experience-row')).toHaveCount(2);
+    await expect(page.locator('.detail-drawer')).toHaveCount(2);
     await expect(page.locator('.project-card')).toHaveCount(5);
     await expect(page.locator('.project-media img')).toHaveCount(5);
+    await expect(page.locator('.project-media img').nth(0)).toHaveAttribute('src', 'assets/project-robomaster-autoaim.jpg');
+    await expect(page.locator('.project-media img').nth(1)).toHaveAttribute('src', 'assets/project-robomaster-navigation.jpg');
+    await expect(page.locator('.project-media img').nth(4)).toHaveAttribute('src', 'assets/project-inventory.jpg');
     await expect(page.locator('.publication-card')).toHaveCount(2);
     await expect(page.locator('.method-step')).toHaveCount(5);
-    await expect(page.locator('.skill-card')).toHaveCount(6);
+    await expect(page.locator('.skill-card')).toHaveCount(5);
     await expect(page.locator('.award-columns > div')).toHaveCount(4);
     await expect(page.locator('.education-honors span')).toHaveCount(6);
     await expect(page.locator('.education-honors')).toContainText('两届国家奖学金');
     await expect(page.locator('.education-honors')).toContainText('优秀毕业生');
     await expect(page.locator('body')).toContainText('TAAC 2026 腾讯广告算法大赛');
+    await expect(page.locator('body')).toContainText('ROS 2 机器人导航开发');
+    await expect(page.locator('body')).toContainText('Stemm 家庭陪护机器人');
+    await expect(page.locator('body')).toContainText('RoboMaster 机器人自瞄系统');
+    await expect(page.locator('body')).toContainText('RoboMaster 机器人自主导航');
+    await expect(page.locator('body')).toContainText('算法核心开发');
+    await expect(page.locator('body')).not.toContainText('AI Agent 简历生成与优化平台');
     await expect(page.locator('body')).toContainText('AAAI 2027 · CCF-A · Submitted');
     await expect(page.locator('body')).toContainText('Submission 3748');
     await expect(page.locator('body')).toContainText('IEEE Sensors Journal · Submitted');
@@ -318,9 +329,13 @@ test('supports language, navigation, and expandable details', async ({ page, isM
 
     await page.locator('.primary-action').click();
     await expect(page).toHaveURL(/#experience$/);
-    await page.locator('.detail-drawer summary').click();
-    await expect(page.locator('.detail-drawer')).toHaveAttribute('open', '');
-    await expect(page.locator('.detail-drawer .feature-list li')).toHaveCount(5);
+    const experienceDrawers = page.locator('.detail-drawer');
+    await experienceDrawers.nth(0).locator('summary').click();
+    await expect(experienceDrawers.nth(0)).toHaveAttribute('open', '');
+    await expect(experienceDrawers.nth(0).locator('.feature-list li')).toHaveCount(4);
+    await experienceDrawers.nth(1).locator('summary').click();
+    await expect(experienceDrawers.nth(1)).toHaveAttribute('open', '');
+    await expect(experienceDrawers.nth(1).locator('.feature-list li')).toHaveCount(4);
 
     await page.locator('.project-details summary').first().click();
     await expect(page.locator('.project-details').first()).toHaveAttribute('open', '');

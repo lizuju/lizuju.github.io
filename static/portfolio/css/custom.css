@@ -2221,6 +2221,11 @@ main {
     font-size: 14px;
 }
 
+.experience-list {
+    display: grid;
+    gap: 24px;
+}
+
 .experience-row {
     display: grid;
     grid-template-columns: 180px minmax(0, 1fr);

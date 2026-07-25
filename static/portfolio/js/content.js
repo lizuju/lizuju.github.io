@@ -150,38 +150,45 @@
             navContact: '联系',
             heroName: '李祖钜 Gavin',
             heroTitle: ['智能系统', '视觉算法', '机器人开发'],
-            heroSummary: '把 AI Agent、推荐算法、视觉感知和硬件控制做成可运行的系统。',
+            heroSummary: '把自主导航、AI Agent、推荐算法与视觉感知做成可运行的机器人系统。',
             heroPrimary: '查看工作经历',
             heroSecondary: '联系我',
-            heroTags: ['AI Agent', 'Computer Vision', 'Robotics', 'Full-stack'],
+            heroTags: ['ROS 2', 'AI Agent', 'Computer Vision', 'Robotics'],
             briefAgentLabel: 'Agent 链路',
             briefAgentValue: '语音、检索、工具调用到硬件动作',
-            briefVisionLabel: '视觉系统',
-            briefVisionValue: '检测、标定、解算与实时优化',
-            briefProductLabel: '产品交付',
-            briefProductValue: '后端服务、前端界面、数据链路与设备联调',
+            briefVisionLabel: '机器人感知',
+            briefVisionValue: 'LiDAR、RGB-D、目标检测与定位',
+            briefProductLabel: '导航与执行',
+            briefProductValue: '建图定位、路径规划、动态避障与设备动作',
             signalRole: '当前方向',
-            signalTitle: 'AI Agent 产品与机器人系统',
-            signalStack: 'Flask / React / ESP32 / PyTorch',
+            signalTitle: 'ROS 2 自主导航与 Stemm 家庭陪护机器人',
+            signalStack: 'ROS 2 / Nav2 / Jetson Orin / ESP32',
             metricRank: '计算机专业综合排名',
             metricScholarship: '国家奖学金',
             metricAwards: '竞赛与创新项目荣誉',
-            metricFocus: 'Agent 产品、推荐系统与论文研究',
+            metricFocus: '自主导航、Agent 交互与论文研究',
             methodKicker: 'Method',
             methodTitle: '把复杂系统收束成可交付结果',
             methodBody: '先澄清，再提炼。先跑通闭环，再加固和打磨。',
             methodProofLabel: 'Working standard',
             methodProofValue: '清晰边界 / 可运行实现 / 可验证交付',
             experienceKicker: 'Experience',
-            experienceTitle: '让模型决策落到真实设备',
+            experienceTitle: '让感知、决策与运动控制形成闭环',
             experienceCompany: '广东华南虎科技有限公司',
-            experienceRole: 'AI Agent 语音陪伴机器人开发',
-            experienceBody: '构建“LLM 决策 + RAG 检索 + Tool Calling + ESP32 硬件执行”的云边协同架构。',
+            experienceRole: '算法核心开发',
+            navigationExperienceTitle: 'ROS 2 机器人导航开发',
+            navigationExperienceBody: '面向家庭陪护场景开发智能移动底盘，集成自主建图导航、视觉人体跟随、语音召唤、动态避障与自动回充能力。',
+            stemmExperienceTitle: 'Stemm 家庭陪护机器人',
+            stemmExperienceBody: '面向家庭陪护场景构建多模态智能交互机器人，集成语音对话、视觉理解与情感计算能力。',
             experienceDetailLabel: '查看完整工作内容',
-            mapAudio: '语音输入',
-            mapReasoning: '模型推理',
-            mapTools: '工具调用',
-            mapDevice: '硬件执行',
+            navigationMapMapping: '建图定位',
+            navigationMapExploration: '前沿探索',
+            navigationMapPlanning: '路径规划',
+            navigationMapFollowing: '跟随回充',
+            stemmMapVoice: '语音输入',
+            stemmMapReasoning: '模型推理',
+            stemmMapTools: '工具调用',
+            stemmMapDevice: '硬件执行',
             projectsKicker: 'Selected work',
             projectsTitle: '五个代表项目',
             projectDetailLabel: '展开技术细节',
@@ -194,7 +201,7 @@
             paperOneProof: '在 12 个公开基准上完成强基线、受控滞后、消融与效率实验。',
             paperTwoVenue: 'IEEE Sensors Journal · Submitted · 2026.07',
             paperTwoRole: '独立作者 · Sensors-109949-2026',
-            paperTwoBody: '提出 SADMS 可靠性感知动态掩膜策略，按跟踪可靠性选择细化、局部约束、语义回退或回滚。',
+            paperTwoBody: '提出 SADMS 可靠性感知动态掩膜策略，以 YOLOv8 人体语义掩膜为稳定回退，按跟踪可靠性选择细化、局部约束、语义回退或回滚。',
             paperTwoProof: '在 3 个 TUM RGB-D walking 序列上分别降低 ATE RMSE 4.50%、20.50%、7.15%，保持 0 次跟踪失败。',
             skillsKicker: 'Capability',
             skillsTitle: '从模型到产品的工程能力',
@@ -203,7 +210,7 @@
             awardModelingTitle: '数学建模',
             awardRoboticsTitle: '机器人竞赛',
             awardInnovationTitle: '创新实践',
-            awardOtherTitle: '综合荣誉',
+            awardOtherTitle: '其他类别荣誉',
             educationKicker: 'Education',
             educationTitle: '计算机科学与技术（本科）',
             educationBody: '综合排名 3/219；可使用英语、普通话和广东话工作沟通。',
@@ -239,53 +246,59 @@
                     body: '用排版、间距、动效和浏览器回归把体验从“能用”推到“稳定好用”。'
                 }
             ],
-            experience: [
-                '负责智能语音机器人 AI Agent 系统开发，构建“LLM 决策 + RAG 检索 + Tool Calling + ESP32 硬件执行”的云边协同架构，实现语音输入、模型推理、工具调用、语音播报与设备动作闭环。',
-                '设计 WebSocket / MQTT 实时通信链路，封装音频流、设备状态、控制指令与工具调用消息，支持多轮会话管理、流式音频传输、设备状态机切换和异常重连。',
-                '在服务端集成 ASR、VAD、TTS、LLM、大模型 API 与声纹识别模块，搭建低延迟流式语音对话流程，支持边识别边生成、边生成边播报和多角色对话。',
-                '负责 RAG 知识问答与 Agent 工具体系开发，设计知识库检索、上下文拼接、Prompt 模板和工具路由流程，将音乐播放、提醒事项、拍照、音量调节、屏幕控制等能力封装为可调用工具。',
-                '完成 ESP32 端多模态硬件适配，接入 GC2145 摄像头、JPEG 图像上传、屏幕背光控制和 STS 总线舵机动作编排，实现举手、挥手、复位、拥抱等动作由 Agent 自动规划与执行。'
+            navigationExperience: [
+                '融合 LiDAR、轮式里程计与 IMU，搭建 Cartographer 2D / SLAM Toolbox 建图定位链路，维护 map → odom_combined → base_footprint TF，完成地图保存、定位导航与返航。',
+                '实现 RRT Frontier Exploration 与 Coverage Frontier 选点，基于 OccupancyGrid 完成可达域搜索、前沿聚类和候选评分，并结合全局 / 局部 Costmap 剔除障碍及不可达目标。',
+                '基于 Nav2 配置 Planner、MPPI Controller 与 Behavior Tree，面向 Jetson Orin 调优导航参数，并利用 LaserScan、TF 与 Action Feedback 实现卡死检测、Costmap 清理、Spin / Wait 恢复和零速锁停。',
+                '开发 YOLO TensorRT + RGB-D 人体检测、身份锁定与距离估计，结合视觉 PD / Nav2 实现人体跟随与避障；接入麦克风阵列 awake_angle、ROS 2 Service / Action 和 MQTT，实现声源定向、语音控制跟随及红外寻桩回充。'
             ],
-            experienceStack: [
-                'Python', 'C/C++', 'ESP32', 'LLM API', 'AI Agent', 'Agent Workflow', 'RAG',
-                'Function Calling / MCP Tool', 'WebSocket', 'MQTT', 'FastAPI', 'ASR/TTS/VAD', 'Opus', 'Git'
+            navigationExperienceStack: [
+                'Python', 'C/C++', 'ROS 2 Humble', 'Nav2', 'SLAM Toolbox', 'Cartographer 2D',
+                'RRT Frontier', 'MPPI', 'Behavior Tree', 'YOLO / TensorRT', 'RGB-D', 'Jetson Orin'
+            ],
+            stemmExperience: [
+                '负责 Stemm 家庭陪护机器人 AI Agent 系统，构建“LLM 决策 + RAG 检索 + Tool Calling + ESP32 硬件执行”的云边协同闭环。',
+                '设计 WebSocket / MQTT 流式语音链路，封装 Opus 音频、设备状态及控制指令，集成 ASR、VAD、TTS、LLM 与声纹识别，支持多轮会话、流式识别与播报、状态机切换及异常重连。',
+                '负责 RAG 知识问答与 Agent 工具体系开发，设计知识库检索、上下文拼接、Prompt 模板及工具路由，将音乐、提醒、拍照、音量调节和屏幕控制等能力封装为可调用工具。',
+                '完成 ESP32 端多模态硬件适配，接入 GC2145 摄像头、JPEG 图像上传、屏幕背光及 STS 总线舵机，实现举手、挥手、复位和拥抱等动作的 Agent 自动规划与执行。'
+            ],
+            stemmExperienceStack: [
+                'Python', 'C/C++', 'AI Agent', 'RAG', 'Prompt Engineering', 'Tool Calling',
+                'WebSocket / MQTT', 'ASR / VAD / TTS', 'Opus', 'ESP32', 'GC2145', 'STS 舵机'
             ],
             projects: [
                 {
-                    title: 'AI Agent 简历生成与优化平台',
-                    role: '全栈开发 / 项目负责人',
-                    period: '2025.10 - 2026.05',
-                    body: '把简历解析、岗位 JD 分析、内容改写、LaTeX 渲染与 PDF 导出串成自动化链路。',
-                    alt: 'AI Agent 简历生成与优化平台产品界面概念图',
+                    title: 'RoboMaster 机器人自瞄系统',
+                    role: '算法组组长 / 项目负责人',
+                    period: '2022.11 - 2025.04',
+                    body: '实现装甲板识别、目标跟踪、位姿解算、弹道补偿与云台控制的完整射击链路。',
+                    alt: '搭载视觉相机、图传模块与发射机构的 RoboMaster 自瞄机器人',
                     details: [
-                        '独立设计并实现面向求职场景的 AI Agent 简历生成与优化平台，将简历解析、岗位 JD 分析、内容改写、LaTeX 渲染与 PDF 导出串联为自动化简历生成链路。',
-                        '设计 Agentic Resume Workflow，引入 Intent Routing 与 Task Orchestration，将用户输入路由到整份生成、JD 匹配、局部改写、压缩优化等任务分支。',
-                        '采用 Schema-first 的 JSON Resume 中间表示，将简历字段与 LaTeX 模板解耦，形成 Structured Output + Renderer Pipeline，支持字段级编辑、版本回溯和 PDF 导出。',
-                        '引入 RAG、Embedding 与向量数据库设计用户简历记忆模块，对项目经历、技能关键词、历史优化版本和目标岗位信息进行检索增强。',
-                        '基于 Flask 封装文件解析、AI 改写、LaTeX 编译、PDF 导出、公开分享和订阅校验等 Agent 工具接口，并使用 React + Vite 构建对话式简历编辑与 PDF 预览界面。'
+                        '作为视觉组组长及项目负责人，负责 RoboMaster 自瞄系统设计与开发，完成装甲板检测、目标选择、角度解算、预测滤波及云台控制链路集成。',
+                        '基于 ROS 2 与 OpenCV 构建装甲板识别链路，通过颜色差分、形态学处理、轮廓提取、椭圆拟合与灯条匹配完成检测，并按面积、编号优先级和帧间距离评分跟踪目标。',
+                        '实现 AngleSolver，基于相机内参、畸变参数与 solvePnP / PinHole 模型计算 yaw、pitch 和距离，完成枪口偏移修正与弹道重力补偿。',
+                        '使用 Kalman Filter 预测装甲板运动状态，抑制目标跳变、短时丢失与图像抖动；通过 termios 打通 MiniPC—STM32 串口链路，传输 yaw、pitch 和发弹指令。'
                     ],
-                    result: '上线后累计服务上百名求职用户。',
-                    tags: ['Python', 'Flask', 'React', 'PostgreSQL', 'LLM', 'AI Agent', 'RAG', 'Embedding', 'LaTeX', 'Git'],
-                    visual: 'resume'
+                    result: '与自主导航系统共同支撑两届 RoboMaster 机甲大师赛步兵对抗赛和 3V3 对抗赛多项获奖。',
+                    tags: ['C++', 'ROS 2', 'OpenCV', 'solvePnP', 'Kalman Filter', 'MiniPC / STM32'],
+                    visual: 'robomasterAutoAim',
+                    link: 'https://github.com/lizuju/notos-rm-autoaim'
                 },
                 {
-                    title: 'RoboMaster 机器人计算机视觉算法',
-                    role: '视觉组组长 / 项目负责人',
+                    title: 'RoboMaster 机器人自主导航',
+                    role: '算法组组长 / 项目负责人',
                     period: '2022.11 - 2025.04',
-                    body: '面向比赛现场的实时视觉、目标识别和姿态解算。',
-                    alt: 'RoboMaster 机器人视觉系统产品式渲染图',
+                    body: '实现激光惯性定位、点云避障、全向路径跟踪与比赛策略调度。',
+                    alt: '搭载 MID-360、图传模块与发射机构的 RoboMaster 自主导航机器人',
                     details: [
-                        '作为视觉组组长及项目负责人，负责 RoboMaster 机器人自瞄系统开发，完成装甲板检测、目标选择、角度解算、预测滤波与 MiniPC-STM32 联调。',
-                        '基于 ROS 与 OpenCV 构建传统视觉装甲板识别链路，通过颜色通道差分、形态学膨胀、轮廓提取、椭圆拟合、灯条筛选与装甲板匹配实现目标检测。',
-                        '设计装甲板评分与目标选择策略，结合装甲板面积、目标编号优先级、上一帧目标位置距离等因素进行候选目标排序与跟踪。',
-                        '实现 AngleSolver 角度解算模块，基于相机内参、畸变参数、solvePnP / PinHole 模型计算 yaw、pitch 与距离，并加入枪口-相机偏移和弹道重力补偿。',
-                        '引入 Kalman Filter 对装甲板中心点进行状态预测与测量校正，降低目标跳变、短时丢失和画面抖动对云台控制的影响。',
-                        '负责 Linux 串口通信与电控联调，基于 termios 配置 MiniPC 串口参数，设计 yaw / pitch 数据帧、符号位、小数位与发弹标志位，实现视觉结果到 STM32 云台控制的实时传输。'
+                        '基于 Livox MID-360 与 Point-LIO 构建激光惯性里程计，维护定位坐标关系并完成 SLAM、PCD / 栅格地图保存和实车定位。',
+                        '集成 small_gicp 实现实时点云与先验 PCD 的全局重定位，通过地形分析链路生成近远场点云并写入局部 / 全局 Costmap。',
+                        '基于 Nav2 配置 Theta* 全局规划与 Omni PID Pursuit 全向路径跟踪，调优前视、曲率降速、速度 / 加速度和重规划参数。',
+                        '使用 BehaviorTree.CPP / BehaviorTree.ROS2 编排比赛策略，接入比赛阶段、血量、热量、弹量、RFID 与目标状态，筛选攻击位姿并发布导航目标。'
                     ],
-                    result: '荣获 RoboMaster 机甲大师赛步兵对抗赛、3V3 对抗赛等多项奖项。',
-                    tags: ['C++', 'OpenCV', 'ROS', 'PnP 位姿估计', 'Kalman Filter', '相机标定', '工业相机', 'MiniPC', 'Git'],
-                    visual: 'vision',
-                    link: 'https://github.com/lizuju/notos-rm-autoaim'
+                    result: '与自瞄系统共同支撑两届 RoboMaster 机甲大师赛步兵对抗赛和 3V3 对抗赛多项获奖。',
+                    tags: ['C++', 'ROS 2', 'Livox MID-360', 'Point-LIO', 'small_gicp', 'Nav2', 'Theta*', 'Omni PID Pursuit', 'Behavior Tree'],
+                    visual: 'robomasterNavigation'
                 },
                 {
                     title: 'TAAC 2026 腾讯广告算法大赛',
@@ -294,11 +307,10 @@
                     body: '围绕广告推荐场景做转化率预测、特征工程和 AUC 优化。',
                     alt: '推荐系统算法训练与特征工程概念图',
                     details: [
-                        '基于 PyTorch 构建面向广告推荐场景的转化率预测模型，围绕用户特征、物品特征、行为序列和时间特征进行建模。',
-                        '负责 Parquet 训练数据读取、schema 对齐、padding、序列截断与特征处理，整理 user sparse、item sparse、user dense 及多路行为序列的模型输入。',
-                        '在模型结构上引入 RankMixer NS Tokenizer、MultiSeqQueryGenerator、MultiSeqHyFormerBlock 等模块，对用户侧稀疏特征、物品侧稀疏特征和行为序列进行交互建模。',
-                        '针对 user dense 特征语义混杂问题，设计 dense group projector 分组投影与 gate 融合机制，将 dense 61、87、62-66、89-91 等特征分组建模后融合为 user dense token。',
-                        '通过加入全局时间特征、调优 Focal Loss 参数、优化 step-level validation 与 checkpoint 选择策略，将 Public AUC 从 0.806617 提升至 0.830964，并整理 35 轮实验记录。'
+                        '基于 PyTorch 构建广告 CVR 预估模型，联合建模用户 / 物品稀疏特征、Dense 特征、多路行为序列和时间特征。',
+                        '完成 Parquet 数据读取、Schema 对齐、Padding、序列截断与特征处理，构建 User Sparse、Item Sparse、User Dense 及多路行为序列输入。',
+                        '引入 RankMixer NS Tokenizer、MultiSeqQueryGenerator 和 MultiSeqHyFormerBlock，并设计 Dense Group Projector 与 Gate 融合机制进行特征交互。',
+                        '加入全局时间特征并调优 Focal Loss、Step-level Validation 与 Checkpoint 选择策略，完成 35 轮实验，将 Public AUC 从 0.806617 提升至 0.830964。'
                     ],
                     result: '荣获腾讯广告算法大赛第 114 名（Top 7%）。',
                     tags: ['Python', 'PyTorch', 'Transformer', '推荐系统', 'CTR/CVR', 'AUC 优化', 'Parquet', 'Focal Loss', 'Git'],
@@ -312,11 +324,10 @@
                     body: '把固定分类检测升级为“特征嵌入 + 向量搜索”的可扩展识别平台。',
                     alt: '垃圾分类识别系统产品式静物图',
                     details: [
-                        '基于 YOLOv5 构建通用目标检测流程，负责物体定位与裁剪；引入 CLIP 进行特征嵌入提取，将垃圾图像转化为高维语义向量。',
-                        '设计并搭建向量检索体系，结合 Milvus 构建“垃圾指纹库”，实现海量特征向量的相似度匹配与近邻搜索。',
-                        '构建可动态扩展的识别机制，新增垃圾类型时无需重新训练检测模型，仅需新增样本向量入库即可完成扩展。',
-                        '使用 Flask 封装检测与向量检索接口，基于 MySQL 管理用户与记录，采用 Vue 实现识别展示和历史管理功能。',
-                        '优化向量检索效率与推理流程，通过索引结构优化和批量特征计算提升系统响应速度。'
+                        '负责系统架构设计，将传统固定类别检测改造为“目标检测 + 语义向量检索”流程，实现检测模型与垃圾类别库解耦。',
+                        '基于 YOLOv5 完成目标定位与裁剪，结合 CLIP 提取图像 Embedding，将垃圾图像编码为高维语义向量。',
+                        '设计 Milvus 向量检索模块，基于 TopK 近邻搜索与相似度排序完成类别判定，并支持新增类别样本向量入库。',
+                        '使用 Flask 封装检测、Embedding 与向量检索接口，结合 MySQL 管理用户和记录，基于 Vue 实现图片识别、批量检测与历史管理。'
                     ],
                     result: '荣获传智杯全国 IT 技能大赛一等奖。',
                     tags: ['Python', 'Flask', 'Vue', 'MySQL', 'YOLOv5', 'CLIP', 'Milvus', 'Git'],
@@ -331,8 +342,8 @@
                     details: [
                         '负责货物盘点架构设计，构建“YOLOv5 视觉检测 + LIVO 定位建图 + Web 管理平台”的前后端分离系统，实现货物识别与数量统计。',
                         '基于 OpenCV 完成去噪、相机标定、透视矫正与 ROI 裁剪，结合 YOLOv5 实现检测、分类和异常筛查。',
-                        '基于 FAST-LIVO 构建视觉、激光雷达和 IMU 紧耦合链路，完成外参标定与时间同步，并以 ESIKF 融合多源残差估计 6DoF 位姿。',
-                        '通过 TF 变换判断堆叠与遮挡并完成盘点校验；基于 Flask + MySQL 开发库存、盘点、告警和统计接口，使用 Vue 完成可视化管理。'
+                        '基于 FAST-LIVO 构建视觉、激光雷达和 IMU 紧耦合链路，完成外参标定与时间同步，以 ESIKF 融合 IMU 与点面 / 光度残差估计 6DoF 位姿，并通过 TF 判断堆叠和遮挡。',
+                        '基于 Flask + MySQL 开发库存、盘点、告警和统计接口，使用 Vue 构建可视化平台，打通检测入库、库存更新与结果展示流程。'
                     ],
                     result: '荣获全国大学生创新创业能力大赛省级结项。',
                     tags: ['Python', 'ROS', 'Flask', 'Vue', 'OpenCV', 'YOLOv5', 'FAST-LIVO', 'ESIKF', 'MySQL'],
@@ -341,34 +352,29 @@
             ],
             skills: [
                 {
-                    title: '编程语言与全栈开发',
-                    body: 'C++ / Python 到 Flask、React、Vue、数据库与接口联调，能独立做前后端闭环。',
-                    items: ['C++ / STL', 'Python', 'Flask', 'React', 'Vue', 'PostgreSQL', 'MySQL']
-                },
-                {
-                    title: 'AI Agent 开发',
-                    body: '围绕多轮对话、工具调用、知识库问答和结构化输出设计 Agent 工作流。',
-                    items: ['LLM API', 'AI Agent', 'Agent Workflow', 'RAG', 'Embedding', '向量检索', 'Function Calling', 'MCP', 'Structured Output']
+                    title: '编程语言与工程开发',
+                    body: '熟练掌握 C++ 与 Python，熟悉 STL、面向对象设计和工程化开发，具备前后端大型项目经验。',
+                    items: ['C++ / STL', 'Python', 'OOP', 'Flask', 'Vue', 'MySQL', 'RESTful API']
                 },
                 {
                     title: 'AI 编程开发',
-                    body: '熟悉 Codex、Claude Code、LangChain 等 AI Coding 工具，用于开发、调试和交付提效。',
-                    items: ['Codex', 'Claude Code', 'LangChain', 'GitHub AI', '调试提效', '交付提效']
+                    body: '使用 Codex、Claude Code 与 LangChain 进行大型项目开发、开源二开移植、测试调试和 Git 协作。',
+                    items: ['Codex', 'Claude Code', 'LangChain', '开源二开', '测试调试', 'Git 工作流']
+                },
+                {
+                    title: '导航与路径规划',
+                    body: '熟悉 ROS 2 Humble 与 Nav2，掌握建图定位、前沿探索、全局 / 局部规划、全向跟踪和导航恢复。',
+                    items: ['ROS 2 Humble', 'Nav2', 'Point-LIO', 'SLAM Toolbox', 'Cartographer 2D', 'small_gicp', 'RRT Frontier', 'Theta*', 'MPPI', 'Omni PID Pursuit', 'Behavior Tree', 'Costmap']
                 },
                 {
                     title: '计算机视觉',
-                    body: '从 OpenCV、YOLOv5 到相机标定、目标检测和视觉工程部署。',
-                    items: ['OpenCV', 'YOLOv5', 'CLIP', 'Milvus', '工业相机', '相机标定', '图像增强']
+                    body: '熟练使用 OpenCV，具备 YOLO 推理部署、图像预处理、PnP 位姿解算与工业相机标定经验。',
+                    items: ['OpenCV', 'YOLO', 'TensorRT', 'OpenVINO', '图像预处理', 'PnP 位姿解算', '工业相机', '相机标定']
                 },
                 {
-                    title: '机器人开发',
-                    body: 'ROS、传感器融合、姿态解算、串口通信和多平台硬件调试。',
-                    items: ['ROS', '传感器融合', '姿态解算', '串口通信', 'ESP32', 'Jetson / NUC / Raspberry Pi', 'Arduino']
-                },
-                {
-                    title: '机器学习与算法建模',
-                    body: '围绕推荐系统、时间序列预测和图学习做特征工程、模型训练与受控实验。',
-                    items: ['PyTorch', 'Transformer', 'CTR / CVR', 'AUC 优化', '时间序列预测', '图学习', '实验设计']
+                    title: '传感器与机器人开发',
+                    body: '掌握多传感器接入、ROS 2 通信、TF2、串口联调和 Jetson / NUC / 树莓派等平台部署。',
+                    items: ['LiDAR', 'IMU', '里程计', 'RGB-D', 'LaserScan', 'PointCloud2', 'OccupancyGrid', 'TF2', 'ROS 2 Topic / Service / Action', 'MiniPC / STM32', 'Jetson / NUC / Raspberry Pi', 'Arduino']
                 }
             ],
             modeling: [
@@ -549,38 +555,45 @@
             navContact: 'Contact',
             heroName: 'Gavin Lizuju',
             heroTitle: ['Intelligent Systems', 'Vision Algorithms', 'Robotics Development'],
-            heroSummary: 'AI agents, recommender models, visual perception and device control in working systems.',
+            heroSummary: 'Autonomous navigation, AI agents, recommender models and visual perception in working robotic systems.',
             heroPrimary: 'View experience',
             heroSecondary: 'Contact',
-            heroTags: ['AI Agent', 'Computer Vision', 'Robotics', 'Full-stack'],
+            heroTags: ['ROS 2', 'AI Agent', 'Computer Vision', 'Robotics'],
             briefAgentLabel: 'Agent loop',
             briefAgentValue: 'Voice, retrieval, tool calls and hardware actions',
-            briefVisionLabel: 'Vision systems',
-            briefVisionValue: 'Detection, calibration, pose solving and realtime tuning',
-            briefProductLabel: 'Product delivery',
-            briefProductValue: 'Backend services, frontend UI, data pipelines and device integration',
+            briefVisionLabel: 'Robot perception',
+            briefVisionValue: 'LiDAR, RGB-D, object detection and localization',
+            briefProductLabel: 'Navigation and action',
+            briefProductValue: 'Mapping, planning, dynamic avoidance and device actions',
             signalRole: 'Current focus',
-            signalTitle: 'AI Agent Products and Robotics',
-            signalStack: 'Flask / React / ESP32 / PyTorch',
+            signalTitle: 'ROS 2 Navigation and the Stemm Home Companion Robot',
+            signalStack: 'ROS 2 / Nav2 / Jetson Orin / ESP32',
             metricRank: 'CS program ranking',
             metricScholarship: 'National Scholarships',
             metricAwards: 'Awards and innovation results',
-            metricFocus: 'Agent products, recommender systems and research',
+            metricFocus: 'Autonomous navigation, agent interaction and research',
             methodKicker: 'Method',
             methodTitle: 'Turning complex systems into shippable work',
             methodBody: 'Clarify first, distill the path, ship the loop, then harden and polish.',
             methodProofLabel: 'Working standard',
             methodProofValue: 'Clear scope / Working build / Verified delivery',
             experienceKicker: 'Experience',
-            experienceTitle: 'Making model decisions reach real devices',
+            experienceTitle: 'Closing the loop across perception, decisions and motion',
             experienceCompany: 'Guangdong South China Tiger Technology Co., Ltd.',
-            experienceRole: 'AI Agent Voice Companion Robot Development',
-            experienceBody: 'Built a cloud-edge architecture for LLM decisions, RAG retrieval, tool calling and ESP32 hardware execution.',
+            experienceRole: 'Core Algorithm Developer',
+            navigationExperienceTitle: 'ROS 2 Robot Navigation Development',
+            navigationExperienceBody: 'Developed an intelligent mobile base for home companionship with autonomous mapping and navigation, visual human following, voice summoning, dynamic obstacle avoidance and automatic recharging.',
+            stemmExperienceTitle: 'Stemm Home Companion Robot',
+            stemmExperienceBody: 'Built a multimodal home companion robot integrating voice conversation, visual understanding and affective computing.',
             experienceDetailLabel: 'View full scope',
-            mapAudio: 'Voice input',
-            mapReasoning: 'Model reasoning',
-            mapTools: 'Tool calling',
-            mapDevice: 'Device action',
+            navigationMapMapping: 'Mapping',
+            navigationMapExploration: 'Frontier exploration',
+            navigationMapPlanning: 'Path planning',
+            navigationMapFollowing: 'Follow and dock',
+            stemmMapVoice: 'Voice input',
+            stemmMapReasoning: 'Model inference',
+            stemmMapTools: 'Tool calling',
+            stemmMapDevice: 'Hardware action',
             projectsKicker: 'Selected work',
             projectsTitle: 'Five representative projects',
             projectDetailLabel: 'Show technical details',
@@ -593,7 +606,7 @@
             paperOneProof: 'Evaluated against strong baselines on 12 public benchmarks with controlled-lag, ablation and efficiency studies.',
             paperTwoVenue: 'IEEE Sensors Journal · Submitted · Jul 2026',
             paperTwoRole: 'Sole Author · Sensors-109949-2026',
-            paperTwoBody: 'Proposed SADMS, a reliability-aware dynamic masking strategy that selects refinement, local constraints, semantic fallback or rollback based on tracking reliability.',
+            paperTwoBody: 'Proposed SADMS, a reliability-aware dynamic masking strategy using YOLOv8 human masks as a stable fallback while selecting refinement, local constraints, semantic fallback or rollback from tracking reliability.',
             paperTwoProof: 'Reduced ATE RMSE by 4.50%, 20.50% and 7.15% on three TUM RGB-D walking sequences while maintaining zero tracking failures.',
             skillsKicker: 'Capability',
             skillsTitle: 'Engineering from model to product',
@@ -638,53 +651,59 @@
                     body: 'Use typography, spacing, motion and browser regression to move the experience from usable to dependable.'
                 }
             ],
-            experience: [
-                'Developed an AI Agent system for a voice companion robot, building a cloud-edge architecture for LLM decisions, RAG retrieval, tool calling and ESP32 hardware execution across voice input, model reasoning, speech playback and device actions.',
-                'Designed WebSocket / MQTT realtime communication, wrapping audio streams, device state, control commands and tool-call messages for multi-turn sessions, streaming audio, device-state switching and reconnect handling.',
-                'Integrated ASR, VAD, TTS, LLM APIs and speaker recognition modules on the server side to build low-latency streaming voice dialogue with incremental recognition, generation, playback and multi-role conversations.',
-                'Developed RAG question answering and Agent tool routing, including knowledge retrieval, context assembly, prompt templates and callable tools for music playback, reminders, camera capture, volume adjustment and screen control.',
-                'Adapted ESP32 multimodal hardware, including GC2145 camera capture, JPEG upload, screen backlight control and STS bus servo choreography, allowing gestures such as raise hand, wave, reset and hug to be planned and executed by the Agent.'
+            navigationExperience: [
+                'Fused LiDAR, wheel odometry and IMU data through Cartographer 2D / SLAM Toolbox, maintained the map → odom_combined → base_footprint TF chain, and delivered map storage, localization, navigation and return-to-base behavior.',
+                'Implemented RRT Frontier Exploration and Coverage Frontier selection using OccupancyGrid reachability search, frontier clustering and candidate scoring, with global and local Costmap filtering for obstacles and unreachable goals.',
+                'Configured Nav2 Planner, MPPI Controller and Behavior Trees for Jetson Orin, then used LaserScan, TF and Action Feedback for stuck detection, Costmap clearing, Spin / Wait recovery and zero-velocity locking.',
+                'Built YOLO TensorRT + RGB-D human detection, identity locking and range estimation, combining visual PD / Nav2 for following and avoidance while integrating microphone-array awake_angle, ROS 2 Service / Action, MQTT and infrared docking.'
             ],
-            experienceStack: [
-                'Python', 'C/C++', 'ESP32', 'LLM API', 'AI Agent', 'Agent Workflow', 'RAG',
-                'Function Calling / MCP Tool', 'WebSocket', 'MQTT', 'FastAPI', 'ASR/TTS/VAD', 'Opus', 'Git'
+            navigationExperienceStack: [
+                'Python', 'C/C++', 'ROS 2 Humble', 'Nav2', 'SLAM Toolbox', 'Cartographer 2D',
+                'RRT Frontier', 'MPPI', 'Behavior Tree', 'YOLO / TensorRT', 'RGB-D', 'Jetson Orin'
+            ],
+            stemmExperience: [
+                'Developed the Stemm home companion robot AI Agent with a cloud-edge loop across LLM decisions, RAG retrieval, tool calling and ESP32 hardware execution.',
+                'Designed WebSocket / MQTT streaming voice communication around Opus audio, device state and control commands, integrating ASR, VAD, TTS, LLM and speaker recognition for multi-turn sessions, streaming playback and reconnect handling.',
+                'Built RAG knowledge and Agent tools around retrieval, context assembly, Prompt templates and tool routing, exposing music, reminders, photography, volume and display control as callable capabilities.',
+                'Adapted ESP32 multimodal hardware with a GC2145 camera, JPEG image upload, screen backlight and STS bus servos, enabling Agent-planned hand raising, waving, reset and hugging motions.'
+            ],
+            stemmExperienceStack: [
+                'Python', 'C/C++', 'AI Agent', 'RAG', 'Prompt Engineering', 'Tool Calling',
+                'WebSocket / MQTT', 'ASR / VAD / TTS', 'Opus', 'ESP32', 'GC2145', 'STS Servos'
             ],
             projects: [
                 {
-                    title: 'AI Agent Resume Generation and Optimization Platform',
-                    role: 'Full-stack Developer / Project Lead',
-                    period: '2025.10 - 2026.05',
-                    body: 'An automated resume pipeline covering parsing, JD analysis, rewriting, LaTeX rendering and PDF export.',
-                    alt: 'Product concept for an AI Agent resume generation and optimization platform',
+                    title: 'RoboMaster Robot Auto-Aim System',
+                    role: 'Algorithm Team Lead / Project Lead',
+                    period: '2022.11 - 2025.04',
+                    body: 'An end-to-end firing pipeline spanning armor detection, target tracking, pose solving, ballistic compensation and gimbal control.',
+                    alt: 'RoboMaster auto-aim robot with vision camera, video transmitter and launcher',
                     details: [
-                        'Designed and implemented an AI Agent resume generation and optimization platform for job-search scenarios, connecting resume parsing, JD analysis, content rewriting, LaTeX rendering and PDF export.',
-                        'Designed an Agentic Resume Workflow with Intent Routing and Task Orchestration, routing user input into full resume generation, JD matching, local rewriting and compression tasks.',
-                        'Used a schema-first JSON Resume intermediate representation to decouple resume fields from LaTeX templates, forming a Structured Output and Renderer Pipeline with field-level editing, version rollback and PDF export.',
-                        'Introduced RAG, embeddings and vector database design for user resume memory, retrieving projects, skills, historical optimization versions and target-job context for personalized continuation and edits.',
-                        'Wrapped file parsing, AI rewriting, LaTeX compilation, PDF export, public sharing and subscription checks as Flask Agent tools, then built a React + Vite conversational editor with PDF preview.'
+                        'Led the vision team and the RoboMaster auto-aim system design, integrating armor detection, target selection, angle solving, predictive filtering and gimbal control.',
+                        'Built an ROS 2 and OpenCV armor-recognition pipeline using color differencing, morphology, contours, ellipse fitting and light-bar matching, then scored targets by area, priority and inter-frame distance.',
+                        'Implemented AngleSolver with camera intrinsics, distortion parameters and solvePnP / PinHole models for yaw, pitch and range, including muzzle offset and ballistic gravity compensation.',
+                        'Applied Kalman Filter motion prediction to suppress target jumps, brief loss and image vibration, then connected MiniPC to STM32 through termios for yaw, pitch and firing commands.'
                     ],
-                    result: 'Served hundreds of job-search users after launch.',
-                    tags: ['Python', 'Flask', 'React', 'PostgreSQL', 'LLM', 'AI Agent', 'RAG', 'Embedding', 'LaTeX', 'Git'],
-                    visual: 'resume'
+                    result: 'Together with the navigation system, supported multiple awards across two seasons of RoboMaster infantry combat and 3V3 competitions.',
+                    tags: ['C++', 'ROS 2', 'OpenCV', 'solvePnP', 'Kalman Filter', 'MiniPC / STM32'],
+                    visual: 'robomasterAutoAim',
+                    link: 'https://github.com/lizuju/notos-rm-autoaim'
                 },
                 {
-                    title: 'RoboMaster Robot Computer Vision Algorithms',
-                    role: 'Vision Team Lead / Project Lead',
+                    title: 'RoboMaster Robot Autonomous Navigation',
+                    role: 'Algorithm Team Lead / Project Lead',
                     period: '2022.11 - 2025.04',
-                    body: 'Realtime vision, target recognition and pose solving for competition robots.',
-                    alt: 'Premium product-style render of a RoboMaster robot vision system',
+                    body: 'LiDAR-inertial localization, point-cloud avoidance, omnidirectional path tracking and match strategy orchestration.',
+                    alt: 'RoboMaster autonomous navigation robot with MID-360, video transmitter and launcher',
                     details: [
-                        'Led the RoboMaster robot auto-aim vision system, covering armor-plate detection, target selection, angle solving, prediction filtering and MiniPC-STM32 integration.',
-                        'Built a traditional ROS and OpenCV armor-plate recognition pipeline using color-channel differencing, morphological dilation, contour extraction, ellipse fitting, light-bar filtering and armor matching.',
-                        'Designed armor scoring and target-selection strategies using armor area, target priority and distance from the previous-frame target for candidate ranking and tracking.',
-                        'Implemented AngleSolver with camera intrinsics, distortion parameters, solvePnP / PinHole models, muzzle-camera offset and ballistic gravity compensation for yaw, pitch and distance solving.',
-                        'Introduced Kalman Filter prediction and correction for armor center points to reduce target jumps, short-term target loss and image jitter in gimbal control.',
-                        'Handled Linux serial communication and electrical integration with termios, yaw / pitch frame design, sign bits, decimal fields and fire flags for realtime STM32 gimbal control.'
+                        'Built LiDAR-inertial odometry from Livox MID-360 and Point-LIO, maintained localization frames, and delivered SLAM, PCD / occupancy-map storage and vehicle localization.',
+                        'Integrated small_gicp for global relocalization against prior PCD maps, then generated near- and far-field terrain point clouds for local and global Costmaps.',
+                        'Configured Nav2 Theta* global planning and Omni PID Pursuit omnidirectional tracking, tuning lookahead, curvature slowdown, speed / acceleration and replanning parameters.',
+                        'Orchestrated match navigation with BehaviorTree.CPP / BehaviorTree.ROS2, integrating match phase, health, heat, ammunition, RFID and target states to select attack poses and issue navigation goals.'
                     ],
-                    result: 'Won multiple RoboMaster awards across infantry combat and 3V3 competitions.',
-                    tags: ['C++', 'OpenCV', 'ROS', 'PnP Pose Estimation', 'Kalman Filter', 'Camera Calibration', 'Industrial Camera', 'MiniPC', 'Git'],
-                    visual: 'vision',
-                    link: 'https://github.com/lizuju/notos-rm-autoaim'
+                    result: 'Together with the auto-aim system, supported multiple awards across two seasons of RoboMaster infantry combat and 3V3 competitions.',
+                    tags: ['C++', 'ROS 2', 'Livox MID-360', 'Point-LIO', 'small_gicp', 'Nav2', 'Theta*', 'Omni PID Pursuit', 'Behavior Tree'],
+                    visual: 'robomasterNavigation'
                 },
                 {
                     title: 'TAAC 2026 Tencent Advertising Algorithm Competition',
@@ -693,11 +712,10 @@
                     body: 'Conversion-rate prediction, feature engineering and AUC optimization for advertising recommendation.',
                     alt: 'Concept visual for recommender-system training and feature engineering',
                     details: [
-                        'Built PyTorch conversion-rate prediction models for advertising recommendation, modeling user features, item features, behavior sequences and time features.',
-                        'Handled Parquet training data ingestion, schema alignment, padding, sequence truncation and feature processing for user sparse, item sparse, user dense and multi-path behavior inputs.',
-                        'Introduced RankMixer NS Tokenizer, MultiSeqQueryGenerator and MultiSeqHyFormerBlock modules to model interactions among user sparse features, item sparse features and behavior sequences.',
-                        'Designed dense group projectors and gate fusion for semantically mixed user dense features, grouping features such as dense 61, 87, 62-66 and 89-91 into a fused user dense token.',
-                        'Improved Public AUC from 0.806617 to 0.830964 by adding global time features, tuning Focal Loss, improving step-level validation and checkpoint selection, and documenting 35 experiment rounds.'
+                        'Built a PyTorch advertising CVR model over user / item sparse features, dense features, multiple behavior sequences and time features.',
+                        'Implemented Parquet ingestion, Schema alignment, Padding, sequence truncation and feature processing for User Sparse, Item Sparse, User Dense and multi-sequence inputs.',
+                        'Introduced RankMixer NS Tokenizer, MultiSeqQueryGenerator and MultiSeqHyFormerBlock, then designed Dense Group Projector and Gate fusion for feature interaction.',
+                        'Added global time features and tuned Focal Loss, Step-level Validation and Checkpoint selection across 35 experiments, raising Public AUC from 0.806617 to 0.830964.'
                     ],
                     result: 'Ranked 114th in the Tencent Advertising Algorithm Competition, Top 7%.',
                     tags: ['Python', 'PyTorch', 'Transformer', 'Recommender Systems', 'CTR/CVR', 'AUC Tuning', 'Parquet', 'Focal Loss', 'Git'],
@@ -711,11 +729,10 @@
                     body: 'An extensible recognition platform using feature embeddings and vector search.',
                     alt: 'Product-style still life for garbage classification recognition',
                     details: [
-                        'Used YOLOv5 for generic object localization and cropping, then introduced CLIP feature embeddings to encode garbage images as high-dimensional semantic vectors.',
-                        'Designed a vector retrieval system with Milvus as a garbage fingerprint library for efficient similarity search and nearest-neighbor matching.',
-                        'Built a dynamic extension mechanism where new garbage categories can be added by inserting sample vectors without retraining the detector.',
-                        'Wrapped detection and vector search APIs with Flask, used MySQL for users and records, and implemented recognition display plus history management in Vue.',
-                        'Optimized vector retrieval and inference through index tuning and batched feature computation.'
+                        'Redesigned a fixed-class detector as an object-detection plus semantic-vector retrieval pipeline, decoupling the detection model from the garbage category library.',
+                        'Used YOLOv5 for localization and cropping, then encoded images as high-dimensional semantic embeddings with CLIP.',
+                        'Built Milvus TopK nearest-neighbor search and similarity ranking for category decisions while supporting new categories through sample-vector insertion.',
+                        'Exposed detection, embedding and retrieval APIs with Flask, managed users and records in MySQL, and built image recognition, batch detection and history views in Vue.'
                     ],
                     result: 'Won first prize in the national Chuanzhi Cup IT Skills Competition.',
                     tags: ['Python', 'Flask', 'Vue', 'MySQL', 'YOLOv5', 'CLIP', 'Milvus', 'Git'],
@@ -730,8 +747,8 @@
                     details: [
                         'Designed a separated frontend-backend inventory system combining YOLOv5 visual detection, LIVO localization and mapping, and a web management platform for item recognition and counting.',
                         'Used OpenCV for denoising, camera calibration, perspective correction and ROI cropping, then applied YOLOv5 for detection, classification and anomaly screening.',
-                        'Built a tightly coupled FAST-LIVO pipeline across vision, LiDAR and IMU, completing extrinsic calibration and time synchronization while using ESIKF to estimate 6DoF pose from multiple residuals.',
-                        'Used TF transforms to reason about stacking and occlusion, then built inventory, audit, alert and analytics APIs with Flask + MySQL and a Vue management interface.'
+                        'Built a tightly coupled FAST-LIVO pipeline across vision, LiDAR and IMU, completing extrinsic calibration and time synchronization while using ESIKF to fuse IMU, point-plane and photometric residuals for 6DoF pose, then used TF for stacking and occlusion checks.',
+                        'Built inventory, audit, alert and analytics APIs with Flask + MySQL plus a Vue interface, connecting detection ingestion, stock updates and result presentation.'
                     ],
                     result: 'Completed as a provincial-level National College Innovation and Entrepreneurship project.',
                     tags: ['Python', 'ROS', 'Flask', 'Vue', 'OpenCV', 'YOLOv5', 'FAST-LIVO', 'ESIKF', 'MySQL'],
@@ -740,34 +757,29 @@
             ],
             skills: [
                 {
-                    title: 'Programming and Full-stack',
-                    body: 'C++ / Python plus Flask, React, Vue, databases and API integration for end-to-end product loops.',
-                    items: ['C++ / STL', 'Python', 'Flask', 'React', 'Vue', 'PostgreSQL', 'MySQL']
-                },
-                {
-                    title: 'AI Agent Development',
-                    body: 'Agent workflows for multi-turn dialogue, tool calling, knowledge QA and structured output.',
-                    items: ['LLM API', 'AI Agent', 'Agent Workflow', 'RAG', 'Embedding', 'Vector Search', 'Function Calling', 'MCP', 'Structured Output']
+                    title: 'Programming and Engineering',
+                    body: 'Strong C++ and Python foundations with STL, object-oriented design, engineering practices and large full-stack project experience.',
+                    items: ['C++ / STL', 'Python', 'OOP', 'Flask', 'Vue', 'MySQL', 'RESTful API']
                 },
                 {
                     title: 'AI Coding Development',
-                    body: 'Codex, Claude Code and LangChain for faster development, debugging and project delivery.',
-                    items: ['Codex', 'Claude Code', 'LangChain', 'GitHub AI', 'Debugging Speed', 'Delivery Speed']
+                    body: 'Codex, Claude Code and LangChain for large project development, open-source adaptation, testing, debugging and Git collaboration.',
+                    items: ['Codex', 'Claude Code', 'LangChain', 'Open-source Adaptation', 'Testing and Debugging', 'Git Workflow']
+                },
+                {
+                    title: 'Navigation and Path Planning',
+                    body: 'ROS 2 Humble and Nav2 across mapping, localization, frontier exploration, global / local planning, omnidirectional tracking and navigation recovery.',
+                    items: ['ROS 2 Humble', 'Nav2', 'Point-LIO', 'SLAM Toolbox', 'Cartographer 2D', 'small_gicp', 'RRT Frontier', 'Theta*', 'MPPI', 'Omni PID Pursuit', 'Behavior Tree', 'Costmap']
                 },
                 {
                     title: 'Computer Vision',
-                    body: 'OpenCV, YOLOv5, calibration, object detection and deployment-minded vision engineering.',
-                    items: ['OpenCV', 'YOLOv5', 'CLIP', 'Milvus', 'Industrial Cameras', 'Calibration', 'Image Enhancement']
+                    body: 'OpenCV with YOLO deployment, image preprocessing, PnP pose solving and industrial-camera calibration.',
+                    items: ['OpenCV', 'YOLO', 'TensorRT', 'OpenVINO', 'Image Preprocessing', 'PnP Pose Solving', 'Industrial Cameras', 'Camera Calibration']
                 },
                 {
-                    title: 'Robotics Development',
-                    body: 'ROS, sensor fusion, pose solving, serial communication and multi-platform hardware debugging.',
-                    items: ['ROS', 'Sensor Fusion', 'Pose Solving', 'Serial Control', 'ESP32', 'Jetson / NUC / Raspberry Pi', 'Arduino']
-                },
-                {
-                    title: 'Machine Learning and Modeling',
-                    body: 'Feature engineering, model training and controlled experiments across recommender systems, time-series forecasting and graph learning.',
-                    items: ['PyTorch', 'Transformer', 'CTR / CVR', 'AUC Tuning', 'Time-series Forecasting', 'Graph Learning', 'Experiment Design']
+                    title: 'Sensors and Robotics Development',
+                    body: 'Multisensor integration, ROS 2 communication, TF2, serial integration and deployment across Jetson, NUC and Raspberry Pi platforms.',
+                    items: ['LiDAR', 'IMU', 'Odometry', 'RGB-D', 'LaserScan', 'PointCloud2', 'OccupancyGrid', 'TF2', 'ROS 2 Topic / Service / Action', 'MiniPC / STM32', 'Jetson / NUC / Raspberry Pi', 'Arduino']
                 }
             ],
             modeling: [
