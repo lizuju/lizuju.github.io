@@ -239,12 +239,15 @@ test('supports language, navigation, and expandable details', async ({ page, isM
 
     const appWindow = page.locator('[data-app-window]');
     const languageButton = page.locator('[data-lang-toggle]');
+    const taskbarLanguageButton = page.locator('[data-taskbar-lang]');
     if (!isMobile) {
         await expect(appWindow).toHaveClass(/is-maximized/);
         await page.locator('[data-window-action="maximize"]').click();
         await expect(appWindow).not.toHaveClass(/is-maximized/);
     }
     await expect(languageButton).toBeVisible();
+    await expect(taskbarLanguageButton).toBeVisible();
+    await expect(taskbarLanguageButton).toHaveText('EN');
     expect(await page.locator('[data-window-scroll]').evaluate((viewport, button) => {
         const viewportRect = viewport.getBoundingClientRect();
         const buttonRect = button.getBoundingClientRect();
@@ -292,26 +295,26 @@ test('supports language, navigation, and expandable details', async ({ page, isM
     await page.locator('[data-start-toggle]').click();
     const startMenu = page.locator('[data-start-menu]');
     await expect(startMenu).toBeVisible();
-    await expect(startMenu.locator('button')).toHaveCount(2);
+    await expect(startMenu.locator('button')).toHaveCount(1);
     await expect(startMenu.locator('a, [data-open-window], [data-open-gomoku]')).toHaveCount(0);
-    await expect(startMenu).toContainText('切换语言');
+    await expect(startMenu.locator('[data-start-lang]')).toHaveCount(0);
     await expect(startMenu).toContainText('关闭计算机');
     const startMenuBox = await startMenu.boundingBox();
-    const languageItemBox = await startMenu.locator('[data-start-lang]').boundingBox();
-    const shutdownItemBox = await startMenu.locator('[data-shutdown]').boundingBox();
     expect(startMenuBox.height).toBeGreaterThanOrEqual(220);
-    expect(shutdownItemBox.y - languageItemBox.y).toBeGreaterThan(100);
     await page.keyboard.press('Escape');
     await expect(startMenu).toBeHidden();
 
-    await languageButton.click();
+    await taskbarLanguageButton.click();
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    await expect(taskbarLanguageButton).toHaveText('中');
+    await expect(languageButton).toHaveText('中文');
     await expect(page.locator('h1')).toContainText('Intelligent Systems');
     await expect(page.locator('.project-card')).toHaveCount(5);
     await expect(page.locator('.publication-card')).toHaveCount(2);
 
     await languageButton.click();
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+    await expect(taskbarLanguageButton).toHaveText('EN');
 
     await page.locator('.primary-action').click();
     await expect(page).toHaveURL(/#experience$/);
@@ -1297,11 +1300,9 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     await page.locator('.gomoku-dialog-actions [data-gomoku-dialog-close]').click();
     await expect(page.locator('[data-gomoku-dialog]')).toBeHidden();
 
-    await page.locator('[data-start-toggle]').click();
-    await page.locator('[data-start-lang]').click();
+    await page.locator('[data-taskbar-lang]').click();
     await expect(page.locator('[data-gomoku-drag]')).toContainText('Gomoku - GavinOS Games');
-    await page.locator('[data-start-toggle]').click();
-    await page.locator('[data-start-lang]').click();
+    await page.locator('[data-taskbar-lang]').click();
     await expect(page.locator('[data-gomoku-drag]')).toContainText('五子棋 - GavinOS 游戏');
     const scoreOutput = page.locator('[data-gomoku-score]');
     const movesOutput = page.locator('[data-gomoku-moves]');

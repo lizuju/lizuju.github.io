@@ -2611,10 +2611,6 @@ main {
     background: #333;
 }
 
-.start-icon--language {
-    background: #6b4aa5;
-}
-
 .start-icon--shutdown {
     background: #b9c5c7;
 }
@@ -2865,9 +2861,9 @@ body.direct-portfolio .app-window:not(.is-maximized) {
     white-space: nowrap;
 }
 
-.taskbar-audio-toggle {
+.taskbar-audio-toggle,
+.taskbar-language-toggle {
     display: grid;
-    width: 22px;
     height: 22px;
     place-items: center;
     padding: 3px;
@@ -2877,18 +2873,32 @@ body.direct-portfolio .app-window:not(.is-maximized) {
     cursor: default;
 }
 
+.taskbar-audio-toggle {
+    width: 22px;
+}
+
+.taskbar-language-toggle {
+    min-width: 28px;
+    padding-right: 4px;
+    padding-left: 4px;
+    font: 700 10px/1 var(--font-system);
+}
+
 .taskbar-audio-toggle[hidden] {
     display: none;
 }
 
 .taskbar-audio-toggle:hover,
-.taskbar-audio-toggle:focus-visible {
+.taskbar-audio-toggle:focus-visible,
+.taskbar-language-toggle:hover,
+.taskbar-language-toggle:focus-visible {
     padding: 2px;
     border: 2px outset #efefef;
     outline: 0;
 }
 
-.taskbar-audio-toggle:active {
+.taskbar-audio-toggle:active,
+.taskbar-language-toggle:active {
     border-style: inset;
 }
 

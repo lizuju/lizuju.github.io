@@ -245,6 +245,15 @@ function applyLanguage() {
     const langButton = document.querySelector('[data-lang-toggle]');
     if (langButton) langButton.textContent = currentLang === 'zh-CN' ? 'EN' : '中文';
 
+    const taskbarLangButton = document.querySelector('[data-taskbar-lang]');
+    if (taskbarLangButton) {
+        const isChinese = currentLang === 'zh-CN';
+        const label = isChinese ? '切换为英文' : 'Switch to Chinese';
+        taskbarLangButton.textContent = isChinese ? 'EN' : '中';
+        taskbarLangButton.setAttribute('aria-label', label);
+        taskbarLangButton.title = label;
+    }
+
     window.dispatchEvent(new CustomEvent('portfolio-language-change', {
         detail: { language: currentLang }
     }));
@@ -1396,11 +1405,6 @@ function setupDesktopShell() {
         targetPhoto.focus({ preventScroll: true });
     });
 
-    document.querySelector('[data-start-lang]')?.addEventListener('click', () => {
-        document.querySelector('[data-lang-toggle]')?.click();
-        closeStartMenu();
-    });
-
     shutdownButton?.addEventListener('click', startShutdown);
     restartButton?.addEventListener('click', restartDesktop);
 
@@ -1618,10 +1622,12 @@ function setupParentEventBridge() {
 }
 
 function setupInteractions() {
-    document.querySelector('[data-lang-toggle]')?.addEventListener('click', () => {
-        currentLang = normalizeLanguage(currentLang) === 'zh-CN' ? 'en' : 'zh-CN';
-        storeLanguage(currentLang);
-        applyLanguage();
+    document.querySelectorAll('[data-lang-toggle], [data-taskbar-lang]').forEach((button) => {
+        button.addEventListener('click', () => {
+            currentLang = normalizeLanguage(currentLang) === 'zh-CN' ? 'en' : 'zh-CN';
+            storeLanguage(currentLang);
+            applyLanguage();
+        });
     });
 
     document.querySelector('[data-menu-toggle]')?.addEventListener('click', (event) => {
