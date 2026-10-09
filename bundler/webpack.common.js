@@ -44,7 +44,7 @@ module.exports = {
             }],
         }),
         new HtmlWebpackPlugin({
-            templateContent: fs
+            templateContent: () => fs
                 .readFileSync(path.resolve(__dirname, '../src/index.html'), 'utf8')
                 .replaceAll('__ASSET_VERSION__', buildMetadata.assetVersion),
             minify: {

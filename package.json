@@ -11,7 +11,7 @@
         "build:gomoku": "webpack --config ./bundler/webpack.gomoku.js",
         "build:satellite": "webpack --config ./bundler/webpack.satellite.js",
         "build": "npm run build:gomoku && npm run build:satellite && webpack --config ./bundler/webpack.prod.js",
-        "dev": "npm run build:gomoku && npm run build:satellite && webpack serve --config ./bundler/webpack.dev.js",
+        "dev": "npm run build:gomoku && npm run build:satellite && node scripts/dev-server.cjs",
         "preview": "python3 -m http.server 3090 --directory docs",
         "test:smoke": "playwright test",
         "verify:docs": "node scripts/verify-docs.cjs"
@@ -50,7 +50,6 @@
         "typescript": "^4.6.2",
         "webpack": "^5.68.0",
         "webpack-cli": "^7.2.1",
-        "webpack-dev-server": "^6.0.0",
         "webpack-merge": "^5.8.0"
     },
     "devDependencies": {
@@ -60,6 +59,8 @@
         "@types/react": "^17.0.43",
         "@types/react-dom": "^17.0.14",
         "@types/stats.js": "^0.17.0",
-        "@types/three": "^0.138.0"
+        "@types/three": "^0.138.0",
+        "open": "^11.0.4",
+        "webpack-dev-middleware": "^8.3.0"
     }
 }
