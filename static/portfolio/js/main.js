@@ -312,9 +312,9 @@ function closeMobileMenu() {
     }
 }
 
-function scrollPortfolioWindow(target, updateHash = false) {
+function scrollPortfolioWindow(target, updateHash = false, behavior = 'smooth') {
     const windowScroll = document.querySelector('[data-window-scroll]');
-    const targetElement = document.querySelector(target);
+    const targetElement = document.getElementById(target.slice(1));
     if (!windowScroll || !targetElement) return false;
 
     closeMobileMenu();
@@ -327,7 +327,7 @@ function scrollPortfolioWindow(target, updateHash = false) {
             - headerHeight;
 
     window.scrollTo(0, 0);
-    windowScroll.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    windowScroll.scrollTo({ top: Math.max(0, top), behavior });
 
     if (updateHash && window.location.hash !== target) {
         window.history.pushState(null, '', target);
@@ -767,7 +767,10 @@ function setupDesktopShell() {
         appWindow.classList.remove('is-maximized');
         clearWindowGeometry(appWindow);
         updateMaximizeButtons(appWindow, '[data-window-action="maximize"]');
-        showPortfolioWindow('#top');
+        showPortfolioWindow();
+        window.requestAnimationFrame(() => {
+            scrollPortfolioWindow(window.location.hash || '#top', false, 'instant');
+        });
     };
     const hidePortfolioWindow = (state) => hideWindow(appWindow, taskWindow, state, {
         hideTask: state === 'is-closed'
@@ -805,10 +808,14 @@ function setupDesktopShell() {
     };
     const showSatelliteWindow = () => {
         showWindow(satelliteWindow, satelliteTask, { revealTask: true });
-        satelliteStatus.textContent = t().satelliteLoading;
+        if (!window.SatelliteTracker) {
+            satelliteStatus.dataset.i18n = 'satelliteLoading';
+            satelliteStatus.textContent = t().satelliteLoading;
+        }
         loadSatelliteTracker()
             .then((tracker) => tracker.open())
             .catch(() => {
+                satelliteStatus.dataset.i18n = 'satelliteLoadError';
                 satelliteStatus.textContent = t().satelliteLoadError;
             });
     };
@@ -1074,7 +1081,11 @@ function setupDesktopShell() {
             if (field && typeof value === 'string') field.value = value;
         });
         if (savedState.mail?.statusKey && t()[savedState.mail.statusKey]) {
-            setMailStatus(savedState.mail.statusKey, savedState.mail.statusState || '');
+            if (savedState.mail.statusKey === 'mailStatusSending') {
+                setMailStatus('mailStatusUnconfirmed', '');
+            } else {
+                setMailStatus(savedState.mail.statusKey, savedState.mail.statusState || '');
+            }
         }
 
         const activeEntry = windowEntries.find(({ id, element }) => (
@@ -1106,11 +1117,13 @@ function setupDesktopShell() {
                 body: JSON.stringify(payload)
             });
             if (!response.ok) throw new Error('Mail delivery failed');
+            const result = await response.json();
+            if (result.success !== true && result.success !== 'true') throw new Error('Mail delivery failed');
 
             mailForm.reset();
             setMailStatus('mailStatusSuccess', 'success');
         } catch {
-            setMailStatus('mailStatusError', 'error');
+            if (mailStatusKey !== 'mailStatusUnconfirmed') setMailStatus('mailStatusError', 'error');
         } finally {
             mailSendButton.disabled = false;
         }
@@ -1233,7 +1246,9 @@ function setupDesktopShell() {
     document.querySelectorAll('[data-menu-action]').forEach((button) => {
         button.addEventListener('click', () => {
             const handler = menuActionHandlers[button.dataset.menuAction];
+            const trigger = button.closest('.window-menu')?.querySelector('[data-window-menu]');
             closeWindowMenus();
+            trigger?.focus({ preventScroll: true });
             handler?.();
         });
     });
@@ -1532,13 +1547,18 @@ function setupDesktopShell() {
         setProjectFolderView(robomasterFolderOpen);
         setMailStatus(mailStatusKey, mailStatusState);
     });
+    window.addEventListener('beforeunload', () => {
+        if (mailSendButton.disabled) setMailStatus('mailStatusUnconfirmed', '');
+    });
     window.addEventListener('pagehide', saveDesktopSession);
     window.addEventListener('gavin:save-session-state', saveDesktopSession);
 
     const restoredActiveEntry = restoreDesktopSession();
     if (mobileHomepage) {
+        window.history.scrollRestoration = 'manual';
         showMobileHomepage();
         window.addEventListener('pageshow', showMobileHomepage);
+        window.addEventListener('popstate', showMobileHomepage);
     } else if (restoredActiveEntry) {
         focusWindow(restoredActiveEntry.element);
     } else {

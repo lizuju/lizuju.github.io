@@ -159,6 +159,7 @@
         let restoreGeometry;
         let pointerInteraction;
         let launchTimers = [];
+        let dialogReturnFocus;
 
         const copy = () => TEXT[language];
 
@@ -571,6 +572,7 @@
 
         function parkGame() {
             if (gameWindow.classList.contains('is-closed')) return;
+            closeDialog();
             gameWindow.classList.add('is-minimized');
             gameWindow.classList.remove('is-active');
             gameTask.classList.remove('is-active');
@@ -600,6 +602,7 @@
         }
 
         function closeGame() {
+            closeDialog();
             clearAiTimer();
             clearLaunchSequence();
             humanScore = 0;
@@ -612,7 +615,6 @@
             gameTask.hidden = true;
             gameTask.classList.remove('is-active');
             closeMenus();
-            dialog.hidden = true;
             notifyWindowHidden();
         }
 
@@ -817,7 +819,10 @@
             resizeBoard();
         }
 
-        function showDialog(type) {
+        function showDialog(type, opener) {
+            if (dialog.hidden) {
+                dialogReturnFocus = opener.closest('.window-menu').querySelector('[data-window-menu]');
+            }
             const isHelp = type === 'help';
             dialogTitle.textContent = isHelp ? copy().helpTitle : copy().aboutTitle;
             dialogCopy.textContent = isHelp ? copy().helpCopy : copy().aboutCopy;
@@ -825,6 +830,13 @@
             dialog.hidden = false;
             closeMenus();
             dialog.querySelector('[data-gomoku-dialog-close]')?.focus();
+        }
+
+        function closeDialog() {
+            if (dialog.hidden) return;
+            dialog.hidden = true;
+            dialogReturnFocus.focus({ preventScroll: true });
+            dialogReturnFocus = undefined;
         }
 
         function applyLanguage(nextLanguage = document.documentElement.lang) {
@@ -865,12 +877,10 @@
 
         document.querySelectorAll('[data-gomoku-new]').forEach((button) => button.addEventListener('click', newGame));
         document.querySelector('[data-gomoku-undo]')?.addEventListener('click', undoMove);
-        document.querySelector('[data-gomoku-help]')?.addEventListener('click', () => showDialog('help'));
-        document.querySelector('[data-gomoku-about]')?.addEventListener('click', () => showDialog('about'));
+        document.querySelector('[data-gomoku-help]')?.addEventListener('click', (event) => showDialog('help', event.currentTarget));
+        document.querySelector('[data-gomoku-about]')?.addEventListener('click', (event) => showDialog('about', event.currentTarget));
         document.querySelectorAll('[data-gomoku-dialog-close]').forEach((button) => {
-            button.addEventListener('click', () => {
-                dialog.hidden = true;
-            });
+            button.addEventListener('click', closeDialog);
         });
 
         canvas.addEventListener('pointermove', (event) => {
@@ -909,6 +919,19 @@
             if (gameWindow.classList.contains('is-minimized')
                 || gameWindow.classList.contains('is-closed')
                 || !gameWindow.classList.contains('is-active')) return;
+            if (!dialog.hidden) {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    closeDialog();
+                } else if (event.key === 'Tab') {
+                    event.preventDefault();
+                    const buttons = Array.from(dialog.querySelectorAll('[data-gomoku-dialog-close]'));
+                    const index = buttons.indexOf(document.activeElement);
+                    const offset = event.shiftKey ? -1 : 1;
+                    buttons[(index + offset + buttons.length) % buttons.length].focus();
+                }
+                return;
+            }
             if (document.activeElement === canvas) {
                 const movement = {
                     ArrowUp: [-1, 0],
@@ -947,8 +970,7 @@
                 toggleMaximize();
             }
             if (event.key === 'Escape') {
-                if (!dialog.hidden) dialog.hidden = true;
-                else if (gameWindow.classList.contains('is-maximized')) toggleMaximize();
+                if (gameWindow.classList.contains('is-maximized')) toggleMaximize();
                 closeMenus();
             }
         });

@@ -42,7 +42,7 @@ jobs:
         run: npm run build
 
       - name: Verify committed deployment output
-        run: git diff --exit-code -- docs
+        run: npm run verify:docs
 
       - name: Run browser regression suite
         run: npm run test:smoke

@@ -115,12 +115,14 @@ function isActive() {
 }
 
 function setStatus(key) {
+    status.dataset.i18n = key;
     status.textContent = copy()[key];
 }
 
 function setLoading(visible, key = 'satelliteLoading') {
     loading.hidden = !visible;
     const label = loading.querySelector('strong');
+    label.dataset.i18n = key;
     label.textContent = copy()[key];
 }
 
@@ -518,7 +520,12 @@ function initialize() {
 
 function open() {
     initialize();
-    loadData();
+    if (dataLoaded) {
+        setLoading(false);
+        setStatus('satelliteReady');
+    } else {
+        loadData();
+    }
     syncAnimation();
     window.requestAnimationFrame(resize);
 }
@@ -549,7 +556,6 @@ function about() {
 
 window.addEventListener('portfolio-language-change', () => {
     updateSelectedDetails();
-    if (dataLoaded) setStatus('satelliteReady');
 });
 
 window.SatelliteTracker = {
