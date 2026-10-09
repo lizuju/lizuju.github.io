@@ -580,6 +580,9 @@
         function openGame() {
             const wasClosed = gameWindow.classList.contains('is-closed');
             gameWindow.classList.remove('is-minimized', 'is-closed');
+            if (!gameWindow.classList.contains('is-maximized') && (window.innerWidth > 900 || gameWindow.style.width)) {
+                restoreWindowGeometry(getWindowGeometry());
+            }
             gameTask.hidden = false;
             document.querySelector('[data-start-menu]')?.setAttribute('hidden', '');
             document.querySelector('[data-start-toggle]')?.setAttribute('aria-expanded', 'false');
@@ -754,7 +757,7 @@
                         height
                     };
                 }
-                if (restoreGeometry) applyWindowGeometry(restoreGeometry);
+                if (restoreGeometry) restoreWindowGeometry(restoreGeometry);
             } else {
                 restoreGeometry = getWindowGeometry();
                 clearWindowGeometry();
@@ -956,7 +959,8 @@
         window.addEventListener('resize', () => {
             finishPointerInteraction();
             if (gameWindow.classList.contains('is-maximized')) clearWindowGeometry();
-            else if (gameWindow.style.width) restoreWindowGeometry(getWindowGeometry());
+            else if (gameWindow.style.width && !gameWindow.classList.contains('is-minimized')
+                && !gameWindow.classList.contains('is-closed')) restoreWindowGeometry(getWindowGeometry());
             window.requestAnimationFrame(resizeBoard);
         });
         window.addEventListener('pagehide', saveGameSession);

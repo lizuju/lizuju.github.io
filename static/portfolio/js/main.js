@@ -317,11 +317,14 @@ function scrollPortfolioWindow(target, updateHash = false) {
     const targetElement = document.querySelector(target);
     if (!windowScroll || !targetElement) return false;
 
+    closeMobileMenu();
+    const headerHeight = window.innerWidth <= 900 ? document.querySelector('.site-header').offsetHeight : 0;
     const top = target === '#top'
         ? 0
         : windowScroll.scrollTop
             + targetElement.getBoundingClientRect().top
-            - windowScroll.getBoundingClientRect().top;
+            - windowScroll.getBoundingClientRect().top - windowScroll.clientTop
+            - headerHeight;
 
     window.scrollTo(0, 0);
     windowScroll.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
@@ -418,7 +421,7 @@ function setupDesktopShell() {
 
     const getWindowZIndex = (element) => Number.parseInt(window.getComputedStyle(element).zIndex, 10) || 0;
 
-    const focusWindow = (element) => {
+    const focusWindow = (element, moveFocus = false) => {
         const entry = windowEntries.find((candidate) => candidate.element === element);
         if (!entry || !isWindowVisible(element)) return null;
 
@@ -437,6 +440,7 @@ function setupDesktopShell() {
             candidate.element.style.zIndex = String(10 + index);
         });
 
+        if (moveFocus) getWindowFocusTarget(element)?.focus({ preventScroll: true });
         return entry;
     };
 
@@ -444,6 +448,7 @@ function setupDesktopShell() {
         element instanceof HTMLElement
         && !element.hidden
         && !element.matches(':disabled')
+        && window.getComputedStyle(element).visibility === 'visible'
         && element.getClientRects().length > 0
     );
 
@@ -500,11 +505,7 @@ function setupDesktopShell() {
                 ? fallbackTask
                 : startButton;
 
-        window.requestAnimationFrame(() => {
-            if (nextEntry && !nextEntry.element.classList.contains('is-active')) return;
-            if (!nextEntry && windowEntries.some(({ element }) => element.classList.contains('is-active'))) return;
-            if (isFocusable(target)) target.focus({ preventScroll: true });
-        });
+        if (isFocusable(target)) target.focus({ preventScroll: true });
     };
 
     const getMenuPopup = (trigger) => document.querySelector(
@@ -671,7 +672,7 @@ function setupDesktopShell() {
         if (element.classList.contains('is-maximized')) {
             element.classList.remove('is-maximized');
             const geometry = restoreGeometry.get(element);
-            if (geometry) applyWindowGeometry(element, geometry);
+            if (geometry) restoreWindowGeometry(element, geometry);
         } else {
             restoreGeometry.set(element, getWindowGeometry(element));
             clearWindowGeometry(element);
@@ -738,7 +739,10 @@ function setupDesktopShell() {
         closeWindowMenus();
         element.classList.remove('is-minimized', 'is-closed');
         if (revealTask) task.hidden = false;
-        focusWindow(element);
+        if (!element.classList.contains('is-maximized') && (window.innerWidth > 900 || element.style.width)) {
+            restoreWindowGeometry(element, getWindowGeometry(element));
+        }
+        focusWindow(element, true);
         closeStartMenu();
 
         if (!target) return;
@@ -1081,7 +1085,7 @@ function setupDesktopShell() {
 
     const sendMail = async (event) => {
         event.preventDefault();
-        if (!mailForm.reportValidity()) return;
+        if (mailSendButton.disabled || !mailForm.reportValidity()) return;
 
         const formData = new FormData(mailForm);
         const payload = Object.fromEntries(formData.entries());
@@ -1286,7 +1290,7 @@ function setupDesktopShell() {
             hidePortfolioWindow('is-minimized');
             return;
         }
-        focusWindow(appWindow);
+        focusWindow(appWindow, true);
     });
 
     projectFolderTask.addEventListener('click', () => {
@@ -1298,7 +1302,7 @@ function setupDesktopShell() {
             hideProjectFolder('is-minimized');
             return;
         }
-        focusWindow(projectFolderWindow);
+        focusWindow(projectFolderWindow, true);
     });
 
     imagePreviewTask.addEventListener('click', () => {
@@ -1310,7 +1314,7 @@ function setupDesktopShell() {
             hideImagePreview('is-minimized');
             return;
         }
-        focusWindow(imagePreviewWindow);
+        focusWindow(imagePreviewWindow, true);
     });
 
     mailTask.addEventListener('click', () => {
@@ -1322,7 +1326,7 @@ function setupDesktopShell() {
             hideMailWindow('is-minimized');
             return;
         }
-        focusWindow(mailWindow);
+        focusWindow(mailWindow, true);
     });
 
     satelliteTask.addEventListener('click', () => {
@@ -1334,7 +1338,7 @@ function setupDesktopShell() {
             hideSatelliteWindow('is-minimized');
             return;
         }
-        focusWindow(satelliteWindow);
+        focusWindow(satelliteWindow, true);
     });
 
     document.querySelectorAll('[data-project-folder-action]').forEach((button) => {
@@ -1401,6 +1405,8 @@ function setupDesktopShell() {
         const previewActive = isWindowVisible(imagePreviewWindow) && imagePreviewWindow.classList.contains('is-active');
         const folderActive = isWindowVisible(projectFolderWindow) && projectFolderWindow.classList.contains('is-active');
         if (!previewActive && !folderActive) return;
+        if (previewActive && !imagePreviewWindow.contains(event.target)) return;
+        if (folderActive && !event.target.closest('[data-robomaster-image]')) return;
 
         if (event.key === 'Enter') {
             if (previewActive || !selectedImageButton) return;
@@ -1486,8 +1492,8 @@ function setupDesktopShell() {
     });
 
     window.addEventListener('resize', () => {
+        finishPointerInteraction();
         if (window.innerWidth <= 900) {
-            finishPointerInteraction();
             [
                 [appWindow, '[data-window-action="maximize"]'],
                 [projectFolderWindow, '[data-project-folder-action="maximize"]'],
@@ -1500,12 +1506,18 @@ function setupDesktopShell() {
                 clearWindowGeometry(element);
                 updateMaximizeButtons(element, selector);
             });
+        } else {
+            windowEntries.forEach(({ id, element }) => {
+                if (id === 'gomoku' || !isWindowVisible(element)
+                    || element.classList.contains('is-maximized')) return;
+                restoreWindowGeometry(element, getWindowGeometry(element));
+            });
         }
     });
 
     desktop.addEventListener('gavin:focus-window', (event) => {
         const targetWindow = event.target.closest?.('.app-window');
-        if (targetWindow) focusWindow(targetWindow);
+        if (targetWindow) focusWindow(targetWindow, true);
     });
     desktop.addEventListener('gavin:window-hidden', (event) => {
         const targetWindow = event.target.closest?.('.app-window');

@@ -686,7 +686,7 @@ summary:focus-visible {
     width: min(560px, calc(100% - 118px));
     height: min(660px, calc(100% - 100px));
     min-width: 420px;
-    min-height: 500px;
+    min-height: min(500px, calc(100% - 36px));
 }
 
 .gomoku-window.is-maximized {
@@ -703,7 +703,7 @@ summary:focus-visible {
     width: min(900px, calc(100% - 122px));
     height: min(620px, calc(100% - 108px));
     min-width: 640px;
-    min-height: 390px;
+    min-height: min(390px, calc(100% - 36px));
 }
 
 .satellite-window.is-maximized {
@@ -1107,7 +1107,7 @@ summary:focus-visible {
     width: min(570px, calc(100% - 126px));
     height: min(540px, calc(100% - 118px));
     min-width: 440px;
-    min-height: 320px;
+    min-height: min(320px, calc(100% - 36px));
 }
 
 .project-folder-window.is-maximized {
@@ -1322,7 +1322,7 @@ summary:focus-visible {
     width: min(640px, calc(100% - 174px));
     height: min(500px, calc(100% - 142px));
     min-width: 380px;
-    min-height: 300px;
+    min-height: min(300px, calc(100% - 36px));
 }
 
 .image-preview-window.is-maximized {
@@ -1367,7 +1367,7 @@ summary:focus-visible {
     width: min(600px, calc(100% - 144px));
     height: min(600px, calc(100% - 116px));
     min-width: 420px;
-    min-height: 410px;
+    min-height: min(410px, calc(100% - 36px));
 }
 
 .mail-window.is-maximized {
@@ -3397,5 +3397,55 @@ body.direct-portfolio .app-window:not(.is-maximized) {
 
     .gomoku-launch-cursor {
         animation: none;
+    }
+}
+
+@media print {
+    html,
+    body,
+    .retro-desktop,
+    .retro-desktop > [data-app-window],
+    [data-window-scroll] {
+        position: static;
+        width: auto !important;
+        height: auto !important;
+        min-height: 0;
+        overflow: visible;
+        border: 0;
+        background: #fff;
+        box-shadow: none;
+    }
+
+    .retro-desktop > [data-app-window],
+    .page-shell {
+        display: block;
+    }
+
+    .retro-desktop > :not([data-app-window]),
+    .retro-desktop::after,
+    [data-app-window] > :not([data-window-scroll]),
+    .site-header,
+    .mobile-menu,
+    .site-footer {
+        display: none !important;
+    }
+
+    .reveal {
+        opacity: 1;
+        transform: none;
+        animation: none;
+        transition: none;
+    }
+
+    h1,
+    h2,
+    h3 {
+        break-after: avoid;
+    }
+
+    .project-card,
+    .publication-card,
+    .skill-card {
+        break-inside: avoid;
     }
 }
