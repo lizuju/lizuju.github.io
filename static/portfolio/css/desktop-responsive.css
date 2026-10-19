@@ -117,3 +117,12 @@ body.direct-portfolio .app-window:not(.is-maximized) {
         display: none;
     }
 }
+
+@media (max-height: 620px) and (min-width: 901px), (max-height: 520px) {
+    .desktop-shortcuts {
+        top: 12px;
+        width: 152px;
+        grid-template-columns: repeat(2, 76px);
+        gap: 8px 0;
+    }
+}

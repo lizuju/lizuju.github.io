@@ -1,0 +1,108 @@
+.desktop-recycle-bin {
+    position: absolute;
+    bottom: 52px;
+    left: 8px;
+    z-index: 2;
+}
+
+.desktop-recycle-bin.is-empty .shortcut-icon--recycle svg > path:first-child,
+.desktop-recycle-bin.is-empty .shortcut-icon--recycle svg > path:nth-child(2) {
+    visibility: hidden;
+}
+
+.recycle-dialog {
+    width: min(410px, calc(100% - 24px));
+    max-height: calc(100% - 48px);
+    padding: 3px;
+    border: 2px outset var(--window-light);
+    color: var(--window-dark);
+    background: var(--window-gray);
+    box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.55);
+    font: 12px/1.45 var(--font-system);
+}
+
+.recycle-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.recycle-dialog .window-titlebar {
+    cursor: default;
+}
+
+.recycle-intro {
+    margin: 12px 10px 8px;
+}
+
+.recycle-content {
+    display: grid;
+    min-height: 130px;
+    margin: 0 8px;
+    padding: 14px 12px;
+    border: 2px inset var(--window-light);
+    background: var(--window-light);
+}
+
+.recycle-files {
+    display: grid;
+    align-content: start;
+    gap: 13px;
+    padding: 0;
+    margin: 0;
+    list-style: none;
+}
+
+.recycle-files li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    overflow-wrap: anywhere;
+}
+
+.recycle-files li::before {
+    width: 14px;
+    height: 18px;
+    flex: 0 0 14px;
+    border: 1px solid #666;
+    background: repeating-linear-gradient(#fff 0 3px, #a6b4c3 3px 4px);
+    box-shadow: inset 2px 2px #fff, 1px 1px #bbb;
+    content: "";
+}
+
+.recycle-empty-hint {
+    align-self: center;
+    margin: 0;
+    color: #3c6155;
+    text-align: center;
+    white-space: pre-line;
+}
+
+.recycle-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 8px;
+}
+
+.recycle-actions button {
+    min-width: 76px;
+    padding: 5px 10px;
+    border: 2px outset var(--window-light);
+    color: var(--window-dark);
+    background: var(--window-gray);
+    font: inherit;
+}
+
+.recycle-actions button:active:not(:disabled) {
+    border-style: inset;
+}
+
+.recycle-actions button:disabled {
+    color: #666;
+    text-shadow: 1px 1px #fff;
+}
+
+.recycle-status {
+    margin: 0;
+    padding: 3px 6px;
+    border: 1px inset var(--window-light);
+}
