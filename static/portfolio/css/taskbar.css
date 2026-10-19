@@ -310,6 +310,10 @@
     width: min(180px, 18vw);
 }
 
+.recycle-task-button {
+    width: min(160px, 16vw);
+}
+
 .task-window-button > span:last-child {
     overflow: hidden;
     text-overflow: ellipsis;

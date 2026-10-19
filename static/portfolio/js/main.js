@@ -38,7 +38,7 @@ import './apps/recycle-bin.js';
         desktopApi.apps.projectFolder(manager);
         desktopApi.apps.mail(manager);
         const satellite = desktopApi.apps.satellite(manager);
-        desktopApi.apps.recycleBin();
+        desktopApi.apps.recycleBin(manager);
 
         const gameWindow = document.querySelector('[data-gomoku-window]');
         const gameTask = document.querySelector('[data-gomoku-task]');

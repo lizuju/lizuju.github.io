@@ -2004,23 +2004,23 @@ summary:focus-visible {
     visibility: hidden;
 }
 
-.recycle-dialog {
-    width: min(410px, calc(100% - 24px));
-    max-height: calc(100% - 48px);
+.recycle-window {
+    top: 110px;
+    right: auto;
+    bottom: auto;
+    left: max(100px, calc(50% - 220px));
+    width: min(440px, calc(100% - 120px));
+    height: min(330px, calc(100% - 64px));
+    min-width: 320px;
+    min-height: min(280px, calc(100% - 36px));
     padding: 3px;
-    border: 2px outset var(--window-light);
     color: var(--window-dark);
-    background: var(--window-gray);
-    box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.55);
     font: 12px/1.45 var(--font-system);
 }
 
-.recycle-dialog::backdrop {
-    background: rgba(0, 0, 0, 0.18);
-}
-
-.recycle-dialog .window-titlebar {
-    cursor: default;
+.recycle-window.is-maximized {
+    width: auto;
+    height: auto;
 }
 
 .recycle-intro {
@@ -2029,11 +2029,13 @@ summary:focus-visible {
 
 .recycle-content {
     display: grid;
-    min-height: 130px;
+    flex: 1;
+    min-height: 0;
     margin: 0 8px;
     padding: 14px 12px;
     border: 2px inset var(--window-light);
     background: var(--window-light);
+    overflow: auto;
 }
 
 .recycle-files {
@@ -2096,6 +2098,7 @@ summary:focus-visible {
 }
 
 .recycle-status {
+    flex-shrink: 0;
     margin: 0;
     padding: 3px 6px;
     border: 1px inset var(--window-light);
@@ -3305,6 +3308,10 @@ main {
 
 .mail-task-button {
     width: min(180px, 18vw);
+}
+
+.recycle-task-button {
+    width: min(160px, 16vw);
 }
 
 .task-window-button > span:last-child {
