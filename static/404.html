@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>找不到文件 | 李祖钜 Gavin</title>
+    <meta name="robots" content="noindex">
+    <meta name="theme-color" content="#000080">
+    <link rel="icon" href="/images/favicon.ico" sizes="any">
+    <link rel="apple-touch-icon" href="/images/apple-touch-icon.png">
+    <style>
+        :root {
+            --desktop-teal: #4f9f9b;
+            --window-gray: #c0c0c0;
+            --title-blue: #000080;
+            --title-blue-light: #0a66c2;
+            --font-system: Tahoma, Verdana, "Microsoft YaHei", sans-serif;
+        }
+
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+        }
+
+        body {
+            display: grid;
+            min-height: 100vh;
+            margin: 0;
+            padding: 24px 16px 60px;
+            place-items: center;
+            color: #111;
+            background-color: var(--desktop-teal);
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                radial-gradient(circle at 70% 15%, rgba(211, 255, 242, 0.28), transparent 38%),
+                radial-gradient(circle at 18% 74%, rgba(0, 63, 83, 0.2), transparent 42%);
+            background-size: 8px 8px, 8px 8px, 100% 100%, 100% 100%;
+            font: 13px/1.5 var(--font-system);
+        }
+
+        .dialog {
+            width: min(100%, 460px);
+            border: 2px outset #f0f0f0;
+            background: var(--window-gray);
+            box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.65);
+        }
+
+        .titlebar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 3px 3px 3px 6px;
+            color: #fff;
+            background: linear-gradient(90deg, var(--title-blue), var(--title-blue-light));
+            font-weight: 700;
+        }
+
+        .titlebar a {
+            display: grid;
+            width: 22px;
+            height: 20px;
+            place-items: center;
+            border: 2px outset #efefef;
+            color: #000;
+            background: var(--window-gray);
+            font: 700 15px/1 Arial, sans-serif;
+            text-decoration: none;
+        }
+
+        .titlebar a:active {
+            border-style: inset;
+        }
+
+        .body {
+            display: grid;
+            grid-template-columns: 40px minmax(0, 1fr);
+            gap: 16px;
+            padding: 20px 18px 12px;
+        }
+
+        .icon {
+            display: grid;
+            width: 34px;
+            height: 34px;
+            place-items: center;
+            border-radius: 50%;
+            color: #fff;
+            background: #d4140c;
+            box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.3), 1px 1px 0 #000;
+            font: 700 22px/1 Arial, sans-serif;
+        }
+
+        .body p {
+            margin: 0 0 8px;
+        }
+
+        .path {
+            padding: 2px 4px;
+            border: 2px inset #fff;
+            background: #fff;
+            font-family: "Courier New", monospace;
+            word-break: break-all;
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 8px;
+            padding: 4px 18px 18px;
+        }
+
+        .actions a {
+            min-width: 112px;
+            padding: 5px 12px;
+            border: 2px outset #fff;
+            color: #111;
+            background: var(--window-gray);
+            text-align: center;
+            text-decoration: none;
+        }
+
+        .actions a:active {
+            border-style: inset;
+        }
+
+        .actions a:focus-visible,
+        .titlebar a:focus-visible {
+            outline: 1px dotted #000;
+            outline-offset: -5px;
+        }
+
+        .taskbar {
+            position: fixed;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            display: flex;
+            height: 36px;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px;
+            border-top: 2px solid #fff;
+            background: var(--window-gray);
+        }
+
+        .taskbar a,
+        .taskbar span {
+            padding: 3px 10px;
+            border: 2px outset #fff;
+            color: #111;
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .taskbar span {
+            border-style: inset;
+            font-weight: 400;
+        }
+    </style>
+</head>
+
+<body>
+    <main class="dialog" role="alertdialog" aria-labelledby="error-title" aria-describedby="error-message">
+        <div class="titlebar">
+            <span id="error-title">C:\GAVIN - 找不到文件 / File Not Found</span>
+            <a href="/" aria-label="关闭并返回首页 / Close and go home" title="Close">×</a>
+        </div>
+        <div class="body">
+            <span class="icon" aria-hidden="true">×</span>
+            <div id="error-message">
+                <p>Windows 找不到文件：</p>
+                <p class="path" data-missing-path>C:\GAVIN\404</p>
+                <p>请确认地址拼写正确，或从下面的入口继续浏览。</p>
+                <p lang="en">The page you requested could not be found.</p>
+            </div>
+        </div>
+        <div class="actions">
+            <a href="/">沉浸式主页 / Home</a>
+            <a href="/portfolio/">直接访问主页 / Portfolio</a>
+        </div>
+    </main>
+    <nav class="taskbar" aria-label="Taskbar">
+        <a href="/">开始 / Start</a>
+        <span>404</span>
+    </nav>
+    <script>
+        (() => {
+            // Only real site URLs have a meaningful path; file:, data: and about: previews keep the default.
+            if (!/^https?:$/.test(window.location.protocol)) return;
+            const target = document.querySelector('[data-missing-path]');
+            let path = window.location.pathname;
+            try {
+                path = decodeURIComponent(path);
+            } catch {
+                // Keep the encoded path when it is not valid UTF-8.
+            }
+            if (path.length > 120) path = `${path.slice(0, 117)}...`;
+            target.textContent = `C:\\GAVIN${path.replace(/\//g, '\\')}`;
+        })();
+    </script>
+</body>
+
+</html>

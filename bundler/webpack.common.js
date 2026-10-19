@@ -8,6 +8,8 @@ const TrimGeneratedTextPlugin = require('./trim-generated-text-plugin');
 
 const rootDirectory = path.resolve(__dirname, '..');
 const buildMetadata = createBuildMetadata(rootDirectory);
+const profileSchemaPath = path.resolve(rootDirectory, 'src/profile-schema.json');
+const readProfileSchema = () => JSON.stringify(JSON.parse(fs.readFileSync(profileSchemaPath, 'utf8')));
 
 module.exports = {
     entry: path.resolve(__dirname, '../src/script.ts'),
@@ -32,7 +34,8 @@ module.exports = {
                     if (absolutePath.endsWith('portfolio/index.html')) {
                         return content
                             .toString()
-                            .replaceAll('__ASSET_VERSION__', buildMetadata.assetVersion);
+                            .replaceAll('__ASSET_VERSION__', buildMetadata.assetVersion)
+                            .replace('__PROFILE_SCHEMA__', readProfileSchema);
                     }
                     if (absolutePath.endsWith('sitemap.xml')) {
                         return content
@@ -46,7 +49,8 @@ module.exports = {
         new HtmlWebpackPlugin({
             templateContent: () => fs
                 .readFileSync(path.resolve(__dirname, '../src/index.html'), 'utf8')
-                .replaceAll('__ASSET_VERSION__', buildMetadata.assetVersion),
+                .replaceAll('__ASSET_VERSION__', buildMetadata.assetVersion)
+                .replace('__PROFILE_SCHEMA__', readProfileSchema),
             minify: {
                 collapseWhitespace: true,
                 minifyCSS: true,

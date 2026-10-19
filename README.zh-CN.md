@@ -17,7 +17,7 @@
 - 面向触控和小屏设备优化的轻量移动端布局。
 - 完整展示 5 个代表项目、2 项投稿中研究、6 类能力、荣誉、教育亮点和联系方式。
 - 网站内容根据最新版简历整理，按要求不公开学校名称。
-- 包含 SEO 元信息、JSON-LD、sitemap、robots 规则和 Playwright smoke test。
+- 包含 SEO 元信息、两页共用的 JSON-LD 资料（`src/profile-schema.json`）、Web App Manifest、复古风格 404 页面、构建时自动写入日期的 sitemap、robots 规则和 Playwright smoke test。
 
 ## 项目结构
 

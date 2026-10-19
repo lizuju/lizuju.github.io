@@ -17,7 +17,7 @@ Desktop visitors enter an interactive Three.js workspace, move toward a CRT comp
 - Lightweight mobile layout designed for touch navigation and smaller screens.
 - Five selected projects, two submitted research works, six capability areas, awards, education highlights, and contact links.
 - Resume-derived public content with the school name intentionally omitted.
-- SEO metadata, JSON-LD, sitemap, robots policy, and Playwright smoke coverage.
+- SEO metadata, a shared JSON-LD profile (`src/profile-schema.json`), web app manifest, retro 404 page, build-dated sitemap, robots policy, and Playwright smoke coverage.
 
 ## Project Structure
 

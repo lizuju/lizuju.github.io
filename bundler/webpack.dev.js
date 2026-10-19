@@ -20,6 +20,7 @@ module.exports = merge(
             apply(compiler) {
                 compiler.hooks.thisCompilation.tap('ReloadPages', (compilation) => {
                     compilation.fileDependencies.add(path.resolve(__dirname, '../src/index.html'));
+                    compilation.fileDependencies.add(path.resolve(__dirname, '../src/profile-schema.json'));
                     compilation.hooks.processAssets.tap({
                         name: 'ReloadPages',
                         stage: webpack.Compilation.PROCESS_ASSETS_STAGE_SUMMARIZE

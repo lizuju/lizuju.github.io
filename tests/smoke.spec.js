@@ -1430,16 +1430,31 @@ test('exposes crawlable SEO metadata', async ({ page, request, isMobile }) => {
     test.skip(isMobile, 'metadata only needs one browser pass');
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-    await expect(page).toHaveTitle('Gavin Lizuju | AI Agent, Robotics & Computer Vision Portfolio');
+    await expect(page).toHaveTitle('李祖钜 Gavin | AI Agent、机器人与计算机视觉作品集');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
     await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', /李祖钜 Gavin.*AI Agent/);
     await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', 'index,follow,max-image-preview:large');
     await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', 'https://lizuju.github.io/');
     await expect(page.locator('meta[property="og:image"]')).toHaveAttribute('content', 'https://lizuju.github.io/portfolio/assets/portfolio-hero.jpg');
+    await expect(page.locator('meta[property^="twitter:"]')).toHaveCount(0);
+    await expect(page.locator('meta[name="twitter:card"]')).toHaveCount(1);
+    await expect(page.locator('meta[name="theme-color"]')).toHaveCount(1);
 
     const schema = JSON.parse(await page.locator('script[type="application/ld+json"]').textContent());
     expect(schema['@type']).toBe('ProfilePage');
     expect(schema.mainEntity.name).toBe('李祖钜');
     expect(schema.mainEntity.sameAs).toContain('https://github.com/lizuju');
+
+    const manifestHref = await page.locator('link[rel="manifest"]').getAttribute('href');
+    const manifest = await (await request.get(`/${manifestHref}`)).json();
+    expect(manifest.start_url).toBe('/');
+    for (const icon of manifest.icons) {
+        const iconResponse = await request.get(`/${icon.src}`);
+        expect(iconResponse.ok()).toBe(true);
+        expect(iconResponse.headers()['content-type']).toBe(icon.type);
+    }
+    const appleTouchIcon = await page.locator('link[rel="apple-touch-icon"]').getAttribute('href');
+    expect((await request.get(`/${appleTouchIcon}`)).ok()).toBe(true);
 
     const robots = await request.get('/robots.txt');
     expect(robots.ok()).toBe(true);
@@ -1459,6 +1474,40 @@ test('exposes crawlable SEO metadata', async ({ page, request, isMobile }) => {
     for (const script of await page.locator('script[src]').all()) {
         await expect(script).toHaveAttribute('src', new RegExp(`\\?v=${buildMetadata.assetVersion}$`));
     }
+    const portfolioSchema = JSON.parse(await page.locator('script[type="application/ld+json"]').textContent());
+    expect(portfolioSchema).toEqual(schema);
+    await expect(page.locator('link[rel="manifest"]')).toHaveAttribute('href', '../site.webmanifest');
+});
+
+test('shows a retro file-not-found page for missing paths', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the static error page only needs one browser pass');
+    // python http.server does not serve 404.html, so load it the way GitHub Pages does.
+    await page.route('**/missing/project-*', async (route) => {
+        const notFound = await page.request.get('/404.html');
+        await route.fulfill({ status: 404, contentType: 'text/html', body: await notFound.text() });
+    });
+
+    const response = await page.goto('/missing/project-%E4%B8%AD%E6%96%87');
+    expect(response.status()).toBe(404);
+    await expect(page).toHaveTitle(/找不到文件/);
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', 'noindex');
+    await expect(page.locator('[data-missing-path]')).toHaveText('C:\\GAVIN\\missing\\project-中文');
+
+    const notFoundHtml = await (await page.request.get('/404.html')).text();
+    const previewPage = await page.context().newPage();
+    await previewPage.goto(`data:text/html;charset=utf-8,${encodeURIComponent(notFoundHtml)}`);
+    await expect(previewPage.locator('[data-missing-path]')).toHaveText('C:\\GAVIN\\404');
+    await previewPage.close();
+
+    const portfolioLink = page.getByRole('link', { name: /Portfolio/ });
+    await expect(portfolioLink).toHaveAttribute('href', '/portfolio/');
+    await portfolioLink.click();
+    await expect(page).toHaveURL(/\/portfolio\/$/);
+    await expect(page.locator('[data-app-window]')).toBeVisible();
+
+    const expectedNotFound = 'console: Failed to load resource: the server responded with a status of 404 (Not Found)';
+    expect(page.browserErrors.filter((error) => error === expectedNotFound)).toHaveLength(1);
+    page.browserErrors.splice(page.browserErrors.indexOf(expectedNotFound), 1);
 });
 
 test('restarts the appropriate shell when crossing the responsive breakpoint', async ({ page, isMobile }) => {
