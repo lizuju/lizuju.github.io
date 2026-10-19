@@ -64,6 +64,8 @@ node --check static/portfolio/js/content.js
 node --check static/portfolio/js/gomoku-game.js
 ```
 
+`npm run build` first runs `npm run images:check`, which fails if any image under `static/` still carries EXIF, GPS, XMP, IPTC, or comment metadata. Run `npm run images:strip` after adding photos; it removes metadata losslessly and keeps ICC color profiles.
+
 ## Attribution
 
 The immersive 3D shell is adapted from [henryjeff/portfolio-website](https://github.com/henryjeff/portfolio-website), used under the MIT License. The upstream license is preserved in [`licenses/henryjeff-portfolio-website-MIT.md`](licenses/henryjeff-portfolio-website-MIT.md).

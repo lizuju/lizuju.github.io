@@ -64,6 +64,8 @@ node --check static/portfolio/js/content.js
 node --check static/portfolio/js/gomoku-game.js
 ```
 
+`npm run build` 会先执行 `npm run images:check`，如果 `static/` 下任何图片仍带有 EXIF、GPS、XMP、IPTC 或注释元数据，构建会失败。新增照片后运行 `npm run images:strip`，它会无损移除元数据，并保留 ICC 色彩配置。
+
 ## 开源来源
 
 沉浸式 3D 外壳基于 [henryjeff/portfolio-website](https://github.com/henryjeff/portfolio-website) 二次开发，并遵循其 MIT License。上游协议保留在 [`licenses/henryjeff-portfolio-website-MIT.md`](licenses/henryjeff-portfolio-website-MIT.md)。
