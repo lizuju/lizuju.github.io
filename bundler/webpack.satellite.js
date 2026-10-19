@@ -10,7 +10,7 @@ module.exports = {
     output: {
         path: path.resolve(__dirname, '../static/portfolio/js'),
         filename: 'satellite-tracker.js',
-        chunkFilename: '[name].js',
+        chunkFilename: '[name].[contenthash].js',
         clean: false,
     },
 };

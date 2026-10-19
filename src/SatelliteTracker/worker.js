@@ -68,6 +68,7 @@ function propagateSatellites(timestamp, selectedIndex) {
     self.postMessage({
         type: 'positions',
         timestamp,
+        selectedIndex,
         positions,
         nextPositions,
         selected
@@ -78,15 +79,24 @@ function calculateOrbit(index, timestamp) {
     const satrec = satellites[index];
     if (!satrec) return;
 
-    const periodMinutes = Math.min(1440, Math.max(80, (Math.PI * 2) / satrec.no));
-    const points = new Float32Array(181 * 3);
+    const periodMinutes = (Math.PI * 2) / satrec.no;
+    const samples = Math.max(180, Math.ceil(periodMinutes / 10));
+    const points = new Float32Array((samples + 1) * 3);
+    const groundPoints = new Float32Array((samples + 1) * 3);
 
-    for (let sample = 0; sample <= 180; sample += 1) {
-        const date = new Date(timestamp + periodMinutes * 60000 * sample / 180);
-        writePosition(points, sample, toScenePosition(satrec, date));
+    for (let sample = 0; sample <= samples; sample += 1) {
+        const date = new Date(timestamp + periodMinutes * 60000 * sample / samples);
+        const position = toScenePosition(satrec, date);
+        writePosition(points, sample, position);
+        const scale = position ? 1.006 / Math.hypot(position.x, position.y, position.z) : 0;
+        writePosition(groundPoints, sample, position && {
+            x: position.x * scale,
+            y: position.y * scale,
+            z: position.z * scale
+        });
     }
 
-    self.postMessage({ type: 'orbit', index, points }, [points.buffer]);
+    self.postMessage({ type: 'orbit', index, timestamp, periodMinutes, points, groundPoints }, [points.buffer, groundPoints.buffer]);
 }
 
 self.addEventListener('message', (event) => {

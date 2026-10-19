@@ -38,6 +38,7 @@ const speedField = document.querySelector('[data-satellite-speed]');
 const periodField = document.querySelector('[data-satellite-period]');
 const inclinationField = document.querySelector('[data-satellite-inclination]');
 const ageField = document.querySelector('[data-satellite-age]');
+const epochField = document.querySelector('[data-satellite-epoch]');
 const groupTag = document.querySelector('[data-satellite-group-tag]');
 
 let renderer;
@@ -57,13 +58,17 @@ let lastPropagationTime = 0;
 let lastClockSecond = -1;
 let initialized = false;
 let dataLoaded = false;
+let dataStatusKey = 'satelliteReady';
 let loadingPromise;
 let records = [];
 let selectedIndex = -1;
 let selectedState;
 let orbitLine;
+let groundTrackLine;
+let groundTrackTimestamp = 0;
 let orbitVisible = true;
 let selectedMarker;
+let groundMarker;
 
 function copy() {
     const language = document.documentElement.lang === 'en' ? 'en' : 'zh-CN';
@@ -101,7 +106,7 @@ function formatInclination(record) {
 }
 
 function formatElementAge(record) {
-    const epoch = Date.parse(record.EPOCH);
+    const epoch = Date.parse(record.EPOCH?.endsWith('Z') ? record.EPOCH : `${record.EPOCH}Z`);
     if (!Number.isFinite(epoch)) return '-';
     const age = Math.max(0, (Date.now() - epoch) / 86400000);
     return `${age.toFixed(1)} ${copy().satelliteAgeUnit}`;
@@ -209,6 +214,13 @@ function initializeScene() {
     selectedMarker.visible = false;
     scene.add(selectedMarker);
 
+    groundMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.018, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0x35f2dc })
+    );
+    groundMarker.visible = false;
+    scene.add(groundMarker);
+
     resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(viewport);
     resize();
@@ -257,6 +269,10 @@ function interpolatePositions(timestamp) {
             pointPositions[offset + 2]
         );
         selectedMarker.visible = Number.isFinite(pointPositions[offset]);
+        groundMarker.visible = selectedMarker.visible;
+        if (groundMarker.visible) {
+            groundMarker.position.copy(selectedMarker.position).setLength(1.006);
+        }
     }
 }
 
@@ -265,6 +281,10 @@ function animate(timestamp) {
     if (!isActive()) return;
 
     updateClock(Date.now());
+    if (dataLoaded && selectedIndex >= 0 && Date.now() - groundTrackTimestamp >= 30000) {
+        groundTrackTimestamp = Date.now();
+        worker.postMessage({ type: 'orbit', index: selectedIndex, timestamp: groundTrackTimestamp });
+    }
     if (timestamp - lastPropagationTime >= 1000 && dataLoaded) {
         lastPropagationTime = timestamp;
         worker.postMessage({
@@ -326,6 +346,7 @@ async function cacheData(nextRecords) {
 }
 
 async function fetchRecords() {
+    dataStatusKey = 'satelliteReady';
     const cached = await readCachedData();
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) return cached.records;
 
@@ -340,7 +361,10 @@ async function fetchRecords() {
         await cacheData(nextRecords);
         return nextRecords;
     } catch (error) {
-        if (cached?.records?.length) return cached.records;
+        if (cached?.records?.length) {
+            dataStatusKey = 'satelliteCached';
+            return cached.records;
+        }
         throw error;
     }
 }
@@ -384,6 +408,7 @@ function updateSelectedDetails() {
         details.hidden = true;
         emptyDetails.hidden = false;
         selectedMarker.visible = false;
+        groundMarker.visible = false;
         return;
     }
 
@@ -402,14 +427,19 @@ function updateSelectedDetails() {
     periodField.textContent = formatPeriod(record);
     inclinationField.textContent = formatInclination(record);
     ageField.textContent = formatElementAge(record);
+    const epoch = Date.parse(record.EPOCH?.endsWith('Z') ? record.EPOCH : `${record.EPOCH}Z`);
+    epochField.textContent = Number.isFinite(epoch) ? `${new Date(epoch).toISOString().slice(0, 19).replace('T', ' ')} UTC` : '-';
 }
 
 function selectSatellite(index) {
     if (!records[index]) return;
+    clearSelectionTracks();
     selectedIndex = index;
     selectedState = null;
     updateSelectedDetails();
-    worker.postMessage({ type: 'orbit', index, timestamp: Date.now() });
+    interpolatePositions(Date.now());
+    groundTrackTimestamp = Date.now();
+    worker.postMessage({ type: 'orbit', index, timestamp: groundTrackTimestamp });
     worker.postMessage({ type: 'propagate', timestamp: Date.now(), selectedIndex });
 }
 
@@ -425,7 +455,7 @@ function runSearch() {
         return;
     }
     selectSatellite(index);
-    setStatus('satelliteReady');
+    setStatus(dataStatusKey);
 }
 
 function handleCanvasClick(event) {
@@ -438,15 +468,53 @@ function handleCanvasClick(event) {
     const raycaster = new THREE.Raycaster();
     raycaster.params.Points.threshold = 0.035;
     raycaster.setFromCamera(mouse, camera);
-    const hit = raycaster.intersectObject(points, false)[0];
+    const earthHit = raycaster.ray.intersectSphere(new THREE.Sphere(new THREE.Vector3(), 1), new THREE.Vector3());
+    const earthDistance = earthHit ? camera.position.distanceTo(earthHit) : Infinity;
+    const hit = raycaster.intersectObject(points, false).find((intersection) => intersection.distance < earthDistance);
     if (hit) selectSatellite(hit.index);
+}
+
+function clearSelectionTracks() {
+    [orbitLine, groundTrackLine].forEach((line) => {
+        if (!line) return;
+        scene.remove(line);
+        line.geometry.dispose();
+        line.material.dispose();
+    });
+    orbitLine = null;
+    groundTrackLine = null;
+}
+
+function createTrackLine(positions, color, opacity, ground = false) {
+    const segments = [];
+    for (let offset = 3; offset < positions.length; offset += 3) {
+        if (!positions.subarray(offset - 3, offset + 3).every(Number.isFinite)) continue;
+        if (!ground) {
+            segments.push(...positions.subarray(offset - 3, offset + 3));
+            continue;
+        }
+        const start = new THREE.Vector3().fromArray(positions, offset - 3);
+        const end = new THREE.Vector3().fromArray(positions, offset);
+        const angle = start.angleTo(end);
+        const steps = Math.max(1, Math.ceil(angle / (Math.PI / 36)));
+        const axis = new THREE.Vector3().crossVectors(start, end).normalize();
+        let previous = start;
+        for (let step = 1; step <= steps; step += 1) {
+            const next = step === steps ? end : start.clone().applyAxisAngle(axis, angle * step / steps).setLength(1.006);
+            segments.push(previous.x, previous.y, previous.z, next.x, next.y, next.z);
+            previous = next;
+        }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(segments, 3));
+    return new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity }));
 }
 
 function handleWorkerMessage(event) {
     if (event.data.type === 'ready') {
         dataLoaded = true;
         setLoading(false);
-        setStatus('satelliteReady');
+        setStatus(dataStatusKey);
         worker.postMessage({ type: 'propagate', timestamp: Date.now(), selectedIndex });
         syncAnimation();
         return;
@@ -455,25 +523,19 @@ function handleWorkerMessage(event) {
         currentPositions = event.data.positions;
         nextPositions = event.data.nextPositions;
         positionTimestamp = event.data.timestamp;
-        selectedState = event.data.selected;
+        if (event.data.selectedIndex === selectedIndex) selectedState = event.data.selected;
         updateSelectedDetails();
         interpolatePositions(Date.now());
         renderNow();
         return;
     }
     if (event.data.type === 'orbit') {
-        orbitLine?.geometry.dispose();
-        orbitLine?.material.dispose();
-        if (orbitLine) scene.remove(orbitLine);
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(event.data.points, 3));
-        orbitLine = new THREE.Line(geometry, new THREE.LineBasicMaterial({
-            color: 0xffffff,
-            transparent: true,
-            opacity: 0.62
-        }));
+        if (event.data.index !== selectedIndex) return;
+        clearSelectionTracks();
+        orbitLine = createTrackLine(event.data.points, 0xffffff, 0.62);
         orbitLine.visible = orbitVisible;
-        scene.add(orbitLine);
+        groundTrackLine = createTrackLine(event.data.groundPoints, 0x35f2dc, 1, true);
+        scene.add(orbitLine, groundTrackLine);
         renderNow();
     }
 }
@@ -488,6 +550,7 @@ async function loadData() {
             records = nextRecords;
             selectedIndex = -1;
             selectedState = null;
+            clearSelectionTracks();
             initializePoints();
             updateSelectedDetails();
             worker.postMessage({ type: 'init', records });
@@ -522,7 +585,7 @@ function open() {
     initialize();
     if (dataLoaded) {
         setLoading(false);
-        setStatus('satelliteReady');
+        setStatus(dataStatusKey);
     } else {
         loadData();
     }

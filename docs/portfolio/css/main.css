@@ -960,6 +960,41 @@ summary:focus-visible {
 
 .satellite-group-tag[data-category="weather"]::before { background: #39d0c3; }
 
+.satellite-track-legend {
+    display: grid;
+    gap: 5px;
+    margin: 8px 0;
+    padding: 7px;
+    color: #e4edf7;
+    background: #101c2b;
+    font: 10px/1.3 var(--font-system);
+}
+
+.satellite-track-key {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.satellite-track-key::before {
+    content: "";
+    width: 18px;
+    height: 2px;
+    background: #35f2dc;
+}
+
+.satellite-track-key--position::before {
+    width: 6px;
+    height: 6px;
+    margin: 0 6px;
+    border-radius: 50%;
+}
+
+.satellite-track-key--orbit::before {
+    background: #fff;
+    opacity: 0.62;
+}
+
 .satellite-detail-table {
     display: grid;
     gap: 0;

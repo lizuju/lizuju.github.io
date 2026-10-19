@@ -30,8 +30,8 @@
     <link rel="apple-touch-icon" href="../images/apple-touch-icon.png">
     <link rel="manifest" href="../site.webmanifest">
     <link rel="preload" as="image" href="assets/portfolio-hero.jpg">
-    <link rel="stylesheet" href="css/main.css?v=cb48d9b09f50">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=cb48d9b09f50">
+    <link rel="stylesheet" href="css/main.css?v=ef92a42715b0">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=ef92a42715b0">
 </head>
 
 <body>
@@ -973,7 +973,7 @@
                             <span data-i18n="satelliteResetView">重置地球视角</span>
                         </button>
                         <button type="button" role="menuitem" data-menu-action="satellite-toggle-orbit">
-                            <span data-i18n="satelliteToggleOrbit">显示 / 隐藏轨道</span>
+                            <span data-i18n="satelliteToggleOrbit">显示 / 隐藏空间轨迹</span>
                         </button>
                         <button type="button" role="menuitem" data-menu-action="satellite-toggle-size">
                             <span data-i18n="menuToggleWindowSize">最大化 / 还原</span>
@@ -1019,7 +1019,7 @@
                     <div class="satellite-panel-section">
                         <h2 data-i18n="satelliteSelectedTitle">卫星信息</h2>
                         <p class="satellite-empty" data-satellite-empty data-i18n="satelliteNoSelection">
-                            搜索或点击一个光点查看卫星信息。
+                            搜索或点击一个光点，跟踪卫星的地面轨迹。
                         </p>
                         <div class="satellite-details" data-satellite-details hidden>
                             <div class="satellite-detail-header">
@@ -1031,16 +1031,22 @@
                                     <span data-satellite-group>-</span>
                                 </span>
                             </div>
+                            <div class="satellite-track-legend">
+                                <span class="satellite-track-key satellite-track-key--ground" data-i18n="satelliteGroundTrack">地面轨迹 · 未来一圈</span>
+                                <span class="satellite-track-key satellite-track-key--position" data-i18n="satelliteGroundPosition">实时星下点</span>
+                                <span class="satellite-track-key satellite-track-key--orbit" data-i18n="satelliteOrbitPath">空间轨迹</span>
+                            </div>
                             <dl class="satellite-detail-table">
                                 <div><dt data-i18n="satelliteAltitudeLabel">高度</dt><dd data-satellite-altitude>-</dd></div>
                                 <div><dt data-i18n="satelliteSpeedLabel">速度</dt><dd data-satellite-speed>-</dd></div>
                                 <div><dt data-i18n="satellitePositionLabel">纬度 / 经度</dt><dd data-satellite-position>-</dd></div>
                                 <div><dt data-i18n="satellitePeriodLabel">轨道周期</dt><dd data-satellite-period>-</dd></div>
                                 <div><dt data-i18n="satelliteInclinationLabel">轨道倾角</dt><dd data-satellite-inclination>-</dd></div>
-                                <div><dt data-i18n="satelliteAgeLabel">TLE 龄期</dt><dd data-satellite-age>-</dd></div>
+                                <div><dt data-i18n="satelliteAgeLabel">数据龄期</dt><dd data-satellite-age>-</dd></div>
+                                <div><dt data-i18n="satelliteEpochLabel">轨道数据历元</dt><dd data-satellite-epoch>-</dd></div>
                             </dl>
                             <p class="satellite-detail-note" data-i18n="satelliteDetailNote">
-                                实时位置与完整轨道线由 SGP4 在浏览器本地推算。
+                                星下点实时更新，青色地面轨迹为未来一圈的 SGP4 预测。
                             </p>
                         </div>
                     </div>
@@ -1275,10 +1281,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=cb48d9b09f50"></script>
-    <script src="js/gomoku-game.js?v=cb48d9b09f50"></script>
-    <script src="js/content.js?v=cb48d9b09f50"></script>
-    <script src="js/main.js?v=cb48d9b09f50"></script>
+    <script src="js/gomoku-engine.js?v=ef92a42715b0"></script>
+    <script src="js/gomoku-game.js?v=ef92a42715b0"></script>
+    <script src="js/content.js?v=ef92a42715b0"></script>
+    <script src="js/main.js?v=ef92a42715b0"></script>
 </body>
 
 </html>
