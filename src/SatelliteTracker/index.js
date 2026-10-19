@@ -388,6 +388,7 @@ function initializePoints() {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(pointPositions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colorValues, 3));
+    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 0);
     points = new THREE.Points(geometry, new THREE.PointsMaterial({
         size: 0.022,
         sizeAttenuation: true,
@@ -522,6 +523,14 @@ function handleWorkerMessage(event) {
     if (event.data.type === 'positions') {
         currentPositions = event.data.positions;
         nextPositions = event.data.nextPositions;
+        let radius = 0;
+        for (let offset = 0; offset < currentPositions.length; offset += 3) {
+            const currentRadius = Math.hypot(currentPositions[offset], currentPositions[offset + 1], currentPositions[offset + 2]);
+            const nextRadius = Math.hypot(nextPositions[offset], nextPositions[offset + 1], nextPositions[offset + 2]);
+            if (Number.isFinite(currentRadius)) radius = Math.max(radius, currentRadius);
+            if (Number.isFinite(nextRadius)) radius = Math.max(radius, nextRadius);
+        }
+        points.geometry.boundingSphere.radius = radius;
         positionTimestamp = event.data.timestamp;
         if (event.data.selectedIndex === selectedIndex) selectedState = event.data.selected;
         updateSelectedDetails();

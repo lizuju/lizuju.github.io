@@ -153,6 +153,10 @@ test('clicks satellites and keeps the selected ground track live across window a
             }
             postMessage(message, ...args) {
                 if (message.type === 'orbit') window.__groundTrackTest.requests.push(message);
+                if (message.type === 'init') {
+                    setTimeout(() => super.postMessage(message, ...args), 250);
+                    return;
+                }
                 return super.postMessage(message, ...args);
             }
         };
