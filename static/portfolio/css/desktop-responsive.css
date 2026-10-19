@@ -1,0 +1,119 @@
+/* Window frame breakpoints. Loaded after the app styles so shared window sizing overrides per-app sizes. */
+
+body.direct-portfolio .app-window:not(.is-maximized) {
+    top: 72px;
+}
+
+@media (min-width: 901px) {
+    body.direct-portfolio .gomoku-window:not(.is-maximized) {
+        height: min(660px, calc(100% - 124px));
+    }
+
+    body.direct-portfolio:has(.app-window.is-maximized) .scene-link {
+        top: 4px;
+        right: 96px;
+    }
+}
+
+@media (max-width: 1040px) {
+    .app-window {
+        right: 12px;
+        left: 80px;
+    }
+}
+
+@media (max-height: 620px) and (min-width: 901px) {
+    .gomoku-window,
+    .satellite-window {
+        top: 8px;
+        height: calc(100% - 52px);
+        min-height: 0;
+    }
+}
+
+@media (max-width: 900px) {
+    body.direct-portfolio .app-window:not(.is-maximized) {
+        top: 88px;
+    }
+
+    .desktop-shortcuts {
+        top: 12px;
+        left: 8px;
+        display: grid;
+        gap: 12px;
+    }
+
+    .app-window,
+    .app-window.is-maximized {
+        top: 4px;
+        right: 4px;
+        bottom: 39px;
+        left: 4px;
+        width: auto;
+        height: auto;
+        min-width: 0;
+        min-height: 0;
+        border-width: 2px;
+        box-shadow: none;
+    }
+
+    .gomoku-window,
+    .gomoku-window.is-maximized,
+    .satellite-window,
+    .satellite-window.is-maximized {
+        width: auto;
+        height: auto;
+        min-width: 0;
+        min-height: 0;
+    }
+
+    .window-titlebar {
+        cursor: move;
+    }
+
+    .window-resize-handle {
+        width: 24px;
+        height: 24px;
+    }
+
+    .window-menubar {
+        display: flex;
+    }
+
+    .address-label,
+    .address-toolbar > a {
+        display: none;
+    }
+
+    .window-statusbar {
+        grid-template-columns: 1fr 110px;
+    }
+}
+
+@media (max-width: 560px) {
+    .window-titlebar {
+        flex-basis: 25px;
+        font-size: 11px;
+    }
+
+    .window-app-icon {
+        width: 16px;
+        height: 16px;
+        flex-basis: 16px;
+        font-size: 9px;
+    }
+
+    .window-controls button {
+        width: 21px;
+        height: 19px;
+    }
+
+    .address-toolbar {
+        flex-basis: 29px;
+        height: 29px;
+    }
+
+    .window-statusbar {
+        display: none;
+    }
+}

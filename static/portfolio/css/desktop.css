@@ -1,0 +1,564 @@
+/* Retro desktop, shortcut icons and the shared window frame: titlebar, menus, address bar, status bar and resize grip. */
+
+.retro-desktop {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    background-color: var(--desktop-teal);
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+        radial-gradient(circle at 70% 15%, rgba(211, 255, 242, 0.28), transparent 38%),
+        radial-gradient(circle at 18% 74%, rgba(0, 63, 83, 0.2), transparent 42%);
+    background-size: 8px 8px, 8px 8px, 100% 100%, 100% 100%;
+}
+
+.retro-desktop::after {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    content: "";
+    opacity: 0.16;
+    background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(12, 24, 24, 0.12) 3px 4px);
+    mix-blend-mode: multiply;
+}
+
+.top-anchor {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+}
+
+.desktop-shortcuts {
+    position: absolute;
+    top: 34px;
+    left: 8px;
+    z-index: 2;
+    display: grid;
+    gap: 20px;
+    width: 76px;
+}
+
+.desktop-shortcut {
+    display: grid;
+    justify-items: center;
+    gap: 5px;
+    width: 76px;
+    padding: 2px;
+    border: 0;
+    color: #fff;
+    background: transparent;
+    font: 12px/1.15 var(--font-system);
+    text-align: center;
+    text-decoration: none;
+    text-shadow: 1px 1px #003f50;
+    cursor: default;
+}
+
+.desktop-shortcut:visited {
+    color: #fff;
+}
+
+.desktop-shortcut:hover,
+.desktop-shortcut:focus-visible {
+    color: #fff;
+    background: rgba(0, 0, 128, 0.48);
+    outline: 1px dotted #fff;
+}
+
+.shortcut-icon {
+    position: relative;
+    display: block;
+    width: 34px;
+    height: 32px;
+    filter: drop-shadow(1px 1px 0 rgba(0, 0, 0, 0.55));
+}
+
+.shortcut-icon--computer::before {
+    position: absolute;
+    inset: 2px 2px 8px;
+    content: "";
+    border: 3px outset #dedede;
+    background: #144b83;
+    box-shadow: inset 0 0 0 3px #6fc2c7;
+}
+
+.shortcut-icon--computer::after {
+    position: absolute;
+    right: 7px;
+    bottom: 2px;
+    left: 7px;
+    height: 6px;
+    content: "";
+    border: 2px outset #c0c0c0;
+    background: #d8d8d8;
+}
+
+.shortcut-icon--folder::before {
+    position: absolute;
+    top: 9px;
+    right: 1px;
+    bottom: 2px;
+    left: 1px;
+    content: "";
+    border: 2px outset #fff0a6;
+    background: #efc94b;
+}
+
+.shortcut-icon--folder::after {
+    position: absolute;
+    top: 4px;
+    left: 3px;
+    width: 17px;
+    height: 8px;
+    content: "";
+    border: 2px outset #fff0a6;
+    background: #efc94b;
+}
+
+.shortcut-icon--network::before {
+    position: absolute;
+    inset: 2px;
+    content: "";
+    border: 2px outset #e8e8e8;
+    border-radius: 50%;
+    background:
+        linear-gradient(90deg, transparent 45%, #e8f5ff 45% 55%, transparent 55%),
+        linear-gradient(#1d68ad 48%, #4ab2b0 48%);
+}
+
+.shortcut-icon--network::after {
+    position: absolute;
+    top: 9px;
+    left: 7px;
+    width: 20px;
+    height: 12px;
+    content: "";
+    border-top: 2px solid #fff;
+    border-bottom: 2px solid #fff;
+    border-radius: 50%;
+}
+
+.shortcut-icon--mail::before {
+    position: absolute;
+    inset: 6px 1px 3px;
+    content: "";
+    border: 3px outset #efefef;
+    background: #f8f8f8;
+}
+
+.shortcut-icon--mail::after {
+    position: absolute;
+    top: 9px;
+    left: 6px;
+    width: 23px;
+    height: 16px;
+    content: "";
+    border-right: 2px solid #244b8e;
+    border-bottom: 2px solid #244b8e;
+    transform: rotate(45deg);
+}
+
+.shortcut-icon--gomoku {
+    border: 2px outset #f1f1f1;
+    background: #c0c0c0;
+}
+
+.shortcut-icon--gomoku::before {
+    position: absolute;
+    inset: 4px;
+    content: "";
+    border: 1px solid #404040;
+    background:
+        repeating-linear-gradient(0deg, transparent 0 5px, #707070 5px 6px),
+        repeating-linear-gradient(90deg, transparent 0 5px, #707070 5px 6px),
+        #d5d5d5;
+}
+
+.shortcut-icon--gomoku::after {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 7px;
+    height: 7px;
+    content: "";
+    border: 1px solid #000;
+    border-radius: 50%;
+    background: #111;
+    box-shadow: 11px 11px 0 -1px #fff, 11px 11px 0 0 #555;
+}
+
+.shortcut-icon--satellite::before {
+    position: absolute;
+    inset: 5px;
+    content: "";
+    border: 2px solid #d9edf7;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 34%, #86d8e8 0 18%, #217e9c 19% 53%, #0e3c68 54%);
+}
+
+.shortcut-icon--satellite::after {
+    position: absolute;
+    top: 11px;
+    left: 0;
+    width: 34px;
+    height: 12px;
+    content: "";
+    border: 2px solid #f0d267;
+    border-radius: 50%;
+    transform: rotate(-22deg);
+}
+
+.app-window {
+    position: absolute;
+    top: 36px;
+    right: 22px;
+    bottom: 44px;
+    left: 88px;
+    z-index: 5;
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    border: 2px outset #f0f0f0;
+    background: var(--window-gray);
+    box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.65);
+}
+
+.app-window.is-maximized {
+    top: 0;
+    right: 0;
+    bottom: 36px;
+    left: 0;
+    border-width: 1px;
+    box-shadow: none;
+}
+
+.app-window.is-minimized,
+.app-window.is-closed {
+    display: none;
+}
+
+.app-window.is-dragging,
+.app-window.is-resizing {
+    outline: 2px dotted #fff;
+    box-shadow: 0 0 0 1px #000, 3px 3px 0 rgba(0, 0, 0, 0.65);
+    user-select: none;
+}
+
+.window-titlebar {
+    display: flex;
+    flex: 0 0 27px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+    padding: 3px 3px 3px 5px;
+    color: #fff;
+    background: linear-gradient(90deg, var(--title-blue), var(--title-blue-light));
+    cursor: move;
+    font: 700 13px/1 var(--font-system);
+    touch-action: none;
+    user-select: none;
+}
+
+.app-window:not(.is-active) > .window-titlebar {
+    color: #e5e5e5;
+    background: #7f7f7f;
+}
+
+.window-title {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 5px;
+}
+
+.window-title > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.window-app-icon {
+    display: inline-grid;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    place-items: center;
+    border: 1px outset #fff;
+    color: #fff;
+    background: #3d397d;
+    font: 700 11px/1 Georgia, serif;
+}
+
+.window-controls {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 2px;
+    cursor: default;
+}
+
+.window-controls button {
+    position: relative;
+    display: grid;
+    width: 22px;
+    height: 20px;
+    padding: 0;
+    place-items: center;
+    border: 2px outset #efefef;
+    color: #000;
+    background: #c0c0c0;
+    font: 700 15px/1 Arial, sans-serif;
+    cursor: default;
+}
+
+.window-controls button:active {
+    border-style: inset;
+}
+
+.window-controls button:first-child span {
+    transform: translateY(-3px);
+}
+
+.window-menubar {
+    position: relative;
+    z-index: 30;
+    display: flex;
+    min-height: 25px;
+    flex: 0 0 25px;
+    align-items: center;
+    gap: 2px;
+    padding: 1px 4px;
+    border-bottom: 1px solid #808080;
+    color: #111;
+    background: #c0c0c0;
+    font: 12px/1 var(--font-system);
+}
+
+.window-menu {
+    position: relative;
+}
+
+.window-menu-trigger {
+    min-height: 21px;
+    padding: 2px 7px;
+    border: 1px solid transparent;
+    color: #111;
+    background: transparent;
+    font: inherit;
+    cursor: default;
+}
+
+.window-menu-trigger::first-letter {
+    text-decoration: underline;
+}
+
+.window-menubar > span {
+    padding: 2px 7px;
+}
+
+.window-menubar > span::first-letter {
+    text-decoration: underline;
+}
+
+.window-menu-trigger:hover,
+.window-menu-trigger:focus-visible,
+.window-menu-trigger[aria-expanded="true"] {
+    border: 1px outset #fff;
+    outline: 0;
+}
+
+.window-menu-popup {
+    position: absolute;
+    top: 22px;
+    left: 0;
+    z-index: 40;
+    width: 205px;
+    max-width: calc(100vw - 16px);
+    padding: 3px;
+    border: 2px outset #fff;
+    background: #c0c0c0;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+}
+
+.window-menu-popup[hidden] {
+    display: none;
+}
+
+.window-menu-popup--compact {
+    width: 170px;
+}
+
+.window-menu-popup button {
+    display: flex;
+    width: 100%;
+    min-height: 27px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 4px 16px;
+    border: 0;
+    color: #111;
+    background: transparent;
+    font: 12px/1.2 var(--font-system);
+    text-align: left;
+    cursor: default;
+}
+
+.window-menu-popup button:hover,
+.window-menu-popup button:focus-visible {
+    color: #fff;
+    background: #000080;
+    outline: 0;
+}
+
+.window-menu-popup kbd {
+    font: 11px/1 var(--font-system);
+}
+
+.window-menu-separator {
+    height: 2px;
+    margin: 3px 2px;
+    border-top: 1px solid #808080;
+    border-bottom: 1px solid #fff;
+}
+
+.address-toolbar {
+    display: flex;
+    flex: 0 0 31px;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 5px;
+    border-top: 1px solid #fff;
+    border-bottom: 1px solid #7b7b7b;
+    background: #c0c0c0;
+    font: 12px/1 var(--font-system);
+}
+
+.address-label {
+    flex: 0 0 auto;
+}
+
+.address-field {
+    display: flex;
+    min-width: 0;
+    height: 23px;
+    flex: 1;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 5px;
+    overflow: hidden;
+    border: 2px inset #fff;
+    background: #fff;
+    white-space: nowrap;
+}
+
+.address-field > span:last-child {
+    display: block;
+    padding-bottom: 1px;
+    overflow: hidden;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+}
+
+.address-page-icon {
+    position: relative;
+    width: 14px;
+    height: 16px;
+    flex: 0 0 14px;
+    border: 1px solid #777;
+    background: #fff;
+}
+
+.address-page-icon::after {
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    width: 6px;
+    height: 6px;
+    content: "";
+    background: #2b58c2;
+}
+
+.address-toolbar > a {
+    display: inline-flex;
+    height: 23px;
+    align-items: center;
+    padding: 0 8px;
+    border: 2px outset #fff;
+    color: #111;
+    background: #c0c0c0;
+    text-decoration: none;
+}
+
+.address-toolbar > a:active {
+    border-style: inset;
+}
+
+.window-scroll {
+    position: relative;
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
+    border: 2px inset #efefef;
+    background-color: var(--paper);
+    background-image:
+        linear-gradient(rgba(34, 34, 34, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(34, 34, 34, 0.018) 1px, transparent 1px);
+    background-size: 5px 5px;
+    scrollbar-color: #8d8d8d #d6d6d6;
+}
+
+.window-statusbar,
+.gomoku-statusbar {
+    display: grid;
+    min-height: 22px;
+    flex: 0 0 22px;
+    gap: 3px;
+    padding: 2px;
+    background: #c0c0c0;
+    font: 11px/16px var(--font-system);
+}
+
+.window-statusbar {
+    grid-template-columns: 1fr 160px;
+}
+
+.gomoku-statusbar {
+    grid-template-columns: minmax(0, 1fr) 160px;
+}
+
+.window-statusbar span,
+.gomoku-statusbar > span {
+    min-width: 0;
+    padding: 0 5px;
+    overflow: hidden;
+    border: 1px inset #efefef;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.window-resize-handle {
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    z-index: 20;
+    width: 17px;
+    height: 17px;
+    padding: 0;
+    border: 0;
+    background:
+        linear-gradient(135deg, transparent 0 48%, #fff 49% 55%, transparent 56%) 0 0 / 6px 6px,
+        linear-gradient(135deg, transparent 0 48%, #555 49% 55%, transparent 56%) 2px 2px / 6px 6px;
+    cursor: nwse-resize;
+    touch-action: none;
+}
+
+.app-window.is-maximized .window-resize-handle {
+    display: none;
+}

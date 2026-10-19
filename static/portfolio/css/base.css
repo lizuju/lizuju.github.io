@@ -1,0 +1,108 @@
+/* Design tokens, reset and shared typography. */
+
+:root {
+    --desktop-teal: #4f9f9b;
+    --window-gray: #c0c0c0;
+    --window-light: #ffffff;
+    --window-shadow: #404040;
+    --window-dark: #111111;
+    --paper: #fbfaf2;
+    --paper-soft: #f0eee2;
+    --ink: #202020;
+    --muted: #5b5b55;
+    --link: #2f24b8;
+    --visited: #6c2d91;
+    --title-blue: #000080;
+    --title-blue-light: #0a66c2;
+    --font-heading: Georgia, "Times New Roman", "Songti SC", serif;
+    --font-body: "Times New Roman", "Songti SC", SimSun, serif;
+    --font-system: Tahoma, Verdana, "Microsoft YaHei", sans-serif;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    height: 100%;
+    overflow: hidden;
+    scroll-behavior: smooth;
+}
+
+body {
+    margin: 0;
+    height: 100%;
+    min-width: 280px;
+    overflow: hidden;
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.48;
+    letter-spacing: 0;
+    -webkit-font-smoothing: antialiased;
+}
+
+body.menu-open {
+    overflow: hidden;
+}
+
+button,
+input {
+    font: inherit;
+}
+
+button,
+a {
+    -webkit-tap-highlight-color: transparent;
+}
+
+a {
+    color: var(--link);
+    text-decoration: underline;
+}
+
+a:visited {
+    color: var(--visited);
+}
+
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+    outline: 2px dotted #000;
+    outline-offset: 2px;
+}
+
+::selection {
+    color: #fff;
+    background: #000080;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+@media (max-width: 560px) {
+    body {
+        font-size: 15px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+}

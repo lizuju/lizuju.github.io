@@ -25,7 +25,10 @@
 src/                       Three.js 外壳和桌面端 UI 源码
 static/portfolio/          响应式双语作品集源码
 static/portfolio/js/content.js  中英文简历与作品集数据
-static/portfolio/js/main.js     作品集渲染和桌面交互
+static/portfolio/js/main.js     桌面启动及 JS/CSS 打包入口
+static/portfolio/js/desktop/    窗口管理、任务栏和沉浸式场景通信
+static/portfolio/js/apps/       主页、项目文件夹、邮件和卫星窗口
+static/portfolio/css/           通用样式、各应用样式、响应式和打印规则
 static/portfolio/js/gomoku-game.js  五子棋应用逻辑
 static/                    3D 模型、纹理、音频和公开文件
 bundler/                   Webpack 开发及生产配置
@@ -65,6 +68,8 @@ node --check static/portfolio/js/gomoku-game.js
 ```
 
 `npm run build` 会先执行 `npm run images:check`，如果 `static/` 下任何图片仍带有 EXIF、GPS、XMP、IPTC 或注释元数据，构建会失败。新增照片后运行 `npm run images:strip`，它会无损移除元数据，并保留 ICC 色彩配置。
+
+Webpack 将桌面模块和样式打包为 `docs/portfolio/js/main.js` 和 `docs/portfolio/css/main.css`；请修改 `static/portfolio/` 下对应的源码。
 
 ## 开源来源
 

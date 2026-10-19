@@ -20,7 +20,7 @@ module.exports = defineConfig({
         screenshot: 'only-on-failure'
     },
     webServer: {
-        command: 'python3 -m http.server 3090 --bind 127.0.0.1 --directory docs',
+        command: 'python3 -m http.server 3090 --protocol HTTP/1.1 --bind 127.0.0.1 --directory docs',
         url: 'http://127.0.0.1:3090/',
         reuseExistingServer: true,
         timeout: 15000

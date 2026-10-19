@@ -12,7 +12,13 @@ const profileSchemaPath = path.resolve(rootDirectory, 'src/profile-schema.json')
 const readProfileSchema = () => JSON.stringify(JSON.parse(fs.readFileSync(profileSchemaPath, 'utf8')));
 
 module.exports = {
-    entry: path.resolve(__dirname, '../src/script.ts'),
+    entry: {
+        main: path.resolve(__dirname, '../src/script.ts'),
+        portfolio: {
+            import: path.resolve(rootDirectory, 'static/portfolio/js/main.js'),
+            filename: 'portfolio/js/main.js',
+        },
+    },
     output: {
         hashFunction: 'xxhash64',
         filename: 'bundle.[contenthash].js',
@@ -25,10 +31,13 @@ module.exports = {
             patterns: [{
                 from: path.resolve(rootDirectory, 'static'),
                 globOptions: {
-                    ignore: [path.resolve(
-                        rootDirectory,
-                        'static/portfolio/assets/robomaster-match-records/*.jpg'
-                    )],
+                    ignore: [
+                        'static/portfolio/assets/robomaster-match-records/*.jpg',
+                        'static/portfolio/js/main.js',
+                        'static/portfolio/js/desktop/**',
+                        'static/portfolio/js/apps/**',
+                        'static/portfolio/css/**',
+                    ].map((pattern) => path.resolve(rootDirectory, pattern)),
                 },
                 transform(content, absolutePath) {
                     if (absolutePath.endsWith('portfolio/index.html')) {
@@ -47,6 +56,7 @@ module.exports = {
             }],
         }),
         new HtmlWebpackPlugin({
+            chunks: ['main'],
             templateContent: () => fs
                 .readFileSync(path.resolve(__dirname, '../src/index.html'), 'utf8')
                 .replaceAll('__ASSET_VERSION__', buildMetadata.assetVersion)
@@ -58,7 +68,10 @@ module.exports = {
                 removeComments: true,
             },
         }),
-        new MiniCSSExtractPlugin(),
+        new MiniCSSExtractPlugin({
+            filename: ({ chunk }) => chunk.name === 'portfolio' ? 'portfolio/css/main.css' : '[name].css',
+            chunkFilename: '[name].css',
+        }),
         new TrimGeneratedTextPlugin(),
     ],
     resolve: {

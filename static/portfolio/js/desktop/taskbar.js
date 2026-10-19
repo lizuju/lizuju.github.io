@@ -1,0 +1,81 @@
+(() => {
+    const desktopApi = window.GavinDesktop;
+    const { t } = desktopApi;
+
+    // Start button and menu, shutdown/restart screen and the tray clock.
+    function setupTaskbar(manager, { showPortfolioWindow }) {
+        const { startButton, startMenu, closeStartMenu } = manager;
+        const shutdownButton = document.querySelector('[data-shutdown]');
+        const shutdownScreen = document.querySelector('[data-shutdown-screen]');
+        const shutdownLog = document.querySelector('[data-shutdown-log]');
+        const restartButton = document.querySelector('[data-restart]');
+        const clock = document.querySelector('[data-retro-clock]');
+        let shutdownTimers = [];
+
+        const clearShutdownTimers = () => {
+            shutdownTimers.forEach((timer) => window.clearTimeout(timer));
+            shutdownTimers = [];
+        };
+
+        const restartDesktop = () => {
+            clearShutdownTimers();
+            if (shutdownScreen) shutdownScreen.hidden = true;
+            if (shutdownLog) shutdownLog.textContent = '';
+            if (restartButton) restartButton.hidden = true;
+            showPortfolioWindow('#top');
+        };
+
+        const startShutdown = () => {
+            if (!shutdownScreen || !shutdownLog || !restartButton) return;
+
+            closeStartMenu();
+            clearShutdownTimers();
+            shutdownLog.textContent = '';
+            restartButton.hidden = true;
+            shutdownScreen.hidden = false;
+
+            t().shutdownLines.forEach((line, index, lines) => {
+                shutdownTimers.push(window.setTimeout(() => {
+                    shutdownLog.textContent += `${line}\n`;
+                    if (index === lines.length - 1) {
+                        restartButton.hidden = false;
+                        shutdownTimers.push(window.setTimeout(restartDesktop, 12000));
+                    }
+                }, 450 * (index + 1)));
+            });
+        };
+
+        startButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            startMenu.hidden = !startMenu.hidden;
+            startButton.setAttribute('aria-expanded', String(!startMenu.hidden));
+        });
+
+        startMenu.addEventListener('click', (event) => event.stopPropagation());
+        document.addEventListener('click', closeStartMenu);
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') closeStartMenu();
+        });
+
+        shutdownButton?.addEventListener('click', startShutdown);
+        restartButton?.addEventListener('click', restartDesktop);
+
+        const updateClock = () => {
+            if (!clock) return;
+            clock.textContent = new Intl.DateTimeFormat([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            }).format(new Date());
+        };
+
+        return {
+            startClock: () => {
+                updateClock();
+                window.setInterval(updateClock, 30000);
+            }
+        };
+    }
+
+    desktopApi.setupTaskbar = setupTaskbar;
+})();

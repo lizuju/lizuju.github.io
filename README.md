@@ -25,7 +25,10 @@ Desktop visitors enter an interactive Three.js workspace, move toward a CRT comp
 src/                       Three.js shell and desktop UI source
 static/portfolio/          Responsive bilingual portfolio source
 static/portfolio/js/content.js  Bilingual resume and portfolio data
-static/portfolio/js/main.js     Portfolio rendering and desktop interactions
+static/portfolio/js/main.js     Desktop bootstrap and bundled JS/CSS entry
+static/portfolio/js/desktop/    Shared window manager, taskbar and scene bridge
+static/portfolio/js/apps/       Portfolio, project folder, mail and satellite windows
+static/portfolio/css/           Shared styles, per-app styles, responsive and print rules
 static/portfolio/js/gomoku-game.js  Gomoku application behavior
 static/                    3D models, textures, audio, and public files
 bundler/                   Webpack development and production configuration
@@ -65,6 +68,8 @@ node --check static/portfolio/js/gomoku-game.js
 ```
 
 `npm run build` first runs `npm run images:check`, which fails if any image under `static/` still carries EXIF, GPS, XMP, IPTC, or comment metadata. Run `npm run images:strip` after adding photos; it removes metadata losslessly and keeps ICC color profiles.
+
+Webpack bundles the desktop modules and styles into `docs/portfolio/js/main.js` and `docs/portfolio/css/main.css`; edit their source files under `static/portfolio/`.
 
 ## Attribution
 

@@ -12,7 +12,7 @@
         "build:satellite": "webpack --config ./bundler/webpack.satellite.js",
         "build": "npm run images:check && npm run build:gomoku && npm run build:satellite && webpack --config ./bundler/webpack.prod.js",
         "dev": "npm run build:gomoku && npm run build:satellite && node scripts/dev-server.cjs",
-        "preview": "python3 -m http.server 3090 --directory docs",
+        "preview": "python3 -m http.server 3090 --protocol HTTP/1.1 --directory docs",
         "test:smoke": "playwright test",
         "verify:docs": "node scripts/verify-docs.cjs",
         "images:check": "node scripts/strip-image-metadata.cjs --check static",

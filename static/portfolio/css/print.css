@@ -1,0 +1,51 @@
+/* Print layout for the homepage window. */
+
+@media print {
+    html,
+    body,
+    .retro-desktop,
+    .retro-desktop > [data-app-window],
+    [data-window-scroll] {
+        position: static;
+        width: auto !important;
+        height: auto !important;
+        min-height: 0;
+        overflow: visible;
+        border: 0;
+        background: #fff;
+        box-shadow: none;
+    }
+
+    .retro-desktop > [data-app-window],
+    .page-shell {
+        display: block;
+    }
+
+    .retro-desktop > :not([data-app-window]),
+    .retro-desktop::after,
+    [data-app-window] > :not([data-window-scroll]),
+    .site-header,
+    .mobile-menu,
+    .site-footer {
+        display: none !important;
+    }
+
+    .reveal {
+        opacity: 1;
+        transform: none;
+        animation: none;
+        transition: none;
+    }
+
+    h1,
+    h2,
+    h3 {
+        break-after: avoid;
+    }
+
+    .project-card,
+    .publication-card,
+    .skill-card {
+        break-inside: avoid;
+    }
+}

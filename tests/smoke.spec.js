@@ -1467,9 +1467,9 @@ test('exposes crawlable SEO metadata', async ({ page, request, isMobile }) => {
     expect(sitemapText).toContain(`<lastmod>${buildMetadata.lastModified}</lastmod>`);
 
     await page.goto('/portfolio/');
-    await expect(page.locator('link[href^="css/custom.css"]')).toHaveAttribute(
+    await expect(page.locator('link[href^="css/main.css"]')).toHaveAttribute(
         'href',
-        `css/custom.css?v=${buildMetadata.assetVersion}`
+        `css/main.css?v=${buildMetadata.assetVersion}`
     );
     for (const script of await page.locator('script[src]').all()) {
         await expect(script).toHaveAttribute('src', new RegExp(`\\?v=${buildMetadata.assetVersion}$`));

@@ -1,0 +1,456 @@
+/* Start menu, taskbar, tray and shutdown screen. */
+
+.start-menu {
+    position: absolute;
+    bottom: 35px;
+    left: 2px;
+    z-index: 30;
+    display: grid;
+    width: 286px;
+    height: clamp(220px, 44vh, 330px);
+    grid-template-columns: 34px 1fr;
+    border: 2px outset #fff;
+    background: #c0c0c0;
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.55);
+}
+
+.start-menu-rail {
+    padding: 7px 5px;
+    color: #fff;
+    background: #000080;
+    font: 700 15px/1 var(--font-system);
+    letter-spacing: 0;
+    text-orientation: mixed;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+}
+
+.start-menu-items {
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+}
+
+.start-menu-items button,
+.start-menu-items a {
+    display: grid;
+    min-height: 42px;
+    grid-template-columns: 28px 1fr;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    border: 0;
+    color: #111;
+    background: transparent;
+    font: 12px/1.2 var(--font-system);
+    text-align: left;
+    text-decoration: none;
+    cursor: default;
+}
+
+.start-menu-items button:hover,
+.start-menu-items a:hover,
+.start-menu-items button:focus-visible,
+.start-menu-items a:focus-visible {
+    color: #fff;
+    background: #000080;
+    outline: 0;
+}
+
+.start-menu-separator {
+    height: 2px;
+    margin: 3px 4px;
+    margin-top: auto;
+    border-top: 1px solid #808080;
+    border-bottom: 1px solid #fff;
+}
+
+.start-icon {
+    position: relative;
+    display: block;
+    width: 23px;
+    height: 23px;
+    border: 2px outset #fff;
+    background: #efc94b;
+}
+
+.start-icon--home {
+    background: #4a8cca;
+}
+
+.start-icon--projects {
+    background: #efc94b;
+}
+
+.start-icon--gomoku {
+    background:
+        radial-gradient(circle at 7px 7px, #111 0 3px, transparent 4px),
+        radial-gradient(circle at 16px 16px, #fff 0 3px, #555 4px, transparent 5px),
+        repeating-linear-gradient(0deg, transparent 0 5px, #707070 5px 6px),
+        repeating-linear-gradient(90deg, transparent 0 5px, #707070 5px 6px),
+        #d5d5d5;
+}
+
+.start-icon--github {
+    border-radius: 50%;
+    background: #333;
+}
+
+.start-icon--shutdown {
+    background: #b9c5c7;
+}
+
+.start-icon--shutdown::before {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 13px;
+    height: 10px;
+    content: "";
+    border: 2px inset #fff;
+    background: #183a47;
+}
+
+.start-icon--shutdown::after {
+    position: absolute;
+    bottom: 3px;
+    left: 7px;
+    width: 8px;
+    height: 2px;
+    content: "";
+    border-bottom: 2px solid #333;
+    background: #ddd;
+}
+
+.desktop-taskbar {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 25;
+    display: flex;
+    height: 36px;
+    align-items: center;
+    gap: 4px;
+    padding: 3px;
+    border-top: 2px outset #fff;
+    background: #c0c0c0;
+    font: 12px/1 var(--font-system);
+}
+
+.shutdown-screen {
+    position: absolute;
+    inset: 0;
+    z-index: 100;
+    padding: clamp(28px, 5vw, 72px);
+    overflow: hidden;
+    color: #f4f4f4;
+    background: #000;
+    font: 16px/1.45 "Courier New", monospace;
+}
+
+.shutdown-screen::after {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    content: "";
+    opacity: 0.08;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), transparent 38%);
+}
+
+.shutdown-bios {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    width: min(980px, 100%);
+    min-height: 100%;
+    margin: 0 auto;
+    grid-template-rows: auto 1fr auto;
+}
+
+.shutdown-bios-header,
+.shutdown-bios-footer {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 28px;
+}
+
+.shutdown-wordmark p,
+.shutdown-release p,
+.shutdown-bios-footer p {
+    margin: 0;
+}
+
+.shutdown-wordmark {
+    font-size: 1.15em;
+    font-weight: 700;
+    line-height: 1.12;
+}
+
+.shutdown-release {
+    color: #b7b7b7;
+    font-size: 0.78em;
+    line-height: 1.35;
+    text-align: right;
+}
+
+.shutdown-bios-body {
+    display: flex;
+    justify-content: center;
+    flex-direction: column;
+    min-height: 260px;
+    padding: clamp(36px, 8vh, 110px) 0;
+}
+
+.shutdown-kicker {
+    margin: 0 0 12px;
+    color: #b7b7b7;
+    font-size: 0.82em;
+    letter-spacing: 0.08em;
+}
+
+.shutdown-title {
+    margin: 0 0 28px;
+    color: #fff;
+    font: 700 clamp(26px, 4vw, 52px)/1.04 var(--font-system);
+}
+
+.shutdown-log {
+    min-height: 120px;
+    margin: 0;
+    color: #dedede;
+    font: 0.96em/1.72 "Courier New", monospace;
+    white-space: pre-wrap;
+}
+
+.shutdown-bios-footer {
+    align-items: center;
+    padding-top: 22px;
+    border-top: 1px solid #5b5b5b;
+    color: #b7b7b7;
+    font-size: 0.82em;
+}
+
+.shutdown-bios-footer p {
+    max-width: 560px;
+}
+
+.shutdown-restart {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 18px;
+    border: 3px solid #f4f4f4;
+    color: #f4f4f4;
+    background: #000;
+    font: 700 0.9rem/1 "Courier New", monospace;
+    cursor: pointer;
+}
+
+.shutdown-restart:hover,
+.shutdown-restart:focus-visible {
+    color: #000;
+    background: #f4f4f4;
+    outline: 0;
+}
+
+.shutdown-restart:active {
+    transform: translate(2px, 2px);
+}
+
+.start-button,
+.task-window-button {
+    display: flex;
+    height: 29px;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    overflow: hidden;
+    border: 2px outset #fff;
+    color: #111;
+    background: #c0c0c0;
+    white-space: nowrap;
+    cursor: default;
+}
+
+.start-button:active,
+.start-button[aria-expanded="true"],
+.task-window-button.is-active {
+    border-style: inset;
+    background: #d4d4d4;
+}
+
+.start-mark {
+    display: block;
+    flex: 0 0 18px;
+    width: 18px;
+    height: 18px;
+    background: center / 18px 18px no-repeat url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAABTUlEQVQ4jaWS4Y7jIBCDPw/QJpu+/4ueqna7Ad+PSVLttied7pCQSWAY21i2+Z8Rf3NIai71ZEkuunzvaPuPM0ozFU/EE0kMFid7yW+LWY6iETKSg8VyNRVDzgiUNJu846ziUa9Ma3DTvGnNc3U17VagAlS0m6gms8JE8GAG3RiYkXV8DHEn0OaA6rZhLW8lpN6a9CsOxeHFLiNYrBGy+pBLWH3osxSfPaNyTerrkp3KA0ZnOECdyTuDvasW3yMNG6HspsQmH+urkwWSQ2Gk9f0r5KYJO/QrXa94+GyvOl4oPpxZKvFpgIjuU2C3M9g0Q+FCsEAX4gFcXoMkrSZswl4Yh2GEPRHWac6OCtuZC8AKhfvoeolvk6NHmlbX/Bczfnwd39EDoG6RJHG7ORRH2n76AzVNLM3PIKkZddQm/HVPeWO8MPvGMuJ5wb+O313iKFEd0WMgAAAAAElFTkSuQmCC");
+    image-rendering: pixelated;
+    pointer-events: none;
+    user-select: none;
+}
+
+.task-window-button {
+    width: min(310px, 40vw);
+    text-align: left;
+}
+
+.gomoku-task-button {
+    width: min(220px, 25vw);
+}
+
+.project-folder-task-button {
+    width: min(180px, 18vw);
+}
+
+.mail-task-button {
+    width: min(180px, 18vw);
+}
+
+.task-window-button > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.taskbar-spacer {
+    min-width: 0;
+    flex: 1;
+}
+
+.taskbar-tray {
+    display: flex;
+    height: 28px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 9px;
+    border: 2px inset #efefef;
+    background: #c8c8c8;
+    white-space: nowrap;
+}
+
+.taskbar-audio-toggle,
+.taskbar-language-toggle {
+    display: grid;
+    height: 22px;
+    place-items: center;
+    padding: 3px;
+    border: 1px solid transparent;
+    color: #111;
+    background: transparent;
+    cursor: default;
+}
+
+.taskbar-audio-toggle {
+    width: 22px;
+}
+
+.taskbar-language-toggle {
+    min-width: 28px;
+    padding-right: 4px;
+    padding-left: 4px;
+    font: 700 10px/1 var(--font-system);
+}
+
+.taskbar-audio-toggle[hidden] {
+    display: none;
+}
+
+.taskbar-audio-toggle:hover,
+.taskbar-audio-toggle:focus-visible,
+.taskbar-language-toggle:hover,
+.taskbar-language-toggle:focus-visible {
+    padding: 2px;
+    border: 2px outset #efefef;
+    outline: 0;
+}
+
+.taskbar-audio-toggle:active,
+.taskbar-language-toggle:active {
+    border-style: inset;
+}
+
+.taskbar-audio-toggle img {
+    width: 15px;
+    height: 13px;
+    filter: invert(1);
+}
+
+.tray-network {
+    position: relative;
+    width: 15px;
+    height: 12px;
+    border: 1px solid #333;
+    background: #63a8be;
+}
+
+.tray-network::after {
+    position: absolute;
+    right: -4px;
+    bottom: -4px;
+    width: 7px;
+    height: 6px;
+    content: "";
+    border: 1px solid #333;
+    background: #e1e1e1;
+}
+
+@media (max-width: 900px) {
+    .start-menu {
+        right: 4px;
+        width: auto;
+        max-width: 310px;
+    }
+
+    .shutdown-screen {
+        padding: 28px 24px;
+        font-size: 13px;
+    }
+
+    .shutdown-bios-header,
+    .shutdown-bios-footer {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .shutdown-release {
+        text-align: left;
+    }
+
+    .shutdown-bios-body {
+        min-height: 220px;
+        padding: 48px 0;
+    }
+
+    .shutdown-title {
+        font-size: clamp(24px, 9vw, 38px);
+    }
+}
+
+@media (max-width: 560px) {
+    .task-window-button {
+        width: auto;
+        min-width: 0;
+        flex: 1;
+    }
+
+    .gomoku-task-button {
+        width: auto;
+    }
+
+    .taskbar-tray {
+        padding: 0 6px;
+    }
+
+    .tray-network {
+        display: none;
+    }
+
+    .start-button {
+        padding-right: 6px;
+        padding-left: 6px;
+    }
+}
