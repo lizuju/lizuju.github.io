@@ -306,7 +306,7 @@ test('supports language, navigation, and expandable details', async ({ page, isM
     await page.locator('[data-start-toggle]').click();
     const startMenu = page.locator('[data-start-menu]');
     await expect(startMenu).toBeVisible();
-    await expect(startMenu.locator('button')).toHaveCount(1);
+    await expect(startMenu.locator('[data-shutdown]')).toBeVisible();
     await expect(startMenu.locator('a, [data-open-window], [data-open-gomoku]')).toHaveCount(0);
     await expect(startMenu.locator('[data-start-lang]')).toHaveCount(0);
     await expect(startMenu).toContainText('关闭计算机');
