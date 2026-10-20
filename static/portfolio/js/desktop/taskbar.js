@@ -11,6 +11,7 @@
         const restartButton = document.querySelector('[data-restart]');
         const clock = document.querySelector('[data-retro-clock]');
         let shutdownTimers = [];
+        let shutdownBackground = [];
 
         const clearShutdownTimers = () => {
             shutdownTimers.forEach((timer) => window.clearTimeout(timer));
@@ -19,6 +20,8 @@
 
         const restartDesktop = () => {
             clearShutdownTimers();
+            shutdownBackground.forEach(([element, inert]) => { element.inert = inert; });
+            shutdownBackground = [];
             if (shutdownScreen) shutdownScreen.hidden = true;
             if (shutdownLog) shutdownLog.textContent = '';
             if (restartButton) restartButton.hidden = true;
@@ -32,13 +35,20 @@
             clearShutdownTimers();
             shutdownLog.textContent = '';
             restartButton.hidden = true;
+            shutdownBackground = Array.from(shutdownScreen.parentElement.children)
+                .filter((element) => element !== shutdownScreen)
+                .map((element) => [element, element.inert]);
+            shutdownBackground.forEach(([element]) => { element.inert = true; });
+            shutdownScreen.tabIndex = -1;
             shutdownScreen.hidden = false;
+            shutdownScreen.focus({ preventScroll: true });
 
             t().shutdownLines.forEach((line, index, lines) => {
                 shutdownTimers.push(window.setTimeout(() => {
                     shutdownLog.textContent += `${line}\n`;
                     if (index === lines.length - 1) {
                         restartButton.hidden = false;
+                        restartButton.focus({ preventScroll: true });
                         shutdownTimers.push(window.setTimeout(restartDesktop, 12000));
                     }
                 }, 450 * (index + 1)));
@@ -59,6 +69,13 @@
 
         shutdownButton?.addEventListener('click', startShutdown);
         restartButton?.addEventListener('click', restartDesktop);
+        shutdownScreen?.addEventListener('keydown', (event) => {
+            event.stopPropagation();
+            if (event.key !== 'Tab') return;
+            event.preventDefault();
+            (restartButton.hidden ? shutdownScreen : restartButton).focus({ preventScroll: true });
+        });
+        shutdownScreen?.addEventListener('keyup', (event) => event.stopPropagation());
 
         const updateClock = () => {
             if (!clock) return;

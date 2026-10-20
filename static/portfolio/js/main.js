@@ -55,11 +55,14 @@ import './apps/recycle-bin.js';
         manager.bindGlobalListeners();
 
         const restoredActiveEntry = manager.restoreDesktopSession();
+        window.history.scrollRestoration = 'manual';
+        window.addEventListener('popstate', () => {
+            if (desktopApi.isMobileHomepage()) portfolio.showMobileHomepage();
+            else desktopApi.scrollPortfolioWindow(window.location.hash || '#top', false, 'instant');
+        });
         if (desktopApi.isMobileHomepage()) {
-            window.history.scrollRestoration = 'manual';
             portfolio.showMobileHomepage();
             window.addEventListener('pageshow', portfolio.showMobileHomepage);
-            window.addEventListener('popstate', portfolio.showMobileHomepage);
         } else if (restoredActiveEntry) {
             manager.focusWindow(restoredActiveEntry.element);
         } else {
