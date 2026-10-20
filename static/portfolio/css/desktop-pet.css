@@ -7,7 +7,6 @@
     height: 88px;
     font: 12px/1.45 var(--font-system);
     pointer-events: none;
-    transition: transform var(--pet-duration, 0s) linear;
 }
 
 .desktop-pet::after {

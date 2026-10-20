@@ -19,7 +19,10 @@
         let position = 0;
         let pointerX = null;
         let patrolTimer;
-        let movementTimer;
+        let movementFrame;
+        let previousFrame = null;
+        let destination = 0;
+        let movementSpeed = 45;
         let speechTimer;
 
         const updateLanguage = () => {
@@ -32,9 +35,8 @@
             speech.textContent = copy[speechKey];
         };
 
-        const place = (nextPosition, duration = 0) => {
+        const place = (nextPosition) => {
             position = Math.max(8, Math.min(nextPosition, desktop.clientWidth - pet.offsetWidth - 8));
-            pet.style.setProperty('--pet-duration', `${duration}s`);
             pet.style.transform = `translateX(${position}px)`;
             pet.style.setProperty('--pet-ground', `${taskbar.offsetHeight + 8}px`);
             const speechLeft = Math.max(8, Math.min(position - 60, desktop.clientWidth - 208));
@@ -42,10 +44,44 @@
         };
 
         const stopWalking = () => {
-            window.clearTimeout(movementTimer);
-            const currentPosition = pet.getBoundingClientRect().left - desktop.getBoundingClientRect().left;
-            place(currentPosition);
+            window.cancelAnimationFrame(movementFrame);
+            movementFrame = null;
+            previousFrame = null;
             pet.classList.remove('is-walking');
+        };
+
+        const canMove = () => !pet.hidden && desktopMode.matches && !document.hidden && !pet.inert && !reducedMotion.matches;
+
+        const step = (timestamp) => {
+            if (!canMove() || pet.matches(':hover')) {
+                stopWalking();
+                return;
+            }
+            const elapsed = previousFrame === null ? 0 : Math.min(timestamp - previousFrame, 50) / 1000;
+            previousFrame = timestamp;
+            const distance = destination - position;
+            const travel = movementSpeed * elapsed;
+            if (Math.abs(distance) <= Math.max(4, travel)) {
+                place(destination);
+                stopWalking();
+                return;
+            }
+            pet.classList.toggle('is-facing-left', distance < 0);
+            place(position + Math.sign(distance) * travel);
+            movementFrame = window.requestAnimationFrame(step);
+        };
+
+        const walkTo = (target, speed) => {
+            if (!canMove() || pet.matches(':hover')) return;
+            destination = Math.max(8, Math.min(target, desktop.clientWidth - pet.offsetWidth - 8));
+            movementSpeed = speed;
+            if (Math.abs(destination - position) < 4) {
+                stopWalking();
+                return;
+            }
+            pet.classList.toggle('is-facing-left', destination < position);
+            pet.classList.add('is-walking');
+            if (!movementFrame) movementFrame = window.requestAnimationFrame(step);
         };
 
         const greet = () => {
@@ -63,24 +99,19 @@
 
         const patrol = () => {
             if (pet.matches(':hover') || pet.querySelector(':focus-visible') || !speech.hidden) return;
-            const followPointer = pointerX !== null && Math.random() < 0.5;
-            const target = followPointer ? pointerX - pet.offsetWidth / 2 : position + (Math.random() - 0.5) * 320;
-            const destination = Math.max(8, Math.min(target, desktop.clientWidth - pet.offsetWidth - 8));
-            const distance = Math.min(200, Math.abs(destination - position));
-            if (distance < 8) return;
-            const direction = Math.sign(destination - position);
-            pet.classList.toggle('is-facing-left', direction < 0);
-            pet.classList.add('is-walking');
-            place(position + direction * distance, distance / 45);
-            movementTimer = window.setTimeout(() => pet.classList.remove('is-walking'), distance / 45 * 1000);
+            if (pointerX !== null) walkTo(pointerX - pet.offsetWidth / 2, 180);
+            else walkTo(position + (Math.random() - 0.5) * 320, 45);
         };
 
         const syncActivity = () => {
             window.clearInterval(patrolTimer);
-            if (!pet.hidden) stopWalking();
-            const paused = pet.hidden || !desktopMode.matches || document.hidden || pet.inert || reducedMotion.matches;
+            stopWalking();
+            const paused = !canMove();
             pet.classList.toggle('is-paused', paused);
-            if (!paused) patrolTimer = window.setInterval(patrol, 6000);
+            if (!paused) {
+                if (pointerX !== null && !pet.querySelector(':focus-visible')) walkTo(pointerX - pet.offsetWidth / 2, 180);
+                patrolTimer = window.setInterval(patrol, 6000);
+            }
         };
 
         const show = (spawnCenter = desktop.clientWidth - 90) => {
@@ -126,11 +157,20 @@
         });
         pet.addEventListener('keyup', (event) => event.stopPropagation());
         desktop.addEventListener('pointermove', (event) => {
-            if (!pet.hidden && event.pointerType !== 'touch') pointerX = event.clientX;
+            if (pet.hidden || event.pointerType === 'touch') return;
+            pointerX = event.clientX - desktop.getBoundingClientRect().left;
+            walkTo(pointerX - pet.offsetWidth / 2, 180);
         }, { passive: true });
-        desktop.addEventListener('pointerleave', () => { pointerX = null; });
+        desktop.addEventListener('pointerleave', () => {
+            pointerX = null;
+            stopWalking();
+        });
         window.addEventListener('resize', () => {
-            if (!pet.hidden) stopWalking();
+            if (!pet.hidden) {
+                stopWalking();
+                place(position);
+                if (pointerX !== null) walkTo(pointerX - pet.offsetWidth / 2, 180);
+            }
         });
         document.addEventListener('visibilitychange', syncActivity);
         reducedMotion.addEventListener('change', syncActivity);
