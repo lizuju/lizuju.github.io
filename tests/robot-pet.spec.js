@@ -108,8 +108,9 @@ test('follows the mouse immediately through greetings, stationary targets and ke
 
     await page.clock.runFor(2000);
     const continued = await pet.boundingBox();
-    expect(continued.x).toBeGreaterThan(started.x + 200);
-    await page.clock.runFor(5000);
+    expect(continued.x).toBeGreaterThan(started.x + 100);
+    expect(continued.x).toBeLessThan(started.x + 140);
+    await page.clock.runFor(12000);
     const arrived = await pet.boundingBox();
     expect(Math.abs(arrived.x - targetX)).toBeLessThanOrEqual(4);
     expect(arrived.y).toBe(initial.y);
@@ -120,7 +121,7 @@ test('follows the mouse immediately through greetings, stationary targets and ke
     await page.clock.runFor(200);
     expect((await pet.boundingBox()).x).toBeLessThan(arrived.x - 5);
     await expect(pet).toHaveClass(/is-facing-left/);
-    await page.clock.runFor(9000);
+    await page.clock.runFor(17000);
     expect(Math.abs((await pet.boundingBox()).x - (reversePointerX - initial.width / 2))).toBeLessThanOrEqual(4);
     await expect(pet).not.toHaveClass(/is-walking/);
 

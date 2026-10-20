@@ -76,14 +76,14 @@
     right: 0;
     z-index: 1;
     display: grid;
-    width: 24px;
-    height: 24px;
+    width: 18px;
+    height: 18px;
     place-items: center;
     padding: 0;
     border: 1px outset #e9f0eb;
     color: #28434b;
     background: #cfddda;
-    font: 16px/1 var(--font-system);
+    font: 12px/1 var(--font-system);
     cursor: pointer;
     pointer-events: auto;
 }

@@ -99,7 +99,7 @@
 
         const patrol = () => {
             if (pet.matches(':hover') || pet.querySelector(':focus-visible') || !speech.hidden) return;
-            if (pointerX !== null) walkTo(pointerX - pet.offsetWidth / 2, 120);
+            if (pointerX !== null) walkTo(pointerX - pet.offsetWidth / 2, 60);
             else walkTo(position + (Math.random() - 0.5) * 320, 45);
         };
 
@@ -109,7 +109,7 @@
             const paused = !canMove();
             pet.classList.toggle('is-paused', paused);
             if (!paused) {
-                if (pointerX !== null && !pet.querySelector(':focus-visible')) walkTo(pointerX - pet.offsetWidth / 2, 120);
+                if (pointerX !== null && !pet.querySelector(':focus-visible')) walkTo(pointerX - pet.offsetWidth / 2, 60);
                 patrolTimer = window.setInterval(patrol, 6000);
             }
         };
@@ -159,7 +159,7 @@
         desktop.addEventListener('pointermove', (event) => {
             if (pet.hidden || event.pointerType === 'touch') return;
             pointerX = event.clientX - desktop.getBoundingClientRect().left;
-            walkTo(pointerX - pet.offsetWidth / 2, 120);
+            walkTo(pointerX - pet.offsetWidth / 2, 60);
         }, { passive: true });
         desktop.addEventListener('pointerleave', () => {
             pointerX = null;
@@ -169,7 +169,7 @@
             if (!pet.hidden) {
                 stopWalking();
                 place(position);
-                if (pointerX !== null) walkTo(pointerX - pet.offsetWidth / 2, 120);
+                if (pointerX !== null) walkTo(pointerX - pet.offsetWidth / 2, 60);
             }
         });
         document.addEventListener('visibilitychange', syncActivity);
