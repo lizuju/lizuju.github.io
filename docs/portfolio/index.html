@@ -30,8 +30,8 @@
     <link rel="apple-touch-icon" href="../images/apple-touch-icon.png">
     <link rel="manifest" href="../site.webmanifest">
     <link rel="preload" as="image" href="assets/portfolio-hero.jpg">
-    <link rel="stylesheet" href="css/main.css?v=139c7e55d374">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=139c7e55d374">
+    <link rel="stylesheet" href="css/main.css?v=b5c85138a813">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=b5c85138a813">
 </head>
 
 <body>
@@ -1198,9 +1198,70 @@
                 title="Resize window"></button>
         </section>
 
+        <div class="desktop-pet" id="desktop-pet" data-desktop-pet hidden>
+            <p class="robot-pet-speech" data-pet-speech role="status" aria-live="polite" hidden></p>
+            <button class="robot-pet-dismiss" type="button" data-pet-dismiss aria-label="收起机器人">×</button>
+            <button class="robot-pet-robot" type="button" data-pet-greet aria-label="和机器人打招呼">
+                <svg class="robot-pet-sprite" viewBox="0 0 64 72" width="64" height="72"
+                    fill="none" shape-rendering="crispEdges" aria-hidden="true">
+                    <g class="robot-pet-leg robot-pet-leg--left">
+                        <path d="M20 59H28V65H30V70H16V66H20Z" fill="#687c85" stroke="#243a49" stroke-width="2"/>
+                        <path d="M20 66H28V68H18V67H20Z" fill="#dce5e3"/>
+                    </g>
+                    <g class="robot-pet-leg robot-pet-leg--right">
+                        <path d="M36 59H44V66H48V70H34V65H36Z" fill="#687c85" stroke="#243a49" stroke-width="2"/>
+                        <path d="M38 66H44V67H46V68H36V67H38Z" fill="#dce5e3"/>
+                    </g>
+                    <g class="robot-pet-body">
+                        <g class="robot-pet-arm robot-pet-arm--left">
+                            <path d="M10 46H18V52H14V59H8V55H6V49H10Z" fill="#a8b8bc" stroke="#243a49" stroke-width="2"/>
+                            <path d="M8 50H12V54H8Z" fill="#e8edeb"/>
+                        </g>
+                        <g class="robot-pet-arm robot-pet-arm--right">
+                            <path d="M46 46H54V49H58V55H56V59H50V52H46Z" fill="#a8b8bc" stroke="#243a49" stroke-width="2"/>
+                            <path d="M52 50H56V54H52Z" fill="#e8edeb"/>
+                        </g>
+                        <path d="M20 44H44V48H48V59H44V63H20V59H16V48H20Z" fill="#b9c7c9" stroke="#243a49" stroke-width="2"/>
+                        <path d="M20 46H42V48H20V58H18V50H20Z" fill="#f0f4ed"/>
+                        <path d="M42 49H46V58H42V61H22V59H42Z" fill="#839ba2"/>
+                        <path d="M24 50H40V57H24Z" fill="#254657"/>
+                        <path d="M27 52H30V55H27Z" fill="#f4d260"/>
+                        <path d="M33 52H37V54H33Z" fill="#66dfc7"/>
+                        <path d="M28 40H36V45H28Z" fill="#708b94" stroke="#243a49" stroke-width="2"/>
+                        <path d="M30 5H34V12H30Z" fill="#8ca2a8" stroke="#243a49" stroke-width="2"/>
+                        <path d="M28 1H36V3H38V7H36V9H28V7H26V3H28Z" fill="#f4d260" stroke="#243a49" stroke-width="2"/>
+                        <path d="M28 3H34V5H28Z" fill="#fff4bd"/>
+                        <path d="M4 20H12V34H4ZM52 20H60V34H52Z" fill="#839ba2" stroke="#243a49" stroke-width="2"/>
+                        <path d="M14 12H50V16H54V38H50V42H14V38H10V16H14Z" fill="#c4d0d0" stroke="#243a49" stroke-width="2"/>
+                        <path d="M16 14H48V16H14V36H12V18H16Z" fill="#f0f4ed"/>
+                        <path d="M50 18H52V36H48V40H16V38H48V36H50Z" fill="#8da4ac"/>
+                        <path d="M17 19H47V35H17Z" fill="#112f45" stroke="#243a49" stroke-width="2"/>
+                        <path d="M19 21H45V23H19Z" fill="#1c4559"/>
+                        <g class="robot-pet-eyes" fill="#77f1cc">
+                            <path d="M21 24H27V30H21ZM37 24H43V30H37Z"/>
+                        </g>
+                        <path d="M29 31H35V33H29Z" fill="#4b9f9c"/>
+                    </g>
+                </svg>
+            </button>
+        </div>
+
         <div class="start-menu" data-start-menu hidden>
             <div class="start-menu-rail">GAVIN 2026</div>
             <div class="start-menu-items">
+                <button type="button" data-pet-toggle aria-controls="desktop-pet" aria-expanded="false">
+                    <span class="start-icon start-icon--robot" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="23" height="23" fill="none" shape-rendering="crispEdges">
+                            <path d="M11 2H13V6H11Z" fill="#526c77"/>
+                            <path d="M10 1H14V4H10Z" fill="#f4d260"/>
+                            <path d="M5 6H19V8H21V17H19V19H5V17H3V8H5Z" fill="#ccd7d7" stroke="#243a49" stroke-width="2"/>
+                            <path d="M6 9H18V15H6Z" fill="#112f45"/>
+                            <path d="M8 10H10V13H8ZM14 10H16V13H14Z" fill="#77f1cc"/>
+                            <path d="M8 19H16V22H8Z" fill="#839ba2"/>
+                        </svg>
+                    </span>
+                    <span data-i18n="petShow">唤醒机器人</span>
+                </button>
                 <div class="start-menu-separator"></div>
                 <button type="button" data-shutdown>
                     <span class="start-icon start-icon--shutdown" aria-hidden="true"></span>
@@ -1281,10 +1342,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=139c7e55d374"></script>
-    <script src="js/gomoku-game.js?v=139c7e55d374"></script>
-    <script src="js/content.js?v=139c7e55d374"></script>
-    <script src="js/main.js?v=139c7e55d374"></script>
+    <script src="js/gomoku-engine.js?v=b5c85138a813"></script>
+    <script src="js/gomoku-game.js?v=b5c85138a813"></script>
+    <script src="js/content.js?v=b5c85138a813"></script>
+    <script src="js/main.js?v=b5c85138a813"></script>
 </body>
 
 </html>

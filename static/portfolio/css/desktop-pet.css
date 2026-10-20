@@ -1,0 +1,188 @@
+.desktop-pet {
+    position: absolute;
+    bottom: var(--pet-ground, 44px);
+    left: 0;
+    z-index: 24;
+    width: 80px;
+    height: 88px;
+    font: 12px/1.45 var(--font-system);
+    pointer-events: none;
+    transition: transform var(--pet-duration, 0s) linear;
+}
+
+.desktop-pet::after {
+    position: absolute;
+    right: 16px;
+    bottom: 0;
+    left: 16px;
+    height: 5px;
+    background: rgba(0, 35, 43, 0.38);
+    box-shadow: 4px -2px rgba(0, 35, 43, 0.12), -4px -2px rgba(0, 35, 43, 0.12);
+    content: "";
+    pointer-events: none;
+}
+
+.robot-pet-robot {
+    position: absolute;
+    bottom: 3px;
+    left: 8px;
+    width: 64px;
+    height: 72px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    pointer-events: auto;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.robot-pet-sprite {
+    display: block;
+    overflow: visible;
+    filter: drop-shadow(2px 2px 0 rgba(0, 32, 40, 0.3));
+    image-rendering: pixelated;
+}
+
+.is-facing-left .robot-pet-sprite {
+    transform: scaleX(-1);
+}
+
+.robot-pet-eyes {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: robot-pet-blink 5s steps(1) infinite;
+}
+
+.is-walking .robot-pet-leg--left {
+    animation: robot-pet-step 480ms steps(2, jump-none) infinite;
+}
+
+.is-walking .robot-pet-leg--right {
+    animation: robot-pet-step 480ms steps(2, jump-none) -240ms infinite;
+}
+
+.is-walking .robot-pet-body {
+    animation: robot-pet-bob 240ms steps(2, jump-none) infinite;
+}
+
+.is-greeting .robot-pet-arm--right {
+    transform-box: fill-box;
+    transform-origin: 15% 10%;
+    animation: robot-pet-wave 420ms steps(3) infinite alternate;
+}
+
+.robot-pet-dismiss {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 1;
+    display: grid;
+    width: 24px;
+    height: 24px;
+    place-items: center;
+    padding: 0;
+    border: 1px outset #e9f0eb;
+    color: #28434b;
+    background: #cfddda;
+    font: 16px/1 var(--font-system);
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.robot-pet-dismiss:hover {
+    color: #fff;
+    background: #315f6d;
+}
+
+.robot-pet-dismiss:active {
+    border-style: inset;
+}
+
+.robot-pet-robot:focus-visible,
+.robot-pet-dismiss:focus-visible {
+    outline: 2px dotted #fff;
+    outline-offset: 3px;
+    box-shadow: 0 0 0 3px #16465b;
+}
+
+.robot-pet-speech {
+    position: absolute;
+    bottom: 100%;
+    left: var(--speech-left, -60px);
+    width: 200px;
+    margin: 0 0 8px;
+    padding: 10px 12px;
+    border: 2px solid #314b56;
+    color: #163c49;
+    background: #fffde8;
+    box-shadow: 3px 3px rgba(0, 28, 40, 0.3);
+    overflow-wrap: anywhere;
+    pointer-events: none;
+}
+
+.robot-pet-speech::after {
+    position: absolute;
+    bottom: -7px;
+    left: clamp(12px, calc(34px - var(--speech-left, -60px)), 180px);
+    width: 10px;
+    height: 10px;
+    border-right: 2px solid #314b56;
+    border-bottom: 2px solid #314b56;
+    background: #fffde8;
+    content: "";
+    transform: rotate(45deg);
+}
+
+.start-icon.start-icon--robot {
+    border: 0;
+    background: transparent;
+}
+
+.is-paused .robot-pet-sprite,
+.is-paused .robot-pet-sprite * {
+    animation-play-state: paused;
+}
+
+@keyframes robot-pet-step {
+    50% { transform: translateY(-3px); }
+}
+
+@keyframes robot-pet-bob {
+    50% { transform: translateY(-1px); }
+}
+
+@keyframes robot-pet-blink {
+    0%, 43%, 47%, 100% { transform: scaleY(1); }
+    44%, 46% { transform: scaleY(0.18); }
+}
+
+@keyframes robot-pet-wave {
+    from { transform: rotate(-100deg); }
+    to { transform: rotate(-135deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .robot-pet-sprite,
+    .robot-pet-sprite * {
+        animation: none !important;
+    }
+}
+
+.mobile-homepage .desktop-pet,
+.mobile-homepage [data-pet-toggle] {
+    display: none;
+}
+
+@media (max-width: 900px), (pointer: coarse), (pointer: none) {
+    .desktop-pet,
+    [data-pet-toggle] {
+        display: none;
+    }
+}
+
+@media print {
+    .desktop-pet,
+    [data-pet-toggle] {
+        display: none !important;
+    }
+}

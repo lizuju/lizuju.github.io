@@ -1,5 +1,6 @@
 import '../css/base.css';
 import '../css/desktop.css';
+import '../css/desktop-pet.css';
 import '../css/apps/satellite.css';
 import '../css/apps/project-folder.css';
 import '../css/apps/mail.css';
@@ -13,6 +14,7 @@ import './desktop/core.js';
 import './desktop/window-manager.js';
 import './desktop/taskbar.js';
 import './desktop/parent-bridge.js';
+import './desktop/robot-pet.js';
 import './apps/portfolio.js';
 import './apps/project-folder.js';
 import './apps/mail.js';
@@ -39,6 +41,7 @@ import './apps/recycle-bin.js';
         desktopApi.apps.mail(manager);
         const satellite = desktopApi.apps.satellite(manager);
         desktopApi.apps.recycleBin(manager);
+        desktopApi.setupRobotPet(manager);
 
         const gameWindow = document.querySelector('[data-gomoku-window]');
         const gameTask = document.querySelector('[data-gomoku-task]');
