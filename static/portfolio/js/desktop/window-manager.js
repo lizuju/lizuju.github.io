@@ -105,11 +105,17 @@
             });
         };
 
+        const closeStartMenu = () => {
+            startMenu.hidden = true;
+            startButton.setAttribute('aria-expanded', 'false');
+            closeWindowMenus();
+        };
+
         const openWindowMenu = (trigger, focusPosition) => {
             const popup = getMenuPopup(trigger);
             if (!popup) return;
 
-            closeWindowMenus();
+            closeStartMenu();
             popup.hidden = false;
             trigger.setAttribute('aria-expanded', 'true');
 
@@ -204,12 +210,6 @@
         document.addEventListener('focusin', (event) => {
             if (!event.target.closest?.('[data-window-menubar]')) closeWindowMenus();
         });
-
-        const closeStartMenu = () => {
-            startMenu.hidden = true;
-            startButton.setAttribute('aria-expanded', 'false');
-            closeWindowMenus();
-        };
 
         const getWorkArea = () => ({
             width: desktop.clientWidth,

@@ -20,7 +20,7 @@
         });
     }
 
-    function renderProjects(projects) {
+    function renderProjects(projects, openDetails = []) {
         const container = document.querySelector('[data-projects]');
         if (!container) return;
 
@@ -83,6 +83,7 @@
 
             const detailsDrawer = document.createElement('details');
             detailsDrawer.className = 'project-details';
+            detailsDrawer.open = Boolean(openDetails[index]);
             const summary = document.createElement('summary');
             summary.textContent = copy.projectDetailLabel;
             const details = document.createElement('ul');
@@ -192,6 +193,20 @@
     function applyLanguage() {
         const copy = t();
         const currentLang = desktopApi.getLanguage();
+        const windowScroll = document.querySelector('[data-window-scroll]');
+        const projectCards = [...document.querySelectorAll('[data-projects] > .project-card')];
+        const openDetails = projectCards.map((card) => card.querySelector('details').open);
+        const anchorSelector = '.page-shell main > section, .method-step, .project-card, .project-body > *, .project-details summary, .project-details[open] li, .skill-card';
+        const anchorCandidates = [...document.querySelectorAll(anchorSelector)];
+        const viewportTop = windowScroll.getBoundingClientRect().top + windowScroll.clientTop
+            + (window.innerWidth <= 900 ? document.querySelector('.site-header').offsetHeight : 0);
+        const readingAnchorIndex = projectCards.length && windowScroll.scrollTop > 0
+            ? anchorCandidates.findLastIndex((element) => {
+                const rect = element.getBoundingClientRect();
+                return rect.height > 0 && rect.top <= viewportTop;
+            })
+            : -1;
+        const readingOffset = anchorCandidates[readingAnchorIndex]?.getBoundingClientRect().top;
 
         document.documentElement.lang = currentLang === 'zh-CN' ? 'zh-CN' : 'en';
         document.title = currentLang === 'zh-CN'
@@ -230,8 +245,13 @@
         renderList('otherAwards', copy.otherAwards);
         renderList('educationHighlights', copy.educationHighlights);
         renderMethods(copy.methods);
-        renderProjects(copy.projects);
+        renderProjects(copy.projects, openDetails);
         renderSkills(copy.skills);
+
+        if (readingAnchorIndex >= 0) {
+            const restoredAnchor = document.querySelectorAll(anchorSelector)[readingAnchorIndex];
+            windowScroll.scrollTop += restoredAnchor.getBoundingClientRect().top - readingOffset;
+        }
 
         const langButton = document.querySelector('[data-lang-toggle]');
         if (langButton) langButton.textContent = currentLang === 'zh-CN' ? 'EN' : '中文';
@@ -351,6 +371,11 @@
                 if (!target || !scrollPortfolioWindow(target, true)) return;
                 event.preventDefault();
                 closeMobileMenu();
+                if (link.closest('[data-mobile-menu]')) {
+                    const targetElement = document.getElementById(target.slice(1));
+                    targetElement.tabIndex = -1;
+                    targetElement.focus({ preventScroll: true });
+                }
             });
         });
 

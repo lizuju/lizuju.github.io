@@ -298,6 +298,10 @@
     text-align: left;
 }
 
+.taskbar-tasks {
+    display: contents;
+}
+
 .gomoku-task-button {
     width: min(220px, 25vw);
 }
@@ -435,14 +439,38 @@
 }
 
 @media (max-width: 560px) {
-    .task-window-button {
-        width: auto;
+    .taskbar-tasks {
+        display: flex;
         min-width: 0;
         flex: 1;
+        gap: 4px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
     }
 
-    .gomoku-task-button {
-        width: auto;
+    .taskbar-tasks::-webkit-scrollbar {
+        display: none;
+    }
+
+    .task-window-button {
+        width: 36px;
+        min-width: 36px;
+        flex: 0 0 36px;
+        gap: 0;
+    }
+
+    .task-window-button > span:last-child {
+        width: 0;
+    }
+
+    .taskbar-spacer {
+        display: none;
+    }
+
+    .start-button,
+    .taskbar-tray {
+        flex-shrink: 0;
     }
 
     .taskbar-tray {

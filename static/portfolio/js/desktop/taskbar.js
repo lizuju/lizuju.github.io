@@ -10,6 +10,11 @@
         const shutdownLog = document.querySelector('[data-shutdown-log]');
         const restartButton = document.querySelector('[data-restart]');
         const clock = document.querySelector('[data-retro-clock]');
+        const taskButtons = document.querySelectorAll('.task-window-button');
+        const taskList = document.createElement('div');
+        taskList.className = 'taskbar-tasks';
+        taskButtons[0].before(taskList);
+        taskList.append(...taskButtons);
         let shutdownTimers = [];
         let shutdownBackground = [];
 
@@ -57,8 +62,12 @@
 
         startButton.addEventListener('click', (event) => {
             event.stopPropagation();
-            startMenu.hidden = !startMenu.hidden;
-            startButton.setAttribute('aria-expanded', String(!startMenu.hidden));
+            const shouldOpen = startMenu.hidden;
+            closeStartMenu();
+            if (shouldOpen) {
+                startMenu.hidden = false;
+                startButton.setAttribute('aria-expanded', 'true');
+            }
         });
 
         startMenu.addEventListener('click', (event) => event.stopPropagation());

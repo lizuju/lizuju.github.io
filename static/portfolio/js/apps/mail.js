@@ -63,7 +63,10 @@
                 const result = await response.json();
                 if (result.success !== true && result.success !== 'true') throw new Error('Mail delivery failed');
 
-                mailForm.reset();
+                const currentFormData = new FormData(mailForm);
+                if (Array.from(formData.entries()).every(([name, value]) => currentFormData.get(name) === value)) {
+                    mailForm.reset();
+                }
                 setMailStatus('mailStatusSuccess', 'success');
             } catch {
                 if (mailStatusKey !== 'mailStatusUnconfirmed') setMailStatus('mailStatusError', 'error');
