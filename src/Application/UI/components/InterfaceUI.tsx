@@ -26,16 +26,18 @@ const InterfaceUI: React.FC<InterfaceUIProps> = ({}) => {
         return removeLoadingListener;
     }, []);
 
-    const initMouseDownHandler = () => {
+    const initInteractionHandler = () => {
         setVisible(true);
         setInitLoad(false);
     };
 
     useEffect(() => {
         if (!loading && initLoad) {
-            document.addEventListener('mousedown', initMouseDownHandler);
+            document.addEventListener('mousedown', initInteractionHandler);
+            document.addEventListener('keydown', initInteractionHandler);
             return () => {
-                document.removeEventListener('mousedown', initMouseDownHandler);
+                document.removeEventListener('mousedown', initInteractionHandler);
+                document.removeEventListener('keydown', initInteractionHandler);
             };
         }
     }, [loading, initLoad]);
@@ -68,6 +70,7 @@ const InterfaceUI: React.FC<InterfaceUIProps> = ({}) => {
             animate={visible ? 'visible' : 'hide'}
             style={styles.wrapper}
             className="interface-wrapper"
+            aria-hidden={!visible}
             id="prevent-click"
         >
             <InfoOverlay visible={visible} />

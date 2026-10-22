@@ -35,6 +35,13 @@ body {
 .icon-control-container {
     height: 26.5px;
     width: 26.5px;
+    border: 0;
+    padding: 0;
+}
+
+.icon-control-container:focus-visible {
+    outline: 2px solid white;
+    outline-offset: 3px;
 }
 
 @media only screen and (max-width: 768px) {

@@ -161,7 +161,8 @@
                     moveToAdjacentMenu(trigger, event.key === 'ArrowLeft' ? -1 : 1, openMenu);
                     return;
                 }
-                if (event.key === 'Escape') {
+                if (event.key === 'Escape' && trigger.getAttribute('aria-expanded') === 'true') {
+                    event.preventDefault();
                     closeWindowMenus();
                     trigger.focus({ preventScroll: true });
                 }

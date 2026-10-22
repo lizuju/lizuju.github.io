@@ -8,20 +8,20 @@ import volumeOn from '../../../../static/textures/UI/volume_on.svg';
 // @ts-ignore
 import volumeOff from '../../../../static/textures/UI/volume_off.svg';
 
-interface MuteToggleProps {}
+interface MuteToggleProps {
+    disabled: boolean;
+}
 
-const MuteToggle: React.FC<MuteToggleProps> = ({}) => {
+const MuteToggle: React.FC<MuteToggleProps> = ({ disabled }) => {
     const [isHovering, setIsHovering] = useState(false);
     const [isActive, setIsActive] = useState(false);
     const [muted, setMuted] = useState(getMuteState);
 
     const onMouseDownHandler = useCallback(
-        (event) => {
+        () => {
             setIsActive(true);
-            event.preventDefault();
-            toggleMuteState();
         },
-        [muted]
+        []
     );
 
     const onMouseUpHandler = useCallback(() => {
@@ -31,12 +31,16 @@ const MuteToggle: React.FC<MuteToggleProps> = ({}) => {
     useEffect(() => UIEventBus.on('muteToggle', setMuted), []);
 
     return (
-        <div
+        <button
+            type="button"
+            tabIndex={0}
+            disabled={disabled}
             onMouseEnter={() => setIsHovering(true)}
             onMouseLeave={() => setIsHovering(false)}
             style={styles.container}
             onMouseDown={onMouseDownHandler}
             onMouseUp={onMouseUpHandler}
+            onClick={toggleMuteState}
             className="icon-control-container"
             data-audio-mute-toggle
             aria-label={muted ? 'Unmute background music' : 'Mute background music'}
@@ -44,6 +48,7 @@ const MuteToggle: React.FC<MuteToggleProps> = ({}) => {
             id="prevent-click"
         >
             <motion.img
+                alt=""
                 id="prevent-click"
                 src={muted ? volumeOff : volumeOn}
                 style={{ opacity: isActive ? 0.2 : isHovering ? 0.8 : 1 }}
@@ -53,7 +58,7 @@ const MuteToggle: React.FC<MuteToggleProps> = ({}) => {
                 }
                 variants={iconVars}
             />
-        </div>
+        </button>
     );
 };
 

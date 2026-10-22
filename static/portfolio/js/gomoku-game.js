@@ -916,7 +916,8 @@
         document.addEventListener('pointercancel', finishPointerInteraction);
 
         document.addEventListener('keydown', (event) => {
-            if (gameWindow.classList.contains('is-minimized')
+            if (event.defaultPrevented
+                || gameWindow.classList.contains('is-minimized')
                 || gameWindow.classList.contains('is-closed')
                 || !gameWindow.classList.contains('is-active')) return;
             if (!dialog.hidden) {

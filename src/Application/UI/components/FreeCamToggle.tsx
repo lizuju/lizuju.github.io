@@ -7,21 +7,21 @@ import camera from '../../../../static/textures/UI/camera.svg';
 // @ts-ignore
 import mouse from '../../../../static/textures/UI/mouse.svg';
 
-interface MuteToggleProps {}
+interface MuteToggleProps {
+    disabled: boolean;
+}
 
-const MuteToggle: React.FC<MuteToggleProps> = ({}) => {
+const MuteToggle: React.FC<MuteToggleProps> = ({ disabled }) => {
     const [isHovering, setIsHovering] = useState(false);
     const [isActive, setIsActive] = useState(false);
     const [freeCamActive, setFreeCamActive] = useState(false);
     const [blockEvents, setBlockEvents] = useState(true);
 
     const onMouseDownHandler = useCallback(
-        (event) => {
+        () => {
             setIsActive(true);
-            event.preventDefault();
-            setFreeCamActive(!freeCamActive);
         },
-        [freeCamActive]
+        []
     );
 
     const iconSize = freeCamActive
@@ -51,16 +51,23 @@ const MuteToggle: React.FC<MuteToggleProps> = ({}) => {
 
     return (
         <div style={styles.wrapper}>
-            <div
+            <button
+                type="button"
+                tabIndex={0}
+                disabled={disabled}
                 onMouseEnter={() => setIsHovering(true)}
                 onMouseLeave={() => setIsHovering(false)}
                 style={styles.container}
                 onMouseDown={onMouseDownHandler}
                 onMouseUp={onMouseUpHandler}
+                onClick={() => setFreeCamActive((active) => !active)}
                 className="icon-control-container"
+                aria-label={freeCamActive ? 'Disable free camera' : 'Enable free camera'}
+                aria-pressed={freeCamActive}
                 id="prevent-click"
             >
                 <motion.img
+                    alt=""
                     id="prevent-click"
                     src={freeCamActive ? mouse : camera}
                     style={{ opacity: isActive ? 0.2 : isHovering ? 0.8 : 1 }}
@@ -74,7 +81,7 @@ const MuteToggle: React.FC<MuteToggleProps> = ({}) => {
                     }
                     variants={iconVars}
                 />
-            </div>
+            </button>
             {/* <motion.div
                 initial="hidden"
                 animate={freeCamActive ? 'active' : 'hidden'}
