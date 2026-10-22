@@ -32,8 +32,8 @@
     <link rel="preload" as="image" type="image/webp" href="assets/portfolio-hero-960.webp"
         imagesrcset="assets/portfolio-hero-480.webp 480w, assets/portfolio-hero-960.webp 960w, assets/portfolio-hero.webp 1672w"
         imagesizes="(max-width: 560px) calc(100vw - 48px), (max-width: 900px) calc(100vw - 56px), (max-width: 1040px) 620px, calc(42.5vw - 145px)">
-    <link rel="stylesheet" href="css/main.css?v=23c6fdccdf74">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=23c6fdccdf74">
+    <link rel="stylesheet" href="css/main.css?v=627f85a80404">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=627f85a80404">
 </head>
 
 <body>
@@ -291,7 +291,7 @@
                     <div class="hero-actions">
                         <a class="primary-action" href="#experience" data-i18n="heroPrimary">查看工作经历</a>
                         <a class="secondary-action" href="#contact" data-i18n="heroSecondary">联系我</a>
-                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=23c6fdccdf74"
+                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=627f85a80404"
                             download="李祖钜简历.pdf" data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                     </div>
                 </div>
@@ -547,7 +547,7 @@
                     </div>
                     <div class="contact-item">
                         <span class="contact-label" data-i18n="contactResume">个人简历</span>
-                        <a href="assets/li-zuju-resume.pdf?v=23c6fdccdf74" download="李祖钜简历.pdf"
+                        <a href="assets/li-zuju-resume.pdf?v=627f85a80404" download="李祖钜简历.pdf"
                             data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                         <span class="contact-note" data-i18n="resumeDetails">中文版 · 5 页 · 576 KB</span>
                     </div>
@@ -666,6 +666,12 @@
                         <span class="folder-item-icon folder-item-icon--music" aria-hidden="true"></span>
                         <strong data-i18n="folderMusic">音乐作品集</strong>
                         <small data-i18n="folderMusicBody">1 段视频</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
+                        data-open-papers-folder data-folder="papers">
+                        <span class="folder-item-icon" aria-hidden="true"></span>
+                        <strong data-i18n="folderPapers">数学建模论文</strong>
+                        <small data-i18n="folderPapersBody">2 篇论文 · PDF</small>
                     </button>
                 </div>
 
@@ -823,10 +829,24 @@
                         <small data-i18n="videoFileType">MP4 视频</small>
                     </button>
                 </div>
+                <div class="project-folder-grid" data-papers-folder-view hidden>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
+                        data-modeling-paper data-paper-preview="assets/math-modeling-papers/national" data-paper-pages="21">
+                        <span class="text-file-icon pdf-file-icon" aria-hidden="true">PDF</span>
+                        <strong data-i18n="nationalPaper">国赛论文.pdf</strong>
+                        <small data-i18n="pdfFileType">PDF 文档</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
+                        data-modeling-paper data-paper-preview="assets/math-modeling-papers/mcm" data-paper-pages="23">
+                        <span class="text-file-icon pdf-file-icon" aria-hidden="true">PDF</span>
+                        <strong data-i18n="mcmPaper">美赛论文.pdf</strong>
+                        <small data-i18n="pdfFileType">PDF 文档</small>
+                    </button>
+                </div>
             </div>
 
             <div class="window-statusbar project-folder-statusbar">
-                <span data-project-folder-status data-i18n="folderStatus">2 个对象</span>
+                <span data-project-folder-status data-i18n="folderStatus">3 个对象</span>
                 <span data-i18n="statusZone">我的电脑</span>
             </div>
             <button class="window-resize-handle" type="button" data-project-folder-resize aria-label="Resize folder window"
@@ -898,6 +918,31 @@
             </div>
             <button class="window-resize-handle" type="button" data-video-preview-resize aria-label="Resize video player"
                 title="Resize video player"></button>
+        </section>
+
+        <section class="app-window paper-preview-window is-closed" data-paper-preview-window
+            aria-label="PDF preview window">
+            <div class="window-titlebar" data-paper-preview-drag>
+                <div class="window-title">
+                    <span class="window-app-icon" aria-hidden="true">P</span>
+                    <span data-paper-preview-title data-i18n="paperPreviewTitle">论文预览</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-paper-preview-action="minimize" aria-label="Minimize PDF preview"
+                        title="Minimize"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-paper-preview-action="maximize" aria-label="Maximize PDF preview"
+                        title="Maximize"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-paper-preview-action="close" aria-label="Close PDF preview"
+                        title="Close"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+            <div class="paper-preview-body" data-paper-preview-pages tabindex="0"></div>
+            <div class="window-statusbar">
+                <span data-paper-preview-status data-i18n="paperPreviewHint">上下滚动阅读论文</span>
+                <span data-i18n="pdfFileType">PDF 文档</span>
+            </div>
+            <button class="window-resize-handle" type="button" data-paper-preview-resize aria-label="Resize PDF preview"
+                title="Resize PDF preview"></button>
         </section>
 
         <section class="app-window mail-window is-closed" data-mail-window aria-label="Email compose window">
@@ -1376,6 +1421,10 @@
                 <span class="window-app-icon window-app-icon--video" aria-hidden="true">▶</span>
                 <span data-i18n="videoTaskTitle">视频播放器</span>
             </button>
+            <button class="task-window-button" type="button" data-paper-preview-task hidden>
+                <span class="window-app-icon" aria-hidden="true">P</span>
+                <span data-paper-preview-task-title data-i18n="paperPreviewTitle">论文预览</span>
+            </button>
             <button class="task-window-button mail-task-button" type="button" data-mail-task hidden>
                 <span class="window-app-icon window-app-icon--mail" aria-hidden="true"></span>
                 <span data-i18n="mailTaskTitle">电子邮件</span>
@@ -1423,10 +1472,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=23c6fdccdf74"></script>
-    <script src="js/gomoku-game.js?v=23c6fdccdf74"></script>
-    <script src="js/content.js?v=23c6fdccdf74"></script>
-    <script src="js/main.js?v=23c6fdccdf74"></script>
+    <script src="js/gomoku-engine.js?v=627f85a80404"></script>
+    <script src="js/gomoku-game.js?v=627f85a80404"></script>
+    <script src="js/content.js?v=627f85a80404"></script>
+    <script src="js/main.js?v=627f85a80404"></script>
 </body>
 
 </html>

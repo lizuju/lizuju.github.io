@@ -2,7 +2,7 @@
     const desktopApi = window.GavinDesktop;
     const { t } = desktopApi;
 
-    // Project folders and their image and video preview windows.
+    // Project folders and their media preview windows.
     function setupProjectFolder(manager) {
         const projectFolderWindow = document.querySelector('[data-project-folder-window]');
         const projectFolderTitlebar = document.querySelector('[data-project-folder-drag]');
@@ -16,6 +16,14 @@
         const robomasterFolderButton = document.querySelector('[data-open-robomaster-folder]');
         const musicFolderView = document.querySelector('[data-music-folder-view]');
         const musicVideoButton = document.querySelector('[data-music-video]');
+        const papersFolderView = document.querySelector('[data-papers-folder-view]');
+        const paperButtons = Array.from(document.querySelectorAll('[data-modeling-paper]'));
+        const paperPreviewWindow = document.querySelector('[data-paper-preview-window]');
+        const paperPreviewTask = document.querySelector('[data-paper-preview-task]');
+        const paperPreviewTitle = document.querySelector('[data-paper-preview-title]');
+        const paperPreviewTaskTitle = document.querySelector('[data-paper-preview-task-title]');
+        const paperPreviewPages = document.querySelector('[data-paper-preview-pages]');
+        const paperPreviewStatus = document.querySelector('[data-paper-preview-status]');
         const folderButtons = Array.from(projectFolderRoot.querySelectorAll('[data-folder]'));
         const projectFolderBack = document.querySelector('[data-project-folder-back]');
         const imagePreviewWindow = document.querySelector('[data-image-preview-window]');
@@ -41,6 +49,9 @@
         let currentFolder = 'root';
         let selectedFolderButton = robomasterFolderButton;
         let selectedImageButton;
+        let selectedPaperButton = paperButtons[0];
+        let previewPaperButton;
+        let pendingPaperScrollTop;
         const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
 
         const folderEntry = manager.registerWindow({
@@ -57,6 +68,7 @@
                     ? selectedImageButton
                     : currentFolder === 'music'
                         ? musicVideoButton
+                        : currentFolder === 'papers' ? selectedPaperButton
                         : currentFolder === 'root' ? selectedFolderButton : projectFolderBack
             )
         });
@@ -96,6 +108,72 @@
             },
             focusTarget: () => video
         });
+        const paperEntry = manager.registerWindow({
+            id: 'paper-preview',
+            element: paperPreviewWindow,
+            task: paperPreviewTask,
+            titlebar: document.querySelector('[data-paper-preview-drag]'),
+            resizeHandle: document.querySelector('[data-paper-preview-resize]'),
+            actionAttribute: 'data-paper-preview-action',
+            minWidth: 440,
+            minHeight: 320,
+            show: () => {
+                manager.showWindow(paperPreviewWindow, paperPreviewTask, { revealTask: true });
+                if (pendingPaperScrollTop !== undefined) {
+                    paperPreviewPages.scrollTop = pendingPaperScrollTop;
+                    pendingPaperScrollTop = undefined;
+                }
+            },
+            hide: (state) => {
+                pendingPaperScrollTop = paperPreviewPages.scrollTop;
+                manager.hideWindow(paperPreviewWindow, paperPreviewTask, state, { hideTask: state === 'is-closed' });
+            },
+            focusTarget: () => paperPreviewPages
+        });
+
+        const updatePaperCopy = () => {
+            if (!previewPaperButton) return;
+            const copy = t();
+            const name = previewPaperButton.querySelector('strong').textContent;
+            const title = `${copy.paperPreviewTitle} - ${name}`;
+            paperPreviewTitle.textContent = title;
+            paperPreviewTaskTitle.textContent = title;
+            paperPreviewPages.setAttribute('aria-label', title);
+            paperPreviewStatus.textContent = `${previewPaperButton.dataset.paperPages} ${copy.paperPreviewPages} · ${copy.paperPreviewHint}`;
+            paperPreviewPages.querySelectorAll('img').forEach((image, index) => {
+                image.alt = `${name} — ${index + 1} / ${previewPaperButton.dataset.paperPages}`;
+            });
+        };
+
+        const updatePaperPreview = (button) => {
+            if (previewPaperButton !== button) {
+                previewPaperButton = button;
+                pendingPaperScrollTop = 0;
+                const count = Number(button.dataset.paperPages);
+                paperPreviewPages.replaceChildren(...Array.from({ length: count }, (_, index) => {
+                    const figure = document.createElement('figure');
+                    figure.className = 'paper-preview-page';
+                    const image = document.createElement('img');
+                    image.width = 1600;
+                    image.height = 2263;
+                    image.loading = index === 0 ? 'eager' : 'lazy';
+                    image.decoding = 'async';
+                    image.src = `${button.dataset.paperPreview}/page-${String(index + 1).padStart(2, '0')}.webp`;
+                    const caption = document.createElement('figcaption');
+                    caption.textContent = `${index + 1} / ${count}`;
+                    figure.append(image, caption);
+                    return figure;
+                }));
+            }
+            updatePaperCopy();
+        };
+
+        const openPaperPreview = (button) => {
+            selectedPaperButton = button;
+            paperButtons.forEach((candidate) => candidate.classList.toggle('is-selected', candidate === button));
+            updatePaperPreview(button);
+            paperEntry.show();
+        };
 
         const getPhotoCopy = (button, key) => {
             const suffix = document.documentElement.lang === 'en' ? 'En' : 'Zh';
@@ -117,12 +195,14 @@
                 return;
             }
             if (currentFolder === 'music') musicVideoButton.classList.add('is-selected');
+            else if (currentFolder === 'papers') paperButtons.forEach((button) => button.classList.add('is-selected'));
             else folderButtons.forEach((button) => button.classList.add('is-selected'));
         };
 
         const clearFolderSelection = () => {
             folderButtons.forEach((button) => button.classList.remove('is-selected'));
             musicVideoButton.classList.remove('is-selected');
+            paperButtons.forEach((button) => button.classList.remove('is-selected'));
             robomasterImageButtons.forEach((button) => button.classList.remove('is-selected'));
             selectedImageButton = undefined;
         };
@@ -200,8 +280,11 @@
             projectFolderRoot.hidden = folder !== 'root';
             robomasterFolderView.hidden = folder !== 'photos';
             musicFolderView.hidden = folder !== 'music';
+            papersFolderView.hidden = folder !== 'papers';
             projectFolderBack.hidden = folder === 'root';
-            const prefix = folder === 'photos' ? 'folderPhoto' : folder === 'music' ? 'folderMusic' : 'folder';
+            if (folder !== 'root') selectedFolderButton = folderButtons.find((button) => button.dataset.folder === folder);
+            const prefix = folder === 'photos' ? 'folderPhoto' : folder === 'music' ? 'folderMusic'
+                : folder === 'papers' ? 'folderPapers' : 'folder';
             projectFolderTitle.textContent = copy[`${prefix}WindowTitle`];
             projectFolderAddress.textContent = copy[`${prefix}Address`];
             projectFolderStatus.textContent = copy[`${prefix}Status`];
@@ -248,6 +331,7 @@
                 return;
             }
             if (currentFolder === 'music') videoEntry.show();
+            else if (currentFolder === 'papers') openPaperPreview(selectedPaperButton);
             else openImagePreview(selectedImageButton || robomasterImageButtons[0]);
         };
 
@@ -286,6 +370,10 @@
         musicVideoButton.addEventListener('click', () => {
             musicVideoButton.classList.add('is-selected');
             videoEntry.show();
+        });
+        paperButtons.forEach((button) => {
+            button.addEventListener('focus', () => { selectedPaperButton = button; });
+            button.addEventListener('click', () => openPaperPreview(button));
         });
         new MutationObserver(() => {
             if (videoPreviewWindow.inert) video.pause();
@@ -338,18 +426,30 @@
 
         window.addEventListener('portfolio-language-change', () => {
             setProjectFolderView(currentFolder);
+            updatePaperCopy();
         });
 
         manager.onSession({
             save: () => ({
                 folderView: currentFolder,
+                selectedPaperIndex: paperButtons.indexOf(selectedPaperButton),
+                previewPaperIndex: paperButtons.indexOf(previewPaperButton),
+                paperScrollTop: pendingPaperScrollTop ?? paperPreviewPages.scrollTop,
                 selectedImageIndex: selectedImageButton ? robomasterImageButtons.indexOf(selectedImageButton) : null
             }),
             restore: (savedState) => {
+                selectedPaperButton = paperButtons[savedState.selectedPaperIndex] || paperButtons[0];
                 setProjectFolderView(savedState.folderView || 'root');
                 const selectedImage = robomasterImageButtons[savedState.selectedImageIndex];
                 if (selectedImage) updateImagePreview(selectedImage);
                 if (manager.isWindowVisible(videoPreviewWindow)) loadVideo();
+                if (!paperPreviewWindow.classList.contains('is-closed')) {
+                    updatePaperPreview(paperButtons[savedState.previewPaperIndex] || selectedPaperButton);
+                    if (manager.isWindowVisible(paperPreviewWindow)) {
+                        paperPreviewPages.scrollTop = savedState.paperScrollTop || 0;
+                        pendingPaperScrollTop = undefined;
+                    } else pendingPaperScrollTop = savedState.paperScrollTop || 0;
+                }
             }
         });
 

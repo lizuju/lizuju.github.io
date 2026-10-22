@@ -287,6 +287,57 @@
     background: #d8d8d8;
 }
 
+.pdf-file-icon {
+    display: grid;
+    align-items: end;
+    padding-bottom: 5px;
+    color: #a00000;
+    background: #fff;
+    font: 700 10px/1 var(--font-system);
+}
+
+.paper-preview-window {
+    top: 64px;
+    left: max(152px, calc(50% - 360px));
+    width: min(720px, calc(100% - 174px));
+    height: min(650px, calc(100% - 110px));
+    min-width: 440px;
+    min-height: 320px;
+}
+
+.paper-preview-window.is-maximized {
+    width: auto;
+    height: auto;
+}
+
+.paper-preview-body {
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
+    padding: 16px;
+    border: 2px inset #efefef;
+    background: #777;
+}
+
+.paper-preview-page {
+    margin: 0 auto 16px;
+}
+
+.paper-preview-page img {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: #fff;
+    box-shadow: 1px 2px 4px #333;
+}
+
+.paper-preview-page figcaption {
+    padding-top: 6px;
+    color: #fff;
+    font: 12px/1.2 var(--font-system);
+    text-align: center;
+}
+
 .image-preview-window {
     top: 96px;
     right: auto;
