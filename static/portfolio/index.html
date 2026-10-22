@@ -656,10 +656,16 @@
             <div class="project-folder-scroll">
                 <div class="project-folder-grid" data-project-folder-root>
                     <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
-                        data-open-robomaster-folder>
+                        data-open-robomaster-folder data-folder="photos">
                         <span class="folder-item-icon" aria-hidden="true"></span>
                         <strong>ROBOMASTER_<br>RECORDS</strong>
                         <small data-i18n="folderRoboMasterRecordsBody">13 张比赛照片</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
+                        data-open-music-folder data-folder="music">
+                        <span class="folder-item-icon folder-item-icon--music" aria-hidden="true"></span>
+                        <strong data-i18n="folderMusic">音乐作品集</strong>
+                        <small data-i18n="folderMusicBody">1 段视频</small>
                     </button>
                 </div>
 
@@ -808,10 +814,19 @@
                         <small data-photo-type>JPEG 图像</small>
                     </button>
                 </div>
+                <div class="project-folder-grid project-folder-grid--photos" data-music-folder-view hidden>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-music-video>
+                        <span class="photo-file-icon video-file-icon"><img data-music-thumbnail
+                                data-thumbnail-src="assets/music-portfolio/poster.webp" alt="" loading="lazy"></span>
+                        <strong>IMG_3168.mp4</strong>
+                        <small data-i18n="videoFileType">MP4 视频</small>
+                    </button>
+                </div>
             </div>
 
             <div class="window-statusbar project-folder-statusbar">
-                <span data-project-folder-status data-i18n="folderStatus">1 个对象</span>
+                <span data-project-folder-status data-i18n="folderStatus">2 个对象</span>
                 <span data-i18n="statusZone">我的电脑</span>
             </div>
             <button class="window-resize-handle" type="button" data-project-folder-resize aria-label="Resize folder window"
@@ -855,6 +870,34 @@
             </div>
             <button class="window-resize-handle" type="button" data-image-preview-resize aria-label="Resize image preview"
                 title="Resize image preview"></button>
+        </section>
+
+        <section class="app-window video-preview-window is-closed" data-video-preview-window
+            aria-label="Video player window">
+            <div class="window-titlebar" data-video-preview-drag>
+                <div class="window-title">
+                    <span class="window-app-icon window-app-icon--video" aria-hidden="true">▶</span>
+                    <span data-i18n="videoWindowTitle">视频播放器 - IMG_3168.mp4</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-video-preview-action="minimize" aria-label="Minimize video player"
+                        title="Minimize"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-video-preview-action="maximize" aria-label="Maximize video player"
+                        title="Maximize"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-video-preview-action="close" aria-label="Close video player"
+                        title="Close"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+            <div class="video-preview-body">
+                <video data-music-player data-video-src="assets/music-portfolio/img-3168.mp4"
+                    controls playsinline preload="none" tabindex="0" aria-label="IMG_3168.mp4"></video>
+            </div>
+            <div class="window-statusbar">
+                <span data-i18n="videoFileType">MP4 视频</span>
+                <span data-i18n="statusZone">我的电脑</span>
+            </div>
+            <button class="window-resize-handle" type="button" data-video-preview-resize aria-label="Resize video player"
+                title="Resize video player"></button>
         </section>
 
         <section class="app-window mail-window is-closed" data-mail-window aria-label="Email compose window">
@@ -1328,6 +1371,10 @@
             <button class="task-window-button image-preview-task-button" type="button" data-image-preview-task hidden>
                 <span class="window-app-icon window-app-icon--image" aria-hidden="true"></span>
                 <span data-image-preview-task-title data-i18n="previewTaskTitle">图片预览</span>
+            </button>
+            <button class="task-window-button" type="button" data-video-preview-task hidden>
+                <span class="window-app-icon window-app-icon--video" aria-hidden="true">▶</span>
+                <span data-i18n="videoTaskTitle">视频播放器</span>
             </button>
             <button class="task-window-button mail-task-button" type="button" data-mail-task hidden>
                 <span class="window-app-icon window-app-icon--mail" aria-hidden="true"></span>

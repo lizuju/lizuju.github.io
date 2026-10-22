@@ -1422,7 +1422,6 @@ summary:focus-visible {
     border: 1px solid transparent;
     background: transparent;
     cursor: pointer;
-    font: inherit;
 }
 
 .project-folder-item--button:hover,
@@ -1490,6 +1489,23 @@ summary:focus-visible {
     content: "";
     border: 1px solid #5b7e4d;
     background: linear-gradient(#d9edf0 0 54%, #78a761 55% 100%);
+}
+
+.folder-item-icon--music::after {
+    position: absolute;
+    right: 5px;
+    bottom: 1px;
+    content: "♪";
+    color: #604785;
+    font: 700 25px/1 var(--font-system);
+}
+
+.video-file-icon::after {
+    z-index: 1;
+    content: "▶";
+    color: #fff;
+    font-size: 20px;
+    text-shadow: 1px 1px 3px #000;
 }
 
 .project-folder-grid--photos {
@@ -1679,6 +1695,44 @@ summary:focus-visible {
 
 .image-preview-statusbar {
     grid-template-columns: 1fr 160px;
+}
+
+.video-preview-window {
+    top: 84px;
+    left: max(152px, calc(50% - 300px));
+    width: min(600px, calc(100% - 174px));
+    height: min(620px, calc(100% - 130px));
+    min-width: 360px;
+    min-height: min(300px, calc(100% - 36px));
+}
+
+.video-preview-window.is-maximized {
+    width: auto;
+    height: auto;
+}
+
+.window-app-icon--video {
+    background: #30284c;
+    color: #fff;
+    font-size: 10px;
+}
+
+.video-preview-body {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    padding: 4px;
+    border: 2px inset #efefef;
+    background: #111;
+}
+
+.video-preview-body video {
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    object-fit: contain;
 }
 
 /* Mail compose window. */

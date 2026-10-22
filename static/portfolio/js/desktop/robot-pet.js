@@ -114,7 +114,7 @@
                 autoShowTimer = null;
                 return;
             }
-            if (autoShowTimer === null) autoShowTimer = window.setTimeout(() => show(), 6000);
+            if (autoShowTimer === null) autoShowTimer = window.setTimeout(() => show(), 10000);
         };
 
         const syncActivity = () => {

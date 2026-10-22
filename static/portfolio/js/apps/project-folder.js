@@ -2,8 +2,7 @@
     const desktopApi = window.GavinDesktop;
     const { t } = desktopApi;
 
-    // Project folder (Explorer) window, the RoboMaster photo folder inside it and the image
-    // preview window that photos open in.
+    // Project folders and their image and video preview windows.
     function setupProjectFolder(manager) {
         const projectFolderWindow = document.querySelector('[data-project-folder-window]');
         const projectFolderTitlebar = document.querySelector('[data-project-folder-drag]');
@@ -15,6 +14,9 @@
         const projectFolderRoot = document.querySelector('[data-project-folder-root]');
         const robomasterFolderView = document.querySelector('[data-robomaster-folder-view]');
         const robomasterFolderButton = document.querySelector('[data-open-robomaster-folder]');
+        const musicFolderView = document.querySelector('[data-music-folder-view]');
+        const musicVideoButton = document.querySelector('[data-music-video]');
+        const folderButtons = Array.from(projectFolderRoot.querySelectorAll('[data-folder]'));
         const projectFolderBack = document.querySelector('[data-project-folder-back]');
         const imagePreviewWindow = document.querySelector('[data-image-preview-window]');
         const imagePreviewTitle = document.querySelector('[data-image-preview-title]');
@@ -26,6 +28,9 @@
         const imagePreviewResizeHandle = document.querySelector('[data-image-preview-resize]');
         const imagePreviewTask = document.querySelector('[data-image-preview-task]');
         const imagePreviewTaskTitle = document.querySelector('[data-image-preview-task-title]');
+        const videoPreviewWindow = document.querySelector('[data-video-preview-window]');
+        const videoPreviewTask = document.querySelector('[data-video-preview-task]');
+        const video = document.querySelector('[data-music-player]');
         if (!projectFolderWindow || !projectFolderTitlebar || !projectFolderResizeHandle || !projectFolderTask
             || !projectFolderTitle || !projectFolderAddress || !projectFolderStatus || !projectFolderRoot
             || !robomasterFolderView || !robomasterFolderButton || !projectFolderBack || !imagePreviewWindow
@@ -33,7 +38,8 @@
             || !imagePreviewTitlebar || !imagePreviewResizeHandle || !imagePreviewTask
             || !imagePreviewTaskTitle) return null;
 
-        let robomasterFolderOpen = false;
+        let currentFolder = 'root';
+        let selectedFolderButton = robomasterFolderButton;
         let selectedImageButton;
         const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
 
@@ -47,11 +53,11 @@
             minWidth: 440,
             minHeight: 320,
             focusTarget: () => (
-                manager.isFocusable(selectedImageButton)
+                currentFolder === 'photos' && manager.isFocusable(selectedImageButton)
                     ? selectedImageButton
-                    : projectFolderBack.hidden
-                        ? projectFolderWindow.querySelector('[data-open-robomaster-folder]')
-                        : projectFolderBack
+                    : currentFolder === 'music'
+                        ? musicVideoButton
+                        : currentFolder === 'root' ? selectedFolderButton : projectFolderBack
             )
         });
         const previewEntry = manager.registerWindow({
@@ -64,6 +70,31 @@
             minWidth: 380,
             minHeight: 300,
             focusTarget: () => imagePreviewWindow.querySelector('[data-image-preview-action="close"]')
+        });
+        const loadVideo = () => {
+            if (video.hasAttribute('src')) return;
+            video.poster = 'assets/music-portfolio/poster.webp';
+            video.preload = 'metadata';
+            video.src = video.dataset.videoSrc;
+        };
+        const videoEntry = manager.registerWindow({
+            id: 'video-preview',
+            element: videoPreviewWindow,
+            task: videoPreviewTask,
+            titlebar: document.querySelector('[data-video-preview-drag]'),
+            resizeHandle: document.querySelector('[data-video-preview-resize]'),
+            actionAttribute: 'data-video-preview-action',
+            minWidth: 360,
+            minHeight: 300,
+            show: () => {
+                loadVideo();
+                manager.showWindow(videoPreviewWindow, videoPreviewTask, { revealTask: true });
+            },
+            hide: (state) => {
+                video.pause();
+                manager.hideWindow(videoPreviewWindow, videoPreviewTask, state, { hideTask: state === 'is-closed' });
+            },
+            focusTarget: () => video
         });
 
         const getPhotoCopy = (button, key) => {
@@ -80,16 +111,18 @@
         };
 
         const selectAllFolderItems = () => {
-            if (robomasterFolderOpen) {
+            if (currentFolder === 'photos') {
                 robomasterImageButtons.forEach((button) => button.classList.add('is-selected'));
                 selectedImageButton = robomasterImageButtons[0];
                 return;
             }
-            robomasterFolderButton.classList.add('is-selected');
+            if (currentFolder === 'music') musicVideoButton.classList.add('is-selected');
+            else folderButtons.forEach((button) => button.classList.add('is-selected'));
         };
 
         const clearFolderSelection = () => {
-            robomasterFolderButton.classList.remove('is-selected');
+            folderButtons.forEach((button) => button.classList.remove('is-selected'));
+            musicVideoButton.classList.remove('is-selected');
             robomasterImageButtons.forEach((button) => button.classList.remove('is-selected'));
             selectedImageButton = undefined;
         };
@@ -161,27 +194,32 @@
             imagePreviewImage.alt = getPhotoCopy(selectedImageButton, 'photoAlt');
         };
 
-        const setProjectFolderView = (showRoboMaster) => {
-            robomasterFolderOpen = showRoboMaster;
+        const setProjectFolderView = (folder) => {
+            currentFolder = folder;
             const copy = t();
-            projectFolderRoot.hidden = showRoboMaster;
-            robomasterFolderView.hidden = !showRoboMaster;
-            projectFolderBack.hidden = !showRoboMaster;
-            projectFolderTitle.textContent = showRoboMaster ? copy.folderPhotoWindowTitle : copy.folderWindowTitle;
-            projectFolderAddress.textContent = showRoboMaster ? copy.folderPhotoAddress : copy.folderAddress;
-            projectFolderStatus.textContent = showRoboMaster ? copy.folderPhotoStatus : copy.folderStatus;
+            projectFolderRoot.hidden = folder !== 'root';
+            robomasterFolderView.hidden = folder !== 'photos';
+            musicFolderView.hidden = folder !== 'music';
+            projectFolderBack.hidden = folder === 'root';
+            const prefix = folder === 'photos' ? 'folderPhoto' : folder === 'music' ? 'folderMusic' : 'folder';
+            projectFolderTitle.textContent = copy[`${prefix}WindowTitle`];
+            projectFolderAddress.textContent = copy[`${prefix}Address`];
+            projectFolderStatus.textContent = copy[`${prefix}Status`];
 
-            if (showRoboMaster) {
+            if (folder === 'photos') {
                 document.querySelectorAll('[data-robomaster-thumbnail]').forEach((thumbnail) => {
                     if (!thumbnail.getAttribute('src')) thumbnail.src = thumbnail.dataset.thumbnailSrc;
                 });
+            } else if (folder === 'music') {
+                const thumbnail = musicVideoButton.querySelector('[data-music-thumbnail]');
+                if (!thumbnail.getAttribute('src')) thumbnail.src = thumbnail.dataset.thumbnailSrc;
             }
 
             updatePhotoCopy();
         };
 
         const openRoboMasterFolder = () => {
-            setProjectFolderView(true);
+            setProjectFolderView('photos');
             folderEntry.show();
         };
 
@@ -199,27 +237,32 @@
         };
 
         const openProjectFolder = () => {
-            setProjectFolderView(false);
+            setProjectFolderView('root');
             folderEntry.show();
         };
 
         const openSelectedFolderItem = () => {
-            if (!robomasterFolderOpen) {
-                openRoboMasterFolder();
+            if (currentFolder === 'root') {
+                setProjectFolderView(selectedFolderButton.dataset.folder);
+                folderEntry.show();
                 return;
             }
-            openImagePreview(selectedImageButton || robomasterImageButtons[0]);
+            if (currentFolder === 'music') videoEntry.show();
+            else openImagePreview(selectedImageButton || robomasterImageButtons[0]);
         };
 
         manager.addMenuActions({
             'portfolio-project-files': openProjectFolder,
             'portfolio-robomaster': openRoboMasterFolder,
             'folder-open': openSelectedFolderItem,
-            'folder-up': () => setProjectFolderView(false),
+            'folder-up': () => {
+                setProjectFolderView('root');
+                selectedFolderButton.focus({ preventScroll: true });
+            },
             'folder-close': () => folderEntry.hide('is-closed'),
             'folder-select-all': selectAllFolderItems,
             'folder-clear-selection': clearFolderSelection,
-            'folder-refresh': () => setProjectFolderView(robomasterFolderOpen),
+            'folder-refresh': () => setProjectFolderView(currentFolder),
             'folder-toggle-size': folderEntry.toggleMaximize,
             'folder-info': () => {
                 projectFolderStatus.textContent = t().folderHelpStatus;
@@ -229,8 +272,27 @@
         document.querySelectorAll('[data-open-project-folder]').forEach((button) => {
             button.addEventListener('click', openProjectFolder);
         });
-        robomasterFolderButton.addEventListener('click', openRoboMasterFolder);
-        projectFolderBack.addEventListener('click', () => setProjectFolderView(false));
+        folderButtons.forEach((button) => {
+            button.addEventListener('focus', () => { selectedFolderButton = button; });
+            button.addEventListener('click', () => {
+                setProjectFolderView(button.dataset.folder);
+                folderEntry.show();
+            });
+        });
+        projectFolderBack.addEventListener('click', () => {
+            setProjectFolderView('root');
+            selectedFolderButton.focus({ preventScroll: true });
+        });
+        musicVideoButton.addEventListener('click', () => {
+            musicVideoButton.classList.add('is-selected');
+            videoEntry.show();
+        });
+        new MutationObserver(() => {
+            if (videoPreviewWindow.inert) video.pause();
+        }).observe(videoPreviewWindow, { attributes: true, attributeFilter: ['inert'] });
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) video.pause();
+        });
         robomasterImageButtons.forEach((button) => {
             button.addEventListener('click', () => openImagePreview(button));
         });
@@ -239,7 +301,7 @@
         // window the arrows switch photos instead.
         document.addEventListener('keydown', (event) => {
             if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
-            if (!robomasterFolderOpen || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter'].includes(event.key)) {
+            if (currentFolder !== 'photos' || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter'].includes(event.key)) {
                 return;
             }
             if (event.target instanceof HTMLElement && event.target.matches('input, textarea, select, [contenteditable="true"]')) {
@@ -275,18 +337,19 @@
         });
 
         window.addEventListener('portfolio-language-change', () => {
-            setProjectFolderView(robomasterFolderOpen);
+            setProjectFolderView(currentFolder);
         });
 
         manager.onSession({
             save: () => ({
-                folderOpen: robomasterFolderOpen,
+                folderView: currentFolder,
                 selectedImageIndex: selectedImageButton ? robomasterImageButtons.indexOf(selectedImageButton) : null
             }),
             restore: (savedState) => {
-                setProjectFolderView(Boolean(savedState.folderOpen));
+                setProjectFolderView(savedState.folderView || 'root');
                 const selectedImage = robomasterImageButtons[savedState.selectedImageIndex];
                 if (selectedImage) updateImagePreview(selectedImage);
+                if (manager.isWindowVisible(videoPreviewWindow)) loadVideo();
             }
         });
 
