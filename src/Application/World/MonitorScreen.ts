@@ -146,6 +146,17 @@ export default class MonitorScreen extends EventEmitter {
         // Create iframe
         const iframe = document.createElement('iframe');
 
+        let viewingPortfolio = false;
+        const updatePortfolioView = (active: boolean) => {
+            viewingPortfolio = active;
+            iframe.contentWindow?.postMessage(
+                { source: 'gavin-shell', type: 'portfolio-view-state', active },
+                window.location.origin
+            );
+        };
+        UIEventBus.on('enterMonitor', () => updatePortfolioView(true));
+        UIEventBus.on('leftMonitor', () => updatePortfolioView(false));
+
         UIEventBus.on('muteToggle', (nextMuted: boolean) => {
             iframe.contentWindow?.postMessage(
                 {
@@ -176,6 +187,7 @@ export default class MonitorScreen extends EventEmitter {
                     },
                     window.location.origin
                 );
+                updatePortfolioView(viewingPortfolio);
                 return;
             }
 

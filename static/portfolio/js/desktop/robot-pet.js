@@ -13,7 +13,11 @@
         const taskbar = document.querySelector('.desktop-taskbar');
         const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
         const desktopMode = window.matchMedia('(min-width: 901px) and (pointer: fine)');
+        const portfolioWindow = manager.getWindow('portfolio').element;
         const greetings = ['petHello', 'petGreeting', 'petPatrol'];
+        let viewingMonitor = window.parent === window;
+        let autoShowPending = true;
+        let autoShowTimer = null;
         let greetingIndex = 0;
         let speechKey = 'petHello';
         let position = 0;
@@ -103,6 +107,16 @@
             else walkTo(position + (Math.random() - 0.5) * 320, 45);
         };
 
+        const syncAutoShow = () => {
+            if (!autoShowPending || !desktopMode.matches || document.hidden || pet.inert
+                || !viewingMonitor || !manager.isWindowVisible(portfolioWindow)) {
+                window.clearTimeout(autoShowTimer);
+                autoShowTimer = null;
+                return;
+            }
+            if (autoShowTimer === null) autoShowTimer = window.setTimeout(() => show(), 6000);
+        };
+
         const syncActivity = () => {
             window.clearInterval(patrolTimer);
             stopWalking();
@@ -112,10 +126,14 @@
                 if (pointerX !== null && !pet.querySelector(':focus-visible')) walkTo(pointerX - pet.offsetWidth / 2, 60);
                 patrolTimer = window.setInterval(patrol, 6000);
             }
+            syncAutoShow();
         };
 
         const show = (spawnCenter = desktop.clientWidth - 90) => {
             if (!desktopMode.matches) return;
+            autoShowPending = false;
+            window.clearTimeout(autoShowTimer);
+            autoShowTimer = null;
             pet.hidden = false;
             place(spawnCenter - pet.offsetWidth / 2);
             updateLanguage();
@@ -176,9 +194,18 @@
         reducedMotion.addEventListener('change', syncActivity);
         desktopMode.addEventListener('change', () => {
             if (!desktopMode.matches && !pet.hidden) hide(pet.contains(document.activeElement));
+            syncAutoShow();
         });
         new MutationObserver(syncActivity).observe(pet, { attributes: true, attributeFilter: ['inert'] });
+        new MutationObserver(syncAutoShow).observe(portfolioWindow, { attributes: true, attributeFilter: ['class'] });
+        window.addEventListener('message', (event) => {
+            if (event.origin !== window.location.origin || event.source !== window.parent
+                || event.data?.source !== 'gavin-shell' || event.data?.type !== 'portfolio-view-state') return;
+            viewingMonitor = event.data.active === true;
+            syncAutoShow();
+        });
         window.addEventListener('portfolio-language-change', updateLanguage);
         updateLanguage();
+        syncAutoShow();
     };
 })();

@@ -602,7 +602,7 @@ test('opens a retro email composer and sends without leaving the portfolio', asy
     await expect(mailWindow).toHaveClass(/is-closed/);
     await expect(mailTask).toBeHidden();
     await expect(page.locator('.desktop-shortcut[href^="mailto:"]')).toHaveCount(0);
-    await expect(page.locator('.contact-links a[href^="mailto:"]')).toHaveCount(0);
+    await expect(page.locator('.contact-links a[href^="mailto:"]')).toHaveAttribute('href', 'mailto:gavinxleele@gmail.com');
     await page.locator('[data-window-action="minimize"]').click();
     await expect(page.locator('[data-app-window]')).toHaveClass(/is-minimized/);
     await page.locator('.desktop-shortcut[data-open-mail-window]').click();

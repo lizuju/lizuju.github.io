@@ -29,9 +29,11 @@
     <link rel="icon" id="favicon" type="image/png" href="assets/avatar.png">
     <link rel="apple-touch-icon" href="../images/apple-touch-icon.png">
     <link rel="manifest" href="../site.webmanifest">
-    <link rel="preload" as="image" href="assets/portfolio-hero.jpg">
-    <link rel="stylesheet" href="css/main.css?v=47cfb37d1b56">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=47cfb37d1b56">
+    <link rel="preload" as="image" type="image/webp" href="assets/portfolio-hero-960.webp"
+        imagesrcset="assets/portfolio-hero-480.webp 480w, assets/portfolio-hero-960.webp 960w, assets/portfolio-hero.webp 1672w"
+        imagesizes="(max-width: 560px) calc(100vw - 48px), (max-width: 900px) calc(100vw - 56px), (max-width: 1040px) 620px, calc(42.5vw - 145px)">
+    <link rel="stylesheet" href="css/main.css?v=62e34af28412">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=62e34af28412">
 </head>
 
 <body>
@@ -225,7 +227,7 @@
                 <div class="page-shell">
         <header class="site-header">
             <a class="brand" href="https://github.com/lizuju" target="_blank" rel="noreferrer" aria-label="Open Gavin's GitHub profile">
-                <img src="assets/avatar.png" alt="李祖钜 Gavin" class="brand-avatar">
+                <img src="assets/avatar.png" alt="李祖钜 Gavin" class="brand-avatar" width="66" height="66" decoding="async">
                 <span data-i18n="brandName">李祖钜 Gavin</span>
             </a>
 
@@ -289,12 +291,19 @@
                     <div class="hero-actions">
                         <a class="primary-action" href="#experience" data-i18n="heroPrimary">查看工作经历</a>
                         <a class="secondary-action" href="#contact" data-i18n="heroSecondary">联系我</a>
+                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=62e34af28412"
+                            download="李祖钜简历.pdf" data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                     </div>
                 </div>
 
                 <div class="hero-visual reveal" aria-label="Portfolio hero visual">
-                    <img src="assets/portfolio-hero.jpg" alt="机器人视觉开发工作台" class="hero-image" width="1672"
-                        height="941">
+                    <picture>
+                        <source type="image/webp"
+                            srcset="assets/portfolio-hero-480.webp 480w, assets/portfolio-hero-960.webp 960w, assets/portfolio-hero.webp 1672w"
+                            sizes="(max-width: 560px) calc(100vw - 48px), (max-width: 900px) calc(100vw - 56px), (max-width: 1040px) 620px, calc(42.5vw - 145px)">
+                        <img src="assets/portfolio-hero.jpg" alt="机器人视觉开发工作台" class="hero-image" width="1672"
+                            height="941" decoding="async" fetchpriority="high">
+                    </picture>
                     <div class="signal-panel">
                         <span data-i18n="signalRole">Current focus</span>
                         <strong data-i18n="signalTitle">ROS 2 自主导航与 Stemm 家庭陪护机器人</strong>
@@ -515,9 +524,34 @@
                     <h2 id="contact-title" data-i18n="contactTitle">如果你需要把智能能力落到真实设备和产品里，可以联系我。</h2>
                 </div>
                 <div class="contact-links reveal">
-                    <button class="contact-email-link" type="button" data-open-mail-window>gavinxleele@gmail.com</button>
-                    <a href="tel:13250541959">13250541959</a>
-                    <a href="https://github.com/lizuju" target="_blank" rel="noreferrer">GitHub</a>
+                    <div class="contact-item">
+                        <span class="contact-label" data-i18n="contactEmail">邮箱</span>
+                        <div class="contact-value">
+                            <button class="contact-email-link" type="button" data-open-mail-window>gavinxleele@gmail.com</button>
+                            <button class="contact-copy-button" type="button" data-copy-contact="gavinxleele@gmail.com"
+                                data-i18n="contactCopyEmail">复制邮箱</button>
+                        </div>
+                        <a class="contact-alternative" href="mailto:gavinxleele@gmail.com" data-i18n="contactMailApp">使用本机邮箱应用发送</a>
+                    </div>
+                    <div class="contact-item">
+                        <span class="contact-label" data-i18n="contactPhone">电话</span>
+                        <div class="contact-value">
+                            <a href="tel:+8613250541959">+86 132 5054 1959</a>
+                            <button class="contact-copy-button" type="button" data-copy-contact="13250541959"
+                                data-i18n="contactCopyPhone">复制号码</button>
+                        </div>
+                    </div>
+                    <div class="contact-item">
+                        <span class="contact-label">GitHub</span>
+                        <a href="https://github.com/lizuju" target="_blank" rel="noreferrer">github.com/lizuju</a>
+                    </div>
+                    <div class="contact-item">
+                        <span class="contact-label" data-i18n="contactResume">个人简历</span>
+                        <a href="assets/li-zuju-resume.pdf?v=62e34af28412" download="李祖钜简历.pdf"
+                            data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
+                        <span class="contact-note" data-i18n="resumeDetails">中文版 · 5 页 · 576 KB</span>
+                    </div>
+                    <p class="contact-feedback" data-contact-feedback role="status" aria-live="polite"></p>
                 </div>
             </section>
         </main>
@@ -1342,10 +1376,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=47cfb37d1b56"></script>
-    <script src="js/gomoku-game.js?v=47cfb37d1b56"></script>
-    <script src="js/content.js?v=47cfb37d1b56"></script>
-    <script src="js/main.js?v=47cfb37d1b56"></script>
+    <script src="js/gomoku-engine.js?v=62e34af28412"></script>
+    <script src="js/gomoku-game.js?v=62e34af28412"></script>
+    <script src="js/content.js?v=62e34af28412"></script>
+    <script src="js/main.js?v=62e34af28412"></script>
 </body>
 
 </html>

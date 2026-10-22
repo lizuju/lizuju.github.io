@@ -54,15 +54,21 @@
             meta.className = 'project-index';
             meta.textContent = `${String(index + 1).padStart(2, '0')} / ${project.period}`;
 
-            const media = document.createElement('figure');
+            const media = document.createElement('picture');
             media.className = 'project-media';
+            const source = document.createElement('source');
+            source.type = 'image/webp';
+            const imageBase = visualAssets[visual].replace(/\.jpg$/, '');
+            source.srcset = `${imageBase}-480.webp 480w, ${imageBase}-960.webp 960w, ${imageBase}.webp 1672w`;
+            source.sizes = '(max-width: 560px) calc(100vw - 48px), (max-width: 900px) calc(100vw - 56px), (max-width: 1040px) calc(100vw - 280px), calc(41vw - 125px)';
             const image = document.createElement('img');
-            image.src = visualAssets[visual];
             image.alt = project.alt || project.title;
-            image.loading = index === 0 ? 'eager' : 'lazy';
+            image.loading = 'lazy';
+            image.decoding = 'async';
             image.width = 1672;
             image.height = 941;
-            media.append(image);
+            media.append(source, image);
+            image.src = visualAssets[visual];
 
             const body = document.createElement('div');
             body.className = 'project-body';
@@ -399,6 +405,21 @@
 
         document.querySelectorAll('a[href^="#"]').forEach((link) => {
             link.addEventListener('click', closeMobileMenu);
+        });
+
+        const contactFeedback = document.querySelector('[data-contact-feedback]');
+        document.querySelectorAll('[data-copy-contact]').forEach((button) => {
+            button.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(button.dataset.copyContact);
+                    contactFeedback.textContent = `${t().contactCopied}${button.dataset.copyContact}`;
+                } catch {
+                    contactFeedback.textContent = t().contactCopyFailed;
+                }
+            });
+        });
+        window.addEventListener('portfolio-language-change', () => {
+            contactFeedback.textContent = '';
         });
     }
 

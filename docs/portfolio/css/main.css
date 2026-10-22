@@ -2983,22 +2983,69 @@ main {
     border-top: 1px solid #555;
 }
 
-.contact-links :is(a, button) {
-    padding: 8px 4px;
-    overflow-wrap: anywhere;
+.contact-item {
+    display: grid;
+    min-width: 0;
+    gap: 5px;
+    padding: 12px 4px;
     border-bottom: 1px solid #777;
+}
+
+.contact-label {
+    color: var(--muted);
+    font: 12px/1.4 var(--font-system);
+}
+
+.contact-value {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+}
+
+.contact-item :is(a, button) {
+    overflow-wrap: anywhere;
     font-weight: 700;
 }
 
 .contact-email-link {
     color: var(--link);
-    border-top: 0;
-    border-right: 0;
-    border-left: 0;
+    padding: 0;
+    border: 0;
     background: transparent;
     text-align: left;
     text-decoration: underline;
     cursor: pointer;
+}
+
+.contact-copy-button {
+    min-height: 36px;
+    padding: 4px 8px;
+    border: 2px outset #fff;
+    background: var(--window-gray);
+    color: var(--ink);
+    font: 12px/1.4 var(--font-system);
+    cursor: pointer;
+}
+
+.contact-copy-button:active {
+    border-style: inset;
+}
+
+.contact-item .contact-alternative,
+.contact-note,
+.contact-feedback {
+    font: 12px/1.5 var(--font-system);
+}
+
+.contact-note {
+    color: var(--muted);
+}
+
+.contact-feedback {
+    min-height: 1.5em;
+    margin: 8px 4px 0;
+    overflow-wrap: anywhere;
 }
 
 .site-footer {
