@@ -1527,6 +1527,10 @@ summary:focus-visible {
     white-space: nowrap;
 }
 
+.project-folder-item--video strong {
+    white-space: normal;
+}
+
 .project-folder-item--image.is-selected,
 .project-folder-item--image.is-selected:hover,
 .project-folder-item--image.is-selected:focus-visible {

@@ -390,7 +390,7 @@ test('opens Project Files as a desktop folder window without navigating the port
     await expect(page).toHaveURL(/\/portfolio\/$/);
     await expect(folderWindow).toBeVisible();
     await expect(folderWindow).toContainText('C:\\GAVIN\\PROJECTS');
-    await expect(folderWindow).toContainText(/ROBOMASTER_\s*RECORDS/);
+    await expect(folderWindow).toContainText('RoboMaster 比赛记录');
     await expect(folderWindow).not.toContainText('AI Agent');
     await expect(folderTask).toBeVisible();
     await expect(folderTask).toHaveClass(/is-active/);
@@ -462,7 +462,7 @@ test('opens RoboMaster match records in a movable image preview window', async (
     await page.locator('[data-open-project-folder]').click();
     await page.locator('[data-open-robomaster-folder]').click();
 
-    await expect(folderWindow).toContainText('C:\\GAVIN\\PROJECTS\\ROBOMASTER_RECORDS');
+    await expect(folderWindow).toContainText('C:\\GAVIN\\PROJECTS\\RoboMaster 比赛记录');
     await expect(folderWindow.locator('[data-robomaster-image]')).toHaveCount(13);
     await expect(folderWindow).toContainText('13 视觉.jpg');
     await expect(folderWindow.locator('[data-robomaster-thumbnail]').first()).toHaveAttribute(
@@ -792,7 +792,7 @@ test('runs consistent keyboard menus with window-specific commands', async ({ pa
     await expect(folderWindow.locator('[data-open-robomaster-folder]')).toHaveClass(/is-selected/);
     await folderWindow.locator('[data-window-menu="folder-file"]').click();
     await folderWindow.locator('[data-menu-action="folder-open"]').click();
-    await expect(folderWindow).toContainText('C:\\GAVIN\\PROJECTS\\ROBOMASTER_RECORDS');
+    await expect(folderWindow).toContainText('C:\\GAVIN\\PROJECTS\\RoboMaster 比赛记录');
 
     await folderWindow.locator('[data-window-menu="folder-edit"]').click();
     await folderWindow.locator('[data-menu-action="folder-select-all"]').click();
@@ -883,7 +883,7 @@ test('restores desktop session state after a portfolio reload', async ({ page, i
 
     await page.locator('.desktop-shortcut[data-open-project-folder]').click();
     await page.locator('[data-open-robomaster-folder]').click();
-    await expect(projectFolderWindow).toContainText('C:\\GAVIN\\PROJECTS\\ROBOMASTER_RECORDS');
+    await expect(projectFolderWindow).toContainText('C:\\GAVIN\\PROJECTS\\RoboMaster 比赛记录');
     await projectFolderWindow.evaluate((element) => {
         element.style.left = '168px';
         element.style.top = '96px';
@@ -903,7 +903,7 @@ test('restores desktop session state after a portfolio reload', async ({ page, i
 
     await page.reload();
 
-    await expect(projectFolderWindow).toContainText('C:\\GAVIN\\PROJECTS\\ROBOMASTER_RECORDS');
+    await expect(projectFolderWindow).toContainText('C:\\GAVIN\\PROJECTS\\RoboMaster 比赛记录');
     await expect(projectFolderWindow).toBeVisible();
     expect(await projectFolderWindow.evaluate((element) => ({ left: element.style.left, top: element.style.top }))).toEqual({
         left: '168px',
