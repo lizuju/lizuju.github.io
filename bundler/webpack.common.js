@@ -88,6 +88,10 @@ module.exports = {
     },
     module: {
         rules: [
+            {
+                test: /[\\/]pdfjs-dist[\\/]build[\\/]pdf\.mjs$/,
+                use: path.resolve(__dirname, 'pdfjs-browser-loader.js'),
+            },
             // HTML
             {
                 test: /\.(html)$/,
