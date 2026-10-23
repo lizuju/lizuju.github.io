@@ -267,7 +267,7 @@
             contactCopied: '已复制：',
             contactCopyFailed: '复制失败，请选中并复制上方联系方式。',
             resumeDownload: '下载简历 PDF',
-            resumeDetails: '中文版 · 5 页 · 576 KB',
+            resumeDetails: '中文版 · 5 页 · 577 KB',
             footerName: '李祖钜 Gavin / Portfolio',
             footerTop: '回到顶部',
             methods: [
@@ -431,9 +431,9 @@
             modeling: [
                 '2025 美国大学生数学建模竞赛全球 M 奖一等奖（Top 5%）',
                 '2024 广东省大学生数学建模竞赛省级一等奖（Top 5%）',
+                '2024 年 APMCM 亚太地区大学生数学建模竞赛省级一等奖',
                 '2024 “华数杯”全国数学建模竞赛国家级二等奖',
-                '2024 “中国电机工程学会杯”电工杯数学建模竞赛国家级三等奖',
-                '2025 MathorCup 数学建模挑战赛省级一等奖'
+                '2024 “中国电机工程学会杯”电工杯数学建模竞赛国家级三等奖'
             ],
             robotics: [
                 'RoboMaster 2023 步兵对抗赛省级二等奖',
@@ -723,7 +723,7 @@
             contactCopied: 'Copied: ',
             contactCopyFailed: 'Could not copy. Select and copy the contact details above.',
             resumeDownload: 'Download resume PDF',
-            resumeDetails: 'Chinese · 5 pages · 576 KB',
+            resumeDetails: 'Chinese · 5 pages · 577 KB',
             footerName: 'Gavin Lizuju / Portfolio',
             footerTop: 'Back to top',
             methods: [
@@ -887,9 +887,9 @@
             modeling: [
                 '2025 MCM Meritorious Winner, Top 5%',
                 '2024 Guangdong Mathematical Modeling Provincial First Prize, Top 5%',
+                '2024 APMCM Asia-Pacific Mathematical Contest in Modeling Provincial First Prize',
                 '2024 Huashu Cup National Mathematical Modeling Second Prize',
-                '2024 CSEE Cup Electrical Engineering Mathematical Modeling National Third Prize',
-                '2025 MathorCup Provincial First Prize'
+                '2024 CSEE Cup Electrical Engineering Mathematical Modeling National Third Prize'
             ],
             robotics: [
                 'RoboMaster 2023 Infantry Combat Provincial Second Prize',
