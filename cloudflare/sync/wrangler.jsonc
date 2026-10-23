@@ -13,11 +13,13 @@
   "durable_objects": {
     "bindings": [
       { "name": "PAIRING_REGISTRY", "class_name": "PairingRegistry" },
-      { "name": "SYNC_ROOMS", "class_name": "SyncRoom" }
+      { "name": "SYNC_ROOMS", "class_name": "SyncRoom" },
+      { "name": "FILE_SHARDS", "class_name": "FileShard" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["PairingRegistry", "SyncRoom"] }
+    { "tag": "v1", "new_sqlite_classes": ["PairingRegistry", "SyncRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["FileShard"] }
   ],
   "observability": {
     "enabled": false

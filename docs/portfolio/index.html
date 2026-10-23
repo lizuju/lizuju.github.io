@@ -32,8 +32,8 @@
     <link rel="preload" as="image" type="image/webp" href="assets/portfolio-hero-960.webp"
         imagesrcset="assets/portfolio-hero-480.webp 480w, assets/portfolio-hero-960.webp 960w, assets/portfolio-hero.webp 1672w"
         imagesizes="(max-width: 560px) calc(100vw - 48px), (max-width: 900px) calc(100vw - 56px), (max-width: 1040px) 620px, calc(42.5vw - 145px)">
-    <link rel="stylesheet" href="css/main.css?v=27e0c5effd8e">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=27e0c5effd8e">
+    <link rel="stylesheet" href="css/main.css?v=37d01d769620">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=37d01d769620">
 </head>
 
 <body>
@@ -198,12 +198,31 @@
                     <button class="sync-button sync-latest" type="button" data-sync-latest hidden
                         data-i18n="syncLatest">回到最新消息</button>
                     <form class="sync-compose" data-sync-send-form>
+                        <label class="visually-hidden" for="sync-file" data-i18n="syncAttach">选择文件/图片</label>
+                        <input id="sync-file" type="file" aria-describedby="sync-file-limit" data-sync-file-input hidden>
+                        <div class="sync-attach-controls">
+                            <button class="sync-button" type="button" aria-describedby="sync-file-limit"
+                                data-sync-attach data-i18n="syncAttach">选择文件/图片</button>
+                            <p class="sync-hint" id="sync-file-limit" data-i18n="syncFileLimit">每条消息可附 1 个文件，最大 2GB。</p>
+                        </div>
+                        <div class="sync-selected-file" data-sync-selected-file hidden>
+                            <span class="sync-selected-file-details">
+                                <strong data-sync-file-name></strong>
+                                <span class="sync-attachment-size" data-sync-file-size></span>
+                            </span>
+                            <button class="sync-button" type="button" data-sync-remove-file data-i18n="syncRemoveFile">移除附件</button>
+                        </div>
+                        <p class="sync-upload-status" id="sync-upload-status" data-sync-upload-status role="status" aria-live="polite" hidden></p>
+                        <progress class="sync-upload-progress" data-sync-upload-progress max="100" value="0"
+                            aria-labelledby="sync-upload-status" hidden></progress>
+                        <button class="sync-button sync-cancel-upload" type="button" data-sync-cancel-upload
+                            data-i18n="syncCancelUpload" hidden disabled>取消上传</button>
                         <label class="visually-hidden" for="sync-message" data-i18n="syncInputLabel">消息内容</label>
-                        <textarea id="sync-message" rows="3" required placeholder="写下要同步的内容…"
+                        <textarea id="sync-message" rows="3" placeholder="写下要同步的内容…"
                             data-i18n-placeholder="syncInputPlaceholder" aria-describedby="sync-compose-hint" data-sync-input></textarea>
                         <p class="visually-hidden" id="sync-compose-hint" data-i18n="syncComposeHint">Enter 发送 · Shift+Enter 换行</p>
                         <div class="sync-compose-footer">
-                            <p class="sync-hint" data-i18n="syncHistoryLimit">最多保留 5 天、最近 500 条；存储接近上限时会提前清理较早消息。清空会同步影响所有设备。</p>
+                            <p class="sync-hint" data-i18n="syncHistoryLimit">消息和附件最多保留 5 天、最近 500 条；存储接近上限时会提前清理较早内容。清空会同步影响所有设备。</p>
                             <button class="sync-button" type="submit" data-sync-send data-i18n="syncSend">发送</button>
                         </div>
                     </form>
@@ -431,7 +450,7 @@
                     <div class="hero-actions">
                         <a class="primary-action" href="#experience" data-i18n="heroPrimary">查看工作经历</a>
                         <a class="secondary-action" href="#contact" data-i18n="heroSecondary">联系我</a>
-                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=27e0c5effd8e"
+                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=37d01d769620"
                             download="李祖钜简历.pdf" data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                     </div>
                 </div>
@@ -687,7 +706,7 @@
                     </div>
                     <div class="contact-item">
                         <span class="contact-label" data-i18n="contactResume">个人简历</span>
-                        <a href="assets/li-zuju-resume.pdf?v=27e0c5effd8e" download="李祖钜简历.pdf"
+                        <a href="assets/li-zuju-resume.pdf?v=37d01d769620" download="李祖钜简历.pdf"
                             data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                         <span class="contact-note" data-i18n="resumeDetails">中文版 · 5 页 · 577 KB</span>
                     </div>
@@ -1621,10 +1640,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=27e0c5effd8e"></script>
-    <script src="js/gomoku-game.js?v=27e0c5effd8e"></script>
-    <script src="js/content.js?v=27e0c5effd8e"></script>
-    <script src="js/main.js?v=27e0c5effd8e"></script>
+    <script src="js/gomoku-engine.js?v=37d01d769620"></script>
+    <script src="js/gomoku-game.js?v=37d01d769620"></script>
+    <script src="js/content.js?v=37d01d769620"></script>
+    <script src="js/main.js?v=37d01d769620"></script>
 </body>
 
 </html>

@@ -29,6 +29,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
               type: 'esm',
               contents: `import { SyncRoom as ProductionSyncRoom, PairingRegistry as ProductionRegistry } from './index.js';
                 export { default } from './index.js';
+                export { FileShard } from './index.js';
                 export class PairingRegistry extends ProductionRegistry {
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
@@ -49,11 +50,13 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
         env: {
           ALLOWED_ORIGINS: { type: 'text', value: origin },
           PAIRING_REGISTRY: { type: 'durable-object', worker: 'sync-test', exportName: 'PairingRegistry' },
-          SYNC_ROOMS: { type: 'durable-object', worker: 'sync-test', exportName: 'SyncRoom' }
+          SYNC_ROOMS: { type: 'durable-object', worker: 'sync-test', exportName: 'SyncRoom' },
+          FILE_SHARDS: { type: 'durable-object', worker: 'sync-test', exportName: 'FileShard' }
         },
         exports: {
           PairingRegistry: { type: 'durable-object', storage: 'sqlite' },
-          SyncRoom: { type: 'durable-object', storage: 'sqlite' }
+          SyncRoom: { type: 'durable-object', storage: 'sqlite' },
+          FileShard: { type: 'durable-object', storage: 'sqlite' }
         }
       }
     }]

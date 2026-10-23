@@ -5,6 +5,12 @@ const MESSAGE_LIFETIME = 5 * 24 * 60 * 60 * 1000;
 const STORAGE_HIGH_WATER = 4_700_000_000;
 const STORAGE_CLEANUP_BYTES = 3_000_000_000;
 const MESSAGE_WRITE_HEADROOM = 128 * 1024;
+const FILE_SIZE_LIMIT = 2 * 1024 * 1024 * 1024;
+const FILE_CHUNK_SIZE = 8 * 1024 * 1024;
+const FILE_SHARD_SIZE = 64 * 1024 * 1024;
+const BLOB_CHUNK_SIZE = 1024 * 1024;
+const UPLOAD_LIFETIME = 24 * 60 * 60 * 1000;
+const DOWNLOAD_LIFETIME = 10 * 60 * 1000;
 const ROOM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function json(data, status = 200, headers = {}) {
@@ -21,6 +27,35 @@ async function hash(value) {
 
 function credential() {
   return Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function readBytes(request, maximum) {
+  if (!request.body || Number(request.headers.get('Content-Length')) > maximum) return { error: 'request_too_large', status: 413 };
+  const reader = request.body.getReader();
+  const chunks = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maximum) {
+      await reader.cancel();
+      return { error: 'request_too_large', status: 413 };
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return { bytes: bytes.buffer };
+}
+
+function fileReserve(size) {
+  return size + Math.ceil(size / FILE_CHUNK_SIZE) * 65536 + 65536;
+}
+
+function publicMessage({ attachment, ...message }) {
+  return attachment ? { ...message, attachment: JSON.parse(attachment) } : message;
 }
 
 async function readJson(request, maximum = 1024) {
@@ -76,17 +111,18 @@ export default {
 
     const corsHeaders = {
       'Vary': 'Origin',
-      'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-      'Access-Control-Expose-Headers': 'Retry-After',
+      'Access-Control-Expose-Headers': 'Retry-After, Content-Disposition',
       'Access-Control-Max-Age': '86400'
     };
     if (origin) corsHeaders['Access-Control-Allow-Origin'] = origin;
 
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
 
-    const response = await this.route(request, env);
+    let response = await this.route(request, env);
     if (response.status === 101) return response;
+    response = new Response(response.body, response);
     for (const [key, value] of Object.entries(corsHeaders)) response.headers.set(key, value);
     return response;
   },
@@ -125,7 +161,7 @@ export default {
       return json({ roomId: invite.roomId, ...device });
     }
 
-    const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/pair-code|\/messages|\/socket|\/device|\/devices(?:\/([^/]+))?)?$/);
+    const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/pair-code|\/messages|\/socket|\/device|\/devices(?:\/([^/]+))?|\/files(?:\/.*)?|\/downloads\/[0-9a-f]{64})?$/);
     if (!match || !ROOM_ID.test(match[1]) || (match[3] && !ROOM_ID.test(match[3]))) return json({ error: 'not_found' }, 404);
     const roomId = match[1];
     if (!await registry.hasRoom(roomId)) return json({ error: 'not_found' }, 404);
@@ -136,10 +172,48 @@ export default {
       if (limit.error) return resultResponse(limit);
       return room.fetch(request);
     }
+    if (request.method === 'GET' && match[2]?.startsWith('/downloads/')) return room.fetch(request);
     const token = request.headers.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
     const deviceId = token ? await room.authorize(token) : null;
     if (!deviceId) return json({ error: 'unauthorized' }, 401);
 
+    if (request.method === 'POST' && match[2] === '/files/uploads') {
+      const body = await readJson(request, 65536);
+      if (body.error) return resultResponse(body);
+      const file = body.value;
+      if (typeof file.clientId !== 'string' || !ROOM_ID.test(file.clientId)) return json({ error: 'invalid_client_id' }, 400);
+      if (typeof file.name !== 'string' || !file.name || file.name.length > 255 || /[\x00-\x1f\x7f/\\]/.test(file.name)) return json({ error: 'invalid_file_name' }, 400);
+      if (typeof file.type !== 'string' || file.type.length > 255 || (file.type && !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(file.type))) return json({ error: 'invalid_file_type' }, 400);
+      if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > FILE_SIZE_LIMIT) return json({ error: 'file_too_large' }, 413);
+      if (file.text === undefined) file.text = '';
+      if (typeof file.text !== 'string' || file.text.length > 10000) return json({ error: 'invalid_text' }, 400);
+      file.type ||= 'application/octet-stream';
+      const result = await registry.prepareUpload(roomId, deviceId, file);
+      const { created, ...response } = result;
+      return resultResponse(response, created ? 201 : 200);
+    }
+    const upload = match[2]?.match(/^\/files\/uploads\/([^/]+)(?:\/chunks\/(0|[1-9][0-9]*)|\/(complete))?$/);
+    if (upload && ROOM_ID.test(upload[1])) {
+      let result;
+      if (request.method === 'PUT' && upload[2] !== undefined) {
+        const body = await readBytes(request, FILE_CHUNK_SIZE);
+        if (body.error) return resultResponse(body);
+        result = await room.writeFileChunk(deviceId, upload[1], Number(upload[2]), body.bytes);
+      } else if (request.method === 'POST' && upload[3]) {
+        result = await room.completeUpload(deviceId, upload[1]);
+      } else if (request.method === 'DELETE' && !upload[2] && !upload[3]) {
+        result = await room.cancelUpload(deviceId, upload[1]);
+      } else return json({ error: 'not_found' }, 404);
+      await registry.refreshRoom(roomId);
+      if (result.message) return json(result.message, result.created ? 201 : 200);
+      return resultResponse(result);
+    }
+    const file = match[2]?.match(/^\/files\/([1-9][0-9]*)(\/download)?$/);
+    if (file) {
+      await registry.refreshRoom(roomId);
+      if (request.method === 'POST' && file[2]) return resultResponse(await room.issueDownload(deviceId, file[1]));
+      if (request.method === 'GET' && !file[2]) return room.fetch(request);
+    }
     if (request.method === 'GET' && match[2] === '/devices') {
       return resultResponse(await room.listDevices(deviceId));
     }
@@ -197,14 +271,17 @@ export class PairingRegistry extends DurableObject {
     this.sql.exec('CREATE INDEX IF NOT EXISTS invites_expiry ON invites(expires_at)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL)');
     this.sql.exec('CREATE INDEX IF NOT EXISTS attempts_expiry ON attempts(expires_at)');
-    this.sql.exec('CREATE TABLE IF NOT EXISTS room_usage (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL, oldest_at INTEGER)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS room_usage (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL, oldest_at INTEGER, deleting_files INTEGER)');
+    if (!this.sql.exec('PRAGMA table_info(room_usage)').toArray().some(column => column.name === 'deleting_files')) {
+      this.sql.exec('ALTER TABLE room_usage ADD COLUMN deleting_files INTEGER');
+    }
     this.sql.exec('CREATE TABLE IF NOT EXISTS cleanup (id INTEGER PRIMARY KEY CHECK(id = 1), phase TEXT NOT NULL, cursor TEXT NOT NULL, target_bytes INTEGER)');
   }
 
   rememberUsage(roomId, usage) {
     this.sql.exec(
-      'INSERT INTO room_usage (room_id, bytes, oldest_at) VALUES (?, ?, ?) ON CONFLICT(room_id) DO UPDATE SET bytes = excluded.bytes, oldest_at = excluded.oldest_at',
-      roomId, usage.bytes, usage.oldestAt
+      'INSERT INTO room_usage (room_id, bytes, oldest_at, deleting_files) VALUES (?, ?, ?, ?) ON CONFLICT(room_id) DO UPDATE SET bytes = excluded.bytes, oldest_at = excluded.oldest_at, deleting_files = excluded.deleting_files',
+      roomId, usage.bytes, usage.oldestAt, usage.deletingFiles
     );
   }
 
@@ -256,6 +333,31 @@ export class PairingRegistry extends DurableObject {
     });
   }
 
+  async prepareUpload(roomId, deviceId, file) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const room = this.env.SYNC_ROOMS.getByName(roomId);
+      const usage = await room.maintain(roomId);
+      this.rememberUsage(roomId, usage);
+      const existing = await room.findMessage(deviceId, file.clientId);
+      if (existing) return existing;
+      const upload = await room.uploadInfo(deviceId, file.clientId);
+      if (upload) return upload;
+      const reserve = fileReserve(file.size);
+      if (this.storageBytes() + reserve >= STORAGE_HIGH_WATER) {
+        if (!this.sql.exec('SELECT 1 FROM room_usage WHERE oldest_at IS NOT NULL LIMIT 1').toArray().length) return { error: 'storage_full', status: 507 };
+        this.sql.exec("INSERT OR IGNORE INTO cleanup (id, phase, cursor) VALUES (1, 'refresh', '')");
+        // A refresh remembers the pending reservation until actual usage is checked.
+        this.sql.exec("UPDATE cleanup SET target_bytes = max(coalesce(target_bytes, 0), ?) WHERE id = 1 AND phase = 'refresh'", reserve);
+        await this.resumeCleanup();
+        return { error: 'storage_cleaning', status: 503, retryAfter: 1 };
+      }
+      this.rememberUsage(roomId, { ...usage, bytes: usage.bytes + reserve });
+      const result = await room.beginUpload(deviceId, file);
+      this.rememberUsage(roomId, await room.storageUsage());
+      return result;
+    });
+  }
+
   async alarm() {
     await this.ctx.blockConcurrencyWhile(async () => {
       let state = this.sql.exec('SELECT phase, cursor, target_bytes FROM cleanup WHERE id = 1').toArray()[0];
@@ -271,7 +373,7 @@ export class PairingRegistry extends DurableObject {
           return;
         }
         const total = this.storageBytes();
-        if (total + MESSAGE_WRITE_HEADROOM < STORAGE_HIGH_WATER) {
+        if (total + Math.max(MESSAGE_WRITE_HEADROOM, state.target_bytes || 0) < STORAGE_HIGH_WATER) {
           this.sql.exec('DELETE FROM cleanup');
           return;
         }
@@ -281,11 +383,19 @@ export class PairingRegistry extends DurableObject {
         return;
       }
       for (let batch = 0; batch < 10 && this.storageBytes() > state.target_bytes; batch += 1) {
+        // Older room snapshots must be refreshed before deciding which history to prune.
+        const pending = this.sql.exec('SELECT room_id FROM room_usage WHERE deleting_files IS NULL OR deleting_files > 0 ORDER BY oldest_at, room_id LIMIT 1').toArray()[0];
+        if (pending) {
+          this.rememberUsage(pending.room_id, await this.env.SYNC_ROOMS.getByName(pending.room_id).maintain());
+          continue;
+        }
         const oldest = this.sql.exec('SELECT room_id, oldest_at FROM room_usage WHERE oldest_at IS NOT NULL ORDER BY oldest_at, room_id LIMIT 1').toArray()[0];
         if (!oldest) break;
         const room = this.env.SYNC_ROOMS.getByName(oldest.room_id);
-        this.rememberUsage(oldest.room_id, await room.maintain());
+        const usage = await room.maintain();
+        this.rememberUsage(oldest.room_id, usage);
         if (this.storageBytes() <= state.target_bytes) break;
+        if (usage.deletingFiles) continue;
         const first = this.sql.exec('SELECT room_id, oldest_at FROM room_usage WHERE oldest_at IS NOT NULL ORDER BY oldest_at, room_id LIMIT 2').toArray();
         if (first[0]?.room_id !== oldest.room_id) continue;
         this.rememberUsage(oldest.room_id, await room.pruneOldest(first[1]?.oldest_at ?? Number.MAX_SAFE_INTEGER));
@@ -342,8 +452,14 @@ export class SyncRoom extends DurableObject {
       this.sql.exec("ALTER TABLE devices ADD COLUMN name TEXT NOT NULL DEFAULT ''");
     }
     this.sql.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
-    this.sql.exec('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL, device_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(device_id, client_id))');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL, device_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, attachment TEXT, UNIQUE(device_id, client_id))');
+    if (!this.sql.exec('PRAGMA table_info(messages)').toArray().some(column => column.name === 'attachment')) this.sql.exec('ALTER TABLE messages ADD COLUMN attachment TEXT');
     this.sql.exec('CREATE INDEX IF NOT EXISTS messages_expiry ON messages(created_at)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS files (file_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, client_id TEXT NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, message_id INTEGER, reserved_bytes INTEGER NOT NULL, UNIQUE(device_id, client_id))');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS file_shards (file_id TEXT NOT NULL, shard_index INTEGER NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(file_id, shard_index))');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS file_upload_chunks (file_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, size INTEGER NOT NULL, received INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(file_id, chunk_index))');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS download_tickets (ticket TEXT PRIMARY KEY, file_id TEXT NOT NULL, device_id TEXT NOT NULL, expires_at INTEGER NOT NULL)');
+    this.sql.exec("CREATE TRIGGER IF NOT EXISTS delete_message_files AFTER DELETE ON messages BEGIN UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE message_id = OLD.id; END");
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
 
@@ -393,43 +509,169 @@ export class SyncRoom extends DurableObject {
   }
 
   messages() {
-    return this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt FROM messages ORDER BY id').toArray();
+    return this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages ORDER BY id').toArray().map(publicMessage);
   }
 
   storageUsage() {
     return {
-      bytes: this.sql.databaseSize,
-      oldestAt: this.sql.exec('SELECT min(created_at) AS oldest_at FROM messages').one().oldest_at
+      bytes: this.sql.databaseSize + this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM file_shards').one().bytes + this.sql.exec('SELECT coalesce(sum(reserved_bytes), 0) AS bytes FROM files').one().bytes,
+      oldestAt: this.sql.exec("SELECT min(created_at) AS oldest_at FROM (SELECT created_at FROM messages UNION ALL SELECT created_at FROM files WHERE status IN ('uploading', 'deleting'))").one().oldest_at,
+      deletingFiles: this.sql.exec("SELECT count(*) AS count FROM files WHERE status = 'deleting'").one().count
     };
   }
 
   pruneExpired() {
     const deleted = this.sql.exec('DELETE FROM messages WHERE created_at <= ? RETURNING id', Date.now() - MESSAGE_LIFETIME).toArray();
     if (deleted.length) this.broadcast({ type: 'history', messages: this.messages() });
+    this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading' AND updated_at <= ?", Date.now() - UPLOAD_LIFETIME);
+    this.sql.exec('DELETE FROM download_tickets WHERE expires_at <= ?', Date.now());
     return deleted.length;
   }
 
   async maintain(roomId) {
-    if (roomId) this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'roomId', roomId);
-    this.pruneExpired();
-    await this.scheduleAlarm();
-    return this.storageUsage();
+    return this.ctx.blockConcurrencyWhile(async () => {
+      if (roomId) this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'roomId', roomId);
+      this.pruneExpired();
+      await this.cleanupFiles();
+      await this.scheduleAlarm();
+      return this.storageUsage();
+    });
   }
 
   async pruneOldest(before = Number.MAX_SAFE_INTEGER) {
-    this.sql.exec('DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE created_at <= ? ORDER BY created_at, id LIMIT 100)', before);
-    this.broadcast({ type: 'history', messages: this.messages() });
-    await this.scheduleAlarm();
-    return this.storageUsage();
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const messages = this.sql.exec('SELECT id, attachment FROM messages WHERE created_at <= ? ORDER BY created_at, id LIMIT 100', before).toArray();
+      // Reclaim an attachment's shards before considering any newer messages.
+      const attachmentIndex = messages.findIndex(message => message.attachment);
+      const ids = messages.slice(0, attachmentIndex < 0 ? messages.length : attachmentIndex + 1).map(message => message.id);
+      if (ids.length) this.sql.exec(`DELETE FROM messages WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids);
+      this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading' AND created_at <= ?", before);
+      this.broadcast({ type: 'history', messages: this.messages() });
+      await this.cleanupFiles();
+      await this.scheduleAlarm();
+      return this.storageUsage();
+    });
   }
 
   findMessage(deviceId, clientId) {
     if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) {
       return { error: 'unauthorized', status: 401 };
     }
-    const existing = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt FROM messages WHERE device_id = ? AND client_id = ?', deviceId, clientId).toArray()[0];
-    if (existing) return { message: existing, created: false };
+    const existing = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages WHERE device_id = ? AND client_id = ?', deviceId, clientId).toArray()[0];
+    if (existing) return { message: publicMessage(existing), created: false };
     return null;
+  }
+
+  uploadInfo(deviceId, clientId) {
+    if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+    const file = this.sql.exec('SELECT file_id, status FROM files WHERE device_id = ? AND client_id = ?', deviceId, clientId).toArray()[0];
+    if (!file) return null;
+    if (file.status !== 'uploading') return { error: 'upload_unavailable', status: 409 };
+    return { uploadId: file.file_id, chunkSize: FILE_CHUNK_SIZE, receivedBytes: this.sql.exec('SELECT coalesce(sum(size), 0) AS bytes FROM file_upload_chunks WHERE file_id = ? AND received = 1', file.file_id).one().bytes };
+  }
+
+  async beginUpload(deviceId, file) {
+    const existing = this.findMessage(deviceId, file.clientId) || this.uploadInfo(deviceId, file.clientId);
+    if (existing) return existing;
+    const uploadId = crypto.randomUUID();
+    this.sql.exec('INSERT INTO files (file_id, device_id, client_id, name, type, size, text, status, created_at, updated_at, reserved_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', uploadId, deviceId, file.clientId, file.name, file.type, file.size, file.text, 'uploading', Date.now(), Date.now(), fileReserve(file.size));
+    await this.scheduleAlarm();
+    return { uploadId, chunkSize: FILE_CHUNK_SIZE, receivedBytes: 0, created: true };
+  }
+
+  async writeFileChunk(deviceId, uploadId, index, bytes) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+      const file = this.sql.exec("SELECT * FROM files WHERE file_id = ? AND device_id = ? AND status = 'uploading'", uploadId, deviceId).toArray()[0];
+      if (!file || file.updated_at + UPLOAD_LIFETIME <= Date.now()) return { error: 'not_found', status: 404 };
+      const count = Math.ceil(file.size / FILE_CHUNK_SIZE);
+      const expected = Math.min(FILE_CHUNK_SIZE, file.size - index * FILE_CHUNK_SIZE);
+      if (!Number.isSafeInteger(index) || index >= count || bytes.byteLength !== expected) return { error: 'invalid_chunk', status: 400 };
+      const shardIndex = Math.floor(index * FILE_CHUNK_SIZE / FILE_SHARD_SIZE);
+      const shard = this.env.FILE_SHARDS.getByName(`${uploadId}:${shardIndex}`);
+      const tracked = this.sql.exec('SELECT bytes FROM file_shards WHERE file_id = ? AND shard_index = ?', uploadId, shardIndex).toArray()[0];
+      const previous = this.sql.exec('SELECT size FROM file_upload_chunks WHERE file_id = ? AND chunk_index = ?', uploadId, index).toArray()[0];
+      const received = this.sql.exec('SELECT count(*) AS count FROM file_upload_chunks WHERE file_id = ? AND received = 1', uploadId).one().count;
+      if (!previous && index !== received) return { error: 'invalid_chunk', status: 400 };
+      const allocation = bytes.byteLength + 65536;
+      if (!previous) {
+        this.ctx.storage.transactionSync(() => {
+          this.sql.exec('INSERT INTO file_upload_chunks (file_id, chunk_index, size) VALUES (?, ?, ?)', uploadId, index, bytes.byteLength);
+          this.sql.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, ?, ?) ON CONFLICT(file_id, shard_index) DO UPDATE SET bytes = bytes + excluded.bytes', uploadId, shardIndex, allocation);
+          this.sql.exec('UPDATE files SET reserved_bytes = max(0, reserved_bytes - ?) WHERE file_id = ?', allocation, uploadId);
+        });
+      }
+      const result = await shard.writePart(index, bytes);
+      if (result.error) return result;
+      this.ctx.storage.transactionSync(() => {
+        this.sql.exec('UPDATE file_upload_chunks SET received = 1 WHERE file_id = ? AND chunk_index = ?', uploadId, index);
+        this.sql.exec('UPDATE files SET updated_at = ? WHERE file_id = ?', Date.now(), uploadId);
+        const accounted = (tracked?.bytes || 0) + (previous ? 0 : allocation);
+        this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', Math.max(result.bytes, accounted), uploadId, shardIndex);
+      });
+      await this.scheduleAlarm();
+      return { receivedBytes: this.sql.exec('SELECT coalesce(sum(size), 0) AS bytes FROM file_upload_chunks WHERE file_id = ? AND received = 1', uploadId).one().bytes };
+    });
+  }
+
+  async completeUpload(deviceId, uploadId) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+      const file = this.sql.exec('SELECT * FROM files WHERE file_id = ? AND device_id = ?', uploadId, deviceId).toArray()[0];
+      if (!file || file.status === 'deleting' || (file.status === 'uploading' && file.updated_at + UPLOAD_LIFETIME <= Date.now())) return { error: 'not_found', status: 404 };
+      const existing = this.findMessage(deviceId, file.client_id);
+      if (existing) return existing;
+      if (this.sql.exec('SELECT coalesce(sum(size), 0) AS bytes FROM file_upload_chunks WHERE file_id = ? AND received = 1', uploadId).one().bytes !== file.size) return { error: 'upload_incomplete', status: 409 };
+      for (const shard of this.sql.exec('SELECT shard_index FROM file_shards WHERE file_id = ?', uploadId).toArray()) {
+        const bytes = await this.env.FILE_SHARDS.getByName(`${uploadId}:${shard.shard_index}`).storageBytes();
+        this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', bytes, uploadId, shard.shard_index);
+      }
+      const attachment = { name: file.name, type: file.type, size: file.size };
+      const message = this.ctx.storage.transactionSync(() => {
+        const created = this.sql.exec('INSERT INTO messages (client_id, device_id, text, created_at, attachment) VALUES (?, ?, ?, ?, ?) RETURNING id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment', file.client_id, deviceId, file.text, Date.now(), JSON.stringify(attachment)).one();
+        this.sql.exec("UPDATE files SET status = 'complete', message_id = ?, created_at = ?, reserved_bytes = 0 WHERE file_id = ?", created.id, created.createdAt, uploadId);
+        this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500)');
+        return publicMessage(created);
+      });
+      this.broadcast({ type: 'message', message });
+      await this.cleanupFiles();
+      await this.scheduleAlarm();
+      return { message, created: true };
+    });
+  }
+
+  async cancelUpload(deviceId, uploadId) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+      if (!this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE file_id = ? AND device_id = ? AND status = 'uploading' RETURNING file_id", uploadId, deviceId).toArray().length) return { error: 'not_found', status: 404 };
+      await this.cleanupFiles();
+      await this.scheduleAlarm();
+      return { ok: true };
+    });
+  }
+
+  async cleanupFiles() {
+    const shards = this.sql.exec("SELECT s.file_id, s.shard_index FROM file_shards s JOIN files f ON f.file_id = s.file_id WHERE f.status = 'deleting' ORDER BY f.created_at, s.shard_index LIMIT 4").toArray();
+    for (const shard of shards) {
+      await this.env.FILE_SHARDS.getByName(`${shard.file_id}:${shard.shard_index}`).erase();
+      this.sql.exec('DELETE FROM file_shards WHERE file_id = ? AND shard_index = ?', shard.file_id, shard.shard_index);
+    }
+    const finished = this.sql.exec("SELECT file_id FROM files WHERE status = 'deleting' AND NOT EXISTS (SELECT 1 FROM file_shards WHERE file_shards.file_id = files.file_id)").toArray();
+    for (const file of finished) {
+      this.sql.exec('DELETE FROM file_upload_chunks WHERE file_id = ?', file.file_id);
+      this.sql.exec('DELETE FROM download_tickets WHERE file_id = ?', file.file_id);
+      this.sql.exec('DELETE FROM files WHERE file_id = ?', file.file_id);
+    }
+  }
+
+  async issueDownload(deviceId, messageId) {
+    if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+    const file = this.sql.exec("SELECT file_id FROM files WHERE message_id = ? AND status = 'complete'", messageId).toArray()[0];
+    if (!file) return { error: 'not_found', status: 404 };
+    const ticket = credential();
+    const expiresAt = Date.now() + DOWNLOAD_LIFETIME;
+    this.sql.exec('INSERT INTO download_tickets (ticket, file_id, device_id, expires_at) VALUES (?, ?, ?, ?)', ticket, file.file_id, deviceId, expiresAt);
+    return { ticket, expiresAt };
   }
 
   async addMessage(deviceId, clientId, text) {
@@ -450,6 +692,7 @@ export class SyncRoom extends DurableObject {
       return { error: 'unauthorized', status: 401 };
     }
     this.sql.exec('DELETE FROM messages');
+    this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading'");
     this.broadcast({ type: 'cleared' });
     await this.scheduleAlarm();
     return { ok: true };
@@ -462,6 +705,7 @@ export class SyncRoom extends DurableObject {
     if (!this.sql.exec('DELETE FROM devices WHERE device_id = ? RETURNING device_id', deviceId).toArray().length) {
       return { error: 'device_not_found', status: 404 };
     }
+    this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE device_id = ? AND status = 'uploading'", deviceId);
     for (const socket of this.ctx.getWebSockets()) {
       if (socket.deserializeAttachment()?.deviceId !== deviceId) continue;
       socket.serializeAttachment({ closing: true });
@@ -479,6 +723,79 @@ export class SyncRoom extends DurableObject {
   }
 
   async fetch(request) {
+    const path = new URL(request.url).pathname;
+    const download = path.match(/^\/v1\/spaces\/[^/]+\/files\/([1-9][0-9]*)$/);
+    const ticketMatch = path.match(/^\/v1\/spaces\/[^/]+\/downloads\/([0-9a-f]{64})$/);
+    if (request.method === 'GET' && (download || ticketMatch)) {
+      if (request.headers.has('Range')) return new Response(null, { status: 416, headers: { 'Accept-Ranges': 'none' } });
+      let deviceId;
+      let file;
+      if (ticketMatch) {
+        const ticket = this.sql.exec('SELECT file_id, device_id, expires_at FROM download_tickets WHERE ticket = ?', ticketMatch[1]).toArray()[0];
+        if (!ticket || ticket.expires_at <= Date.now()) return json({ error: 'not_found' }, 404);
+        deviceId = ticket.device_id;
+        file = this.sql.exec("SELECT * FROM files WHERE file_id = ? AND status = 'complete'", ticket.file_id).toArray()[0];
+        this.sql.exec('DELETE FROM download_tickets WHERE ticket = ?', ticketMatch[1]);
+      } else {
+        const token = request.headers.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
+        deviceId = token ? await this.authorize(token) : null;
+        file = this.sql.exec("SELECT * FROM files WHERE message_id = ? AND status = 'complete'", download[1]).toArray()[0];
+      }
+      if (!deviceId || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return json({ error: 'unauthorized' }, 401);
+      if (!file || !this.sql.exec('SELECT 1 FROM messages WHERE id = ?', file.message_id).toArray().length || file.created_at + MESSAGE_LIFETIME <= Date.now()) return json({ error: 'not_found' }, 404);
+      let offset = 0;
+      let shardReader = null;
+      let shardIndex = -1;
+      const body = new ReadableStream({
+        type: 'bytes',
+        pull: async (controller) => {
+          if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length || !this.sql.exec("SELECT 1 FROM files WHERE file_id = ? AND status = 'complete'", file.file_id).toArray().length) {
+            await shardReader?.cancel();
+            shardReader?.releaseLock();
+            shardReader = null;
+            controller.error(new Error('download_unavailable'));
+            return;
+          }
+          if (offset === file.size) {
+            await shardReader?.cancel();
+            shardReader?.releaseLock();
+            shardReader = null;
+            controller.close();
+            return;
+          }
+          try {
+            const nextShard = Math.floor(offset / FILE_SHARD_SIZE);
+            if (nextShard !== shardIndex) {
+              await shardReader?.cancel();
+              shardReader?.releaseLock();
+              const stream = await this.env.FILE_SHARDS.getByName(`${file.file_id}:${nextShard}`).readStream();
+              shardReader = stream.getReader();
+              shardIndex = nextShard;
+            }
+            const { done, value } = await shardReader.read();
+            if (done || !value?.byteLength) throw new Error('not_found');
+            offset += value.byteLength;
+            controller.enqueue(value);
+          } catch (error) {
+            await shardReader?.cancel(error).catch(() => {});
+            shardReader?.releaseLock();
+            shardReader = null;
+            controller.error(error);
+          }
+        },
+        async cancel(reason) {
+          await shardReader?.cancel(reason);
+          shardReader?.releaseLock();
+          shardReader = null;
+        }
+      });
+      const filename = encodeURIComponent(file.name).replace(/['()*]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+      return new Response(body, { headers: {
+        'Content-Type': 'application/octet-stream', 'Content-Length': String(file.size),
+        'Content-Disposition': `attachment; filename="download"; filename*=UTF-8''${filename}`,
+        'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store', 'Accept-Ranges': 'none'
+      } });
+    }
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({ error: 'websocket_required' }, 426);
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
@@ -532,6 +849,9 @@ export class SyncRoom extends DurableObject {
       .filter(Boolean);
     const oldest = this.sql.exec('SELECT min(created_at) AS oldest_at FROM messages').one().oldest_at;
     if (oldest !== null) deadlines.push(oldest + MESSAGE_LIFETIME);
+    const uploading = this.sql.exec("SELECT min(updated_at) AS oldest_at FROM files WHERE status = 'uploading'").one().oldest_at;
+    if (uploading !== null) deadlines.push(uploading + UPLOAD_LIFETIME);
+    if (this.sql.exec("SELECT 1 FROM files WHERE status = 'deleting' LIMIT 1").toArray().length) deadlines.push(Date.now() + 1000);
     if (deadlines.length) await this.ctx.storage.setAlarm(Math.min(...deadlines));
     else await this.ctx.storage.deleteAlarm();
   }
@@ -545,9 +865,11 @@ export class SyncRoom extends DurableObject {
       socket.close(1008, 'Authentication timed out');
     }
     const deleted = this.pruneExpired();
+    const hadPending = this.sql.exec("SELECT 1 FROM files WHERE status = 'deleting' LIMIT 1").toArray().length;
+    await this.cleanupFiles();
     await this.scheduleAlarm();
     const roomId = this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'roomId').toArray()[0]?.value;
-    if (deleted && roomId) this.ctx.waitUntil(this.env.PAIRING_REGISTRY.getByName('registry').refreshRoom(roomId));
+    if ((deleted || hadPending) && roomId) this.ctx.waitUntil(this.env.PAIRING_REGISTRY.getByName('registry').refreshRoom(roomId));
   }
 
   async webSocketClose(socket) {
@@ -559,5 +881,50 @@ export class SyncRoom extends DurableObject {
     socket.serializeAttachment({ closing: true });
     socket.close(1011, 'Connection error');
     await this.scheduleAlarm();
+  }
+}
+
+export class FileShard extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.sql = ctx.storage.sql;
+    this.sql.exec('CREATE TABLE IF NOT EXISTS chunks (chunk_index INTEGER PRIMARY KEY, data BLOB NOT NULL)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS parts (part_index INTEGER PRIMARY KEY, hash TEXT NOT NULL)');
+  }
+
+  async writePart(index, contents) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', contents)), value => value.toString(16).padStart(2, '0')).join('');
+      const existing = this.sql.exec('SELECT hash FROM parts WHERE part_index = ?', index).toArray()[0];
+      if (existing) return existing.hash === digest ? { bytes: this.sql.databaseSize } : { error: 'chunk_conflict', status: 409 };
+      this.ctx.storage.transactionSync(() => {
+        const start = (index % (FILE_SHARD_SIZE / FILE_CHUNK_SIZE)) * (FILE_CHUNK_SIZE / BLOB_CHUNK_SIZE);
+        for (let offset = 0, chunk = start; offset < contents.byteLength; offset += BLOB_CHUNK_SIZE, chunk++) {
+          this.sql.exec('INSERT INTO chunks (chunk_index, data) VALUES (?, ?)', chunk, new Uint8Array(contents, offset, Math.min(BLOB_CHUNK_SIZE, contents.byteLength - offset)));
+        }
+        this.sql.exec('INSERT INTO parts (part_index, hash) VALUES (?, ?)', index, digest);
+      });
+      return { bytes: this.sql.databaseSize };
+    });
+  }
+
+  readStream() {
+    let index = 0;
+    return new ReadableStream({
+      type: 'bytes',
+      pull: (controller) => {
+        const chunk = this.sql.exec('SELECT data FROM chunks WHERE chunk_index = ?', index++).toArray()[0];
+        if (!chunk) controller.close();
+        else controller.enqueue(new Uint8Array(chunk.data));
+      }
+    });
+  }
+
+  storageBytes() {
+    return this.sql.databaseSize;
+  }
+
+  erase() {
+    return this.ctx.storage.deleteAll();
   }
 }
