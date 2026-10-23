@@ -148,8 +148,8 @@
             pet.hidden = false;
             place(spawnCenter - pet.offsetWidth / 2);
             updateLanguage();
-            syncActivity();
             greet();
+            syncActivity();
         };
 
         const hide = (restoreFocus = true) => {
@@ -186,7 +186,7 @@
         });
         pet.addEventListener('keyup', (event) => event.stopPropagation());
         desktop.addEventListener('pointermove', (event) => {
-            if (pet.hidden || event.pointerType === 'touch') return;
+            if (event.pointerType === 'touch') return;
             const wasFollowing = isFollowing();
             pointer = { x: event.clientX, y: event.clientY };
             if (isFollowing()) followPointer();

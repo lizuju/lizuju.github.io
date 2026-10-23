@@ -36,6 +36,43 @@ test('summons one robot from empty desktop space without intercepting app intera
     await expect(page.locator('[data-pet-toggle]')).toHaveAttribute('aria-expanded', 'true');
 });
 
+test('automatically follows a stationary lower-quarter pointer when the direct portfolio stays maximized', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'automatic desktop following is disabled on touch devices');
+    await page.clock.install({ time: new Date('2026-10-23T00:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-10-23T00:00:01Z'));
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.goto('/portfolio/');
+    const appWindow = page.locator('[data-app-window]');
+    const pet = page.locator('[data-desktop-pet]');
+    const speech = page.locator('[data-pet-speech]');
+    await expect(appWindow).toHaveClass(/is-maximized/);
+    await expect(pet).toBeHidden();
+    const desktop = await page.locator('[data-retro-desktop]').boundingBox();
+    const boundaryY = desktop.y + desktop.height * 0.75;
+    await page.mouse.move(desktop.x + desktop.width * 0.25, boundaryY + 2);
+    await page.clock.runFor(9999);
+    await expect(pet).toBeHidden();
+    await page.clock.runFor(1);
+    await expect(pet).toBeVisible();
+    await expect(pet).toHaveClass(/is-walking/);
+    await expect(speech).toBeVisible();
+    const appeared = await pet.boundingBox();
+    await page.clock.runFor(1000);
+    const followed = await pet.boundingBox();
+    expect(appeared.x - followed.x).toBeGreaterThan(25);
+    expect(appeared.x - followed.x).toBeLessThan(35);
+    await expect(speech).toBeVisible();
+
+    await page.mouse.move(desktop.x + desktop.width * 0.25, boundaryY - 2);
+    await expect(pet).not.toHaveClass(/is-walking/);
+    const stopped = await pet.boundingBox();
+    await page.mouse.move(desktop.x + desktop.width * 0.85, boundaryY - 2);
+    await page.clock.runFor(1000);
+    expect((await pet.boundingBox()).x).toBe(stopped.x);
+    await expect(pet).not.toHaveClass(/is-walking/);
+    await expect(appWindow).toHaveClass(/is-maximized/);
+});
+
 test('supports keyboard wake-up, bilingual greetings and returning focus when dismissed', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the desktop start menu is checked with a keyboard');
     await page.goto('/portfolio/');
