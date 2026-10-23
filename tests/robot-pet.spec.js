@@ -120,7 +120,8 @@ test('supports keyboard wake-up, bilingual greetings and returning focus when di
 
 test('follows the mouse immediately through greetings, stationary targets and keyboard wake-up', async ({ page, isMobile }) => {
     test.skip(isMobile, 'mouse following is only available in the desktop layout');
-    await page.clock.install();
+    await page.clock.install({ time: new Date('2026-10-23T00:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-10-23T00:00:01Z'));
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.goto('/portfolio/');
     await page.locator('[data-window-action="minimize"]').click();
