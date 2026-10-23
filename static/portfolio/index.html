@@ -70,7 +70,7 @@
             </button>
             <button class="desktop-shortcut" type="button" data-open-sync-space>
                 <span class="shortcut-icon shortcut-icon--sync" aria-hidden="true"></span>
-                <span data-i18n="desktopSyncSpace">同步空间</span>
+                <span data-i18n="desktopSyncSpace">联络站</span>
             </button>
         </nav>
 
@@ -128,23 +128,22 @@
             <div class="window-titlebar" data-sync-titlebar>
                 <div class="window-title">
                     <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
-                    <span id="sync-space-title" data-i18n="desktopSyncSpace">同步空间</span>
+                    <span id="sync-space-title" data-i18n="desktopSyncSpace">联络站</span>
                 </div>
                 <div class="window-controls">
-                    <button type="button" data-sync-action="minimize" aria-label="最小化同步空间"
-                        title="最小化同步空间"><span aria-hidden="true">_</span></button>
-                    <button type="button" data-sync-action="maximize" aria-label="最大化同步空间"
-                        title="最大化同步空间"><span aria-hidden="true">□</span></button>
-                    <button type="button" data-sync-action="close" aria-label="关闭同步空间"
-                        title="关闭同步空间"><span aria-hidden="true">×</span></button>
+                    <button type="button" data-sync-action="minimize" aria-label="最小化联络站"
+                        title="最小化联络站"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-sync-action="maximize" aria-label="最大化联络站"
+                        title="最大化联络站"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-sync-action="close" aria-label="关闭联络站"
+                        title="关闭联络站"><span aria-hidden="true">×</span></button>
                 </div>
             </div>
             <div class="sync-content">
                 <div class="sync-setup" data-sync-setup>
                     <div class="sync-welcome">
                         <span class="sync-welcome-icon" aria-hidden="true">↔</span>
-                        <h2 data-i18n="syncSetupTitle">让内容跟着你走</h2>
-                        <p data-i18n="syncSetupIntro">创建一个空间，在另一台设备输入配对码，即可同步消息。</p>
+                        <h2 data-i18n="syncSetupTitle">输入配对码，随时聊，随手传。</h2>
                     </div>
                     <button class="sync-button sync-create" type="button" data-sync-create
                         data-i18n="syncCreate">创建空间</button>
@@ -189,8 +188,14 @@
                                 data-i18n="syncCopyCode">复制配对码</button>
                         </div>
                     </div>
+                    <div class="sync-message-toolbar">
+                        <label class="visually-hidden" for="sync-search" data-i18n="syncSearchPlaceholder">搜索消息或文件名</label>
+                        <input id="sync-search" type="search" placeholder="搜索消息或文件名"
+                            data-i18n-placeholder="syncSearchPlaceholder" data-sync-search>
+                    </div>
                     <div class="sync-message-feed" data-sync-feed>
                         <p class="sync-empty" data-sync-empty data-i18n="syncEmpty">这里还没有消息，发送一条试试。</p>
+                        <p class="sync-empty" data-sync-no-results data-i18n="syncNoResults" hidden>没有找到匹配的消息。</p>
                         <h2 class="visually-hidden" id="sync-messages-title" data-i18n="syncMessagesLabel">同步消息</h2>
                         <ol class="sync-messages" data-sync-messages role="log" aria-live="polite"
                             aria-relevant="additions" aria-labelledby="sync-messages-title"></ol>
@@ -230,8 +235,8 @@
             </div>
             <p class="sync-notice" role="status" aria-live="polite" data-sync-notice
                 data-i18n="syncReady">创建或加入空间，开始同步。</p>
-            <button class="window-resize-handle" type="button" data-sync-resize aria-label="调整同步空间大小"
-                title="调整同步空间大小"></button>
+            <button class="window-resize-handle" type="button" data-sync-resize aria-label="调整联络站大小"
+                title="调整联络站大小"></button>
             <dialog class="sync-confirm-dialog" data-sync-confirm-dialog aria-labelledby="sync-confirm-title"
                 aria-describedby="sync-confirm-copy">
                 <form method="dialog">
@@ -255,14 +260,14 @@
                 </form>
             </dialog>
             <dialog class="sync-devices-dialog" data-sync-devices-dialog aria-labelledby="sync-devices-title">
-                <form method="dialog">
+                <form data-sync-devices-form>
                     <div class="window-titlebar">
                         <div class="window-title">
                             <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
                             <span id="sync-devices-title" data-i18n="syncDevices">配对设备</span>
                         </div>
                         <div class="window-controls">
-                            <button type="submit" aria-label="关闭设备窗口" data-sync-devices-close>
+                            <button type="button" aria-label="关闭设备窗口" data-sync-devices-close>
                                 <span aria-hidden="true">×</span>
                             </button>
                         </div>
@@ -272,10 +277,34 @@
                         <p class="sync-devices-status" data-sync-devices-status role="status" aria-live="polite"></p>
                     </div>
                     <div class="sync-devices-actions">
-                        <button class="sync-button" type="submit" data-i18n="syncDevicesClose">关闭</button>
+                        <button class="sync-button" type="button" data-sync-devices-dismiss data-i18n="syncDevicesClose">关闭</button>
                     </div>
                 </form>
             </dialog>
+        </section>
+
+        <section class="app-window sync-preview-window is-closed" data-sync-preview-window
+            aria-labelledby="sync-preview-title">
+            <div class="window-titlebar" data-sync-preview-drag>
+                <div class="window-title">
+                    <span class="window-app-icon window-app-icon--image" aria-hidden="true"></span>
+                    <span id="sync-preview-title" data-sync-preview-title data-i18n="syncPreviewTitle">附件预览</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-sync-preview-action="minimize" data-i18n-aria="syncPreviewMinimize" aria-label="最小化附件预览"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-sync-preview-action="maximize" data-i18n-aria="syncPreviewMaximize" aria-label="最大化附件预览"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-sync-preview-action="close" data-i18n-aria="syncPreviewClose" aria-label="关闭附件预览"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+            <div class="sync-preview-toolbar" data-sync-preview-toolbar hidden>
+                <button class="sync-button" type="button" data-sync-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
+                <button class="sync-button" type="button" data-sync-preview-fit data-i18n="syncPreviewFit">适应窗口</button>
+                <button class="sync-button" type="button" data-sync-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
+                <span data-sync-preview-zoom></span>
+            </div>
+            <div class="sync-preview-body" data-sync-preview-body tabindex="0" data-i18n-aria="syncPreviewTitle" aria-label="附件预览"></div>
+            <p class="sync-notice" role="status" aria-live="polite" data-sync-preview-status></p>
+            <button class="window-resize-handle" type="button" data-sync-preview-resize data-i18n-aria="syncPreviewResize" aria-label="调整附件预览大小"></button>
         </section>
 
         <section class="app-window is-active" data-app-window aria-label="Gavin portfolio window">
@@ -1532,7 +1561,7 @@
             <div class="start-menu-items">
                 <button type="button" data-open-sync-space aria-controls="sync-space-window">
                     <span class="start-icon start-icon--sync" aria-hidden="true">↔</span>
-                    <span data-i18n="desktopSyncSpace">同步空间</span>
+                    <span data-i18n="desktopSyncSpace">联络站</span>
                 </button>
                 <button type="button" data-pet-toggle aria-controls="desktop-pet" aria-expanded="false">
                     <span class="start-icon start-icon--robot" aria-hidden="true">
@@ -1598,8 +1627,12 @@
             </button>
             <button class="task-window-button sync-task-button" type="button" data-sync-task hidden>
                 <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
-                <span data-i18n="desktopSyncSpace">同步空间</span>
+                <span data-i18n="desktopSyncSpace">联络站</span>
                 <span class="sync-unread-badge" data-sync-unread hidden></span>
+            </button>
+            <button class="task-window-button" type="button" data-sync-preview-task hidden>
+                <span class="window-app-icon window-app-icon--image" aria-hidden="true"></span>
+                <span data-sync-preview-task-title data-i18n="syncPreviewTitle">附件预览</span>
             </button>
             <div class="taskbar-spacer"></div>
             <div class="taskbar-tray">

@@ -85,6 +85,12 @@
     background: #f3f3ef;
 }
 
+.sync-window.is-dragging-files .sync-content {
+    outline: 3px dashed #2c7979;
+    outline-offset: -5px;
+    background: #e5f0ec;
+}
+
 .sync-setup {
     width: min(380px, 100%);
     margin: auto;
@@ -275,6 +281,33 @@
 .sync-pairing-footer .sync-button {
     min-height: 24px;
     padding: 2px 7px;
+}
+
+.sync-message-toolbar {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+    border-bottom: 1px solid #aaa;
+}
+
+.sync-message-toolbar input {
+    flex: 1 1 140px;
+    width: 0;
+    min-width: 0;
+    min-height: 30px;
+    padding: 4px 6px;
+    border: 2px inset #fff;
+    border-radius: 0;
+    color: #111;
+    background: #fff;
+    font: inherit;
+}
+
+.sync-message-toolbar input:focus {
+    outline: 1px dotted #000080;
+    outline-offset: -4px;
 }
 
 .sync-message-feed {
@@ -615,6 +648,11 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
+}
+
+.sync-device-heading strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .sync-device-current {

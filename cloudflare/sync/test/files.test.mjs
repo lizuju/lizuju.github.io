@@ -32,8 +32,15 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
             'index.js': { type: 'esm', contents: await readFile(new URL('../src/index.js', import.meta.url), 'utf8') },
             'harness.js': {
               type: 'esm',
-              contents: `import worker, { SyncRoom as ProductionSyncRoom, PairingRegistry as ProductionRegistry } from './index.js';
-                export { FileShard } from './index.js';
+              contents: `import worker, { SyncRoom as ProductionSyncRoom, PairingRegistry as ProductionRegistry, FileShard as ProductionFileShard } from './index.js';
+                export class FileShard extends ProductionFileShard {
+                  readStream(offset, length) {
+                    this.readRequests ||= [];
+                    this.readRequests.push({ offset, length });
+                    return super.readStream(offset, length);
+                  }
+                  testReadRequests() { return this.readRequests || []; }
+                }
                 export default {
                   fetch(request, env, ctx) {
                     const declared = request.headers.get('X-Test-Content-Length');
@@ -94,7 +101,7 @@ function client(instance = runtime) {
     return {
       status: response.status,
       headers: response.headers,
-      body: response.headers.get('Content-Type')?.includes('application/json')
+      body: method !== 'HEAD' && response.headers.get('Content-Type')?.includes('application/json')
         ? await response.json()
         : Buffer.from(await response.arrayBuffer())
     };
@@ -225,6 +232,13 @@ test('a binary file crosses 8 MiB upload chunks and 64 MiB shards without losing
   assert.ok(downloaded.headers.get('Content-Disposition').includes(`filename*=UTF-8''${encodeURIComponent(name)}`));
   assert.equal(downloaded.body.length, bytes.length);
   assert.equal(createHash('sha256').update(downloaded.body).digest('hex'), createHash('sha256').update(bytes).digest('hex'));
+  for (const [start, end] of [[MiB - 9, MiB + 11], [64 * MiB - 17, 64 * MiB + 43], [64 * MiB + 107, bytes.length - 1]]) {
+    const ranged = await request(`/v1/spaces/${space.roomId}/files/${sent.body.id}`, { token: space.token, headers: { Range: `bytes=${start}-${end}` } });
+    assert.equal(ranged.status, 206);
+    assert.equal(ranged.headers.get('Content-Range'), `bytes ${start}-${end}/${bytes.length}`);
+    assert.equal(ranged.headers.get('Content-Length'), String(end - start + 1));
+    assert.deepEqual(ranged.body, bytes.subarray(start, end + 1));
+  }
   const state = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
   assert.deepEqual(state.body.messages, [sent.body]);
   const restored = await authenticateSocket(space);
@@ -255,6 +269,11 @@ test('empty files and Chinese image names complete without allocating unnecessar
     const downloaded = await request(`/v1/spaces/${space.roomId}/files/${sent.body.id}`, { token: space.token });
     assert.equal(downloaded.status, 200);
     assert.deepEqual(downloaded.body, fixture.bytes);
+    if (!fixture.bytes.length) {
+      const range = await request(`/v1/spaces/${space.roomId}/files/${sent.body.id}`, { token: space.token, headers: { Range: 'bytes=0-' } });
+      assert.equal(range.status, 416);
+      assert.equal(range.headers.get('Content-Range'), 'bytes */0');
+    }
   }
 });
 
@@ -420,7 +439,7 @@ test('upload mutations belong to their device while completed downloads are shar
   assert.deepEqual((await request(path, { token: space.token })).body, bytes);
 });
 
-test('native download tickets are short lived, single use, range-free and invalid after revocation or deletion', async () => {
+test('native download tickets allow resumable ranges for 24 hours and reject expiry, revocation and deletion', async () => {
   const request = client();
   const space = await createSpace(request);
   const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
@@ -434,23 +453,76 @@ test('native download tickets are short lived, single use, range-free and invali
   const issued = await request(ticketPath, { method: 'POST', token: space.token });
   assert.equal(issued.status, 200);
   assert.match(issued.body.ticket, /^[0-9a-f]{64}$/);
-  assert.ok(issued.body.expiresAt > now && issued.body.expiresAt <= Date.now() + 10 * 60 * 1000);
+  assert.ok(issued.body.expiresAt >= now + 24 * 60 * 60 * 1000 && issued.body.expiresAt <= Date.now() + 24 * 60 * 60 * 1000);
   const path = `/v1/spaces/${space.roomId}/downloads/${issued.body.ticket}`;
   const consumed = await Promise.all([request(path, { headers: { Origin: null } }), request(path, { headers: { Origin: null } })]);
-  assert.deepEqual(consumed.map(result => result.status).sort(), [200, 404]);
-  const downloaded = consumed.find(result => result.status === 200);
+  assert.deepEqual(consumed.map(result => result.status), [200, 200]);
+  const downloaded = consumed[0];
   assert.deepEqual(downloaded.body, bytes);
   assert.equal(downloaded.headers.get('Content-Type'), 'application/octet-stream');
   assert.equal(downloaded.headers.get('X-Content-Type-Options'), 'nosniff');
   assert.match(downloaded.headers.get('Content-Disposition'), /^attachment;/);
-  const rangeTicket = await request(ticketPath, { method: 'POST', token: space.token });
-  assert.equal((await request(`/v1/spaces/${space.roomId}/downloads/${rangeTicket.body.ticket}`, { headers: { Origin: null, Range: 'bytes=0-10' } })).status, 416);
-  assert.equal((await request(`/v1/spaces/${space.roomId}/files/${sent.body.id}`, { token: space.token, headers: { Range: 'bytes=0-10' } })).status, 416);
+  const prefix = await request(path, { headers: { Origin: null, Range: 'bytes=0-7000' } });
+  const suffix = await request(path, { headers: { Origin: null, Range: 'bytes=7001-' } });
+  assert.equal(prefix.status, 206);
+  assert.equal(suffix.status, 206);
+  assert.deepEqual(Buffer.concat([prefix.body, suffix.body]), bytes);
+  assert.equal(prefix.headers.get('Accept-Ranges'), 'bytes');
+  assert.equal(prefix.headers.get('Content-Range'), `bytes 0-7000/${bytes.length}`);
+  assert.equal(prefix.headers.get('Content-Length'), '7001');
+  const etag = prefix.headers.get('ETag');
+  const modified = prefix.headers.get('Last-Modified');
+  assert.match(etag, /^"[0-9a-f-]{36}"$/);
+  assert.ok(Number.isFinite(Date.parse(modified)));
+  for (const validator of [etag, modified]) {
+    const resumed = await request(path, { headers: { Range: 'bytes=17-31', 'If-Range': validator } });
+    assert.equal(resumed.status, 206);
+    assert.deepEqual(resumed.body, bytes.subarray(17, 32));
+    assert.equal(resumed.headers.get('ETag'), etag);
+    assert.equal(resumed.headers.get('Last-Modified'), modified);
+  }
+  for (const validator of ['"changed"', `W/${etag}`, new Date(Date.parse(modified) - 1000).toUTCString(), 'invalid']) {
+    const changed = await request(path, { headers: { Range: 'bytes=17-31', 'If-Range': validator } });
+    assert.equal(changed.status, 200);
+    assert.equal(changed.headers.get('Content-Range'), null);
+    assert.deepEqual(changed.body, bytes);
+  }
+  for (const [range, expectedStart, expectedEnd] of [
+    ['bytes=-31', bytes.length - 31, bytes.length - 1],
+    ['bytes=7-999999999999999999999', 7, bytes.length - 1],
+    ['bytes=-999999999999999999999', 0, bytes.length - 1],
+    ['bytes=4-4', 4, 4]
+  ]) {
+    const ranged = await request(path, { headers: { Range: range } });
+    assert.equal(ranged.status, 206, range);
+    assert.equal(ranged.headers.get('Content-Range'), `bytes ${expectedStart}-${expectedEnd}/${bytes.length}`);
+    assert.deepEqual(ranged.body, bytes.subarray(expectedStart, expectedEnd + 1));
+  }
+  for (const range of ['bytes=15731-', 'bytes=9-2', 'bytes=-0', 'bytes=-', 'bytes=0-1,4-5', 'items=0-1', 'bytes=1.5-2']) {
+    const invalid = await request(path, { headers: { Range: range } });
+    assert.equal(invalid.status, 416, range);
+    assert.equal(invalid.headers.get('Content-Range'), `bytes */${bytes.length}`);
+    assert.equal(invalid.headers.get('Content-Length'), '0');
+    assert.equal(invalid.body.length, 0);
+  }
+  for (const [headPath, token] of [[path, undefined], [`/v1/spaces/${space.roomId}/files/${sent.body.id}`, space.token]]) {
+    const head = await request(headPath, { method: 'HEAD', token, headers: { Range: 'bytes=1-2' } });
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get('Content-Length'), String(bytes.length));
+    assert.equal(head.headers.get('Content-Range'), null);
+    assert.equal(head.body.length, 0);
+  }
+  const preflight = await request(path, { method: 'OPTIONS', headers: { 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'range' } });
+  assert.match(preflight.headers.get('Access-Control-Allow-Headers'), /Range/);
+  assert.match(preflight.headers.get('Access-Control-Allow-Headers'), /If-Range/);
+  assert.match(prefix.headers.get('Access-Control-Expose-Headers'), /Content-Range/);
+  assert.match(prefix.headers.get('Access-Control-Expose-Headers'), /ETag/);
 
   const expired = await request(ticketPath, { method: 'POST', token: space.token });
   const storage = await roomStorage(space);
   await storage.exec('UPDATE download_tickets SET expires_at = ?', Date.now() - 1);
   assert.equal((await request(`/v1/spaces/${space.roomId}/downloads/${expired.body.ticket}`)).status, 404);
+  assert.equal((await request(`/v1/spaces/${space.roomId}/downloads/${expired.body.ticket}`, { method: 'HEAD' })).status, 404);
   const peerTicket = await request(ticketPath, { method: 'POST', token: paired.body.token });
   assert.equal(peerTicket.status, 200);
   assert.equal((await request(`/v1/spaces/${space.roomId}/devices/${paired.body.deviceId}`, { method: 'DELETE', token: space.token })).status, 200);
@@ -458,6 +530,78 @@ test('native download tickets are short lived, single use, range-free and invali
   const deletedTicket = await request(ticketPath, { method: 'POST', token: space.token });
   assert.equal((await request(`/v1/spaces/${space.roomId}/messages`, { method: 'DELETE', token: space.token })).status, 200);
   assert.equal((await request(`/v1/spaces/${space.roomId}/downloads/${deletedTicket.body.ticket}`)).status, 404);
+});
+
+test('resuming the end of a 2 GiB file reads only the requested shard and rejects an expired attachment', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance);
+  const space = await createSpace(request);
+  const started = await initiate(request, space, { size: maximumFileSize });
+  assert.equal(started.status, 201);
+  const fileId = started.body.uploadId;
+  const storage = await roomStorage(space, instance);
+  const [{ client_id: clientId }] = await storage.exec('SELECT client_id FROM files WHERE file_id = ?', fileId);
+  const attachment = JSON.stringify({ name: 'file.bin', type: 'application/octet-stream', size: maximumFileSize });
+  const [{ id }] = await storage.exec('INSERT INTO messages (client_id, device_id, text, created_at, attachment) VALUES (?, ?, ?, ?, ?) RETURNING id', clientId, space.deviceId, '', Date.now(), attachment);
+  await storage.exec("UPDATE files SET status = 'complete', message_id = ?, reserved_bytes = 0 WHERE file_id = ?", id, fileId);
+  const shardNamespace = await instance.getDurableObjectNamespace('FILE_SHARDS');
+  const lastShard = shardNamespace.getByName(`${fileId}:31`);
+  await lastShard.storageBytes();
+  const shardStorage = await instance.unsafeGetDurableObjectStorage('sync-files-test', 'FileShard', { name: `${fileId}:31` });
+  const lastMiB = randomBytes(MiB);
+  await shardStorage.exec('INSERT INTO chunks (chunk_index, data) VALUES (?, ?)', 63, lastMiB);
+  const issued = await request(`/v1/spaces/${space.roomId}/files/${id}/download`, { method: 'POST', token: space.token });
+  const path = `/v1/spaces/${space.roomId}/downloads/${issued.body.ticket}`;
+  const ranged = await request(path, { headers: { Range: 'bytes=-23' } });
+  assert.equal(ranged.status, 206);
+  assert.deepEqual(ranged.body, lastMiB.subarray(MiB - 23));
+  assert.equal(ranged.headers.get('Content-Range'), `bytes ${maximumFileSize - 23}-${maximumFileSize - 1}/${maximumFileSize}`);
+  assert.deepEqual(await lastShard.testReadRequests(), [{ offset: 64 * MiB - 23, length: 23 }]);
+  assert.equal((await instance.listDurableObjectIds('FILE_SHARDS')).length, 1);
+  assert.equal((await request(path, { method: 'HEAD' })).headers.get('Content-Length'), String(maximumFileSize));
+  assert.equal((await lastShard.testReadRequests()).length, 1);
+
+  await storage.exec('UPDATE files SET created_at = ?', Date.now() - fiveDays - 1);
+  for (const method of ['GET', 'HEAD']) {
+    assert.equal((await request(path, { method, headers: { Range: 'bytes=-23' } })).status, 404);
+  }
+  assert.equal((await lastShard.testReadRequests()).length, 1);
+});
+
+test('ticket previews inline only safe media and PDF while retaining range and credential checks', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const bytes = Buffer.from('preview fixture bytes');
+  for (const type of ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'video/ogg', 'application/pdf', 'text/html', 'image/svg+xml', 'application/octet-stream']) {
+    const sent = await upload(request, space, { bytes, type });
+    const issued = await request(`/v1/spaces/${space.roomId}/files/${sent.body.id}/download`, { method: 'POST', token: space.token });
+    const path = `/v1/spaces/${space.roomId}/downloads/${issued.body.ticket}`;
+    const preview = await request(`${path}?preview=1`, { headers: { Range: 'bytes=3-9' } });
+    assert.equal(preview.status, 206, type);
+    assert.deepEqual(preview.body, bytes.subarray(3, 10));
+    assert.equal(preview.headers.get('Content-Range'), `bytes 3-9/${bytes.length}`);
+    assert.equal(preview.headers.get('Content-Length'), '7');
+    assert.equal(preview.headers.get('X-Content-Type-Options'), 'nosniff');
+    const safe = !['text/html', 'image/svg+xml', 'application/octet-stream'].includes(type);
+    assert.equal(preview.headers.get('Content-Type'), safe ? type : 'application/octet-stream');
+    assert.ok(preview.headers.get('Content-Disposition').startsWith(safe ? 'inline;' : 'attachment;'));
+    const head = await request(`${path}?preview=1`, { method: 'HEAD' });
+    assert.equal(head.headers.get('Content-Type'), preview.headers.get('Content-Type'));
+    assert.equal(head.body.length, 0);
+    const downloaded = await request(path);
+    assert.equal(downloaded.headers.get('Content-Type'), 'application/octet-stream');
+    assert.match(downloaded.headers.get('Content-Disposition'), /^attachment;/);
+    const direct = await request(`/v1/spaces/${space.roomId}/files/${sent.body.id}?preview=1`, { token: space.token });
+    assert.equal(direct.headers.get('Content-Type'), 'application/octet-stream');
+  }
+  const sent = await upload(request, space, { bytes, type: 'application/pdf' });
+  const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
+  const issued = await request(`/v1/spaces/${space.roomId}/files/${sent.body.id}/download`, { method: 'POST', token: paired.body.token });
+  const path = `/v1/spaces/${space.roomId}/downloads/${issued.body.ticket}?preview=1`;
+  await request(`/v1/spaces/${space.roomId}/devices/${paired.body.deviceId}`, { method: 'DELETE', token: space.token });
+  assert.equal((await request(path)).status, 401);
+  assert.equal((await request(path, { method: 'HEAD' })).status, 401);
 });
 
 test('clearing history removes file manifests, upload rows and physical shard bytes from storage usage', async () => {
@@ -713,3 +857,59 @@ for (const { separateRoom, unknownUsage, clearedHistory } of [
     assert.equal(retried.status, 201, JSON.stringify(retried.body));
   });
 }
+
+test('capacity cleanup preserves a newer active upload when older completed files reclaim enough space', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance);
+  const space = await createSpace(request);
+  const storage = await roomStorage(space, instance);
+  const timestamp = Date.now() - 10000;
+  // Exercise bounded deletion of 3 GiB using accounting rows, without allocating those file bytes.
+  for (let index = 0; index < 2; index += 1) {
+    const fileId = randomUUID();
+    const clientId = randomUUID();
+    const size = 1536 * MiB;
+    const attachment = JSON.stringify({ name: 'old.bin', type: 'application/octet-stream', size });
+    const [{ id }] = await storage.exec('INSERT INTO messages (client_id, device_id, text, created_at, attachment) VALUES (?, ?, ?, ?, ?) RETURNING id', clientId, space.deviceId, '', timestamp + index, attachment);
+    await storage.exec('INSERT INTO files (file_id, device_id, client_id, name, type, size, text, status, created_at, updated_at, message_id, reserved_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      fileId, space.deviceId, clientId, 'old.bin', 'application/octet-stream', size, '', 'complete', timestamp + index, timestamp + index, id, 0);
+    for (let shard = 0; shard < 24; shard += 1) await storage.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, ?, ?)', fileId, shard, 64 * MiB);
+  }
+  const freshClientId = randomUUID();
+  const fresh = await initiate(request, space, { clientId: freshClientId, size: 1024 * MiB });
+  assert.equal(fresh.status, 201);
+  const [beforeFresh] = await storage.exec('SELECT status, reserved_bytes FROM files WHERE file_id = ?', fresh.body.uploadId);
+  const blocked = await initiate(request, space, { size: maximumFileSize });
+  assert.equal(blocked.status, 503);
+  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-files-test', 'PairingRegistry', { name: 'registry' });
+  const registryNamespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const registry = registryNamespace.getByName('registry');
+  await registry.testRunAlarm();
+  const before = await registry.storageBytes();
+  const [{ target_bytes: target }] = await registryStorage.exec('SELECT target_bytes FROM cleanup');
+  assert.equal(before - target, 3_000_000_000);
+  for (let turn = 0; (await registryStorage.exec('SELECT 1 FROM cleanup')).length; turn += 1) {
+    assert.ok(turn < 5);
+    await registry.testRunAlarm();
+    assert.deepEqual(await storage.exec('SELECT status, reserved_bytes FROM files WHERE file_id = ?', fresh.body.uploadId), [beforeFresh]);
+  }
+  assert.ok(await registry.storageBytes() <= target);
+  const resumed = await initiate(request, space, { clientId: freshClientId, size: 1024 * MiB });
+  assert.equal(resumed.status, 200);
+  assert.equal(resumed.body.uploadId, fresh.body.uploadId);
+  assert.equal((await complete(request, space, fresh.body.uploadId)).body.error, 'upload_incomplete');
+});
+
+test('capacity pruning cancels an older upload before removing newer messages', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const started = await initiate(request, space, { size: MiB });
+  const storage = await roomStorage(space);
+  await storage.exec('UPDATE files SET created_at = ?', Date.now() - 10000);
+  const sent = await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'newer history survives' } });
+  const room = await roomObject(space);
+  await room.pruneOldest();
+  assert.deepEqual(await storage.exec('SELECT text FROM messages'), [{ text: sent.body.text }]);
+  assert.deepEqual(await storage.exec('SELECT file_id FROM files WHERE file_id = ?', started.body.uploadId), []);
+});

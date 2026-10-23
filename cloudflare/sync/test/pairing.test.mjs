@@ -34,6 +34,16 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   testDropAlarm() { return this.ctx.storage.deleteAlarm(); }
+                  testReadInvite(roomId) { return JSON.stringify(super.currentInvite(roomId)); }
+                  testExpireAfterInviteRead() { this.expireAfterInviteRead = true; }
+                  findInvite(code) {
+                    const invite = super.findInvite(code);
+                    if (this.expireAfterInviteRead && !invite.error) {
+                      this.expireAfterInviteRead = false;
+                      this.sql.exec('UPDATE invites SET expires_at = ? WHERE code = ?', Date.now() - 1, code);
+                    }
+                    return invite;
+                  }
                   testHoldPairing() {
                     this.holdPairing = true;
                     this.pairingRead = new Promise(resolve => { this.pairingReadStarted = resolve; });
@@ -57,6 +67,21 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                 export class SyncRoom extends ProductionSyncRoom {
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
+                  testSchema() { return this.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name' ORDER BY name").toArray(); }
+                  testHoldDeviceAdd() {
+                    this.deviceAddStarted = new Promise(resolve => { this.startDeviceAdd = resolve; });
+                    this.deviceAddRelease = new Promise(resolve => { this.releaseDeviceAdd = resolve; });
+                  }
+                  testWaitDeviceAdd() { return this.deviceAddStarted; }
+                  testReleaseDeviceAdd() { this.releaseDeviceAdd(); }
+                  async addDevice() {
+                    if (this.deviceAddRelease) {
+                      this.startDeviceAdd();
+                      await this.deviceAddRelease;
+                      this.deviceAddRelease = null;
+                    }
+                    return super.addDevice();
+                  }
                   testWatchPairingPublish() {
                     this.pairingPublication = new Promise(resolve => { this.pairingPublishStarted = resolve; });
                   }
@@ -72,6 +97,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                   }
                   storageUsage() {
                     const usage = super.storageUsage();
+                    if (!this.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'").toArray().length) return usage;
                     usage.bytes += ${virtualBaseBytes} + this.sql.exec('SELECT count(*) AS count FROM messages').one().count * ${virtualMessageBytes};
                     return usage;
                   }
@@ -279,7 +305,7 @@ test('device lists identify the current device without exposing credentials or a
   assert.ok(unchanged.body.devices.every(device => device.name === ''));
 });
 
-test('every paired device can rename itself or a peer and names validate UTF-16 length', async () => {
+test('every paired device can rename itself or a peer and names allow 24 Unicode characters after trimming', async () => {
   const request = client();
   const space = await createSpace(request);
   const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
@@ -299,7 +325,7 @@ test('every paired device can rename itself or a peer and names validate UTF-16 
   listed = await request(path, { token: space.token });
   assert.equal(listed.body.devices.find(device => device.deviceId === space.deviceId).name, '另一台电脑');
 
-  for (const name of ['x'.repeat(60), '🤖'.repeat(30), '', ' \t\n ']) {
+  for (const name of ['x'.repeat(24), '🤖'.repeat(24), ` \t${'中'.repeat(24)}\n `, 'Mac  工作站 🤖', 'e\u0301'.repeat(12), '', ' \t\n ']) {
     const renamed = await request(`${path}/${paired.body.deviceId}`, {
       method: 'PATCH', token: space.token, json: { name }
     });
@@ -309,7 +335,7 @@ test('every paired device can rename itself or a peer and names validate UTF-16 
   }
 
   for (const json of [{}, { name: null }, { name: 123 }, { name: [] }, { name: {} },
-    { name: 'x'.repeat(61) }, { name: '🤖'.repeat(31) }, { name: ` ${'x'.repeat(60)}` }]) {
+    { name: 'x'.repeat(25) }, { name: '🤖'.repeat(25) }, { name: ` ${'中'.repeat(25)} ` }]) {
     const invalid = await request(`${path}/${paired.body.deviceId}`, {
       method: 'PATCH', token: space.token, json
     });
@@ -398,6 +424,145 @@ test('unregistered room IDs reject forged HTTP credentials and sockets without a
   assert.equal(socket.body.error, 'not_found');
   assert.deepEqual(await instance.listDurableObjectIds('SYNC_ROOMS'), databases);
   assert.deepEqual(await registry.exec('SELECT room_id, bytes, oldest_at FROM room_usage ORDER BY room_id'), usage);
+});
+
+test('empty-room maintenance preserves a valid invitation after the final device leaves', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance);
+  const space = await createSpace(request);
+  const left = await request(`/v1/spaces/${space.roomId}/device`, { method: 'DELETE', token: space.token });
+  assert.equal(left.status, 200);
+  const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const registry = namespace.getByName('registry');
+  await registry.refreshRoom(space.roomId);
+  assert.equal(await registry.hasRoom(space.roomId), true);
+  assert.deepEqual(JSON.parse(await registry.testReadInvite(space.roomId)), space.pairing);
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM devices'), [{ count: 0 }]);
+
+  const joined = await client(instance)('/v1/pair', { method: 'POST', json: { code: space.code } });
+  assert.equal(joined.status, 200);
+  assert.equal(joined.body.roomId, space.roomId);
+  const state = await request(`/v1/spaces/${space.roomId}`, { token: joined.body.token });
+  assert.equal(state.status, 200);
+  assert.deepEqual(state.body.messages, []);
+});
+
+for (const maintenance of ['refresh', 'scheduled']) {
+  test(`empty-room ${maintenance} reclaims an expired unoccupied space and stale requests cannot recreate tables`, async t => {
+    const instance = await createRuntime();
+    t.after(() => instance.dispose());
+    const request = client(instance);
+    const space = await createSpace(request);
+    assert.equal((await request(`/v1/spaces/${space.roomId}/device`, { method: 'DELETE', token: space.token })).status, 200);
+    const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+    await registryStorage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+    const registryNamespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+    const registry = registryNamespace.getByName('registry');
+    if (maintenance === 'refresh') await registry.refreshRoom(space.roomId);
+    else {
+      await registry.maintainRooms();
+      await registry.testRunAlarm();
+    }
+    assert.equal(await registry.hasRoom(space.roomId), false);
+    assert.deepEqual(await registryStorage.exec('SELECT room_id FROM room_usage WHERE room_id = ?', space.roomId), []);
+    assert.deepEqual(await registryStorage.exec('SELECT code FROM invites WHERE room_id = ?', space.roomId), []);
+    const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+    assert.deepEqual(await storage.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name'"), []);
+    assert.equal((await request(`/v1/spaces/${space.roomId}`, { token: space.token })).status, 404);
+    const paired = await client(instance)('/v1/pair', { method: 'POST', json: { code: space.code } });
+    assert.equal(paired.status, 404);
+    assert.equal(paired.body.error, 'code_expired');
+
+    await instance.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId });
+    const roomNamespace = await instance.getDurableObjectNamespace('SYNC_ROOMS');
+    const room = roomNamespace.getByName(space.roomId);
+    assert.deepEqual(await room.testSchema(), []);
+    assert.equal(await room.authorize(space.token), null);
+    assert.equal((await room.addDevice()).status, 404);
+    assert.deepEqual(await room.testSchema(), []);
+    await registry.refreshRoom(space.roomId);
+    assert.equal(await registry.hasRoom(space.roomId), false);
+    assert.deepEqual(await room.testSchema(), []);
+  });
+}
+
+test('empty-room reclamation retains devices, history, uploads and remaining shard or chunk rows', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const registry = namespace.getByName('registry');
+  for (const retained of ['device', 'message', 'upload', 'shard', 'chunk', 'deleting shards']) {
+    await t.test(retained, async () => {
+      const request = client(instance);
+      const space = await createSpace(request);
+      const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+      const fileId = randomUUID();
+      if (retained === 'message') {
+        const sent = await request(`/v1/spaces/${space.roomId}/messages`, {
+          method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'preserve this history' }
+        });
+        assert.equal(sent.status, 201);
+      }
+      if (retained === 'upload') {
+        const started = await request(`/v1/spaces/${space.roomId}/files/uploads`, {
+          method: 'POST', token: space.token,
+          json: { clientId: randomUUID(), name: 'pending.bin', type: 'application/octet-stream', size: 8 }
+        });
+        assert.equal(started.status, 201);
+      }
+      if (retained === 'shard') await storage.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, 0, 8)', fileId);
+      if (retained === 'chunk') await storage.exec('INSERT INTO file_upload_chunks (file_id, chunk_index, size) VALUES (?, 0, 8)', fileId);
+      if (retained === 'deleting shards') {
+        await storage.exec("INSERT INTO files (file_id, device_id, client_id, name, type, size, text, status, created_at, updated_at, reserved_bytes) VALUES (?, ?, ?, 'old.bin', 'application/octet-stream', 40, '', 'deleting', ?, ?, 0)", fileId, space.deviceId, randomUUID(), Date.now(), Date.now());
+        for (let index = 0; index < 5; index += 1) await storage.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, ?, 8)', fileId, index);
+      }
+      if (retained !== 'device') await storage.exec('DELETE FROM devices');
+      await registryStorage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+      await registry.refreshRoom(space.roomId);
+      assert.equal(await registry.hasRoom(space.roomId), true);
+      assert.ok((await storage.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'")).length);
+      if (retained === 'deleting shards') {
+        assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM file_shards'), [{ count: 1 }]);
+        await registry.refreshRoom(space.roomId);
+        assert.equal(await registry.hasRoom(space.roomId), false);
+        assert.deepEqual(await storage.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name'"), []);
+      }
+    });
+  }
+});
+
+test('empty-room reclamation waits for a pairing already admitted with a valid invitation', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance);
+  const space = await createSpace(request);
+  assert.equal((await request(`/v1/spaces/${space.roomId}/device`, { method: 'DELETE', token: space.token })).status, 200);
+  const roomNamespace = await instance.getDurableObjectNamespace('SYNC_ROOMS');
+  const room = roomNamespace.getByName(space.roomId);
+  const registryNamespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const registry = registryNamespace.getByName('registry');
+  const refreshRoom = registry.refreshRoom;
+  await room.testHoldDeviceAdd();
+  await registry.testExpireAfterInviteRead();
+  const joining = client(instance)('/v1/pair', { method: 'POST', json: { code: space.code } });
+  await room.testWaitDeviceAdd();
+  const refreshing = refreshRoom(space.roomId);
+  const refreshedBeforePairing = await Promise.race([
+    refreshing.then(() => true),
+    new Promise(resolve => setTimeout(() => resolve(false), 100))
+  ]);
+  await room.testReleaseDeviceAdd();
+  const [joined] = await Promise.all([joining, refreshing]);
+  assert.equal(refreshedBeforePairing, false);
+  assert.equal(joined.status, 200);
+  assert.equal(joined.body.roomId, space.roomId);
+  assert.equal(await registry.hasRoom(space.roomId), true);
+  const listed = await request(`/v1/spaces/${space.roomId}/devices`, { token: joined.body.token });
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listed.body.devices.map(device => device.deviceId), [joined.body.deviceId]);
 });
 
 test('pairing accepts exactly four ASCII digits supplied as a string', async () => {
@@ -1117,6 +1282,58 @@ test('idempotent retries under storage pressure return the existing message with
   assert.deepEqual(await registryStorage.exec('SELECT 1 FROM cleanup'), []);
   const states = await Promise.all(spaces.map(space => request(`/v1/spaces/${space.roomId}`, { token: space.token })));
   assert.equal(states.reduce((total, state) => total + state.body.messages.length, 0), 5);
+});
+
+test('concurrent space creation admits only one room when storage has headroom for one new room', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const existing = await createSpace(client(instance));
+  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const registry = namespace.getByName('registry');
+  const availableBefore = 4_700_000_000 - 200_000;
+  const total = await registry.storageBytes();
+  await registryStorage.exec('UPDATE room_usage SET bytes = bytes + ? WHERE room_id = ?', availableBefore - total, existing.roomId);
+  assert.equal(await registry.storageBytes(), availableBefore);
+
+  const results = await Promise.all([client(instance), client(instance)].map(request => request('/v1/spaces', { method: 'POST' })));
+  assert.deepEqual(results.map(result => result.status).sort(), [201, 507]);
+  const created = results.find(result => result.status === 201).body;
+  assert.equal(results.find(result => result.status === 507).body.error, 'storage_full');
+  const expected = [existing.roomId, created.roomId].sort();
+  assert.deepEqual((await registryStorage.exec('SELECT room_id FROM room_usage ORDER BY room_id')).map(row => row.room_id), expected);
+  assert.deepEqual((await registryStorage.exec('SELECT room_id FROM invites ORDER BY room_id')).map(row => row.room_id), expected);
+  assert.equal((await instance.listDurableObjectIds('SYNC_ROOMS')).length, 2);
+  assert.deepEqual(await registryStorage.exec('SELECT 1 FROM cleanup'), []);
+
+  for (const space of [existing, created]) {
+    const state = await client(instance)(`/v1/spaces/${space.roomId}`, { token: space.token });
+    assert.equal(state.status, 200);
+    assert.deepEqual(state.body.messages, []);
+  }
+});
+
+test('space creation under storage pressure starts cleanup without allocating another room', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance);
+  const space = await createSpace(request);
+  const sent = await request(`/v1/spaces/${space.roomId}/messages`, {
+    method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'removable history' }
+  });
+  assert.equal(sent.status, 201);
+  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await registryStorage.exec('UPDATE room_usage SET bytes = ? WHERE room_id = ?', 4_700_000_000, space.roomId);
+  const blocked = await client(instance)('/v1/spaces', { method: 'POST' });
+  assert.equal(blocked.status, 503);
+  assert.equal(blocked.body.error, 'storage_cleaning');
+  assert.equal(blocked.headers.get('Retry-After'), '1');
+  assert.deepEqual(await registryStorage.exec('SELECT room_id FROM room_usage'), [{ room_id: space.roomId }]);
+  assert.deepEqual(await registryStorage.exec('SELECT room_id FROM invites'), [{ room_id: space.roomId }]);
+  assert.equal((await instance.listDurableObjectIds('SYNC_ROOMS')).length, 1);
+  assert.deepEqual(await registryStorage.exec('SELECT phase, cursor FROM cleanup'), [{ phase: 'refresh', cursor: '' }]);
+  const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  assert.ok(await namespace.getByName('registry').testReadAlarm() !== null);
 });
 
 test('full storage with no removable history returns 507 while paired credentials keep working', async t => {

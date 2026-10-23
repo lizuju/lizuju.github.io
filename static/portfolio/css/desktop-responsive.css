@@ -121,8 +121,11 @@ body.direct-portfolio .app-window:not(.is-maximized) {
 @media (max-height: 620px) and (min-width: 901px), (max-height: 520px) {
     .desktop-shortcuts {
         top: 12px;
-        width: 152px;
+        width: 168px;
+        max-height: calc(100% - 132px);
         grid-template-columns: repeat(2, 76px);
+        align-content: start;
         gap: 8px 0;
+        overflow-y: auto;
     }
 }

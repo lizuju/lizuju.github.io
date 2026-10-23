@@ -17,6 +17,7 @@ module.exports = {
         portfolio: {
             import: path.resolve(rootDirectory, 'static/portfolio/js/main.js'),
             filename: 'portfolio/js/main.js',
+            publicPath: '../',
         },
     },
     output: {
@@ -28,7 +29,12 @@ module.exports = {
     devtool: 'source-map',
     plugins: [
         new CopyWebpackPlugin({
-            patterns: [{
+            patterns: [
+                ...['cmaps', 'standard_fonts', 'wasm'].map((folder) => ({
+                    from: path.resolve(rootDirectory, 'node_modules/pdfjs-dist', folder),
+                    to: `portfolio/assets/pdfjs/${folder}`,
+                })),
+                {
                 from: path.resolve(rootDirectory, 'static'),
                 globOptions: {
                     ignore: [

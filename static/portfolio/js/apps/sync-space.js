@@ -2,9 +2,8 @@
     const desktopApi = window.GavinDesktop;
     const CREDENTIAL_KEY = 'portfolio-sync-space';
     const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
-    const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
 
-    desktopApi.apps.syncSpace = (manager) => {
+    desktopApi.apps.syncSpace = (manager, attachmentPreview) => {
         const app = document.querySelector('[data-sync-window]');
         const find = (name) => app.querySelector(`[data-sync-${name}]`);
         const setup = find('setup');
@@ -18,8 +17,6 @@
         const devicesDialog = find('devices-dialog');
         const messageNodes = new Map();
         const unread = new Set();
-        const attachmentRequests = new Map();
-        const previewUrls = new Map();
         const cooldowns = { create: 0, join: 0, pair: 0 };
         let credentials = null;
         let deviceId = null;
@@ -45,6 +42,9 @@
         let configPromise = null;
         let sessionVersion = 0;
         let deviceRequest = 0;
+        let searchScrollTop = null;
+        let fileDragDepth = 0;
+        let previewRequest = 0;
 
         const loadConfig = () => {
             if (!configPromise) {
@@ -123,6 +123,7 @@
             const keys = {
                 unavailable: 'syncUnavailable', storage: 'syncStorageError', rate_limited: 'syncRateLimited',
                 invalid_code: 'syncInvalidCode', code_expired: 'syncInvalidCode',
+                invalid_name: 'syncDeviceNameTooLong',
                 storage_full: 'syncStorageFull', storage_cleaning: 'syncStorageCleaning',
                 file_too_large: 'syncFileTooLarge', invalid_file: 'syncFileInvalid',
                 invalid_filename: 'syncFileInvalid', invalid_file_name: 'syncFileInvalid',
@@ -168,43 +169,30 @@
             find('upload-status').hidden = !sending || !pendingUpload;
             if (sending && pendingUpload) {
                 const percent = pendingUpload.file.size ? Math.floor((pendingUpload.receivedBytes || 0) / pendingUpload.file.size * 100) : 100;
-                find('upload-status').textContent = translate(pendingUpload.stage || 'syncUploadProgress', { filename: pendingUpload.file.name, percent });
+                let text = translate(pendingUpload.stage || 'syncUploadProgress', { filename: pendingUpload.file.name, percent });
+                if (pendingUpload.stage === 'syncUploadProgress') {
+                    text += ` · ${pendingUpload.bytesPerSecond > 0 ? translate('syncUploadRate', {
+                        speed: formatSize(pendingUpload.bytesPerSecond),
+                        seconds: Math.ceil((pendingUpload.file.size - pendingUpload.receivedBytes) / pendingUpload.bytesPerSecond)
+                    }) : translate('syncUploadRatePending')}`;
+                }
+                find('upload-status').textContent = text;
                 find('upload-progress').value = percent;
             }
             find('upload-progress').hidden = !sending || !pendingUpload;
             updateControls();
         };
-        const disposeAttachment = (id) => {
-            attachmentRequests.get(id)?.controller.abort();
-            attachmentRequests.delete(id);
-            if (previewUrls.has(id)) URL.revokeObjectURL(previewUrls.get(id));
-            previewUrls.delete(id);
-            const item = messageNodes.get(id);
-            const image = item?.querySelector('.sync-attachment-image');
-            if (image) { image.hidden = true; image.removeAttribute('src'); }
-            const button = item?.querySelector('[data-sync-preview-file]');
-            if (button) button.textContent = translate('syncPreview');
-        };
-        const fetchAttachment = (message) => {
-            if (attachmentRequests.has(message.id)) return attachmentRequests.get(message.id).promise;
-            const session = credentials;
-            const controller = new AbortController();
-            const request = { controller };
-            request.promise = (async () => {
-                const base = await loadConfig();
-                if (!base) throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
-                const response = await fetch(`${base}/v1/spaces/${session.roomId}/files/${message.id}`, {
-                    headers: { Authorization: `Bearer ${session.token}` },
-                    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120000)])
-                });
-                if (!response.ok) throw Object.assign(new Error('download'), { code: response.status === 404 ? 'attachment_expired' : 'download' });
-                const blob = await response.blob();
-                return credentials === session && messageNodes.has(message.id) ? blob : null;
-            })().finally(() => {
-                if (attachmentRequests.get(message.id) === request) attachmentRequests.delete(message.id);
-            });
-            attachmentRequests.set(message.id, request);
-            return request.promise;
+        const disposeAttachment = (id) => attachmentPreview.remove(id);
+        const previewKind = (attachment) => {
+            const type = attachment.type;
+            const extension = attachment.name.split('.').pop().toLowerCase();
+            if (['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'].includes(type)) return 'image';
+            if (['video/mp4', 'video/webm', 'video/ogg'].includes(type)) return 'video';
+            if (type === 'application/pdf' || extension === 'pdf') return 'pdf';
+            if (extension === 'docx') return 'word';
+            if (['xlsx', 'xls', 'ods', 'csv', 'tsv'].includes(extension)) return 'spreadsheet';
+            if (['txt', 'md', 'json', 'log', 'xml', 'yaml', 'yml'].includes(extension)) return 'text';
+            return null;
         };
         const showAttachmentError = (error) => {
             setNotice(['attachment_expired', 'not_found'].includes(error.code) ? 'syncAttachmentExpired' : 'syncDownloadFailed', true);
@@ -237,33 +225,30 @@
                 button.textContent = translate('syncDownload');
             }
         };
-        const previewAttachment = async (message, button, image) => {
-            if (previewUrls.has(message.id)) {
-                disposeAttachment(message.id);
+        const previewAttachment = async (message, button) => {
+            const session = credentials;
+            const request = ++previewRequest;
+            const kind = previewKind(message.attachment);
+            const limit = kind === 'image' ? 20 : kind === 'text' ? 2 : 25;
+            if (!['pdf', 'video'].includes(kind) && message.attachment.size > limit * 1024 * 1024) {
+                setNotice('syncPreviewTooLarge', true);
                 return;
             }
-            const session = credentials;
             button.disabled = true;
             try {
-                const blob = await fetchAttachment(message);
-                if (!blob) return;
-                const url = URL.createObjectURL(new Blob([blob], { type: message.attachment.type }));
-                previewUrls.set(message.id, url);
-                image.src = url;
-                await image.decode();
-                if (credentials !== session || !active || previewUrls.get(message.id) !== url) return;
-                image.hidden = false;
-                button.textContent = translate('syncHidePreview');
+                const result = await api(`/v1/spaces/${session.roomId}/files/${message.id}/download`, { method: 'POST' }, session);
+                const base = await loadConfig();
+                if (request !== previewRequest || credentials !== session || !active || !app.classList.contains('is-active') || !messageNodes.has(message.id)) return;
+                attachmentPreview.open({
+                    id: message.id, name: message.attachment.name, kind,
+                    url: `${base}/v1/spaces/${session.roomId}/downloads/${encodeURIComponent(result.ticket)}?preview=1`
+                });
             } catch (error) {
-                disposeAttachment(message.id);
-                if (credentials === session && active && messageNodes.has(message.id) && error.name !== 'AbortError') {
-                    if (error.name === 'EncodingError') setNotice('syncPreviewFailed', true);
-                    else showAttachmentError(error);
-                }
+                if (credentials === session && active && messageNodes.has(message.id)) showAttachmentError(error);
             } finally { button.disabled = false; }
         };
         const atBottom = () => feed.scrollHeight - feed.scrollTop - feed.clientHeight < 60;
-        const isReading = () => active && !document.hidden && app.classList.contains('is-active') && !app.classList.contains('is-minimized');
+        const isReading = () => active && !document.hidden && app.classList.contains('is-active') && !app.classList.contains('is-minimized') && !find('search').value.trim() && !devicesDialog.open && !confirmation.open;
         const updateUnread = () => {
             const badge = document.querySelector('[data-sync-unread]');
             badge.hidden = !unread.size;
@@ -278,6 +263,19 @@
                 unread.clear();
                 updateUnread();
             }
+        };
+        const applySearch = () => {
+            const query = find('search').value.trim().toLocaleLowerCase();
+            let count = 0;
+            for (const message of history) {
+                const name = devices.find((device) => device.deviceId === message.deviceId)?.name
+                    || translate(message.deviceId === deviceId ? 'syncMessageYou' : 'syncMessageDevice');
+                const match = !query || [message.text, message.attachment?.name || '', name].some((value) => value.toLocaleLowerCase().includes(query));
+                messageNodes.get(message.id).hidden = !match;
+                if (match) count++;
+            }
+            find('empty').hidden = history.length !== 0 || !!query;
+            find('no-results').hidden = !query || count !== 0;
         };
         const render = (scroll = false) => {
             const follow = scroll || (atBottom() && isReading());
@@ -338,41 +336,54 @@
                         download.addEventListener('click', () => downloadAttachment(message, download));
                         actions.append(download);
                         attachment.append(name, size, actions);
-                        if (message.attachment.size <= MAX_PREVIEW_BYTES && ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'].includes(message.attachment.type)) {
+                        if (previewKind(message.attachment)) {
                             const preview = document.createElement('button');
                             preview.type = 'button';
                             preview.className = 'sync-attachment-preview';
                             preview.dataset.syncPreviewFile = '';
-                            const image = document.createElement('img');
-                            image.className = 'sync-attachment-image';
-                            image.alt = message.attachment.name;
-                            image.hidden = true;
-                            preview.addEventListener('click', () => previewAttachment(message, preview, image));
+                            preview.addEventListener('click', () => previewAttachment(message, preview));
                             actions.prepend(preview);
-                            attachment.append(image);
                         }
                         item.append(attachment);
                     }
                     messageNodes.set(message.id, item);
                 }
                 item.classList.toggle('is-own', message.deviceId === deviceId);
-                const label = `${translate(message.deviceId === deviceId ? 'syncMessageYou' : 'syncMessageDevice')} · ${new Date(message.createdAt).toLocaleString(desktopApi.getLanguage())}`;
+                const name = devices.find((device) => device.deviceId === message.deviceId)?.name
+                    || translate(message.deviceId === deviceId ? 'syncMessageYou' : 'syncMessageDevice');
+                const label = `${name} · ${new Date(message.createdAt).toLocaleString(desktopApi.getLanguage())}`;
                 if (item.firstChild.firstChild.textContent !== label) item.firstChild.firstChild.textContent = label;
                 const copy = item.querySelector('[data-sync-copy-message]');
                 copy.textContent = translate('syncCopy');
                 const download = item.querySelector('[data-sync-download-file]');
                 if (download) download.textContent = translate(download.dataset.loading ? 'syncDownloading' : 'syncDownload');
                 const preview = item.querySelector('[data-sync-preview-file]');
-                if (preview) preview.textContent = translate(previewUrls.has(message.id) ? 'syncHidePreview' : 'syncPreview');
+                if (preview) preview.textContent = translate('syncPreview');
                 if (messages.children[index] !== item) messages.insertBefore(item, messages.children[index] || null);
             });
-            find('empty').hidden = history.length !== 0;
+            applySearch();
             if (follow) feed.scrollTop = feed.scrollHeight;
             markRead();
             updateUnread();
             updateControls();
         };
+        const reconcileUpload = (incoming) => {
+            const upload = pendingUpload;
+            if (!upload || !incoming.some((message) => message.clientId === upload.clientId && message.deviceId === deviceId)) return;
+            upload.confirmed = true;
+            pendingUpload = null;
+            if (input.value === upload.text) input.value = '';
+            if (selectedFile === upload.file) {
+                selectedFile = null;
+                find('file-input').value = '';
+            }
+            uploadController?.abort();
+            saveDraft();
+            updateSelectedFile();
+            setNotice('syncSent');
+        };
         const receiveHistory = (incoming, initial = false) => {
+            reconcileUpload(incoming);
             const known = new Set(history.map((message) => message.id));
             if (!initial && !(isReading() && atBottom())) {
                 incoming.forEach((message) => { if (!known.has(message.id) && message.deviceId !== deviceId) unread.add(message.id); });
@@ -381,6 +392,7 @@
             render(initial);
         };
         const addMessage = (message) => {
+            reconcileUpload([message]);
             if (history.some((item) => item.id === message.id)) return;
             if (message.deviceId !== deviceId && !(isReading() && atBottom())) unread.add(message.id);
             history = [...history, message].sort((a, b) => a.id - b.id).slice(-500);
@@ -434,7 +446,7 @@
                     showPairing(data.pairing);
                     receiveHistory(data.messages, initial);
                     if (notice.dataset.i18n === 'syncUnavailable') setNotice('syncJoined');
-                    if (devicesDialog.open) loadDevices();
+                    loadDevices();
                     clearInterval(pingTimer);
                     pingTimer = setInterval(() => {
                         if (awaitingPong) connection.close();
@@ -446,7 +458,7 @@
                 } else if (data.type === 'message') addMessage(data.message);
                 else if (data.type === 'pairing') showPairing(data.pairing);
                 else if (data.type === 'history') receiveHistory(data.messages);
-                else if (data.type === 'devices' && devicesDialog.open) loadDevices();
+                else if (data.type === 'devices') loadDevices();
                 else if (data.type === 'cleared') {
                     uploadController?.abort(Object.assign(new Error('history_cleared'), { code: 'history_cleared' }));
                     pendingUpload = null;
@@ -485,6 +497,8 @@
         };
         const sameSession = (a, b) => a?.roomId === b?.roomId && a?.token === b?.token;
         const reset = (forget = true) => {
+            previewRequest++;
+            attachmentPreview.close();
             if (confirmation.open) confirmation.close();
             if (devicesDialog.open) devicesDialog.close();
             disconnect();
@@ -506,6 +520,10 @@
             find('file-input').value = '';
             history = [];
             input.value = '';
+            find('search').value = '';
+            searchScrollTop = null;
+            fileDragDepth = 0;
+            app.classList.remove('is-dragging-files');
             busy = false;
             sending = false;
             leavingSession = null;
@@ -571,7 +589,7 @@
                     heading.append(label, current);
                     const name = document.createElement('input');
                     name.type = 'text';
-                    name.maxLength = 60;
+                    name.maxLength = 24;
                     name.dataset.syncDeviceName = '';
                     name.dataset.saved = device.name;
                     name.value = device.name;
@@ -602,18 +620,22 @@
         const loadDevices = async () => {
             const session = credentials;
             const request = ++deviceRequest;
-            setText(find('devices-status'), 'syncDevicesLoading');
+            const showStatus = devicesDialog.open;
+            if (showStatus) setText(find('devices-status'), 'syncDevicesLoading');
             try {
                 const result = await api(roomPath('/devices'));
                 if (credentials !== session || request !== deviceRequest) return false;
                 devices = result.devices;
                 deviceId = result.deviceId;
                 renderDevices();
-                find('devices-status').textContent = '';
-                find('devices-status').dataset.i18n = '';
+                render();
+                if (showStatus) {
+                    find('devices-status').textContent = '';
+                    find('devices-status').dataset.i18n = '';
+                }
                 return true;
             } catch {
-                if (credentials === session && request === deviceRequest) setText(find('devices-status'), 'syncDevicesError', 'error');
+                if (credentials === session && request === deviceRequest && showStatus) setText(find('devices-status'), 'syncDevicesError', 'error');
                 return false;
             }
         };
@@ -631,14 +653,17 @@
                 markRead();
             },
             hide: (state) => {
-                followOnRestore = atBottom();
+                followOnRestore = !find('search').value.trim() && atBottom();
                 if (confirmation.open) confirmation.close();
                 if (devicesDialog.open) devicesDialog.close();
                 manager.hideWindow(app, entry.task, state, { hideTask: state === 'is-closed' });
                 if (state === 'is-closed') {
+                    previewRequest++;
                     active = false;
+                    fileDragDepth = 0;
+                    app.classList.remove('is-dragging-files');
                     disconnect();
-                    for (const id of new Set([...attachmentRequests.keys(), ...previewUrls.keys()])) disposeAttachment(id);
+                    attachmentPreview.close();
                 }
             }
         });
@@ -704,9 +729,13 @@
                 body: JSON.stringify({ clientId: upload.clientId, name: upload.file.name, type: upload.file.type || 'application/octet-stream', size: upload.file.size, text: upload.text }),
                 signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)])
             }, session);
-            if (credentials !== session || controller.signal.aborted || result.message) return;
+            if (credentials !== session || controller.signal.aborted || pendingUpload !== upload) return;
+            if (result.message) return result.message;
             upload.uploadId = result.uploadId;
             upload.receivedBytes = result.receivedBytes;
+            upload.baselineBytes = result.receivedBytes;
+            upload.startedAt = performance.now();
+            upload.bytesPerSecond = 0;
             saveDraft();
             upload.stage = 'syncUploadProgress';
             updateSelectedFile();
@@ -725,20 +754,21 @@
                         if (controller.signal.aborted || credentials !== session || attempt === 2 || (error.code && !['storage_cleaning', 'rate_limited'].includes(error.code))) throw error;
                     }
                 }
-                if (credentials !== session || controller.signal.aborted) return;
+                if (credentials !== session || controller.signal.aborted || pendingUpload !== upload) return;
                 upload.receivedBytes = received.receivedBytes;
+                const elapsed = (performance.now() - upload.startedAt) / 1000;
+                upload.bytesPerSecond = elapsed > 0 ? (upload.receivedBytes - upload.baselineBytes) / elapsed : 0;
                 updateSelectedFile();
             }
             upload.stage = 'syncCompletingUpload';
             updateSelectedFile();
-            await api(`${path}/${upload.uploadId}/complete`, {
+            return api(`${path}/${upload.uploadId}/complete`, {
                 method: 'POST', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)])
             }, session);
         };
         find('attach').addEventListener('click', () => find('file-input').click());
-        find('file-input').addEventListener('change', () => {
-            const file = find('file-input').files[0];
-            if (!file) return;
+        const selectFile = (file) => {
+            if (busy || sending || !online) { setNotice('syncAttachUnavailable', true); return; }
             if (file.size > MAX_FILE_BYTES) {
                 find('file-input').value = '';
                 setNotice(selectedFile || pendingUpload ? 'syncFileTooLargeRetained' : 'syncFileTooLarge', true);
@@ -755,6 +785,44 @@
             selectedFile = file;
             saveDraft();
             updateSelectedFile();
+            setNotice('syncFileReady');
+        };
+        find('file-input').addEventListener('change', () => {
+            const file = find('file-input').files[0];
+            if (file) selectFile(file);
+        });
+        app.addEventListener('dragenter', (event) => {
+            if (!event.dataTransfer.types.includes('Files')) return;
+            event.preventDefault();
+            fileDragDepth++;
+            if (online && !busy && !sending) app.classList.add('is-dragging-files');
+        });
+        app.addEventListener('dragover', (event) => {
+            if (!event.dataTransfer.types.includes('Files')) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = online && !busy && !sending ? 'copy' : 'none';
+        });
+        app.addEventListener('dragleave', (event) => {
+            if (!event.dataTransfer.types.includes('Files')) return;
+            fileDragDepth = Math.max(0, fileDragDepth - 1);
+            if (!fileDragDepth) app.classList.remove('is-dragging-files');
+        });
+        app.addEventListener('drop', (event) => {
+            if (!event.dataTransfer.types.includes('Files')) return;
+            event.preventDefault();
+            fileDragDepth = 0;
+            app.classList.remove('is-dragging-files');
+            const files = Array.from(event.dataTransfer.files);
+            if (files.length !== 1) { setNotice('syncOneFileOnly', true); return; }
+            selectFile(files[0]);
+        });
+        input.addEventListener('paste', (event) => {
+            const files = Array.from(event.clipboardData.items)
+                .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+                .map((item) => item.getAsFile()).filter(Boolean);
+            if (!files.length) return;
+            if (files.length !== 1) { setNotice('syncOneFileOnly', true); return; }
+            selectFile(files[0]);
         });
         find('remove-file').addEventListener('click', () => {
             discardUpload();
@@ -793,6 +861,8 @@
                     pendingUpload = { clientId: crypto.randomUUID(), file, text, receivedBytes: 0 };
                 }
             } else if (pending?.text !== text) pending = { clientId: crypto.randomUUID(), text };
+            const upload = file ? pendingUpload : null;
+            const textDraft = file ? null : pending;
             saveDraft();
             sending = true;
             const controller = file ? new AbortController() : null;
@@ -800,22 +870,26 @@
             updateSelectedFile();
             setNotice('syncSending');
             try {
-                if (file) await uploadAttachment(pendingUpload, session, controller);
-                else await api(roomPath('/messages'), { method: 'POST', body: JSON.stringify(pending) });
+                if (file) {
+                    const message = await uploadAttachment(upload, session, controller);
+                    if (credentials === session && message && !controller.signal.aborted && pendingUpload === upload) addMessage(message);
+                } else await api(roomPath('/messages'), { method: 'POST', body: JSON.stringify(textDraft) });
                 if (credentials !== session) return;
+                if (upload?.confirmed || (file && pendingUpload !== upload)) return;
                 controller?.signal.throwIfAborted();
                 if (input.value === text) input.value = '';
-                if (selectedFile === file) {
+                if (file && selectedFile === file) {
                     selectedFile = null;
                     pendingUpload = null;
                     find('file-input').value = '';
                 }
-                pending = null;
+                if (!file && pending === textDraft) pending = null;
                 saveDraft();
                 setNotice('syncSent');
             } catch (error) {
                 if (credentials === session) {
-                    if (file && ['not_found', 'upload_unavailable'].includes(error.code)) pendingUpload = null;
+                    if (upload?.confirmed) return;
+                    if (file && pendingUpload === upload && ['not_found', 'upload_unavailable'].includes(error.code)) pendingUpload = null;
                     saveDraft();
                     if (error.code === 'history_cleared') setNotice('syncCleared');
                     else if (error.code === 'upload_cancelled') return;
@@ -823,7 +897,7 @@
                     else showError(error);
                 }
             } finally {
-                if (credentials === session) { sending = false; uploadController = null; updateSelectedFile(); }
+                if (credentials === session && uploadController === controller) { sending = false; uploadController = null; updateSelectedFile(); }
             }
         });
         input.maxLength = 10000;
@@ -837,7 +911,23 @@
             if (secondsLeft(pairExpiresAt)) copyText(find('pair-code').textContent);
             else updateCountdowns();
         });
-        find('latest').addEventListener('click', () => { feed.scrollTop = feed.scrollHeight; markRead(); });
+        find('search').addEventListener('input', () => {
+            if (find('search').value.trim() && searchScrollTop === null) searchScrollTop = feed.scrollTop;
+            applySearch();
+            if (find('search').value.trim()) feed.scrollTop = 0;
+            else {
+                feed.scrollTop = searchScrollTop ?? feed.scrollTop;
+                searchScrollTop = null;
+                markRead();
+            }
+        });
+        find('latest').addEventListener('click', () => {
+            find('search').value = '';
+            searchScrollTop = null;
+            applySearch();
+            feed.scrollTop = feed.scrollHeight;
+            markRead();
+        });
         feed.addEventListener('scroll', markRead);
         new MutationObserver(markRead).observe(app, { attributes: true, attributeFilter: ['class'] });
         find('devices').addEventListener('click', () => {
@@ -859,9 +949,17 @@
         };
         find('clear').addEventListener('click', () => showConfirmation('clear'));
         find('leave').addEventListener('click', () => showConfirmation('leave'));
+        find('devices-form').addEventListener('submit', (event) => event.preventDefault());
+        for (const name of ['devices-close', 'devices-dismiss']) find(name).addEventListener('click', () => devicesDialog.close());
         for (const dialog of [confirmation, devicesDialog]) {
+            dialog.addEventListener('close', markRead);
             dialog.addEventListener('keydown', (event) => {
                 event.stopPropagation();
+                if (event.key === 'Enter' && event.target.matches('[data-sync-device-name]') && !event.isComposing && event.keyCode !== 229) {
+                    event.preventDefault();
+                    if (!event.repeat) event.target.closest('[data-device-id]').querySelector('[data-sync-device-save]').click();
+                    return;
+                }
                 if (event.key !== 'Tab') return;
                 event.preventDefault();
                 const controls = Array.from(dialog.querySelectorAll('button:not(:disabled), input:not(:disabled)'));
@@ -879,6 +977,7 @@
             if (!button.hasAttribute('data-sync-device-save')) return;
             const name = row.querySelector('input');
             const text = name.value;
+            if (Array.from(text.trim()).length > 24) { setText(find('devices-status'), 'syncDeviceNameTooLong', 'error'); return; }
             const session = credentials;
             busy = true;
             updateControls();
@@ -900,13 +999,14 @@
             if (action === 'leave' || (action === 'remove' && target === deviceId)) leavingSession = session;
             busy = true;
             updateControls();
+            const focusAtRequest = document.activeElement;
             try {
                 const suffix = action === 'clear' ? '/messages' : action === 'remove' ? `/devices/${target}` : '/device';
                 await api(roomPath(suffix), { method: 'DELETE' });
                 if (credentials !== session) return;
                 if (action === 'clear') {
                     setNotice('syncCleared');
-                    input.focus({ preventScroll: true });
+                    if (app.classList.contains('is-active') && document.activeElement === focusAtRequest) input.focus({ preventScroll: true });
                 } else if (action === 'remove' && target !== deviceId) {
                     devices = devices.filter((device) => device.deviceId !== target);
                     renderDevices();
