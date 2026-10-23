@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "portfolio-sync",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-23",
+  "workers_dev": true,
+  "triggers": {
+    "crons": ["17 0 * * *"]
+  },
+  "vars": {
+    "ALLOWED_ORIGINS": "https://lizuju.github.io,http://127.0.0.1:3090,http://localhost:3090"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "PAIRING_REGISTRY", "class_name": "PairingRegistry" },
+      { "name": "SYNC_ROOMS", "class_name": "SyncRoom" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["PairingRegistry", "SyncRoom"] }
+  ],
+  "observability": {
+    "enabled": false
+  }
+}

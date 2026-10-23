@@ -68,6 +68,10 @@
                 <span class="shortcut-icon shortcut-icon--mail" aria-hidden="true"></span>
                 <span data-i18n="desktopMail">电子邮件</span>
             </button>
+            <button class="desktop-shortcut" type="button" data-open-sync-space>
+                <span class="shortcut-icon shortcut-icon--sync" aria-hidden="true"></span>
+                <span data-i18n="desktopSyncSpace">同步空间</span>
+            </button>
         </nav>
 
         <button class="desktop-shortcut desktop-recycle-bin" type="button" data-open-recycle-bin
@@ -117,6 +121,89 @@
             <p class="recycle-status" role="status" aria-live="polite" data-recycle-status></p>
             <button class="window-resize-handle" type="button" data-recycle-resize aria-label="Resize recycle bin window"
                 title="Resize recycle bin window"></button>
+        </section>
+
+        <section class="app-window sync-window is-closed" id="sync-space-window" data-sync-window
+            aria-labelledby="sync-space-title">
+            <div class="window-titlebar" data-sync-titlebar>
+                <div class="window-title">
+                    <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
+                    <span id="sync-space-title" data-i18n="desktopSyncSpace">同步空间</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-sync-action="minimize" aria-label="最小化同步空间"
+                        title="最小化同步空间"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-sync-action="maximize" aria-label="最大化同步空间"
+                        title="最大化同步空间"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-sync-action="close" aria-label="关闭同步空间"
+                        title="关闭同步空间"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+            <div class="sync-content">
+                <div class="sync-setup" data-sync-setup>
+                    <div class="sync-welcome">
+                        <span class="sync-welcome-icon" aria-hidden="true">↔</span>
+                        <h2 data-i18n="syncSetupTitle">让内容跟着你走</h2>
+                        <p data-i18n="syncSetupIntro">创建一个空间，在另一台设备输入配对码，即可同步消息。</p>
+                    </div>
+                    <button class="sync-button sync-create" type="button" data-sync-create
+                        data-i18n="syncCreate">创建空间</button>
+                    <p class="sync-divider" data-i18n="syncJoinDivider">已有配对码？</p>
+                    <form class="sync-join" data-sync-join-form>
+                        <label for="sync-pairing-code" data-i18n="syncCodeLabel">4 位配对码</label>
+                        <div class="sync-join-fields">
+                            <input id="sync-pairing-code" name="pairing-code" type="text" inputmode="numeric"
+                                autocomplete="one-time-code" pattern="[0-9]{4}" minlength="4" maxlength="4"
+                                required placeholder="输入 4 位数字" data-i18n-placeholder="syncCodePlaceholder"
+                                data-sync-code>
+                            <button class="sync-button" type="submit" data-sync-join
+                                data-i18n="syncJoin">加入空间</button>
+                        </div>
+                    </form>
+                    <p class="sync-hint" data-i18n="syncPairHint">配对码 10 分钟内有效，请只分享给信任的人。</p>
+                </div>
+                <div class="sync-room" data-sync-room hidden>
+                    <div class="sync-room-toolbar">
+                        <p class="sync-connection" data-sync-status data-state="connecting" role="status"
+                            data-i18n="syncConnecting">正在连接…</p>
+                        <div class="sync-room-actions">
+                            <button class="sync-button" type="button" data-sync-pair
+                                data-i18n="syncPair">生成配对码</button>
+                            <button class="sync-button" type="button" data-sync-clear
+                                data-i18n="syncClear">清空历史</button>
+                            <button class="sync-button" type="button" data-sync-leave
+                                data-i18n="syncLeave">离开空间</button>
+                        </div>
+                    </div>
+                    <div class="sync-pairing" data-sync-pairing hidden>
+                        <div class="sync-pairing-heading">
+                            <span data-i18n="syncPairCodeLabel">在另一台设备输入</span>
+                            <code data-sync-pair-code></code>
+                        </div>
+                        <p class="sync-hint" data-i18n="syncPairHint">配对码 10 分钟内有效，请只分享给信任的人。</p>
+                    </div>
+                    <div class="sync-message-feed" data-sync-feed>
+                        <p class="sync-empty" data-sync-empty data-i18n="syncEmpty">这里还没有消息，发送一条试试。</p>
+                        <h2 class="visually-hidden" id="sync-messages-title" data-i18n="syncMessagesLabel">同步消息</h2>
+                        <ol class="sync-messages" data-sync-messages role="log" aria-live="polite"
+                            aria-relevant="additions" aria-labelledby="sync-messages-title"></ol>
+                    </div>
+                    <form class="sync-compose" data-sync-send-form>
+                        <label class="visually-hidden" for="sync-message" data-i18n="syncInputLabel">消息内容</label>
+                        <textarea id="sync-message" rows="3" required placeholder="写下要同步的内容…"
+                            data-i18n-placeholder="syncInputPlaceholder" aria-describedby="sync-compose-hint" data-sync-input></textarea>
+                        <p class="sync-hint" id="sync-compose-hint" data-i18n="syncComposeHint">Enter 发送 · Shift+Enter 换行</p>
+                        <div class="sync-compose-footer">
+                            <p class="sync-hint" data-i18n="syncHistoryLimit">最多保留 5 天、最近 500 条；存储接近上限时会提前清理较早消息。清空会同步影响所有设备。</p>
+                            <button class="sync-button" type="submit" data-sync-send data-i18n="syncSend">发送</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <p class="sync-notice" role="status" aria-live="polite" data-sync-notice
+                data-i18n="syncReady">创建或加入空间，开始同步。</p>
+            <button class="window-resize-handle" type="button" data-sync-resize aria-label="调整同步空间大小"
+                title="调整同步空间大小"></button>
         </section>
 
         <section class="app-window is-active" data-app-window aria-label="Gavin portfolio window">
@@ -1371,6 +1458,10 @@
         <div class="start-menu" data-start-menu hidden>
             <div class="start-menu-rail">GAVIN 2026</div>
             <div class="start-menu-items">
+                <button type="button" data-open-sync-space aria-controls="sync-space-window">
+                    <span class="start-icon start-icon--sync" aria-hidden="true">↔</span>
+                    <span data-i18n="desktopSyncSpace">同步空间</span>
+                </button>
                 <button type="button" data-pet-toggle aria-controls="desktop-pet" aria-expanded="false">
                     <span class="start-icon start-icon--robot" aria-hidden="true">
                         <svg viewBox="0 0 24 24" width="23" height="23" fill="none" shape-rendering="crispEdges">
@@ -1432,6 +1523,10 @@
             <button class="task-window-button recycle-task-button" type="button" data-recycle-task hidden>
                 <span class="window-app-icon" aria-hidden="true">♻</span>
                 <span data-i18n="desktopRecycleBin">回收站</span>
+            </button>
+            <button class="task-window-button sync-task-button" type="button" data-sync-task hidden>
+                <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
+                <span data-i18n="desktopSyncSpace">同步空间</span>
             </button>
             <div class="taskbar-spacer"></div>
             <div class="taskbar-tray">
