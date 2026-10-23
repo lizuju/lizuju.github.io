@@ -22,9 +22,9 @@ npm run dev
 | 请求 | 返回 |
 | --- | --- |
 | `GET /health` | `{ ok: true }` |
-| `POST /v1/spaces` | `201 { roomId, token, deviceId, code, expiresAt }` |
-| `POST /v1/pair`，JSON `{ code: "0123" }` | `{ roomId, token, deviceId }` |
-| `GET /v1/spaces/:roomId`，需要凭据 | `{ roomId, createdAt, deviceId, messages }` |
+| `POST /v1/spaces` | `201 { roomId, token, deviceId, code, expiresAt, pairing }` |
+| `POST /v1/pair`，JSON `{ code: "0123" }` | `{ roomId, token, deviceId, pairing }` |
+| `GET /v1/spaces/:roomId`，需要凭据 | `{ roomId, createdAt, deviceId, messages, pairing }` |
 | `POST /v1/spaces/:roomId/pair-code`，需要凭据 | `{ code, expiresAt }` |
 | `POST /v1/spaces/:roomId/messages`，需要凭据，JSON `{ clientId, text }` | 一条消息；新建为 `201`，重试为 `200` |
 | `DELETE /v1/spaces/:roomId/messages`，需要凭据 | `{ ok: true }`，清空历史及附件，并取消进行中的上传 |
@@ -33,7 +33,7 @@ npm run dev
 | `PATCH /v1/spaces/:roomId/devices/:deviceId`，需要凭据，JSON `{ name }` | `{ ok: true }`，修改指定设备名称 |
 | `DELETE /v1/spaces/:roomId/devices/:deviceId`，需要凭据 | `{ ok: true }`，撤销指定设备凭据并断开其连接 |
 
-时间为 Unix 毫秒。配对码保留前导零，十分钟内可供多台设备加入。重新生成会立即废弃旧码；同一空间每 30 秒最多重新生成一次。创建空间每 IP 每小时最多五次，尝试配对每 IP 每十分钟最多五次。限流返回 `429`，`Retry-After` 为剩余秒数。
+时间为 Unix 毫秒。`pairing` 为当前有效的 `{ code, expiresAt }`，没有有效配对码时为 `null`。配对码保留前导零，十分钟内可供多台设备加入；同一空间的所有设备共用这个码。有效期内再次获取或并发获取都返回原码及原到期时间，不延长有效期，也没有 30 秒获取限制；过期后首次获取才生成新码。创建空间每 IP 每小时最多五次，尝试配对每 IP 每十分钟最多五次。限流返回 `429`，`Retry-After` 为剩余秒数。
 
 浏览器保留 `roomId` 和该设备独立的 256 位随机凭据，后端仅保存凭据的 SHA-256。四位码只用于临时配对，不是永久密码；得到有效配对码的人具有相同空间访问权限。清理浏览器数据后，需要另一台已配对设备生成新码重新加入。
 
@@ -43,9 +43,9 @@ npm run dev
 
 消息为 `{ id, clientId, deviceId, text, createdAt, attachment? }`，附件元数据为 `{ name, type, size }`，大小以字节计。`id` 是空间内递增整数，`clientId` 是客户端生成的 UUID v4，同设备重试同一个 `clientId` 会返回已有消息。文字最多 10,000 个 UTF-16 码元，纯文字消息不能全为空白；带附件时文字可留空。每个空间最多保留 5 天、最近 500 条，删除消息时同步清理附件。已清空或超出保留范围的旧消息不再参与重试去重。前端 Enter 发送，Shift+Enter 换行；输入法选词不会触发发送。
 
-连接 `GET /v1/spaces/:roomId/socket` 并升级 WebSocket，地址中不携带凭据。在十秒内发送首帧 `{ "type": "auth", "token": "..." }`；认证成功返回 `{ type: "ready", deviceId, messages }`，包含当前完整保留历史。未认证连接不会收到历史或广播。
+连接 `GET /v1/spaces/:roomId/socket` 并升级 WebSocket，地址中不携带凭据。在十秒内发送首帧 `{ "type": "auth", "token": "..." }`；认证成功返回 `{ type: "ready", deviceId, messages, pairing }`，包含当前完整保留历史和当前有效配对码。重连也从 Registry 读取最新配对码，不依赖设备本地保存的旧码。未认证连接不会收到历史、配对码或广播。
 
-后续服务端广播 `{ type: "message", message }`、`{ type: "cleared" }` 或 `{ type: "history", messages }`。自动清理通过 `history` 同步剩余完整历史，客户端应替换已有列表。设备加入、改名和撤销后广播 `{ type: "devices" }`，客户端可重新读取设备列表；被撤销的设备以 `4001` 断开，不再接收广播。客户端消息发送仍使用上述 HTTP 接口。需要保活时发送字符串 `ping`，运行时直接回复字符串 `pong`，不会唤醒闲置对象。新建 WebSocket 每 IP 每十分钟最多 30 次。
+后续服务端广播 `{ type: "message", message }`、`{ type: "cleared" }` 或 `{ type: "history", messages }`。自动清理通过 `history` 同步剩余完整历史，客户端应替换已有列表。任一已配对设备调用 `POST /pair-code` 后，向同一空间的已认证连接广播 `{ type: "pairing", pairing }`，包括复用现有码时；该 HTTP 接口仍返回顶层 `{ code, expiresAt }`。客户端按 `expiresAt` 隐藏过期码，过期本身不主动广播；创建、加入、读取空间及重连的响应都会携带当前 `pairing`。配对码只持久保存在 Registry。设备加入、改名和撤销后广播 `{ type: "devices" }`，客户端可重新读取设备列表；被撤销的设备以 `4001` 断开，不再接收广播。客户端消息发送仍使用上述 HTTP 接口。需要保活时发送字符串 `ping`，运行时直接回复字符串 `pong`，不会唤醒闲置对象。新建 WebSocket 每 IP 每十分钟最多 30 次。
 
 连接采用 Hibernation API。每个空间共用一个 Durable Object alarm，处理首次认证截止、最早消息满 5 天、未完成上传过期和待删除附件，无人打开网页时也能清理。alarm 实际触发时间取决于平台调度；读取、重连和发送前也会清除已过期消息。认证截止时间是十秒，超过截止时间的新认证帧始终会被拒绝。网络变化或后端重新部署会断开连接；客户端应重连并重新认证，使用新的 `ready` 历史恢复状态。
 

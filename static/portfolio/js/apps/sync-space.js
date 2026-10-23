@@ -30,6 +30,7 @@
         let pingTimer = null;
         let countdownTimer = null;
         let pairExpiresAt = 0;
+        let pairingRevision = 0;
         let retryDelay = 1000;
         let online = false;
         let busy = false;
@@ -99,6 +100,7 @@
             if (pairExpiresAt && !seconds) {
                 pairExpiresAt = 0;
                 find('pairing').hidden = true;
+                find('pair-code').textContent = '';
                 setNotice('syncCodeExpired');
             }
             find('pair-expiry').textContent = seconds ? translate('syncPairExpires', { minutes: Math.floor(seconds / 60), seconds: String(seconds % 60).padStart(2, '0') }) : '';
@@ -429,6 +431,7 @@
                     deviceId = data.deviceId;
                     retryDelay = 1000;
                     setConnection(true);
+                    showPairing(data.pairing);
                     receiveHistory(data.messages, initial);
                     if (notice.dataset.i18n === 'syncUnavailable') setNotice('syncJoined');
                     if (devicesDialog.open) loadDevices();
@@ -441,6 +444,7 @@
                         }
                     }, 30000);
                 } else if (data.type === 'message') addMessage(data.message);
+                else if (data.type === 'pairing') showPairing(data.pairing);
                 else if (data.type === 'history') receiveHistory(data.messages);
                 else if (data.type === 'devices' && devicesDialog.open) loadDevices();
                 else if (data.type === 'cleared') {
@@ -468,11 +472,11 @@
                 if (credentials === session) retry();
             });
         };
-        const showPairing = ({ code, expiresAt }) => {
-            pairExpiresAt = expiresAt;
-            find('pairing').hidden = false;
-            find('pair-code').textContent = code;
-            cooldowns.pair = Date.now() + 30000;
+        const showPairing = (pairing) => {
+            pairingRevision++;
+            pairExpiresAt = pairing?.expiresAt || 0;
+            find('pairing').hidden = !pairing;
+            find('pair-code').textContent = pairing?.code || '';
             startCountdowns();
         };
         const savedSession = () => {
@@ -507,9 +511,11 @@
             leavingSession = null;
             followOnRestore = true;
             pairExpiresAt = 0;
+            pairingRevision++;
             cooldowns.pair = 0;
             unread.clear();
             find('pairing').hidden = true;
+            find('pair-code').textContent = '';
             room.hidden = true;
             setup.hidden = false;
             render();
@@ -528,7 +534,7 @@
                 pending = draft?.pending || null;
                 pendingUpload = draft?.upload || null;
             } catch { input.value = ''; pending = null; pendingUpload = null; }
-            if (session.code) showPairing(session);
+            showPairing(session.pairing);
             render();
             updateSelectedFile();
             connect();
@@ -652,7 +658,7 @@
                 if (version !== sessionVersion) return;
                 localStorage.setItem(CREDENTIAL_KEY, JSON.stringify({ roomId: session.roomId, token: session.token }));
                 enter(session);
-                setNotice(session.code ? 'syncPaired' : 'syncJoined');
+                setNotice(action === 'create' ? 'syncPaired' : 'syncJoined');
                 input.focus({ preventScroll: true });
             } catch (error) {
                 if (version !== sessionVersion) return;
@@ -670,13 +676,14 @@
         find('pair').addEventListener('click', async () => {
             if (busy || sending || !online || secondsLeft(cooldowns.pair)) return;
             const session = credentials;
+            const revision = pairingRevision;
             busy = true;
             updateControls();
             try {
                 const pairing = await api(roomPath('/pair-code'), { method: 'POST' });
                 if (credentials !== session) return;
-                showPairing(pairing);
-                setNotice('syncPaired');
+                if (pairingRevision === revision) showPairing(pairing);
+                if (secondsLeft(pairExpiresAt)) setNotice('syncPaired');
             } catch (error) { if (credentials === session) showError(error, 'pair'); }
             finally { if (credentials === session) { busy = false; updateControls(); } }
         });
@@ -826,7 +833,10 @@
             event.preventDefault();
             if (!event.repeat) find('send-form').requestSubmit();
         });
-        find('copy-code').addEventListener('click', () => copyText(find('pair-code').textContent));
+        find('copy-code').addEventListener('click', () => {
+            if (secondsLeft(pairExpiresAt)) copyText(find('pair-code').textContent);
+            else updateCountdowns();
+        });
         find('latest').addEventListener('click', () => { feed.scrollTop = feed.scrollHeight; markRead(); });
         feed.addEventListener('scroll', markRead);
         new MutationObserver(markRead).observe(app, { attributes: true, attributeFilter: ['class'] });
@@ -913,7 +923,10 @@
         window.addEventListener('storage', (event) => { if (event.key === CREDENTIAL_KEY || event.key === null) reconcileSession(); });
         window.addEventListener('pagehide', () => { saveDraft(); disconnect(); });
         window.addEventListener('pageshow', () => { reconcileSession(); if (active) connect(); });
-        document.addEventListener('visibilitychange', markRead);
+        document.addEventListener('visibilitychange', () => {
+            markRead();
+            if (!document.hidden) { updateCountdowns(); connect(); }
+        });
         window.addEventListener('portfolio-language-change', () => {
             render();
             renderDevices();

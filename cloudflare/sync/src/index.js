@@ -142,7 +142,7 @@ export default {
       await registry.refreshRoom(roomId);
       const invite = await registry.createInvite(roomId);
       if (invite.error) return resultResponse(invite);
-      return json({ roomId, ...device, ...invite }, 201);
+      return json({ roomId, ...device, ...invite, pairing: invite }, 201);
     }
 
     if (request.method === 'POST' && url.pathname === '/v1/pair') {
@@ -158,7 +158,7 @@ export default {
       if (invite.error) return resultResponse(invite);
       const device = await env.SYNC_ROOMS.getByName(invite.roomId).addDevice();
       await registry.refreshRoom(invite.roomId);
-      return json({ roomId: invite.roomId, ...device });
+      return json({ roomId: invite.roomId, ...device, pairing: await registry.currentInvite(invite.roomId) });
     }
 
     const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/pair-code|\/messages|\/socket|\/device|\/devices(?:\/([^/]+))?|\/files(?:\/.*)?|\/downloads\/[0-9a-f]{64})?$/);
@@ -232,12 +232,13 @@ export default {
     }
     if (request.method === 'GET' && !match[2]) {
       await registry.refreshRoom(roomId);
-      return json({ roomId, deviceId, ...await room.info() });
+      return json({ roomId, deviceId, ...await room.info(), pairing: await registry.currentInvite(roomId) });
     }
     if (request.method === 'POST' && match[2] === '/pair-code') {
-      const limit = await registry.takeLimit(`invite:${roomId}`, 1, 30 * 1000);
-      if (limit.error) return resultResponse(limit);
-      return resultResponse(await registry.createInvite(roomId));
+      const invite = await registry.createInvite(roomId);
+      if (invite.error) return resultResponse(invite);
+      await room.publishPairing(roomId);
+      return resultResponse(invite);
     }
     if (request.method === 'POST' && match[2] === '/messages') {
       const body = await readJson(request, 65536);
@@ -423,6 +424,8 @@ export class PairingRegistry extends DurableObject {
   }
 
   createInvite(roomId) {
+    const existing = this.currentInvite(roomId);
+    if (existing) return existing;
     const now = Date.now();
     this.sql.exec('DELETE FROM invites WHERE expires_at <= ?', now);
     for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -436,6 +439,10 @@ export class PairingRegistry extends DurableObject {
     return { error: 'codes_busy', status: 503, retryAfter: 60 };
   }
 
+  currentInvite(roomId) {
+    return this.sql.exec('SELECT code, expires_at AS expiresAt FROM invites WHERE room_id = ? AND expires_at > ?', roomId, Date.now()).toArray()[0] || null;
+  }
+
   findInvite(code) {
     const invite = this.sql.exec('SELECT room_id, expires_at FROM invites WHERE code = ?', code).toArray()[0];
     if (!invite || invite.expires_at <= Date.now()) return { error: 'code_expired', status: 404 };
@@ -447,6 +454,7 @@ export class SyncRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
+    this.pairingQueue = Promise.resolve();
     this.sql.exec("CREATE TABLE IF NOT EXISTS devices (token_hash TEXT PRIMARY KEY, device_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '')");
     if (!this.sql.exec('PRAGMA table_info(devices)').toArray().some(column => column.name === 'name')) {
       this.sql.exec("ALTER TABLE devices ADD COLUMN name TEXT NOT NULL DEFAULT ''");
@@ -722,6 +730,20 @@ export class SyncRoom extends DurableObject {
     }
   }
 
+  pairingSnapshot(roomId, receive) {
+    // Send ready before a newer pairing broadcast can overtake its registry read.
+    const work = this.pairingQueue.then(async () => {
+      const pairing = await this.env.PAIRING_REGISTRY.getByName('registry').currentInvite(roomId);
+      return receive(pairing?.expiresAt > Date.now() ? pairing : null);
+    });
+    this.pairingQueue = work.catch(() => {});
+    return work;
+  }
+
+  publishPairing(roomId) {
+    return this.pairingSnapshot(roomId, pairing => this.broadcast({ type: 'pairing', pairing }));
+  }
+
   async fetch(request) {
     const path = new URL(request.url).pathname;
     const download = path.match(/^\/v1\/spaces\/[^/]+\/files\/([1-9][0-9]*)$/);
@@ -835,12 +857,25 @@ export class SyncRoom extends DurableObject {
       await this.scheduleAlarm();
       return;
     }
-    this.pruneExpired();
-    this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'roomId', attachment.roomId);
-    socket.serializeAttachment({ deviceId });
-    socket.send(JSON.stringify({ type: 'ready', deviceId, messages: this.messages() }));
+    const authenticated = await this.pairingSnapshot(attachment.roomId, pairing => {
+      if (attachment.authDeadline <= Date.now()) {
+        socket.serializeAttachment({ closing: true });
+        socket.close(1008, 'Authentication timed out');
+        return false;
+      }
+      if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) {
+        socket.serializeAttachment({ closing: true });
+        socket.close(4001, 'Invalid credential');
+        return false;
+      }
+      this.pruneExpired();
+      this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'roomId', attachment.roomId);
+      socket.serializeAttachment({ deviceId });
+      socket.send(JSON.stringify({ type: 'ready', deviceId, messages: this.messages(), pairing }));
+      return true;
+    });
     await this.scheduleAlarm();
-    this.ctx.waitUntil(this.env.PAIRING_REGISTRY.getByName('registry').refreshRoom(attachment.roomId));
+    if (authenticated) this.ctx.waitUntil(this.env.PAIRING_REGISTRY.getByName('registry').refreshRoom(attachment.roomId));
   }
 
   async scheduleAlarm() {

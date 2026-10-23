@@ -34,10 +34,42 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   testDropAlarm() { return this.ctx.storage.deleteAlarm(); }
+                  testHoldPairing() {
+                    this.holdPairing = true;
+                    this.pairingRead = new Promise(resolve => { this.pairingReadStarted = resolve; });
+                    this.pairingRelease = new Promise(resolve => { this.releasePairing = resolve; });
+                  }
+                  testWaitPairingRead() { return this.pairingRead; }
+                  testReleasePairing() { this.releasePairing(); }
+                  testFailPairingRead() { this.failPairingRead = true; }
+                  currentInvite(roomId) {
+                    if (this.failPairingRead) {
+                      this.failPairingRead = false;
+                      throw new Error('test_pairing_read_failed');
+                    }
+                    const pairing = super.currentInvite(roomId);
+                    if (!this.holdPairing) return pairing;
+                    this.holdPairing = false;
+                    this.pairingReadStarted();
+                    return this.pairingRelease.then(() => pairing);
+                  }
                 }
                 export class SyncRoom extends ProductionSyncRoom {
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
+                  testWatchPairingPublish() {
+                    this.pairingPublication = new Promise(resolve => { this.pairingPublishStarted = resolve; });
+                  }
+                  testWaitPairingPublish() { return this.pairingPublication; }
+                  publishPairing(roomId) {
+                    this.pairingPublishStarted?.();
+                    this.pairingPublishStarted = null;
+                    return super.publishPairing(roomId);
+                  }
+                  async testPublishPairingFailure(roomId) {
+                    try { await super.publishPairing(roomId); return null; }
+                    catch (error) { return error.message; }
+                  }
                   storageUsage() {
                     const usage = super.storageUsage();
                     usage.bytes += ${virtualBaseBytes} + this.sql.exec('SELECT count(*) AS count FROM messages').one().count * ${virtualMessageBytes};
@@ -66,7 +98,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
 }
 
 after(async () => {
-  for (const socket of sockets) socket.close();
+  for (const socket of sockets) if (socket.readyState === 1) socket.close();
   await runtime?.dispose();
 });
 
@@ -125,6 +157,25 @@ function socketEvent(socket, type = 'message', timeout = 3000) {
   });
 }
 
+function socketFrames(socket, count) {
+  return new Promise((resolve, reject) => {
+    const frames = [];
+    const timer = setTimeout(() => {
+      socket.removeEventListener('message', onMessage);
+      reject(new Error(`Expected ${count} WebSocket frames, received ${frames.length}`));
+    }, 3000);
+    function onMessage(event) {
+      frames.push(JSON.parse(event.data));
+      if (frames.length === count) {
+        clearTimeout(timer);
+        socket.removeEventListener('message', onMessage);
+        resolve(frames);
+      }
+    }
+    socket.addEventListener('message', onMessage);
+  });
+}
+
 async function authenticateSocket(space, instance = runtime) {
   const socket = await openSocket(space.roomId, instance);
   const ready = socketEvent(socket);
@@ -145,6 +196,7 @@ test('a four-digit invitation gives each device its own credential for the same 
   assert.match(created.token, /^[0-9a-f]{64}$/);
   assert.ok(created.expiresAt > startedAt);
   assert.ok(created.expiresAt <= Date.now() + 10 * 60 * 1000);
+  assert.deepEqual(created.pairing, { code: created.code, expiresAt: created.expiresAt });
 
   const joined = await second('/v1/pair', { method: 'POST', json: { code: created.code } });
   const joinedAgain = await third('/v1/pair', { method: 'POST', json: { code: created.code } });
@@ -152,6 +204,8 @@ test('a four-digit invitation gives each device its own credential for the same 
   assert.equal(joinedAgain.status, 200);
   assert.equal(joined.body.roomId, created.roomId);
   assert.equal(joinedAgain.body.roomId, created.roomId);
+  assert.deepEqual(joined.body.pairing, created.pairing);
+  assert.deepEqual(joinedAgain.body.pairing, created.pairing);
   assert.match(joined.body.token, /^[0-9a-f]{64}$/);
   assert.equal(new Set([created.token, joined.body.token, joinedAgain.body.token]).size, 3);
 
@@ -159,6 +213,7 @@ test('a four-digit invitation gives each device its own credential for the same 
     const info = await first(`/v1/spaces/${created.roomId}`, { token });
     assert.equal(info.status, 200);
     assert.equal(info.body.roomId, created.roomId);
+    assert.deepEqual(info.body.pairing, created.pairing);
     assert.ok(info.body.createdAt >= startedAt);
     assert.equal(info.headers.get('Cache-Control'), 'no-store');
   }
@@ -379,31 +434,134 @@ test('an expired invitation rejects new devices while existing devices keep acce
   assert.equal(joined.body.error, 'code_expired');
   const info = await owner(`/v1/spaces/${space.roomId}`, { token: space.token });
   assert.equal(info.status, 200);
+  assert.equal(info.body.pairing, null);
+  const reconnected = await authenticateSocket(space);
+  assert.equal(reconnected.frame.pairing, null);
 });
 
-test('rotating an invitation revokes the old code without revoking paired devices', async () => {
+test('paired devices concurrently reuse an active invitation without extending its expiry', async () => {
   const owner = client();
   const space = await createSpace(owner);
   const device = client();
   const joined = await device('/v1/pair', { method: 'POST', json: { code: space.code } });
   assert.equal(joined.status, 200);
 
-  const rotated = await owner(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token });
-  assert.equal(rotated.status, 200);
-  assert.match(rotated.body.code, /^\d{4}$/);
-  assert.notEqual(rotated.body.code, space.code);
-  assert.ok(rotated.body.expiresAt > Date.now());
-  const oldCode = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
-  assert.equal(oldCode.status, 404);
-  const newCode = await client()('/v1/pair', { method: 'POST', json: { code: rotated.body.code } });
+  const registry = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const expiresAt = Date.now() + 60000;
+  await registry.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', expiresAt, space.roomId);
+  const results = await Promise.all(Array.from({ length: 12 }, (_, index) => (index % 2 ? owner : device)(`/v1/spaces/${space.roomId}/pair-code`, {
+    method: 'POST', token: index % 2 ? space.token : joined.body.token
+  })));
+  for (const result of results) {
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { code: space.code, expiresAt });
+  }
+  assert.deepEqual(await registry.exec('SELECT code, expires_at AS expiresAt FROM invites WHERE room_id = ?', space.roomId), [{ code: space.code, expiresAt }]);
+  const newCode = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
   assert.equal(newCode.status, 200);
-  assert.equal(newCode.body.roomId, space.roomId);
   const info = await device(`/v1/spaces/${space.roomId}`, { token: joined.body.token });
   assert.equal(info.status, 200);
+  assert.deepEqual(info.body.pairing, { code: space.code, expiresAt });
+});
 
-  const tooSoon = await owner(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token });
-  assert.equal(tooSoon.status, 429);
-  assert.ok(Number(tooSoon.headers.get('Retry-After')) > 0);
+test('expired invitations are replaced once for concurrent devices and broadcast only inside the authenticated room', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
+  const unrelated = await createSpace();
+  const owner = await authenticateSocket(space);
+  const peer = await authenticateSocket(paired.body);
+  const other = await authenticateSocket(unrelated);
+  const unauthenticated = await openSocket(space.roomId);
+  const ownerFrames = socketFrames(owner.socket, 2);
+  const peerFrames = socketFrames(peer.socket, 2);
+  const otherFrames = [], privateFrames = [];
+  for (const [socket, frames] of [[other.socket, otherFrames], [unauthenticated, privateFrames]]) {
+    socket.addEventListener('message', event => frames.push(JSON.parse(event.data)));
+  }
+  assert.deepEqual(owner.frame.pairing, space.pairing);
+  assert.deepEqual(peer.frame.pairing, space.pairing);
+  const registry = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await registry.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+  const results = await Promise.all([space.token, paired.body.token].map(token => request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token })));
+  const pairing = results[0].body;
+  for (const result of results) { assert.equal(result.status, 200); assert.deepEqual(result.body, pairing); }
+  assert.ok(pairing.expiresAt > Date.now());
+  for (const frames of await Promise.all([ownerFrames, peerFrames])) assert.deepEqual(frames, [{ type: 'pairing', pairing }, { type: 'pairing', pairing }]);
+  assert.deepEqual(otherFrames, []);
+  assert.deepEqual(privateFrames, []);
+  for (const token of [undefined, unrelated.token]) {
+    const rejected = await request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token });
+    assert.equal(rejected.status, 401);
+    assert.ok(!JSON.stringify(rejected.body).includes(pairing.code));
+  }
+  const reconnected = await authenticateSocket(paired.body);
+  assert.deepEqual(reconnected.frame.pairing, pairing);
+  const info = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
+  assert.deepEqual(info.body.pairing, pairing);
+  assert.deepEqual(await registry.exec('SELECT code, expires_at AS expiresAt FROM invites WHERE room_id = ?', space.roomId), [pairing]);
+});
+
+test('pairing publication queues behind an in-flight authentication snapshot across invitation expiry', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance);
+  const space = await createSpace(request);
+  const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const registry = namespace.getByName('registry');
+  const roomNamespace = await instance.getDurableObjectNamespace('SYNC_ROOMS');
+  const room = roomNamespace.getByName(space.roomId);
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const socket = await openSocket(space.roomId, instance);
+  t.after(() => { if (socket.readyState === 1) socket.close(); });
+  const frames = socketFrames(socket, 2);
+  await registry.testHoldPairing();
+  socket.send(JSON.stringify({ type: 'auth', token: space.token }));
+  await registry.testWaitPairingRead();
+  await storage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+  await room.testWatchPairingPublish();
+  const publishing = request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token });
+  await room.testWaitPairingPublish();
+  const refreshed = await registry.currentInvite(space.roomId);
+  const expected = { code: refreshed.code, expiresAt: refreshed.expiresAt };
+  await registry.testReleasePairing();
+  assert.equal((await publishing).status, 200);
+  const [ready, pairing] = await frames;
+  assert.equal(ready.type, 'ready');
+  assert.deepEqual(ready.pairing, space.pairing);
+  assert.deepEqual(pairing, { type: 'pairing', pairing: expected });
+});
+
+test('concurrent pairing publications stay ordered and a failed snapshot does not stop later authentication', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance);
+  const space = await createSpace(request);
+  const registryNamespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const registry = registryNamespace.getByName('registry');
+  const roomNamespace = await instance.getDurableObjectNamespace('SYNC_ROOMS');
+  const room = roomNamespace.getByName(space.roomId);
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const connected = await authenticateSocket(space, instance);
+  t.after(() => { if (connected.socket.readyState === 1) connected.socket.close(); });
+  const frames = socketFrames(connected.socket, 2);
+  await registry.testHoldPairing();
+  const first = room.publishPairing(space.roomId);
+  await registry.testWaitPairingRead();
+  await storage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+  const refreshed = await registry.createInvite(space.roomId);
+  const pairing = { code: refreshed.code, expiresAt: refreshed.expiresAt };
+  await room.testWatchPairingPublish();
+  const second = room.publishPairing(space.roomId);
+  await room.testWaitPairingPublish();
+  await registry.testReleasePairing();
+  await Promise.all([first, second]);
+  assert.deepEqual(await frames, [{ type: 'pairing', pairing: space.pairing }, { type: 'pairing', pairing }]);
+  await registry.testFailPairingRead();
+  assert.match(await room.testPublishPairingFailure(space.roomId), /test_pairing_read_failed/);
+  const reconnected = await authenticateSocket(space, instance);
+  t.after(() => { if (reconnected.socket.readyState === 1) reconnected.socket.close(); });
+  assert.deepEqual(reconnected.frame.pairing, pairing);
 });
 
 test('creation is rate limited per IP while another IP can still create a space', async () => {
