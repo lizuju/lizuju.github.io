@@ -1,0 +1,33 @@
+.preview-zoom-toolbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    padding: 5px;
+    color: var(--window-dark);
+    font: 12px/1.45 var(--font-system);
+}
+
+.preview-zoom-toolbar button {
+    min-height: 26px;
+    padding: 2px 8px;
+    border: 2px outset #fff;
+    border-radius: 0;
+    color: inherit;
+    background: var(--window-gray);
+    font: inherit;
+    cursor: default;
+}
+
+.preview-zoom-toolbar button:active:not(:disabled) {
+    border-style: inset;
+}
+
+.preview-zoom-toolbar button:disabled {
+    color: #777;
+    text-shadow: 1px 1px #fff;
+}
+
+.preview-zoom-toolbar [data-preview-zoom-value] {
+    min-width: 4ch;
+}

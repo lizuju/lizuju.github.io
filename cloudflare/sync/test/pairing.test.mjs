@@ -347,7 +347,7 @@ test('device lists identify the current device without exposing credentials or a
   assert.ok(unchanged.body.devices.every(device => device.name === ''));
 });
 
-test('every paired device can rename itself or a peer and names allow 24 Unicode characters after trimming', async () => {
+test('every paired device can rename itself or a peer and names allow 8 Unicode characters after trimming', async () => {
   const request = client();
   const space = await createSpace(request);
   const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
@@ -367,7 +367,7 @@ test('every paired device can rename itself or a peer and names allow 24 Unicode
   listed = await request(path, { token: space.token });
   assert.equal(listed.body.devices.find(device => device.deviceId === space.deviceId).name, '另一台电脑');
 
-  for (const name of ['x'.repeat(24), '🤖'.repeat(24), ` \t${'中'.repeat(24)}\n `, 'Mac  工作站 🤖', 'e\u0301'.repeat(12), '', ' \t\n ']) {
+  for (const name of ['x'.repeat(8), '🤖'.repeat(8), ` \t${'中'.repeat(8)}\n `, 'Mac 工作站🤖', 'e\u0301'.repeat(4), '', ' \t\n ']) {
     const renamed = await request(`${path}/${paired.body.deviceId}`, {
       method: 'PATCH', token: space.token, json: { name }
     });
@@ -377,7 +377,7 @@ test('every paired device can rename itself or a peer and names allow 24 Unicode
   }
 
   for (const json of [{}, { name: null }, { name: 123 }, { name: [] }, { name: {} },
-    { name: 'x'.repeat(25) }, { name: '🤖'.repeat(25) }, { name: ` ${'中'.repeat(25)} ` }]) {
+    { name: 'x'.repeat(9) }, { name: '🤖'.repeat(9) }, { name: ` ${'中'.repeat(9)} ` }]) {
     const invalid = await request(`${path}/${paired.body.deviceId}`, {
       method: 'PATCH', token: space.token, json
     });

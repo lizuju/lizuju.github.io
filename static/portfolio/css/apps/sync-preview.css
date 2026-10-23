@@ -16,19 +16,6 @@
     height: auto;
 }
 
-.sync-preview-toolbar {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-    gap: 6px;
-    padding: 5px;
-}
-
-.sync-preview-toolbar .sync-button {
-    min-height: 26px;
-    padding: 2px 8px;
-}
-
 .sync-preview-body {
     min-width: 0;
     min-height: 0;

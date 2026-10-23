@@ -3,7 +3,6 @@ import eventBus from '../EventBus';
 
 type LoadingFailure = {
     kind: 'resource' | 'webgl';
-    sourceName?: string;
 };
 
 const getSpace = (sourceName: string) =>
@@ -70,7 +69,7 @@ const LoadingScreen: React.FC = () => {
             setProgress(data.progress);
             setToLoad(data.toLoad);
             setCompleted(data.completed);
-            setFailure({ kind: 'resource', sourceName: data.sourceName });
+            setFailure({ kind: 'resource' });
         });
 
         return () => {
@@ -101,8 +100,8 @@ const LoadingScreen: React.FC = () => {
             : '3D 资源加载失败 / Resource loading failed';
     const errorDetail =
         failure?.kind === 'webgl'
-            ? '浏览器未启用 WebGL。你仍可直接查看完整作品集。'
-            : `资源 ${failure?.sourceName || ''} 未能加载。请重试，或直接查看完整作品集。`;
+            ? '请确认浏览器已启用 WebGL 后重试。'
+            : '3D 场景加载失败，请重试。';
 
     return (
         <div
@@ -219,9 +218,6 @@ const LoadingScreen: React.FC = () => {
                             >
                                 重试 / Retry
                             </button>
-                            <a className="bios-start-button" data-resource-direct href="portfolio/">
-                                直接访问主页 / Visit homepage
-                            </a>
                         </div>
                     </div>
                 </div>

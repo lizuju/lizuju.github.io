@@ -190,6 +190,7 @@
         const previewKind = (attachment) => {
             const type = attachment.type;
             const extension = attachment.name.split('.').pop().toLowerCase();
+            if (['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence'].includes(type) || ['heic', 'heif', 'hif'].includes(extension)) return 'heic';
             if (['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'].includes(type)) return 'image';
             if (['video/mp4', 'video/webm', 'video/ogg'].includes(type)) return 'video';
             if (type === 'application/pdf' || extension === 'pdf') return 'pdf';
@@ -247,7 +248,7 @@
             const session = credentials;
             const request = ++previewRequest;
             const kind = previewKind(message.attachment);
-            const limit = kind === 'image' ? 20 : kind === 'text' ? 2 : 25;
+            const limit = ['image', 'heic'].includes(kind) ? 20 : kind === 'text' ? 2 : 25;
             if (!['pdf', 'video'].includes(kind) && message.attachment.size > limit * 1024 * 1024) {
                 setNotice('syncPreviewTooLarge', true);
                 return;
@@ -622,7 +623,13 @@
                     heading.append(label, current);
                     const name = document.createElement('input');
                     name.type = 'text';
-                    name.maxLength = 24;
+                    const limitName = (event) => {
+                        if (event.isComposing) return;
+                        const characters = Array.from(name.value);
+                        if (characters.length > 8) name.value = characters.slice(0, 8).join('');
+                    };
+                    name.addEventListener('input', limitName);
+                    name.addEventListener('compositionend', limitName);
                     name.dataset.syncDeviceName = '';
                     name.dataset.saved = device.name;
                     name.value = device.name;
@@ -1010,7 +1017,7 @@
             if (!button.hasAttribute('data-sync-device-save')) return;
             const name = row.querySelector('input');
             const text = name.value;
-            if (Array.from(text.trim()).length > 24) { setText(find('devices-status'), 'syncDeviceNameTooLong', 'error'); return; }
+            if (Array.from(text.trim()).length > 8) { setText(find('devices-status'), 'syncDeviceNameTooLong', 'error'); return; }
             const session = credentials;
             busy = true;
             updateControls();

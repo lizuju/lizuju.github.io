@@ -1,3 +1,5 @@
+import { PreviewZoom } from './preview-zoom.js';
+
 (() => {
     const desktopApi = window.GavinDesktop;
 
@@ -6,7 +8,7 @@
         const find = (name) => app.querySelector(`[data-sync-preview-${name}]`);
         const body = find('body');
         let current = null;
-        let zoom = 1;
+        const zoom = new PreviewZoom({ toolbar: find('toolbar'), onChange: () => layout() });
         let resizeTimer;
         const translate = (key, values = {}) => Object.entries(values).reduce((text, [key, value]) => text.replace(`{${key}}`, value), desktopApi.t()[key]);
         const setStatus = (key, values = {}) => {
@@ -26,6 +28,7 @@
             });
             previous.pdfTask?.destroy().catch(() => {});
             previous.cleanup?.();
+            if (previous.imageUrl) URL.revokeObjectURL(previous.imageUrl);
             body.querySelector('img')?.removeAttribute('src');
             const video = body.querySelector('video');
             if (video) { video.pause(); video.removeAttribute('src'); video.load(); }
@@ -87,12 +90,9 @@
         };
         const layout = () => {
             if (!current) return;
-            const width = Math.max(1, body.clientWidth - 24) * zoom;
-            find('zoom').textContent = `${Math.round(zoom * 100)}%`;
-            find('zoom-out').disabled = zoom <= 0.5;
-            find('zoom-in').disabled = zoom >= 3;
+            const width = Math.max(1, body.clientWidth - 24) * zoom.value;
             const image = body.querySelector('img');
-            if (image) image.style.width = `${Math.min(width, image.naturalWidth * zoom)}px`;
+            if (image) image.style.width = `${Math.min(width, image.naturalWidth * zoom.value)}px`;
             if (current.pages && current.width !== width) {
                 current.width = width;
                 body.style.setProperty('--sync-preview-width', `${width}px`);
@@ -143,10 +143,10 @@
             dispose();
             const state = { ...file, controller: new AbortController() };
             current = state;
-            zoom = 1;
+            zoom.reset();
             find('title').textContent = file.name;
             document.querySelector('[data-sync-preview-task-title]').textContent = file.name;
-            find('toolbar').hidden = !['image', 'pdf'].includes(file.kind);
+            find('toolbar').hidden = !['image', 'heic', 'pdf'].includes(file.kind);
             body.className = 'sync-preview-body';
             body.scrollTop = 0;
             body.scrollLeft = 0;
@@ -155,12 +155,34 @@
             layout();
             try {
                 if (file.kind === 'pdf') await loadPdf(state);
-                else if (file.kind === 'image') {
+                else if (['image', 'heic'].includes(file.kind)) {
                     const image = document.createElement('img');
                     image.alt = file.name;
-                    image.src = file.url;
                     body.append(image);
-                    await image.decode();
+                    if (file.kind === 'heic') {
+                        const response = await fetch(file.url, { signal: state.controller.signal });
+                        if (!response.ok) throw new Error('Image preview request failed');
+                        const original = await response.blob();
+                        if (current !== state) return;
+                        state.imageUrl = URL.createObjectURL(original.slice(0, original.size, 'image/heic'));
+                        image.src = state.imageUrl;
+                        try {
+                            await image.decode();
+                        } catch {
+                            if (current !== state) return;
+                            const { heicTo } = await import(/* webpackChunkName: "preview-heic" */ 'heic-to');
+                            if (current !== state) return;
+                            const converted = await heicTo({ blob: original, type: 'image/jpeg', quality: 0.9 });
+                            if (current !== state) return;
+                            URL.revokeObjectURL(state.imageUrl);
+                            state.imageUrl = URL.createObjectURL(converted);
+                            image.src = state.imageUrl;
+                            await image.decode();
+                        }
+                    } else {
+                        image.src = file.url;
+                        await image.decode();
+                    }
                     if (current !== state) return;
                     layout();
                     setStatus('syncPreviewImageHint');
@@ -181,9 +203,6 @@
                 }
             } catch { fail(state); }
         };
-        find('zoom-in').addEventListener('click', () => { zoom = Math.min(3, zoom + 0.25); layout(); });
-        find('zoom-out').addEventListener('click', () => { zoom = Math.max(0.5, zoom - 0.25); layout(); });
-        find('fit').addEventListener('click', () => { zoom = 1; layout(); });
         new ResizeObserver(() => {
             clearTimeout(resizeTimer);
             resizeTimer = setTimeout(layout, 120);

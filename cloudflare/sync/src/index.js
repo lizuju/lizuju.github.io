@@ -220,7 +220,7 @@ export default {
     if (request.method === 'PATCH' && match[3]) {
       const body = await readJson(request);
       if (body.error) return resultResponse(body);
-      if (typeof body.value.name !== 'string' || Array.from(body.value.name.trim()).length > 24) return json({ error: 'invalid_name' }, 400);
+      if (typeof body.value.name !== 'string' || Array.from(body.value.name.trim()).length > 8) return json({ error: 'invalid_name' }, 400);
       const result = await room.renameDevice(deviceId, match[3], body.value.name.trim());
       await registry.refreshRoom(roomId);
       return resultResponse(result);

@@ -32,8 +32,8 @@
     <link rel="preload" as="image" type="image/webp" href="assets/portfolio-hero-960.webp"
         imagesrcset="assets/portfolio-hero-480.webp 480w, assets/portfolio-hero-960.webp 960w, assets/portfolio-hero.webp 1672w"
         imagesizes="(max-width: 560px) calc(100vw - 48px), (max-width: 900px) calc(100vw - 56px), (max-width: 1040px) 620px, calc(42.5vw - 145px)">
-    <link rel="stylesheet" href="css/main.css?v=cb0837510892">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=cb0837510892">
+    <link rel="stylesheet" href="css/main.css?v=55245e5dd711">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=55245e5dd711">
 </head>
 
 <body>
@@ -208,7 +208,7 @@
                         <div class="sync-attach-controls">
                             <button class="sync-button" type="button" aria-describedby="sync-file-limit"
                                 data-sync-attach data-i18n="syncAttach">选择文件/图片</button>
-                            <p class="sync-hint" id="sync-file-limit" data-i18n="syncFileLimit">每条消息可附 1 个文件，最大 2GB。</p>
+                            <p class="sync-hint" id="sync-file-limit" data-i18n="syncFileLimit">可选择、拖入文件或粘贴截图，最大 2GB。</p>
                         </div>
                         <div class="sync-selected-file" data-sync-selected-file hidden>
                             <span class="sync-selected-file-details">
@@ -296,11 +296,11 @@
                     <button type="button" data-sync-preview-action="close" data-i18n-aria="syncPreviewClose" aria-label="关闭附件预览"><span aria-hidden="true">×</span></button>
                 </div>
             </div>
-            <div class="sync-preview-toolbar" data-sync-preview-toolbar hidden>
-                <button class="sync-button" type="button" data-sync-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
-                <button class="sync-button" type="button" data-sync-preview-fit data-i18n="syncPreviewFit">适应窗口</button>
-                <button class="sync-button" type="button" data-sync-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
-                <span data-sync-preview-zoom></span>
+            <div class="sync-preview-toolbar preview-zoom-toolbar" data-sync-preview-toolbar hidden>
+                <button class="sync-button" type="button" data-sync-preview-zoom-out data-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
+                <button class="sync-button" type="button" data-sync-preview-fit data-preview-zoom-fit data-i18n="syncPreviewFit">适应窗口</button>
+                <button class="sync-button" type="button" data-sync-preview-zoom-in data-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
+                <span data-sync-preview-zoom data-preview-zoom-value>100%</span>
             </div>
             <div class="sync-preview-body" data-sync-preview-body tabindex="0" data-i18n-aria="syncPreviewTitle" aria-label="附件预览"></div>
             <p class="sync-notice" role="status" aria-live="polite" data-sync-preview-status></p>
@@ -479,7 +479,7 @@
                     <div class="hero-actions">
                         <a class="primary-action" href="#experience" data-i18n="heroPrimary">查看工作经历</a>
                         <a class="secondary-action" href="#contact" data-i18n="heroSecondary">联系我</a>
-                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=cb0837510892"
+                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=55245e5dd711"
                             download="李祖钜简历.pdf" data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                     </div>
                 </div>
@@ -735,7 +735,7 @@
                     </div>
                     <div class="contact-item">
                         <span class="contact-label" data-i18n="contactResume">个人简历</span>
-                        <a href="assets/li-zuju-resume.pdf?v=cb0837510892" download="李祖钜简历.pdf"
+                        <a href="assets/li-zuju-resume.pdf?v=55245e5dd711" download="李祖钜简历.pdf"
                             data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                         <span class="contact-note" data-i18n="resumeDetails">中文版 · 5 页 · 577 KB</span>
                     </div>
@@ -1063,7 +1063,13 @@
                 <span data-i18n="menuView">查看</span>
                 <span data-i18n="menuHelp">帮助</span>
             </div>
-            <div class="image-preview-body">
+            <div class="preview-zoom-toolbar" data-image-preview-toolbar>
+                <button type="button" data-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
+                <button type="button" data-preview-zoom-fit data-i18n="syncPreviewFit">适应窗口</button>
+                <button type="button" data-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
+                <span data-preview-zoom-value>100%</span>
+            </div>
+            <div class="image-preview-body" tabindex="0" data-i18n-aria="previewWindowTitle" aria-label="图片预览">
                 <figure class="image-preview-figure">
                     <picture>
                         <source data-image-preview-source type="image/webp">
@@ -1096,7 +1102,13 @@
                         title="Close"><span aria-hidden="true">×</span></button>
                 </div>
             </div>
-            <div class="video-preview-body">
+            <div class="preview-zoom-toolbar" data-video-preview-toolbar>
+                <button type="button" data-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
+                <button type="button" data-preview-zoom-fit data-i18n="syncPreviewFit">适应窗口</button>
+                <button type="button" data-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
+                <span data-preview-zoom-value>100%</span>
+            </div>
+            <div class="video-preview-body" tabindex="0" data-i18n-aria="videoWindowTitle" aria-label="视频播放器 - Last Christmas solo">
                 <video data-music-player data-video-src="assets/music-portfolio/last-christmas-solo.mp4"
                     controls playsinline preload="none" tabindex="0" aria-label="Last Christmas solo"></video>
             </div>
@@ -1123,6 +1135,12 @@
                     <button type="button" data-paper-preview-action="close" aria-label="Close PDF preview"
                         title="Close"><span aria-hidden="true">×</span></button>
                 </div>
+            </div>
+            <div class="preview-zoom-toolbar" data-paper-preview-toolbar>
+                <button type="button" data-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
+                <button type="button" data-preview-zoom-fit data-i18n="syncPreviewFit">适应窗口</button>
+                <button type="button" data-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
+                <span data-preview-zoom-value>100%</span>
             </div>
             <div class="paper-preview-body" data-paper-preview-pages tabindex="0"></div>
             <div class="window-statusbar">
@@ -1673,10 +1691,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=cb0837510892"></script>
-    <script src="js/gomoku-game.js?v=cb0837510892"></script>
-    <script src="js/content.js?v=cb0837510892"></script>
-    <script src="js/main.js?v=cb0837510892"></script>
+    <script src="js/gomoku-engine.js?v=55245e5dd711"></script>
+    <script src="js/gomoku-game.js?v=55245e5dd711"></script>
+    <script src="js/content.js?v=55245e5dd711"></script>
+    <script src="js/main.js?v=55245e5dd711"></script>
 </body>
 
 </html>

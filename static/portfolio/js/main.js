@@ -2,6 +2,7 @@ import '../css/base.css';
 import '../css/desktop.css';
 import '../css/desktop-pet.css';
 import '../css/apps/satellite.css';
+import '../css/apps/preview-zoom.css';
 import '../css/apps/project-folder.css';
 import '../css/apps/mail.css';
 import '../css/apps/gomoku.css';

@@ -1,3 +1,5 @@
+import { PreviewZoom } from './preview-zoom.js';
+
 (() => {
     const desktopApi = window.GavinDesktop;
     const { t } = desktopApi;
@@ -36,8 +38,11 @@
         const imagePreviewResizeHandle = document.querySelector('[data-image-preview-resize]');
         const imagePreviewTask = document.querySelector('[data-image-preview-task]');
         const imagePreviewTaskTitle = document.querySelector('[data-image-preview-task-title]');
+        const imagePreviewBody = imagePreviewWindow.querySelector('.image-preview-body');
+        const imagePreviewFigure = imagePreviewWindow.querySelector('figure');
         const videoPreviewWindow = document.querySelector('[data-video-preview-window]');
         const videoPreviewTask = document.querySelector('[data-video-preview-task]');
+        const videoPreviewBody = videoPreviewWindow.querySelector('.video-preview-body');
         const video = document.querySelector('[data-music-player]');
         if (!projectFolderWindow || !projectFolderTitlebar || !projectFolderResizeHandle || !projectFolderTask
             || !projectFolderTitle || !projectFolderAddress || !projectFolderStatus || !projectFolderRoot
@@ -53,6 +58,37 @@
         let previewPaperButton;
         let pendingPaperScrollTop;
         const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
+
+        const layoutImage = () => {
+            if (!imagePreviewBody.clientWidth || !imagePreviewImage.naturalWidth) return;
+            const width = Math.max(1, imagePreviewBody.clientWidth - 16);
+            const height = Math.max(1, imagePreviewBody.clientHeight - 16 - imagePreviewCaption.offsetHeight);
+            const fit = Math.min(width / imagePreviewImage.naturalWidth, height / imagePreviewImage.naturalHeight);
+            imagePreviewFigure.style.width = `${imagePreviewImage.naturalWidth * fit * imageZoom.value + 2}px`;
+            imagePreviewImage.parentElement.style.height = `${imagePreviewImage.naturalHeight * fit * imageZoom.value}px`;
+        };
+        const layoutVideo = () => {
+            if (!videoPreviewBody.clientWidth) return;
+            const width = Math.max(1, videoPreviewBody.clientWidth - 8);
+            const height = Math.max(1, videoPreviewBody.clientHeight - 8);
+            const mediaWidth = video.videoWidth || 16;
+            const mediaHeight = video.videoHeight || 9;
+            const fit = Math.min(width / mediaWidth, height / mediaHeight);
+            video.style.width = `${mediaWidth * fit * videoZoom.value}px`;
+            video.style.height = `${mediaHeight * fit * videoZoom.value}px`;
+        };
+        const layoutPaper = () => {
+            if (!paperPreviewPages.clientWidth) return;
+            paperPreviewPages.style.setProperty('--project-paper-width', `${Math.max(1, paperPreviewPages.clientWidth - 32) * paperZoom.value}px`);
+        };
+        const imageZoom = new PreviewZoom({ toolbar: document.querySelector('[data-image-preview-toolbar]'), onChange: layoutImage });
+        const videoZoom = new PreviewZoom({ toolbar: document.querySelector('[data-video-preview-toolbar]'), onChange: layoutVideo });
+        const paperZoom = new PreviewZoom({ toolbar: document.querySelector('[data-paper-preview-toolbar]'), onChange: layoutPaper });
+        imagePreviewImage.addEventListener('load', layoutImage);
+        video.addEventListener('loadedmetadata', layoutVideo);
+        new ResizeObserver(layoutImage).observe(imagePreviewBody);
+        new ResizeObserver(layoutVideo).observe(videoPreviewBody);
+        new ResizeObserver(layoutPaper).observe(paperPreviewPages);
 
         const folderEntry = manager.registerWindow({
             id: 'project-folder',
@@ -164,6 +200,8 @@
                     figure.append(image, caption);
                     return figure;
                 }));
+                paperZoom.reset();
+                paperPreviewPages.scrollLeft = 0;
             }
             updatePaperCopy();
         };
@@ -307,11 +345,17 @@
         };
 
         const updateImagePreview = (button) => {
+            const changed = imagePreviewImage.getAttribute('src') !== button.dataset.imageSrc;
             selectPhoto(button);
             imagePreviewSource.srcset = button.dataset.imageSrc.replace(/\.jpg$/i, '.webp');
             imagePreviewImage.decoding = 'async';
             imagePreviewImage.src = button.dataset.imageSrc;
             updatePhotoCopy();
+            if (changed) {
+                imageZoom.reset();
+                imagePreviewBody.scrollTop = 0;
+                imagePreviewBody.scrollLeft = 0;
+            }
         };
 
         const openImagePreview = (button) => {
@@ -427,6 +471,11 @@
         window.addEventListener('portfolio-language-change', () => {
             setProjectFolderView(currentFolder);
             updatePaperCopy();
+            [imagePreviewWindow, videoPreviewWindow, paperPreviewWindow].forEach((previewWindow) => {
+                previewWindow.querySelectorAll('[data-i18n-aria]').forEach((element) => {
+                    element.setAttribute('aria-label', t()[element.dataset.i18nAria]);
+                });
+            });
         });
 
         manager.onSession({
