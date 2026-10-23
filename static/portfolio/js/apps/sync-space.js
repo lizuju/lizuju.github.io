@@ -45,6 +45,7 @@
         let searchScrollTop = null;
         let fileDragDepth = 0;
         let previewRequest = 0;
+        const downloadTickets = new Map();
 
         const loadConfig = () => {
             if (!configPromise) {
@@ -182,7 +183,10 @@
             find('upload-progress').hidden = !sending || !pendingUpload;
             updateControls();
         };
-        const disposeAttachment = (id) => attachmentPreview.remove(id);
+        const disposeAttachment = (id) => {
+            downloadTickets.delete(id);
+            attachmentPreview.remove(id);
+        };
         const previewKind = (attachment) => {
             const type = attachment.type;
             const extension = attachment.name.split('.').pop().toLowerCase();
@@ -197,13 +201,27 @@
         const showAttachmentError = (error) => {
             setNotice(['attachment_expired', 'not_found'].includes(error.code) ? 'syncAttachmentExpired' : 'syncDownloadFailed', true);
         };
+        const attachmentTicket = async (message, session) => {
+            let entry = downloadTickets.get(message.id);
+            if (!entry || entry.session !== session || (entry.expiresAt && entry.expiresAt <= Date.now() + 60000)) {
+                entry = { session };
+                entry.promise = api(`/v1/spaces/${session.roomId}/files/${message.id}/download`, { method: 'POST' }, session)
+                    .then((result) => { entry.expiresAt = result.expiresAt; return result; })
+                    .catch((error) => {
+                        if (downloadTickets.get(message.id) === entry) downloadTickets.delete(message.id);
+                        throw error;
+                    });
+                downloadTickets.set(message.id, entry);
+            }
+            return entry.promise;
+        };
         const downloadAttachment = async (message, button) => {
             const session = credentials;
             button.disabled = true;
             button.dataset.loading = 'true';
             button.textContent = translate('syncDownloading');
             try {
-                const result = await api(`/v1/spaces/${session.roomId}/files/${message.id}/download`, { method: 'POST' }, session);
+                const result = await attachmentTicket(message, session);
                 if (credentials !== session || !messageNodes.has(message.id)) return;
                 const base = await loadConfig();
                 const frame = document.createElement('iframe');
@@ -236,7 +254,7 @@
             }
             button.disabled = true;
             try {
-                const result = await api(`/v1/spaces/${session.roomId}/files/${message.id}/download`, { method: 'POST' }, session);
+                const result = await attachmentTicket(message, session);
                 const base = await loadConfig();
                 if (request !== previewRequest || credentials !== session || !active || !app.classList.contains('is-active') || !messageNodes.has(message.id)) return;
                 attachmentPreview.open({
@@ -410,7 +428,7 @@
         const retry = () => {
             if (!active || !credentials) return;
             clearTimeout(retryTimer);
-            retryTimer = setTimeout(connect, retryDelay);
+            retryTimer = setTimeout(connect, retryDelay + Math.random() * retryDelay * 0.25);
             retryDelay = Math.min(retryDelay * 2, 30000);
         };
         const connect = async () => {
@@ -427,8 +445,9 @@
             }
             const url = new URL(base + roomPath('/socket'));
             url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-            const connection = new WebSocket(url);
+            const connection = new WebSocket(url, ['sync', `auth.${session.token}`]);
             let awaitingPong = false;
+            let authenticated = false;
             socket = connection;
             connection.addEventListener('open', () => {
                 if (socket === connection) connection.send(JSON.stringify({ type: 'auth', token: session.token }));
@@ -439,6 +458,7 @@
                 let data;
                 try { data = JSON.parse(event.data); } catch { return; }
                 if (data.type === 'ready') {
+                    authenticated = true;
                     const initial = deviceId === null;
                     deviceId = data.deviceId;
                     retryDelay = 1000;
@@ -469,7 +489,7 @@
                     setNotice('syncCleared');
                 }
             });
-            connection.addEventListener('close', (event) => {
+            connection.addEventListener('close', async (event) => {
                 if (socket !== connection) return;
                 clearInterval(pingTimer);
                 socket = null;
@@ -480,6 +500,18 @@
                     setNotice(left ? 'syncLeft' : 'syncRejoin', !left);
                     reconcileSession();
                     return;
+                }
+                if (!authenticated && event.code === 1006) {
+                    try { await api(`/v1/spaces/${session.roomId}/devices`, {}, session); }
+                    catch (error) {
+                        if (credentials !== session) return;
+                        if (['unauthorized', 'not_found'].includes(error.code)) {
+                            reset();
+                            setNotice('syncRejoin', true);
+                            reconcileSession();
+                            return;
+                        }
+                    }
                 }
                 if (credentials === session) retry();
             });
@@ -498,6 +530,7 @@
         const sameSession = (a, b) => a?.roomId === b?.roomId && a?.token === b?.token;
         const reset = (forget = true) => {
             previewRequest++;
+            downloadTickets.clear();
             attachmentPreview.close();
             if (confirmation.open) confirmation.close();
             if (devicesDialog.open) devicesDialog.close();

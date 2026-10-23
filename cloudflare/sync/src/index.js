@@ -11,6 +11,8 @@ const FILE_SHARD_SIZE = 64 * 1024 * 1024;
 const BLOB_CHUNK_SIZE = 1024 * 1024;
 const UPLOAD_LIFETIME = 24 * 60 * 60 * 1000;
 const DOWNLOAD_LIFETIME = 24 * 60 * 60 * 1000;
+const ROOM_IDLE_LIFETIME = 30 * 24 * 60 * 60 * 1000;
+const ACTIVITY_WRITE_INTERVAL = 60 * 60 * 1000;
 const ROOM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function json(data, status = 200, headers = {}) {
@@ -129,7 +131,9 @@ export default {
 
   async route(request, env) {
     const url = new URL(request.url);
-    if (request.method === 'GET' && url.pathname === '/health') return json({ ok: true });
+    if (request.method === 'GET' && url.pathname === '/health') {
+      return json({ ok: true, service: 'portfolio-sync', apiVersion: 1, revision: env.RELEASE_REVISION || null, versionId: env.WORKER_VERSION?.id || null });
+    }
 
     const registry = env.PAIRING_REGISTRY.getByName('registry');
     if (request.method === 'POST' && url.pathname === '/v1/spaces') {
@@ -157,10 +161,15 @@ export default {
     if (!await registry.hasRoom(roomId)) return json({ error: 'not_found' }, 404);
     const room = env.SYNC_ROOMS.getByName(roomId);
     if (request.method === 'GET' && match[2] === '/socket') {
-      const ipHash = await hash(request.headers.get('CF-Connecting-IP') || 'local');
-      const limit = await registry.takeLimit(`socket:${ipHash}`, 30, INVITE_LIFETIME);
+      const protocols = (request.headers.get('Sec-WebSocket-Protocol') || '').split(',').map(value => value.trim());
+      const token = protocols.find(value => /^auth\.[0-9a-f]{64}$/.test(value))?.slice(5);
+      const deviceId = token ? await room.authorize(token) : null;
+      const key = deviceId ? `socket-device:${roomId}:${deviceId}` : `socket:${await hash(request.headers.get('CF-Connecting-IP') || 'local')}`;
+      const limit = await registry.takeLimit(key, deviceId ? 60 : 30, INVITE_LIFETIME);
       if (limit.error) return resultResponse(limit);
-      return room.fetch(request);
+      const headers = new Headers(request.headers);
+      headers.set('X-Sync-Device', deviceId || '');
+      return room.fetch(new Request(request, { headers }));
     }
     if (['GET', 'HEAD'].includes(request.method) && match[2]?.startsWith('/downloads/')) return room.fetch(request);
     const token = request.headers.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
@@ -188,7 +197,8 @@ export default {
       if (request.method === 'PUT' && upload[2] !== undefined) {
         const body = await readBytes(request, FILE_CHUNK_SIZE);
         if (body.error) return resultResponse(body);
-        result = await room.writeFileChunk(deviceId, upload[1], Number(upload[2]), body.bytes);
+        // The complete upload was reserved at initialization; retain that budget until completion or cancellation.
+        return resultResponse(await room.writeFileChunk(deviceId, upload[1], Number(upload[2]), body.bytes));
       } else if (request.method === 'POST' && upload[3]) {
         result = await room.completeUpload(deviceId, upload[1]);
       } else if (request.method === 'DELETE' && !upload[2] && !upload[3]) {
@@ -505,6 +515,8 @@ export class SyncRoom extends DurableObject {
       this.sql.exec("ALTER TABLE devices ADD COLUMN name TEXT NOT NULL DEFAULT ''");
     }
     this.sql.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'lastActiveAt', String(Date.now()));
+    this.lastActivity = Number(this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt').one().value);
     this.sql.exec('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL, device_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, attachment TEXT, UNIQUE(device_id, client_id))');
     if (!this.sql.exec('PRAGMA table_info(messages)').toArray().some(column => column.name === 'attachment')) this.sql.exec('ALTER TABLE messages ADD COLUMN attachment TEXT');
     this.sql.exec('CREATE INDEX IF NOT EXISTS messages_expiry ON messages(created_at)');
@@ -512,6 +524,7 @@ export class SyncRoom extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_shards (file_id TEXT NOT NULL, shard_index INTEGER NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(file_id, shard_index))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_upload_chunks (file_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, size INTEGER NOT NULL, received INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(file_id, chunk_index))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS download_tickets (ticket TEXT PRIMARY KEY, file_id TEXT NOT NULL, device_id TEXT NOT NULL, expires_at INTEGER NOT NULL)');
+    this.sql.exec('CREATE INDEX IF NOT EXISTS download_tickets_device_file ON download_tickets(device_id, file_id, expires_at)');
     this.sql.exec("CREATE TRIGGER IF NOT EXISTS delete_message_files AFTER DELETE ON messages BEGIN UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE message_id = OLD.id; END");
     this.initialized = true;
   }
@@ -527,6 +540,7 @@ export class SyncRoom extends DurableObject {
     const token = credential();
     const deviceId = crypto.randomUUID();
     this.sql.exec('INSERT INTO devices (token_hash, device_id, created_at) VALUES (?, ?, ?)', await hash(token), deviceId, Date.now());
+    this.touchActivity();
     this.broadcast({ type: 'devices' });
     return { token, deviceId };
   }
@@ -534,7 +548,16 @@ export class SyncRoom extends DurableObject {
   async authorize(token) {
     const tokenHash = await hash(token);
     if (!this.initialized) return null;
-    return this.sql.exec('SELECT device_id FROM devices WHERE token_hash = ?', tokenHash).toArray()[0]?.device_id || null;
+    const deviceId = this.sql.exec('SELECT device_id FROM devices WHERE token_hash = ?', tokenHash).toArray()[0]?.device_id || null;
+    if (deviceId) this.touchActivity();
+    return deviceId;
+  }
+
+  touchActivity() {
+    const now = Date.now();
+    if (now - this.lastActivity < ACTIVITY_WRITE_INTERVAL) return;
+    this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', String(now), 'lastActiveAt');
+    this.lastActivity = now;
   }
 
   listDevices(deviceId) {
@@ -602,7 +625,13 @@ export class SyncRoom extends DurableObject {
 
   async reclaimIfEmpty() {
     return this.ctx.blockConcurrencyWhile(async () => {
-      if (this.initialized && this.sql.exec('SELECT 1 FROM devices UNION ALL SELECT 1 FROM messages UNION ALL SELECT 1 FROM files UNION ALL SELECT 1 FROM file_shards UNION ALL SELECT 1 FROM file_upload_chunks LIMIT 1').toArray().length) return false;
+      if (this.initialized) {
+        if (this.sql.exec('SELECT 1 FROM messages UNION ALL SELECT 1 FROM files UNION ALL SELECT 1 FROM file_shards UNION ALL SELECT 1 FROM file_upload_chunks LIMIT 1').toArray().length) return false;
+        if (this.sql.exec('SELECT 1 FROM devices LIMIT 1').toArray().length) {
+          const lastActivity = Number(this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt').one().value);
+          if (lastActivity + ROOM_IDLE_LIFETIME + ACTIVITY_WRITE_INTERVAL > Date.now() || this.ctx.getWebSockets().some(socket => socket.readyState === WebSocket.OPEN && socket.deserializeAttachment()?.deviceId && !socket.deserializeAttachment()?.closing)) return false;
+        }
+      }
       for (const socket of this.ctx.getWebSockets()) {
         if (socket.readyState !== WebSocket.OPEN) continue;
         socket.serializeAttachment({ closing: true });
@@ -749,6 +778,9 @@ export class SyncRoom extends DurableObject {
     if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
     const file = this.sql.exec("SELECT file_id FROM files WHERE message_id = ? AND status = 'complete'", messageId).toArray()[0];
     if (!file) return { error: 'not_found', status: 404 };
+    const existing = this.sql.exec('SELECT ticket, expires_at AS expiresAt FROM download_tickets WHERE device_id = ? AND file_id = ? AND expires_at > ? ORDER BY expires_at DESC LIMIT 1', deviceId, file.file_id, Date.now() + 60000).toArray()[0];
+    if (existing) return existing;
+    this.sql.exec('DELETE FROM download_tickets WHERE device_id = ? AND file_id = ? AND expires_at <= ?', deviceId, file.file_id, Date.now());
     const ticket = credential();
     const expiresAt = Date.now() + DOWNLOAD_LIFETIME;
     this.sql.exec('INSERT INTO download_tickets (ticket, file_id, device_id, expires_at) VALUES (?, ?, ?, ?)', ticket, file.file_id, deviceId, expiresAt);
@@ -838,6 +870,7 @@ export class SyncRoom extends DurableObject {
       }
       if (!deviceId || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return json({ error: 'unauthorized' }, 401);
       if (!file || !this.sql.exec('SELECT 1 FROM messages WHERE id = ?', file.message_id).toArray().length || file.created_at + MESSAGE_LIFETIME <= Date.now()) return json({ error: 'not_found' }, 404);
+      this.touchActivity();
       const filename = encodeURIComponent(file.name).replace(/['()*]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
       const inline = ticketMatch && url.searchParams.get('preview') === '1' && ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'video/ogg', 'application/pdf'].includes(file.type.toLowerCase());
       const headers = {
@@ -919,9 +952,10 @@ export class SyncRoom extends DurableObject {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({ error: 'websocket_required' }, 426);
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ authDeadline: Date.now() + 10000, roomId: new URL(request.url).pathname.split('/')[3] });
+    server.serializeAttachment({ authDeadline: Date.now() + 10000, roomId: new URL(request.url).pathname.split('/')[3], expectedDeviceId: request.headers.get('X-Sync-Device') || null });
     await this.scheduleAlarm();
-    return new Response(null, { status: 101, webSocket: client });
+    const protocols = (request.headers.get('Sec-WebSocket-Protocol') || '').split(',').map(value => value.trim());
+    return new Response(null, { status: 101, webSocket: client, headers: protocols.includes('sync') ? { 'Sec-WebSocket-Protocol': 'sync' } : {} });
   }
 
   async webSocketMessage(socket, payload) {
@@ -953,7 +987,7 @@ export class SyncRoom extends DurableObject {
       return;
     }
     const deviceId = await this.authorize(frame.token);
-    if (!deviceId) {
+    if (!deviceId || (attachment.expectedDeviceId && attachment.expectedDeviceId !== deviceId)) {
       socket.serializeAttachment({ closing: true });
       socket.close(4001, 'Invalid credential');
       await this.scheduleAlarm();
@@ -1012,11 +1046,14 @@ export class SyncRoom extends DurableObject {
   }
 
   async webSocketClose(socket) {
+    if (this.initialized && socket.deserializeAttachment()?.deviceId && !socket.deserializeAttachment()?.closing) this.touchActivity();
     socket.serializeAttachment({ closing: true });
+    socket.close(1000, 'Connection closed');
     await this.scheduleAlarm();
   }
 
   async webSocketError(socket) {
+    if (this.initialized && socket.deserializeAttachment()?.deviceId && !socket.deserializeAttachment()?.closing) this.touchActivity();
     socket.serializeAttachment({ closing: true });
     socket.close(1011, 'Connection error');
     await this.scheduleAlarm();

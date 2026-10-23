@@ -68,6 +68,10 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   testSchema() { return this.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name' ORDER BY name").toArray(); }
+                  testAgeActivity(timestamp) {
+                    this.lastActivity = timestamp;
+                    this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', String(timestamp), 'lastActiveAt');
+                  }
                   testHoldDeviceAdd() {
                     this.deviceAddStarted = new Promise(resolve => { this.startDeviceAdd = resolve; });
                     this.deviceAddRelease = new Promise(resolve => { this.releaseDeviceAdd = resolve; });
@@ -156,11 +160,12 @@ async function createSpace(request = client()) {
   return result.body;
 }
 
-async function openSocket(roomId, instance = runtime) {
+async function openSocket(roomId, instance = runtime, headers = {}) {
   const response = await instance.dispatchFetch(`https://sync.test/v1/spaces/${roomId}/socket`, {
-    headers: { Origin: origin, Upgrade: 'websocket', 'CF-Connecting-IP': `203.0.113.${nextIp++}` }
+    headers: { Origin: origin, Upgrade: 'websocket', 'CF-Connecting-IP': `203.0.113.${nextIp++}`, ...headers }
   });
   assert.equal(response.status, 101, response.status === 101 ? undefined : await response.text());
+  if (headers['Sec-WebSocket-Protocol']?.startsWith('sync,')) assert.equal(response.headers.get('Sec-WebSocket-Protocol'), 'sync');
   const socket = response.webSocket;
   socket.accept();
   sockets.add(socket);
@@ -211,6 +216,43 @@ async function authenticateSocket(space, instance = runtime) {
   assert.equal(frame.deviceId, space.deviceId);
   return { socket, frame };
 }
+
+test('health identifies the sync service and exposes release metadata instead of only reporting reachability', async () => {
+  const health = await client()('/health');
+  assert.equal(health.status, 200);
+  assert.deepEqual(health.body, { ok: true, service: 'portfolio-sync', apiVersion: 1, revision: null, versionId: null });
+  assert.equal(health.headers.get('Cache-Control'), 'no-store');
+});
+
+test('authenticated reconnects use separate device budgets even after the shared IP anonymous budget is exhausted', async () => {
+  const space = await createSpace();
+  const peer = (await client()('/v1/pair', { method: 'POST', json: { code: space.code } })).body;
+  const headers = { 'CF-Connecting-IP': '203.0.113.250', Upgrade: 'websocket', Origin: origin };
+  const path = `https://sync.test/v1/spaces/${space.roomId}/socket`;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const socket = await openSocket(space.roomId, runtime, headers);
+    socket.close();
+  }
+  const anonymous = await runtime.dispatchFetch(path, { headers });
+  assert.equal(anonymous.status, 429);
+  assert.ok(Number(anonymous.headers.get('Retry-After')) > 0);
+  const invalid = await runtime.dispatchFetch(path, { headers: { ...headers, 'Sec-WebSocket-Protocol': `sync, auth.${'0'.repeat(64)}` } });
+  assert.equal(invalid.status, 429);
+  for (const device of [space, peer]) {
+    const socket = await openSocket(space.roomId, runtime, { ...headers, 'Sec-WebSocket-Protocol': `sync, auth.${device.token}` });
+    const ready = socketEvent(socket);
+    socket.send(JSON.stringify({ type: 'auth', token: device.token }));
+    assert.equal(JSON.parse((await ready).data).deviceId, device.deviceId);
+    socket.close();
+  }
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await storage.exec('UPDATE attempts SET count = 60 WHERE key = ?', `socket-device:${space.roomId}:${space.deviceId}`);
+  assert.equal((await runtime.dispatchFetch(path, { headers: { ...headers, 'Sec-WebSocket-Protocol': `sync, auth.${space.token}` } })).status, 429);
+  const independent = await openSocket(space.roomId, runtime, { ...headers, 'Sec-WebSocket-Protocol': `sync, auth.${peer.token}` });
+  const closed = socketEvent(independent, 'close');
+  independent.send(JSON.stringify({ type: 'auth', token: space.token }));
+  assert.equal((await closed).code, 4001, 'The first frame cannot change the device selected for rate limiting');
+});
 
 test('a four-digit invitation gives each device its own credential for the same space', async () => {
   const first = client();
@@ -532,6 +574,75 @@ test('empty-room reclamation retains devices, history, uploads and remaining sha
       }
     });
   }
+});
+
+test('daily maintenance reclaims a 30-day abandoned empty room despite old paired devices', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const space = await createSpace(client(instance));
+  const roomStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await roomStorage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 31 * 24 * 60 * 60 * 1000), 'lastActiveAt');
+  await registryStorage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+  const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  await registry.maintainRooms();
+  await registry.testRunAlarm();
+  assert.equal(await registry.hasRoom(space.roomId), false);
+  assert.deepEqual(await roomStorage.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name'"), []);
+  assert.equal((await client(instance)(`/v1/spaces/${space.roomId}`, { token: space.token })).status, 404);
+});
+
+test('abandoned-room reclamation preserves recent activity, online devices, invitations and pending contents', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  for (const retained of ['recent', 'online', 'invitation', 'history', 'upload']) {
+    const request = client(instance);
+    const space = await createSpace(request);
+    const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+    const socket = retained === 'online' ? (await authenticateSocket(space, instance)).socket : null;
+    if (retained === 'history') await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'keep' } });
+    if (retained === 'upload') await request(`/v1/spaces/${space.roomId}/files/uploads`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), name: 'pending.bin', type: 'application/octet-stream', size: 8 } });
+    if (retained !== 'recent') await storage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 31 * 24 * 60 * 60 * 1000), 'lastActiveAt');
+    if (retained !== 'invitation') await registryStorage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+    await registry.refreshRoom(space.roomId);
+    assert.equal(await registry.hasRoom(space.roomId), true, retained);
+    socket?.close();
+  }
+});
+
+test('successful authentication refreshes stale activity and existing rooms receive a full idle grace period on migration', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance);
+  const space = await createSpace(request);
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  const old = Date.now() - 31 * 24 * 60 * 60 * 1000;
+  await storage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(old), 'lastActiveAt');
+  await instance.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId });
+  assert.equal((await request(`/v1/spaces/${space.roomId}/devices`, { token: space.token })).status, 200);
+  assert.ok(Number((await storage.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt'))[0].value) > old);
+  await storage.exec('DELETE FROM metadata WHERE key = ?', 'lastActiveAt');
+  await instance.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId });
+  const room = (await instance.getDurableObjectNamespace('SYNC_ROOMS')).getByName(space.roomId);
+  assert.equal(await room.reclaimIfEmpty(), false);
+  assert.ok(Number((await storage.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt'))[0].value) >= Date.now() - 10000);
+});
+
+test('closing a long-lived authenticated connection refreshes activity before an empty room can be reclaimed', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const space = await createSpace(client(instance));
+  const { socket } = await authenticateSocket(space, instance);
+  const room = (await instance.getDurableObjectNamespace('SYNC_ROOMS')).getByName(space.roomId);
+  await room.testAgeActivity(Date.now() - 31 * 24 * 60 * 60 * 1000);
+  const closed = socketEvent(socket, 'close');
+  socket.close();
+  await closed;
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  assert.ok(Number((await storage.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt'))[0].value) >= Date.now() - 10000);
+  assert.equal(await room.reclaimIfEmpty(), false);
 });
 
 test('empty-room reclamation waits for a pairing already admitted with a valid invitation', async t => {

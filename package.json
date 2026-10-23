@@ -15,6 +15,7 @@
         "preview": "python3 -m http.server 3090 --protocol HTTP/1.1 --directory docs",
         "test:smoke": "playwright test",
         "verify:docs": "node scripts/verify-docs.cjs",
+        "verify:release": "node cloudflare/sync/scripts/verify-release.mjs",
         "images:check": "node scripts/strip-image-metadata.cjs --check static",
         "images:strip": "node scripts/strip-image-metadata.cjs static"
     },

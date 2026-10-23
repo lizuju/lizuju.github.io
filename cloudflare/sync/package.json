@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "wrangler dev --local --port 8787",
     "test": "node --test test/*.test.mjs",
-    "check": "wrangler deploy --dry-run"
+    "check": "wrangler deploy --dry-run",
+    "deploy": "node scripts/deploy.mjs",
+    "verify:release": "node scripts/verify-release.mjs"
   },
   "devDependencies": {
     "miniflare": "5.20261019.2-beta",

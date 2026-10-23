@@ -54,6 +54,8 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                   }
                 };
                 export class PairingRegistry extends ProductionRegistry {
+                  refreshRoom(roomId) { this.refreshes = (this.refreshes || 0) + 1; return super.refreshRoom(roomId); }
+                  testRefreshes() { return this.refreshes || 0; }
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                 }
@@ -275,6 +277,56 @@ test('empty files and Chinese image names complete without allocating unnecessar
       assert.equal(range.headers.get('Content-Range'), 'bytes */0');
     }
   }
+});
+
+test('upload chunks retain the initial global reservation without running registry maintenance on every chunk', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const started = await initiate(request, space, { size: chunkSize * 2 + 3 });
+  assert.equal(started.status, 201);
+  const namespace = await runtime.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const registry = namespace.getByName('registry');
+  const registryStorage = await runtime.unsafeGetDurableObjectStorage('sync-files-test', 'PairingRegistry', { name: 'registry' });
+  const snapshot = await registryStorage.exec('SELECT bytes FROM room_usage WHERE room_id = ?', space.roomId);
+  const refreshes = await registry.testRefreshes();
+  for (const [index, bytes] of [Buffer.alloc(chunkSize), Buffer.alloc(chunkSize), Buffer.from('end')].entries()) {
+    const result = await putChunk(request, space, started.body.uploadId, index, bytes);
+    assert.equal(result.status, 200);
+    assert.equal(await registry.testRefreshes(), refreshes);
+    assert.deepEqual(await registryStorage.exec('SELECT bytes FROM room_usage WHERE room_id = ?', space.roomId), snapshot);
+    const room = await roomObject(space);
+    assert.ok((await room.storageUsage()).bytes <= snapshot[0].bytes, 'Initial reservation must still cover all stored chunks and remaining upload bytes');
+  }
+  assert.equal((await complete(request, space, started.body.uploadId)).status, 201);
+  assert.equal(await registry.testRefreshes(), refreshes + 1);
+  const cancelled = await initiate(request, space, { size: chunkSize });
+  assert.equal(cancelled.status, 201);
+  const beforeCancel = await registryStorage.exec('SELECT bytes FROM room_usage WHERE room_id = ?', space.roomId);
+  assert.equal((await request(`/v1/spaces/${space.roomId}/files/uploads/${cancelled.body.uploadId}`, { method: 'DELETE', token: space.token })).status, 200);
+  assert.ok((await registryStorage.exec('SELECT bytes FROM room_usage WHERE room_id = ?', space.roomId))[0].bytes < beforeCancel[0].bytes);
+});
+
+test('concurrent download and preview requests reuse persisted tickets per device without extending their lifetime', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const sent = await upload(request, space, { name: 'note.txt' });
+  const path = `/v1/spaces/${space.roomId}/files/${sent.body.id}/download`;
+  const results = await Promise.all(Array.from({ length: 8 }, () => request(path, { method: 'POST', token: space.token })));
+  for (const result of results) {
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, results[0].body);
+  }
+  const storage = await roomStorage(space);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM download_tickets'), [{ count: 1 }]);
+  await runtime.unsafeEvictDurableObject('sync-files-test', 'SyncRoom', { name: space.roomId });
+  assert.deepEqual((await request(path, { method: 'POST', token: space.token })).body, results[0].body);
+  const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
+  const peer = await request(path, { method: 'POST', token: paired.body.token });
+  assert.notEqual(peer.body.ticket, results[0].body.ticket);
+  await storage.exec('UPDATE download_tickets SET expires_at = ? WHERE device_id = ?', Date.now() + 30000, space.deviceId);
+  const renewed = await request(path, { method: 'POST', token: space.token });
+  assert.notEqual(renewed.body.ticket, results[0].body.ticket);
+  assert.ok(renewed.body.expiresAt > Date.now() + 60000);
 });
 
 test('upload initialization validates the 2 GiB boundary and reserves an idempotent upload without transferring it', async () => {
