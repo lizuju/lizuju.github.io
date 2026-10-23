@@ -21,12 +21,12 @@
         let greetingIndex = 0;
         let speechKey = 'petHello';
         let position = 0;
-        let pointerX = null;
+        let pointer = null;
         let patrolTimer;
         let movementFrame;
         let previousFrame = null;
         let destination = 0;
-        let movementSpeed = 45;
+        let movementSpeed = 15;
         let speechTimer;
 
         const updateLanguage = () => {
@@ -88,6 +88,17 @@
             if (!movementFrame) movementFrame = window.requestAnimationFrame(step);
         };
 
+        const isFollowing = () => {
+            if (pointer === null) return false;
+            const bounds = desktop.getBoundingClientRect();
+            return pointer.x >= bounds.left && pointer.x < bounds.right
+                && pointer.y >= bounds.top + bounds.height * 0.75 && pointer.y < bounds.bottom;
+        };
+
+        const followPointer = () => {
+            walkTo(pointer.x - desktop.getBoundingClientRect().left - pet.offsetWidth / 2, 30);
+        };
+
         const greet = () => {
             stopWalking();
             window.clearTimeout(speechTimer);
@@ -103,8 +114,8 @@
 
         const patrol = () => {
             if (pet.matches(':hover') || pet.querySelector(':focus-visible') || !speech.hidden) return;
-            if (pointerX !== null) walkTo(pointerX - pet.offsetWidth / 2, 60);
-            else walkTo(position + (Math.random() - 0.5) * 320, 45);
+            if (isFollowing()) followPointer();
+            else if (!movementFrame) walkTo(position + (Math.random() - 0.5) * 120, 15);
         };
 
         const syncAutoShow = () => {
@@ -123,7 +134,7 @@
             const paused = !canMove();
             pet.classList.toggle('is-paused', paused);
             if (!paused) {
-                if (pointerX !== null && !pet.querySelector(':focus-visible')) walkTo(pointerX - pet.offsetWidth / 2, 60);
+                if (isFollowing() && !pet.querySelector(':focus-visible')) followPointer();
                 patrolTimer = window.setInterval(patrol, 6000);
             }
             syncAutoShow();
@@ -146,7 +157,7 @@
             window.clearTimeout(speechTimer);
             pet.hidden = true;
             speech.hidden = true;
-            pointerX = null;
+            pointer = null;
             pet.classList.remove('is-greeting');
             syncActivity();
             updateLanguage();
@@ -176,18 +187,20 @@
         pet.addEventListener('keyup', (event) => event.stopPropagation());
         desktop.addEventListener('pointermove', (event) => {
             if (pet.hidden || event.pointerType === 'touch') return;
-            pointerX = event.clientX - desktop.getBoundingClientRect().left;
-            walkTo(pointerX - pet.offsetWidth / 2, 60);
+            const wasFollowing = isFollowing();
+            pointer = { x: event.clientX, y: event.clientY };
+            if (isFollowing()) followPointer();
+            else if (wasFollowing) stopWalking();
         }, { passive: true });
         desktop.addEventListener('pointerleave', () => {
-            pointerX = null;
+            pointer = null;
             stopWalking();
         });
         window.addEventListener('resize', () => {
             if (!pet.hidden) {
                 stopWalking();
                 place(position);
-                if (pointerX !== null) walkTo(pointerX - pet.offsetWidth / 2, 60);
+                if (isFollowing()) followPointer();
             }
         });
         document.addEventListener('visibilitychange', syncActivity);

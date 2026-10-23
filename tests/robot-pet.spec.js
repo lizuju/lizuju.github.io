@@ -90,17 +90,18 @@ test('follows the mouse immediately through greetings, stationary targets and ke
     const desktop = await page.locator('[data-retro-desktop]').boundingBox();
     const pet = page.locator('[data-desktop-pet]');
     const speech = page.locator('[data-pet-speech]');
-    const pointerY = desktop.y + desktop.height * 0.4;
-    await page.mouse.dblclick(desktop.x + desktop.width * 0.25, pointerY);
+    const pointerY = desktop.y + desktop.height * 0.8;
+    await page.mouse.dblclick(desktop.x + desktop.width * 0.4, pointerY);
     const initial = await pet.boundingBox();
-    const pointerX = desktop.x + desktop.width * 0.85;
+    const pointerX = desktop.x + desktop.width * 0.65;
     const targetX = pointerX - initial.width / 2;
     await expect(speech).toBeVisible();
 
     await page.mouse.move(pointerX, pointerY);
     await page.clock.runFor(200);
     const started = await pet.boundingBox();
-    expect(started.x).toBeGreaterThan(initial.x + 5);
+    expect(started.x).toBeGreaterThan(initial.x + 4);
+    expect(started.x).toBeLessThan(initial.x + 8);
     expect(started.x).toBeLessThan(targetX - 100);
     expect(started.y).toBe(initial.y);
     await expect(speech).toBeVisible();
@@ -108,18 +109,20 @@ test('follows the mouse immediately through greetings, stationary targets and ke
 
     await page.clock.runFor(2000);
     const continued = await pet.boundingBox();
-    expect(continued.x).toBeGreaterThan(started.x + 100);
-    expect(continued.x).toBeLessThan(started.x + 140);
+    expect(continued.x).toBeGreaterThan(started.x + 50);
+    expect(continued.x).toBeLessThan(started.x + 70);
     await page.clock.runFor(12000);
     const arrived = await pet.boundingBox();
     expect(Math.abs(arrived.x - targetX)).toBeLessThanOrEqual(4);
     expect(arrived.y).toBe(initial.y);
     await expect(pet).not.toHaveClass(/is-walking/);
 
-    const reversePointerX = desktop.x + desktop.width * 0.15;
+    const reversePointerX = desktop.x + desktop.width * 0.35;
     await page.mouse.move(reversePointerX, pointerY);
     await page.clock.runFor(200);
-    expect((await pet.boundingBox()).x).toBeLessThan(arrived.x - 5);
+    const reversed = await pet.boundingBox();
+    expect(reversed.x).toBeLessThan(arrived.x - 4);
+    expect(reversed.x).toBeGreaterThan(arrived.x - 8);
     await expect(pet).toHaveClass(/is-facing-left/);
     await page.clock.runFor(17000);
     expect(Math.abs((await pet.boundingBox()).x - (reversePointerX - initial.width / 2))).toBeLessThanOrEqual(4);
@@ -135,7 +138,9 @@ test('follows the mouse immediately through greetings, stationary targets and ke
     const keyboardSpawn = await pet.boundingBox();
     await page.mouse.move(desktop.x + desktop.width * 0.45, pointerY);
     await page.clock.runFor(200);
-    expect((await pet.boundingBox()).x).toBeLessThan(keyboardSpawn.x - 5);
+    const keyboardStarted = await pet.boundingBox();
+    expect(keyboardStarted.x).toBeLessThan(keyboardSpawn.x - 4);
+    expect(keyboardStarted.x).toBeGreaterThan(keyboardSpawn.x - 8);
     await expect(page.locator('[data-pet-greet]')).toBeFocused();
     await expect(speech).toBeVisible();
 });
@@ -159,7 +164,7 @@ test('patrols while idle and rejects mouse movement while reduced motion, hidden
     await expect(pet).toHaveClass(/is-paused/);
     await expect(pet).not.toHaveClass(/is-walking/);
     const reducedPosition = await pet.evaluate((element) => element.style.transform);
-    await page.mouse.move(desktop.x + desktop.width * 0.9, desktop.y + desktop.height * 0.4);
+    await page.mouse.move(desktop.x + desktop.width * 0.9, desktop.y + desktop.height * 0.8);
     await page.clock.runFor(12000);
     expect(await pet.evaluate((element) => element.style.transform)).toBe(reducedPosition);
     await expect(pet).not.toHaveClass(/is-walking/);
@@ -171,7 +176,7 @@ test('patrols while idle and rejects mouse movement while reduced motion, hidden
     });
     await expect(pet).toHaveClass(/is-paused/);
     const hiddenPosition = await pet.evaluate((element) => element.style.transform);
-    await page.mouse.move(desktop.x + desktop.width * 0.15, desktop.y + desktop.height * 0.4);
+    await page.mouse.move(desktop.x + desktop.width * 0.15, desktop.y + desktop.height * 0.8);
     await page.clock.runFor(12000);
     expect(await pet.evaluate((element) => element.style.transform)).toBe(hiddenPosition);
     await expect(pet).not.toHaveClass(/is-walking/);
@@ -180,7 +185,7 @@ test('patrols while idle and rejects mouse movement while reduced motion, hidden
         document.dispatchEvent(new Event('visibilitychange'));
     });
     await expect(pet).not.toHaveClass(/is-paused/);
-    await page.mouse.move(desktop.x + desktop.width * 0.9, desktop.y + desktop.height * 0.4);
+    await page.mouse.move(desktop.x + desktop.width * 0.9, desktop.y + desktop.height * 0.8);
     await page.clock.runFor(200);
     await expect(pet).toHaveClass(/is-walking/);
     expect(await pet.evaluate((element) => element.style.transform)).not.toBe(hiddenPosition);
@@ -191,7 +196,7 @@ test('patrols while idle and rejects mouse movement while reduced motion, hidden
     await expect(pet).toHaveClass(/is-paused/);
     await expect(pet).not.toHaveClass(/is-walking/);
     const shutdownPosition = await pet.evaluate((element) => element.style.transform);
-    await page.mouse.move(desktop.x + desktop.width * 0.15, desktop.y + desktop.height * 0.4);
+    await page.mouse.move(desktop.x + desktop.width * 0.15, desktop.y + desktop.height * 0.8);
     await page.clock.runFor(6100);
     expect(await pet.evaluate((element) => element.style.transform)).toBe(shutdownPosition);
     await expect(pet).not.toHaveClass(/is-walking/);
@@ -199,6 +204,80 @@ test('patrols while idle and rejects mouse movement while reduced motion, hidden
     await expect(pet).not.toHaveAttribute('inert');
     await expect(pet).not.toHaveClass(/is-paused/);
 });
+
+for (const viewport of [
+    { width: 1366, height: 768 },
+    { width: 1024, height: 600 },
+    { width: 1920, height: 1080 },
+    { width: 901, height: 600 }
+]) {
+    test(`follows only in the bottom quarter and takes short idle walks at ${viewport.width}x${viewport.height}`, async ({ page, isMobile }) => {
+        test.skip(isMobile, 'desktop regions are checked without touch emulation');
+        await page.clock.install({ time: new Date('2026-10-23T00:00:00Z') });
+        await page.clock.pauseAt(new Date('2026-10-23T00:00:01Z'));
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
+        await page.addInitScript(() => { Math.random = () => 0.999; });
+        await page.setViewportSize(viewport);
+        await page.goto('/portfolio/');
+        await page.locator('[data-window-action="minimize"]').click();
+        const desktop = await page.locator('[data-retro-desktop]').boundingBox();
+        const pet = page.locator('[data-desktop-pet]');
+        const boundaryY = desktop.y + desktop.height * 0.75;
+        await page.mouse.dblclick(desktop.x + desktop.width * 0.25, desktop.y + desktop.height * 0.4);
+        const initial = await pet.boundingBox();
+
+        await page.mouse.move(desktop.x + desktop.width * 0.85, boundaryY + 2);
+        await expect(pet).toHaveClass(/is-walking/);
+        await page.clock.runFor(2000);
+        const followed = await pet.boundingBox();
+        expect(followed.x - initial.x).toBeGreaterThan(50);
+        expect(followed.x - initial.x).toBeLessThan(70);
+
+        await page.mouse.move(desktop.x + desktop.width * 0.85, boundaryY - 2);
+        await expect(pet).not.toHaveClass(/is-walking/);
+        const stopped = await pet.boundingBox();
+        await page.mouse.move(desktop.x + desktop.width * 0.15, boundaryY - 2);
+        await page.clock.runFor(3900);
+        expect((await pet.boundingBox()).x).toBe(stopped.x);
+        await expect(pet).not.toHaveClass(/is-walking/);
+
+        await page.clock.runFor(200);
+        await expect(pet).toHaveClass(/is-walking/);
+        const patrolStarted = await pet.boundingBox();
+        expect(patrolStarted.x).toBeGreaterThan(stopped.x);
+        expect(patrolStarted.x).toBeLessThan(stopped.x + 3);
+        await page.clock.runFor(2000);
+        const patrolContinued = await pet.boundingBox();
+        expect(patrolContinued.x - patrolStarted.x).toBeGreaterThan(25);
+        expect(patrolContinued.x - patrolStarted.x).toBeLessThan(35);
+        await page.clock.runFor(2100);
+        const patrolStopped = await pet.boundingBox();
+        expect(patrolStopped.x - stopped.x).toBeGreaterThan(55);
+        expect(patrolStopped.x - stopped.x).toBeLessThanOrEqual(60);
+        await expect(pet).not.toHaveClass(/is-walking/);
+        await page.clock.runFor(1500);
+        expect((await pet.boundingBox()).x).toBe(patrolStopped.x);
+        await expect(pet).not.toHaveClass(/is-walking/);
+        await page.clock.runFor(400);
+        await expect(pet).toHaveClass(/is-walking/);
+
+        await page.mouse.move(desktop.x + desktop.width * 0.15, boundaryY + 2);
+        const beforeResize = await pet.boundingBox();
+        await page.setViewportSize({ width: viewport.width, height: viewport.height + 200 });
+        await expect(pet).not.toHaveClass(/is-walking/);
+        const resized = await pet.boundingBox();
+        expect(Math.abs(resized.x - beforeResize.x)).toBeLessThanOrEqual(1);
+        await page.clock.runFor(200);
+        expect((await pet.boundingBox()).x).toBe(resized.x);
+        await page.setViewportSize(viewport);
+        await expect(pet).toHaveClass(/is-walking/);
+        const resumed = await pet.boundingBox();
+        await page.clock.runFor(200);
+        const moved = await pet.boundingBox();
+        expect(resumed.x - moved.x).toBeGreaterThan(4);
+        expect(resumed.x - moved.x).toBeLessThan(8);
+    });
+}
 
 test('stays inside desktop bounds and remains disabled for small screens and touch devices', async ({ page, isMobile }) => {
     if (!isMobile) {
