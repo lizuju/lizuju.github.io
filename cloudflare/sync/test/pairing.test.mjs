@@ -181,6 +181,167 @@ test('credentials stay isolated between spaces and reject missing or forged toke
   assert.equal(rotate.status, 401);
 });
 
+test('device lists identify the current device without exposing credentials or another space', async () => {
+  const request = client();
+  const startedAt = Date.now();
+  const space = await createSpace(request);
+  const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
+  assert.equal(paired.status, 200);
+  const unrelated = await createSpace();
+
+  for (const device of [space, paired.body]) {
+    const result = await request(`/v1/spaces/${space.roomId}/devices`, { token: device.token });
+    assert.equal(result.status, 200);
+    assert.equal(result.headers.get('Cache-Control'), 'no-store');
+    assert.deepEqual(Object.keys(result.body).sort(), ['deviceId', 'devices']);
+    assert.equal(result.body.deviceId, device.deviceId);
+    assert.deepEqual(result.body.devices.map(value => value.deviceId).sort(), [space.deviceId, paired.body.deviceId].sort());
+    for (const listed of result.body.devices) {
+      assert.deepEqual(Object.keys(listed).sort(), ['createdAt', 'deviceId', 'name']);
+      assert.equal(listed.name, '');
+      assert.ok(listed.createdAt >= startedAt && listed.createdAt <= Date.now());
+    }
+    assert.ok(!JSON.stringify(result.body).includes(space.token));
+    assert.ok(!JSON.stringify(result.body).includes(paired.body.token));
+  }
+
+  for (const token of [undefined, '', '0'.repeat(64), unrelated.token]) {
+    for (const [method, suffix, json] of [
+      ['GET', '', undefined],
+      ['PATCH', `/${space.deviceId}`, { name: 'intrusion' }],
+      ['DELETE', `/${space.deviceId}`, undefined]
+    ]) {
+      const denied = await request(`/v1/spaces/${space.roomId}/devices${suffix}`, { method, token, json });
+      assert.equal(denied.status, 401);
+      assert.equal(denied.body.error, 'unauthorized');
+    }
+  }
+  const unchanged = await request(`/v1/spaces/${space.roomId}/devices`, { token: space.token });
+  assert.equal(unchanged.body.devices.length, 2);
+  assert.ok(unchanged.body.devices.every(device => device.name === ''));
+});
+
+test('every paired device can rename itself or a peer and names validate UTF-16 length', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
+  assert.equal(paired.status, 200);
+  const path = `/v1/spaces/${space.roomId}/devices`;
+  const own = await request(`${path}/${space.deviceId}`, {
+    method: 'PATCH', token: space.token, json: { name: '  我的 Mac  ' }
+  });
+  assert.equal(own.status, 200);
+  assert.deepEqual(own.body, { ok: true });
+  let listed = await request(path, { token: space.token });
+  assert.equal(listed.body.devices.find(device => device.deviceId === space.deviceId).name, '我的 Mac');
+  const peer = await request(`${path}/${space.deviceId}`, {
+    method: 'PATCH', token: paired.body.token, json: { name: '另一台电脑' }
+  });
+  assert.equal(peer.status, 200);
+  listed = await request(path, { token: space.token });
+  assert.equal(listed.body.devices.find(device => device.deviceId === space.deviceId).name, '另一台电脑');
+
+  for (const name of ['x'.repeat(60), '🤖'.repeat(30), '', ' \t\n ']) {
+    const renamed = await request(`${path}/${paired.body.deviceId}`, {
+      method: 'PATCH', token: space.token, json: { name }
+    });
+    assert.equal(renamed.status, 200, JSON.stringify(name));
+    listed = await request(path, { token: paired.body.token });
+    assert.equal(listed.body.devices.find(device => device.deviceId === paired.body.deviceId).name, name.trim());
+  }
+
+  for (const json of [{}, { name: null }, { name: 123 }, { name: [] }, { name: {} },
+    { name: 'x'.repeat(61) }, { name: '🤖'.repeat(31) }, { name: ` ${'x'.repeat(60)}` }]) {
+    const invalid = await request(`${path}/${paired.body.deviceId}`, {
+      method: 'PATCH', token: space.token, json
+    });
+    assert.equal(invalid.status, 400, JSON.stringify(json));
+    assert.equal(invalid.body.error, 'invalid_name');
+  }
+  listed = await request(path, { token: space.token });
+  assert.equal(listed.body.devices.find(device => device.deviceId === paired.body.deviceId).name, '');
+  for (const method of ['PATCH', 'DELETE']) {
+    const missing = await request(`${path}/${randomUUID()}`, {
+      method, token: space.token, json: method === 'PATCH' ? { name: 'missing' } : undefined
+    });
+    assert.equal(missing.status, 404);
+    assert.equal(missing.body.error, 'device_not_found');
+  }
+});
+
+test('device names migrate from the old schema without revoking existing credentials', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
+  assert.equal(paired.status, 200);
+  const sent = await request(`/v1/spaces/${space.roomId}/messages`, {
+    method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'preserved through migration' }
+  });
+  assert.equal(sent.status, 201);
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  const devices = await storage.exec('SELECT token_hash, device_id, created_at FROM devices');
+  await storage.exec('DROP TABLE devices');
+  await storage.exec('CREATE TABLE devices (token_hash TEXT PRIMARY KEY, device_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL)');
+  for (const device of devices) {
+    await storage.exec('INSERT INTO devices (token_hash, device_id, created_at) VALUES (?, ?, ?)', device.token_hash, device.device_id, device.created_at);
+  }
+  await runtime.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId });
+
+  for (const device of [space, paired.body]) {
+    const listed = await request(`/v1/spaces/${space.roomId}/devices`, { token: device.token });
+    assert.equal(listed.status, 200);
+    assert.equal(listed.body.deviceId, device.deviceId);
+    assert.equal(listed.body.devices.length, 2);
+    assert.ok(listed.body.devices.every(value => value.name === ''));
+    const state = await request(`/v1/spaces/${space.roomId}`, { token: device.token });
+    assert.equal(state.status, 200);
+    assert.deepEqual(state.body.messages, [sent.body]);
+  }
+  const renamed = await request(`/v1/spaces/${space.roomId}/devices/${space.deviceId}`, {
+    method: 'PATCH', token: paired.body.token, json: { name: '迁移后的 Mac' }
+  });
+  assert.equal(renamed.status, 200);
+  await runtime.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId });
+  const reloaded = await request(`/v1/spaces/${space.roomId}/devices`, { token: space.token });
+  assert.equal(reloaded.status, 200);
+  assert.equal(reloaded.body.devices.find(device => device.deviceId === space.deviceId).name, '迁移后的 Mac');
+  assert.equal((await storage.exec('PRAGMA table_info(devices)')).filter(column => column.name === 'name').length, 1);
+});
+
+test('unregistered room IDs reject forged HTTP credentials and sockets without allocating SQLite databases', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance);
+  await createSpace(request);
+  const registry = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const usage = await registry.exec('SELECT room_id, bytes, oldest_at FROM room_usage ORDER BY room_id');
+  const databases = await instance.listDurableObjectIds('SYNC_ROOMS');
+  assert.equal(databases.length, 1);
+
+  for (const [method, suffix, json] of [
+    ['GET', '', undefined],
+    ['POST', '/messages', { clientId: randomUUID(), text: 'forged' }],
+    ['POST', '/pair-code', undefined],
+    ['DELETE', '/device', undefined],
+    ['GET', '/devices', undefined],
+    ['PATCH', `/devices/${randomUUID()}`, { name: 'forged' }],
+    ['DELETE', `/devices/${randomUUID()}`, undefined]
+  ]) {
+    const rejected = await request(`/v1/spaces/${randomUUID()}${suffix}`, {
+      method, token: '0'.repeat(64), json
+    });
+    assert.equal(rejected.status, 404);
+    assert.equal(rejected.body.error, 'not_found');
+  }
+  const socket = await request(`/v1/spaces/${randomUUID()}/socket`, {
+    token: '0'.repeat(64), headers: { Upgrade: 'websocket' }
+  });
+  assert.equal(socket.status, 404);
+  assert.equal(socket.body.error, 'not_found');
+  assert.deepEqual(await instance.listDurableObjectIds('SYNC_ROOMS'), databases);
+  assert.deepEqual(await registry.exec('SELECT room_id, bytes, oldest_at FROM room_usage ORDER BY room_id'), usage);
+});
+
 test('pairing accepts exactly four ASCII digits supplied as a string', async () => {
   for (const code of ['1', '123', '12345', ' 1234', '1234 ', '１２３４', '12a4', 1234, null, {}, []]) {
     const result = await client()('/v1/pair', { method: 'POST', json: { code } });
@@ -278,6 +439,7 @@ test('the allowed website can preflight authorization and an unrelated origin is
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get('Access-Control-Allow-Origin'), origin);
   assert.match(preflight.headers.get('Access-Control-Allow-Headers'), /Authorization/);
+  assert.match(preflight.headers.get('Access-Control-Allow-Methods'), /\bPATCH\b/);
   const forbidden = await request('/v1/spaces', { method: 'POST', headers: { Origin: 'https://unrelated.example' } });
   assert.equal(forbidden.status, 403);
   assert.equal(forbidden.headers.get('Access-Control-Allow-Origin'), null);
@@ -402,6 +564,104 @@ test('unauthenticated sockets receive no room content and invalid authentication
   assert.deepEqual(received, ['pong']);
 });
 
+test('device additions, renames and removals notify authenticated sockets and peers can remove the creator', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
+  assert.equal(paired.status, 200);
+  const owner = await authenticateSocket(space);
+  const peer = await authenticateSocket(paired.body);
+  const unauthenticated = await openSocket(space.roomId);
+  const privateFrames = [];
+  unauthenticated.addEventListener('message', event => privateFrames.push(event.data));
+  await runtime.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId, webSockets: 'hibernate' });
+
+  const ownerAdded = socketEvent(owner.socket);
+  const peerAdded = socketEvent(peer.socket);
+  const third = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
+  assert.equal(third.status, 200);
+  assert.deepEqual(JSON.parse((await ownerAdded).data), { type: 'devices' });
+  assert.deepEqual(JSON.parse((await peerAdded).data), { type: 'devices' });
+
+  const ownerRenamed = socketEvent(owner.socket);
+  const peerRenamed = socketEvent(peer.socket);
+  const renamed = await request(`/v1/spaces/${space.roomId}/devices/${space.deviceId}`, {
+    method: 'PATCH', token: third.body.token, json: { name: 'MacBook' }
+  });
+  assert.equal(renamed.status, 200);
+  assert.deepEqual(JSON.parse((await ownerRenamed).data), { type: 'devices' });
+  assert.deepEqual(JSON.parse((await peerRenamed).data), { type: 'devices' });
+  const listed = await request(`/v1/spaces/${space.roomId}/devices`, { token: paired.body.token });
+  assert.equal(listed.body.devices.find(device => device.deviceId === space.deviceId).name, 'MacBook');
+
+  const closed = socketEvent(owner.socket, 'close');
+  const peerRemoved = socketEvent(peer.socket);
+  const removed = await request(`/v1/spaces/${space.roomId}/devices/${space.deviceId}`, {
+    method: 'DELETE', token: paired.body.token
+  });
+  assert.equal(removed.status, 200);
+  assert.deepEqual(removed.body, { ok: true });
+  assert.equal((await closed).code, 4001);
+  assert.deepEqual(JSON.parse((await peerRemoved).data), { type: 'devices' });
+  const remaining = await request(`/v1/spaces/${space.roomId}/devices`, { token: third.body.token });
+  assert.deepEqual(remaining.body.devices.map(device => device.deviceId).sort(), [paired.body.deviceId, third.body.deviceId].sort());
+
+  for (const [method, suffix, json] of [
+    ['GET', '', undefined],
+    ['GET', '/devices', undefined],
+    ['PATCH', `/devices/${paired.body.deviceId}`, { name: 'revoked' }],
+    ['DELETE', `/devices/${paired.body.deviceId}`, undefined],
+    ['POST', '/messages', { clientId: randomUUID(), text: 'revoked' }]
+  ]) {
+    const denied = await request(`/v1/spaces/${space.roomId}${suffix}`, { method, token: space.token, json });
+    assert.equal(denied.status, 401);
+  }
+  const rejected = await openSocket(space.roomId);
+  const rejectedClose = socketEvent(rejected, 'close');
+  rejected.send(JSON.stringify({ type: 'auth', token: space.token }));
+  assert.equal((await rejectedClose).code, 4001);
+  const peerMessage = socketEvent(peer.socket);
+  const sent = await request(`/v1/spaces/${space.roomId}/messages`, {
+    method: 'POST', token: paired.body.token, json: { clientId: randomUUID(), text: 'peer still works' }
+  });
+  assert.equal(sent.status, 201);
+  assert.equal(JSON.parse((await peerMessage).data).message.text, 'peer still works');
+  const pong = socketEvent(unauthenticated);
+  unauthenticated.send('ping');
+  assert.equal((await pong).data, 'pong');
+  assert.deepEqual(privateFrames, ['pong']);
+  unauthenticated.close();
+});
+
+test('targeted self-removal revokes only that device and preserves shared history', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
+  assert.equal(paired.status, 200);
+  const sent = await request(`/v1/spaces/${space.roomId}/messages`, {
+    method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'keep after device leaves' }
+  });
+  assert.equal(sent.status, 201);
+  const owner = await authenticateSocket(space);
+  const peer = await authenticateSocket(paired.body);
+  const closed = socketEvent(owner.socket, 'close');
+  const devicesChanged = socketEvent(peer.socket);
+  const removed = await request(`/v1/spaces/${space.roomId}/devices/${space.deviceId}`, {
+    method: 'DELETE', token: space.token
+  });
+  assert.equal(removed.status, 200);
+  assert.deepEqual(removed.body, { ok: true });
+  assert.equal((await closed).code, 4001);
+  assert.deepEqual(JSON.parse((await devicesChanged).data), { type: 'devices' });
+  const denied = await request(`/v1/spaces/${space.roomId}/devices`, { token: space.token });
+  assert.equal(denied.status, 401);
+  const remaining = await request(`/v1/spaces/${space.roomId}/devices`, { token: paired.body.token });
+  assert.deepEqual(remaining.body.devices.map(device => device.deviceId), [paired.body.deviceId]);
+  const state = await request(`/v1/spaces/${space.roomId}`, { token: paired.body.token });
+  assert.equal(state.status, 200);
+  assert.deepEqual(state.body.messages, [sent.body]);
+});
+
 test('disconnecting one device revokes its HTTP and WebSocket access while peers keep working', async () => {
   const request = client();
   const space = await createSpace(request);
@@ -409,9 +669,11 @@ test('disconnecting one device revokes its HTTP and WebSocket access while peers
   const owner = await authenticateSocket(space);
   const peer = await authenticateSocket(paired.body);
   const closed = socketEvent(owner.socket, 'close');
+  const devicesChanged = socketEvent(peer.socket);
   const removed = await request(`/v1/spaces/${space.roomId}/device`, { method: 'DELETE', token: space.token });
   assert.equal(removed.status, 200);
   assert.equal((await closed).code, 4001);
+  assert.deepEqual(JSON.parse((await devicesChanged).data), { type: 'devices' });
   const denied = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
   assert.equal(denied.status, 401);
   const deniedSend = await request(`/v1/spaces/${space.roomId}/messages`, {

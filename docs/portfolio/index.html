@@ -32,8 +32,8 @@
     <link rel="preload" as="image" type="image/webp" href="assets/portfolio-hero-960.webp"
         imagesrcset="assets/portfolio-hero-480.webp 480w, assets/portfolio-hero-960.webp 960w, assets/portfolio-hero.webp 1672w"
         imagesizes="(max-width: 560px) calc(100vw - 48px), (max-width: 900px) calc(100vw - 56px), (max-width: 1040px) 620px, calc(42.5vw - 145px)">
-    <link rel="stylesheet" href="css/main.css?v=4f54b72b35df">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=4f54b72b35df">
+    <link rel="stylesheet" href="css/main.css?v=27e0c5effd8e">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=27e0c5effd8e">
 </head>
 
 <body>
@@ -169,6 +169,8 @@
                         <div class="sync-room-actions">
                             <button class="sync-button" type="button" data-sync-pair
                                 data-i18n="syncPair">生成配对码</button>
+                            <button class="sync-button" type="button" data-sync-devices
+                                data-i18n="syncDevices">配对设备</button>
                             <button class="sync-button" type="button" data-sync-clear
                                 data-i18n="syncClear">清空历史</button>
                             <button class="sync-button" type="button" data-sync-leave
@@ -181,6 +183,11 @@
                             <code data-sync-pair-code></code>
                         </div>
                         <p class="sync-hint" data-i18n="syncPairHint">配对码 10 分钟内有效，请只分享给信任的人。</p>
+                        <div class="sync-pairing-footer">
+                            <span data-sync-pair-expiry></span>
+                            <button class="sync-button" type="button" data-sync-copy-code
+                                data-i18n="syncCopyCode">复制配对码</button>
+                        </div>
                     </div>
                     <div class="sync-message-feed" data-sync-feed>
                         <p class="sync-empty" data-sync-empty data-i18n="syncEmpty">这里还没有消息，发送一条试试。</p>
@@ -188,11 +195,13 @@
                         <ol class="sync-messages" data-sync-messages role="log" aria-live="polite"
                             aria-relevant="additions" aria-labelledby="sync-messages-title"></ol>
                     </div>
+                    <button class="sync-button sync-latest" type="button" data-sync-latest hidden
+                        data-i18n="syncLatest">回到最新消息</button>
                     <form class="sync-compose" data-sync-send-form>
                         <label class="visually-hidden" for="sync-message" data-i18n="syncInputLabel">消息内容</label>
                         <textarea id="sync-message" rows="3" required placeholder="写下要同步的内容…"
                             data-i18n-placeholder="syncInputPlaceholder" aria-describedby="sync-compose-hint" data-sync-input></textarea>
-                        <p class="sync-hint" id="sync-compose-hint" data-i18n="syncComposeHint">Enter 发送 · Shift+Enter 换行</p>
+                        <p class="visually-hidden" id="sync-compose-hint" data-i18n="syncComposeHint">Enter 发送 · Shift+Enter 换行</p>
                         <div class="sync-compose-footer">
                             <p class="sync-hint" data-i18n="syncHistoryLimit">最多保留 5 天、最近 500 条；存储接近上限时会提前清理较早消息。清空会同步影响所有设备。</p>
                             <button class="sync-button" type="submit" data-sync-send data-i18n="syncSend">发送</button>
@@ -204,6 +213,50 @@
                 data-i18n="syncReady">创建或加入空间，开始同步。</p>
             <button class="window-resize-handle" type="button" data-sync-resize aria-label="调整同步空间大小"
                 title="调整同步空间大小"></button>
+            <dialog class="sync-confirm-dialog" data-sync-confirm-dialog aria-labelledby="sync-confirm-title"
+                aria-describedby="sync-confirm-copy">
+                <form method="dialog">
+                    <div class="window-titlebar">
+                        <div class="window-title">
+                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
+                            <span id="sync-confirm-title" data-sync-confirm-title></span>
+                        </div>
+                        <div class="window-controls">
+                            <button type="submit" aria-label="关闭确认窗口" data-sync-confirm-close>
+                                <span aria-hidden="true">×</span>
+                            </button>
+                        </div>
+                    </div>
+                    <p id="sync-confirm-copy" data-sync-confirm-copy></p>
+                    <div class="sync-confirm-actions">
+                        <button class="sync-button" type="button" data-sync-confirm-accept></button>
+                        <button class="sync-button" type="submit" data-sync-confirm-cancel data-i18n="syncCancel"
+                            autofocus>取消</button>
+                    </div>
+                </form>
+            </dialog>
+            <dialog class="sync-devices-dialog" data-sync-devices-dialog aria-labelledby="sync-devices-title">
+                <form method="dialog">
+                    <div class="window-titlebar">
+                        <div class="window-title">
+                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
+                            <span id="sync-devices-title" data-i18n="syncDevices">配对设备</span>
+                        </div>
+                        <div class="window-controls">
+                            <button type="submit" aria-label="关闭设备窗口" data-sync-devices-close>
+                                <span aria-hidden="true">×</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="sync-devices-body">
+                        <ol class="sync-devices-list" data-sync-devices-list></ol>
+                        <p class="sync-devices-status" data-sync-devices-status role="status" aria-live="polite"></p>
+                    </div>
+                    <div class="sync-devices-actions">
+                        <button class="sync-button" type="submit" data-i18n="syncDevicesClose">关闭</button>
+                    </div>
+                </form>
+            </dialog>
         </section>
 
         <section class="app-window is-active" data-app-window aria-label="Gavin portfolio window">
@@ -378,7 +431,7 @@
                     <div class="hero-actions">
                         <a class="primary-action" href="#experience" data-i18n="heroPrimary">查看工作经历</a>
                         <a class="secondary-action" href="#contact" data-i18n="heroSecondary">联系我</a>
-                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=4f54b72b35df"
+                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=27e0c5effd8e"
                             download="李祖钜简历.pdf" data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                     </div>
                 </div>
@@ -634,7 +687,7 @@
                     </div>
                     <div class="contact-item">
                         <span class="contact-label" data-i18n="contactResume">个人简历</span>
-                        <a href="assets/li-zuju-resume.pdf?v=4f54b72b35df" download="李祖钜简历.pdf"
+                        <a href="assets/li-zuju-resume.pdf?v=27e0c5effd8e" download="李祖钜简历.pdf"
                             data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                         <span class="contact-note" data-i18n="resumeDetails">中文版 · 5 页 · 577 KB</span>
                     </div>
@@ -1527,6 +1580,7 @@
             <button class="task-window-button sync-task-button" type="button" data-sync-task hidden>
                 <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
                 <span data-i18n="desktopSyncSpace">同步空间</span>
+                <span class="sync-unread-badge" data-sync-unread hidden></span>
             </button>
             <div class="taskbar-spacer"></div>
             <div class="taskbar-tray">
@@ -1567,10 +1621,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=4f54b72b35df"></script>
-    <script src="js/gomoku-game.js?v=4f54b72b35df"></script>
-    <script src="js/content.js?v=4f54b72b35df"></script>
-    <script src="js/main.js?v=4f54b72b35df"></script>
+    <script src="js/gomoku-engine.js?v=27e0c5effd8e"></script>
+    <script src="js/gomoku-game.js?v=27e0c5effd8e"></script>
+    <script src="js/content.js?v=27e0c5effd8e"></script>
+    <script src="js/main.js?v=27e0c5effd8e"></script>
 </body>
 
 </html>

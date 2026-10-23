@@ -76,7 +76,7 @@ export default {
 
     const corsHeaders = {
       'Vary': 'Origin',
-      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type',
       'Access-Control-Expose-Headers': 'Retry-After',
       'Access-Control-Max-Age': '86400'
@@ -125,9 +125,10 @@ export default {
       return json({ roomId: invite.roomId, ...device });
     }
 
-    const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/pair-code|\/messages|\/socket|\/device)?$/);
-    if (!match || !ROOM_ID.test(match[1])) return json({ error: 'not_found' }, 404);
+    const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/pair-code|\/messages|\/socket|\/device|\/devices(?:\/([^/]+))?)?$/);
+    if (!match || !ROOM_ID.test(match[1]) || (match[3] && !ROOM_ID.test(match[3]))) return json({ error: 'not_found' }, 404);
     const roomId = match[1];
+    if (!await registry.hasRoom(roomId)) return json({ error: 'not_found' }, 404);
     const room = env.SYNC_ROOMS.getByName(roomId);
     if (request.method === 'GET' && match[2] === '/socket') {
       const ipHash = await hash(request.headers.get('CF-Connecting-IP') || 'local');
@@ -139,6 +140,22 @@ export default {
     const deviceId = token ? await room.authorize(token) : null;
     if (!deviceId) return json({ error: 'unauthorized' }, 401);
 
+    if (request.method === 'GET' && match[2] === '/devices') {
+      return resultResponse(await room.listDevices(deviceId));
+    }
+    if (request.method === 'PATCH' && match[3]) {
+      const body = await readJson(request);
+      if (body.error) return resultResponse(body);
+      if (typeof body.value.name !== 'string' || body.value.name.length > 60) return json({ error: 'invalid_name' }, 400);
+      const result = await room.renameDevice(deviceId, match[3], body.value.name.trim());
+      await registry.refreshRoom(roomId);
+      return resultResponse(result);
+    }
+    if (request.method === 'DELETE' && match[3]) {
+      const result = await room.removeDevice(match[3], deviceId);
+      await registry.refreshRoom(roomId);
+      return resultResponse(result);
+    }
     if (request.method === 'GET' && !match[2]) {
       await registry.refreshRoom(roomId);
       return json({ roomId, deviceId, ...await room.info() });
@@ -189,6 +206,10 @@ export class PairingRegistry extends DurableObject {
       'INSERT INTO room_usage (room_id, bytes, oldest_at) VALUES (?, ?, ?) ON CONFLICT(room_id) DO UPDATE SET bytes = excluded.bytes, oldest_at = excluded.oldest_at',
       roomId, usage.bytes, usage.oldestAt
     );
+  }
+
+  hasRoom(roomId) {
+    return this.sql.exec('SELECT 1 FROM room_usage WHERE room_id = ?', roomId).toArray().length !== 0;
   }
 
   storageBytes() {
@@ -316,7 +337,10 @@ export class SyncRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
-    this.sql.exec('CREATE TABLE IF NOT EXISTS devices (token_hash TEXT PRIMARY KEY, device_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL)');
+    this.sql.exec("CREATE TABLE IF NOT EXISTS devices (token_hash TEXT PRIMARY KEY, device_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '')");
+    if (!this.sql.exec('PRAGMA table_info(devices)').toArray().some(column => column.name === 'name')) {
+      this.sql.exec("ALTER TABLE devices ADD COLUMN name TEXT NOT NULL DEFAULT ''");
+    }
     this.sql.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL, device_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(device_id, client_id))');
     this.sql.exec('CREATE INDEX IF NOT EXISTS messages_expiry ON messages(created_at)');
@@ -332,11 +356,33 @@ export class SyncRoom extends DurableObject {
     const token = credential();
     const deviceId = crypto.randomUUID();
     this.sql.exec('INSERT INTO devices (token_hash, device_id, created_at) VALUES (?, ?, ?)', await hash(token), deviceId, Date.now());
+    this.broadcast({ type: 'devices' });
     return { token, deviceId };
   }
 
   async authorize(token) {
     return this.sql.exec('SELECT device_id FROM devices WHERE token_hash = ?', await hash(token)).toArray()[0]?.device_id || null;
+  }
+
+  listDevices(deviceId) {
+    if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) {
+      return { error: 'unauthorized', status: 401 };
+    }
+    return {
+      deviceId,
+      devices: this.sql.exec('SELECT device_id AS deviceId, name, created_at AS createdAt FROM devices ORDER BY created_at, device_id').toArray()
+    };
+  }
+
+  renameDevice(deviceId, targetDeviceId, name) {
+    if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) {
+      return { error: 'unauthorized', status: 401 };
+    }
+    if (!this.sql.exec('UPDATE devices SET name = ? WHERE device_id = ? RETURNING device_id', name, targetDeviceId).toArray().length) {
+      return { error: 'device_not_found', status: 404 };
+    }
+    this.broadcast({ type: 'devices' });
+    return { ok: true };
   }
 
   info() {
@@ -409,13 +455,19 @@ export class SyncRoom extends DurableObject {
     return { ok: true };
   }
 
-  removeDevice(deviceId) {
-    this.sql.exec('DELETE FROM devices WHERE device_id = ?', deviceId);
+  removeDevice(deviceId, requesterId = deviceId) {
+    if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', requesterId).toArray().length) {
+      return { error: 'unauthorized', status: 401 };
+    }
+    if (!this.sql.exec('DELETE FROM devices WHERE device_id = ? RETURNING device_id', deviceId).toArray().length) {
+      return { error: 'device_not_found', status: 404 };
+    }
     for (const socket of this.ctx.getWebSockets()) {
       if (socket.deserializeAttachment()?.deviceId !== deviceId) continue;
       socket.serializeAttachment({ closing: true });
       socket.close(4001, 'Device disconnected');
     }
+    this.broadcast({ type: 'devices' });
     return { ok: true };
   }
 

@@ -29,10 +29,15 @@ npm run dev
 | `POST /v1/spaces/:roomId/messages`，需要凭据，JSON `{ clientId, text }` | 一条消息；新建为 `201`，重试为 `200` |
 | `DELETE /v1/spaces/:roomId/messages`，需要凭据 | `{ ok: true }`，同时清空所有设备的历史 |
 | `DELETE /v1/spaces/:roomId/device`，需要凭据 | `{ ok: true }`，撤销当前设备凭据并断开其连接 |
+| `GET /v1/spaces/:roomId/devices`，需要凭据 | `{ deviceId, devices: [{ deviceId, name, createdAt }] }`，顶层 `deviceId` 为当前设备 |
+| `PATCH /v1/spaces/:roomId/devices/:deviceId`，需要凭据，JSON `{ name }` | `{ ok: true }`，修改指定设备名称 |
+| `DELETE /v1/spaces/:roomId/devices/:deviceId`，需要凭据 | `{ ok: true }`，撤销指定设备凭据并断开其连接 |
 
 时间为 Unix 毫秒。配对码保留前导零，十分钟内可供多台设备加入。重新生成会立即废弃旧码；同一空间每 30 秒最多重新生成一次。创建空间每 IP 每小时最多五次，尝试配对每 IP 每十分钟最多五次。限流返回 `429`，`Retry-After` 为剩余秒数。
 
 浏览器保留 `roomId` 和该设备独立的 256 位随机凭据，后端仅保存凭据的 SHA-256。四位码只用于临时配对，不是永久密码；得到有效配对码的人具有相同空间访问权限。清理浏览器数据后，需要另一台已配对设备生成新码重新加入。
+
+已配对成员都可以查看设备列表、重命名或撤销任意设备。名称最多 60 个 UTF-16 码元，保存时去除首尾空白，空名称由前端显示本地化默认名称。列表只返回设备 ID、名称和加入时间，不包含凭据或其哈希。目标设备不存在时返回 `404 device_not_found`，名称格式不正确时返回 `400 invalid_name`。既有空间的设备表首次加载时补充空名称列，原有凭据保持有效。未登记空间返回 `404 not_found`，不会实例化该空间的数据库。
 
 ## 消息与实时连接
 
@@ -40,7 +45,7 @@ npm run dev
 
 连接 `GET /v1/spaces/:roomId/socket` 并升级 WebSocket，地址中不携带凭据。在十秒内发送首帧 `{ "type": "auth", "token": "..." }`；认证成功返回 `{ type: "ready", deviceId, messages }`，包含当前完整保留历史。未认证连接不会收到历史或广播。
 
-后续服务端广播 `{ type: "message", message }`、`{ type: "cleared" }` 或 `{ type: "history", messages }`。自动清理通过 `history` 同步剩余完整历史，客户端应替换已有列表。客户端消息发送仍使用上述 HTTP 接口。需要保活时发送字符串 `ping`，运行时直接回复字符串 `pong`，不会唤醒闲置对象。新建 WebSocket 每 IP 每十分钟最多 30 次。
+后续服务端广播 `{ type: "message", message }`、`{ type: "cleared" }` 或 `{ type: "history", messages }`。自动清理通过 `history` 同步剩余完整历史，客户端应替换已有列表。设备加入、改名和撤销后广播 `{ type: "devices" }`，客户端可重新读取设备列表；被撤销的设备以 `4001` 断开，不再接收广播。客户端消息发送仍使用上述 HTTP 接口。需要保活时发送字符串 `ping`，运行时直接回复字符串 `pong`，不会唤醒闲置对象。新建 WebSocket 每 IP 每十分钟最多 30 次。
 
 连接采用 Hibernation API。每个空间共用一个 Durable Object alarm，取首次认证截止和最早消息满 5 天的时间中较早者，无人打开网页时也能清理。alarm 实际触发时间取决于平台调度；读取、重连和发送前也会清除已过期消息。认证截止时间是十秒，超过截止时间的新认证帧始终会被拒绝。网络变化或后端重新部署会断开连接；客户端应重连并重新认证，使用新的 `ready` 历史恢复状态。
 
