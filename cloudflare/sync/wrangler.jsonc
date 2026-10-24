@@ -14,14 +14,15 @@
   },
   "durable_objects": {
     "bindings": [
-      { "name": "PAIRING_REGISTRY", "class_name": "PairingRegistry" },
-      { "name": "SYNC_ROOMS", "class_name": "SyncRoom" },
-      { "name": "FILE_SHARDS", "class_name": "FileShard" }
+      { "name": "PAIRING_REGISTRY", "class_name": "E2eePairingRegistry" },
+      { "name": "SYNC_ROOMS", "class_name": "E2eeSyncRoom" },
+      { "name": "FILE_SHARDS", "class_name": "E2eeFileShard" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["PairingRegistry", "SyncRoom"] },
-    { "tag": "v2", "new_sqlite_classes": ["FileShard"] }
+    { "tag": "v2", "new_sqlite_classes": ["FileShard"] },
+    { "tag": "v3-e2ee", "deleted_classes": ["PairingRegistry", "SyncRoom", "FileShard"], "new_sqlite_classes": ["E2eePairingRegistry", "E2eeSyncRoom", "E2eeFileShard"] }
   ],
   "observability": {
     "enabled": true,

@@ -1,9 +1,10 @@
 const { test, expect } = require('@playwright/test');
 const XLSX = require('xlsx');
+const { createServer } = require('node:http');
+const { deviceId, keyId, authorize, message, profile, file, startSite } = require('./fixtures/sync-e2ee.cjs');
 
-const roomId = '0f91b47d-d2a7-426e-aa14-48cd174ad752';
-const deviceId = '49def00d-752e-4dd9-ae46-952ce53ec1f3';
-const token = 'c'.repeat(64);
+let site;
+let server;
 const workbook = XLSX.utils.book_new();
 const formatted = XLSX.utils.aoa_to_sheet([['Amount', 'Cached formula', 'Text'], [12.5, 7, '<img src=x onerror=alert(1)>']]);
 formatted.A2.z = '0.00';
@@ -18,8 +19,7 @@ const csv = Buffer.from('名称,金额\n示例,12.50\n', 'utf8');
 
 test.beforeEach(async ({ page, isMobile }) => {
     test.skip(isMobile, 'document previews are desktop windows');
-    await page.addInitScript(({ roomId, token }) => {
-        localStorage.setItem('portfolio-sync-space', JSON.stringify({ roomId, token }));
+    await page.addInitScript(() => {
         window.spreadsheetWorkers = 0;
         window.closedSpreadsheetWorkers = 0;
         window.workerWaitTicks = 0;
@@ -46,37 +46,53 @@ test.beforeEach(async ({ page, isMobile }) => {
                 };
             }
         };
-    }, { roomId, token });
-    await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
-    await page.route('https://sync.test/**', route => {
-        const request = route.request();
-        const path = new URL(request.url()).pathname;
-        const headers = {
-            'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
-        };
-        if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
-        if (path.endsWith('/devices')) return route.fulfill({ headers, json: { deviceId, devices: [{ deviceId, name: 'Mac', createdAt: Date.now() }] } });
-        if (path.endsWith('/download')) return route.fulfill({ headers, json: { ticket: path.split('/').at(-2).padStart(64, '0'), expiresAt: Date.now() + 86400000 } });
-        return route.fulfill({ headers, contentType: 'application/octet-stream', body: path.endsWith('1') ? xlsx : csv });
     });
-    await page.routeWebSocket('wss://sync.test/**', socket => socket.onMessage(message => {
-        if (message === 'ping') return socket.send('pong');
-        if (JSON.parse(message).type === 'auth') socket.send(JSON.stringify({
+    const files = [
+        { id: 1, ...file('sample.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xlsx) },
+        { id: 2, ...file('sample.csv', 'text/csv', csv) }
+    ];
+    const headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id, Range',
+        'Access-Control-Allow-Methods': 'GET, HEAD, POST, DELETE, OPTIONS',
+        'Access-Control-Expose-Headers': 'Content-Range, Content-Length'
+    };
+    server = createServer((request, response) => {
+        if (request.method === 'OPTIONS') { response.writeHead(204, headers); response.end(); return; }
+        const json = value => { response.writeHead(200, { ...headers, 'Content-Type': 'application/json' }); response.end(JSON.stringify(value)); };
+        if (request.url.endsWith('/key-grants')) return json({ grants: [], hasMore: false, keyId });
+        if (request.url.endsWith('/devices')) return json({ deviceId, devices: [profile()] });
+        if (request.url.endsWith('/download')) return json({ ticket: request.url.split('/').at(-2).padStart(64, '0'), expiresAt: Date.now() + 86400000 });
+        const encrypted = files[request.url.endsWith('1') ? 0 : 1].bytes;
+        const range = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range || '');
+        const start = range ? Number(range[1]) : 0;
+        const end = range ? Number(range[2]) : encrypted.length - 1;
+        const body = encrypted.subarray(start, end + 1);
+        response.writeHead(range ? 206 : 200, { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length),
+            ...(range ? { 'Content-Range': `bytes ${start}-${end}/${encrypted.length}` } : {}) });
+        response.end(request.method === 'HEAD' ? undefined : body);
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const apiOrigin = `http://127.0.0.1:${server.address().port}`;
+    site = await startSite(apiOrigin);
+    await authorize(page, `${site.origin}/portfolio/`);
+    await page.routeWebSocket(`${apiOrigin.replace('http:', 'ws:')}/**`, socket => socket.onMessage(received => {
+        if (received === 'ping') return socket.send('pong');
+        if (JSON.parse(received).type === 'auth') socket.send(JSON.stringify({
             type: 'ready', deviceId, pairing: null,
-            messages: [
-                { id: 1, name: 'sample.xlsx', type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', body: xlsx },
-                { id: 2, name: 'sample.csv', type: 'text/csv', body: csv }
-            ].map(file => ({
-                id: file.id, clientId: `${roomId}-${file.id}`, deviceId, text: '', createdAt: Date.now(),
-                attachment: { name: file.name, type: file.type, size: file.body.length }
-            }))
+            messages: files.map(file => message(file.id, '', deviceId, file.metadata))
         }));
     }));
-    await page.goto('/portfolio/');
+    await page.goto(`${site.origin}/portfolio/`);
     await page.locator('[data-window-action="minimize"]').click();
     await page.locator('.desktop-shortcut[data-open-sync-space]').click();
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+});
+
+test.afterEach(async () => {
+    await site?.close();
+    site = null;
+    if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); server = null; }
 });
 
 test('parses real XLSX in a local worker, preserves formatted cached values, and renders only visible rows', async ({ page }) => {

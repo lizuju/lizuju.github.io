@@ -67,7 +67,7 @@ jobs:
         run: npm run verify:docs
 
       - name: Run browser regression suite
-        run: npm run test:smoke
+        run: npm ci --prefix cloudflare/sync && npm run test:smoke
 
       - name: Upload Playwright diagnostics
         if: failure()

@@ -5,7 +5,7 @@ import { verifyRelease } from '../scripts/verify-release.mjs';
 
 const revision = 'a'.repeat(40);
 const apiBase = JSON.parse(await readFile(new URL('../../../static/portfolio/sync-config.json', import.meta.url), 'utf8')).apiBase;
-const health = { ok: true, service: 'portfolio-sync', apiVersion: 1, revision, versionId: 'deployed-version' };
+const health = { ok: true, service: 'portfolio-sync', apiVersion: 1, encryptionVersion: 1, revision, versionId: 'deployed-version' };
 
 test('release verification matches the Worker revision and actual frontend content without modifying production data', async () => {
   const requests = [];
@@ -20,11 +20,11 @@ test('release verification matches the Worker revision and actual frontend conte
     }
   });
   assert.deepEqual(result, health);
-  assert.deepEqual(requests, ['/health', '/portfolio/index.html', '/portfolio/sync-config.json', '/portfolio/js/main.js', '/portfolio/css/main.css']);
+  assert.deepEqual(requests, ['/health', '/portfolio/index.html', '/portfolio/sync-config.json', '/portfolio/js/main.js', '/portfolio/css/main.css', '/portfolio/sync-e2ee-worker.js']);
 });
 
 test('HTTP 200 and ok true cannot hide an old Worker, another service or missing Cloudflare deployment metadata', async () => {
-  for (const changed of [{ revision: 'b'.repeat(40) }, { service: 'another-service' }, { apiVersion: 2 }, { versionId: null }, { ok: false }]) {
+  for (const changed of [{ revision: 'b'.repeat(40) }, { service: 'another-service' }, { apiVersion: 2 }, { encryptionVersion: undefined }, { encryptionVersion: 0 }, { versionId: null }, { ok: false }]) {
     await assert.rejects(verifyRelease({ expectedRevision: revision, apiBase, backendOnly: true, fetcher: async () => Response.json({ ...health, ...changed }) }));
   }
   await assert.rejects(verifyRelease({ expectedRevision: revision, apiBase, backendOnly: true, fetcher: async () => new Response('Unavailable', { status: 503 }) }));

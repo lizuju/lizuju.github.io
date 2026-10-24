@@ -1,17 +1,20 @@
 const { test, expect } = require('@playwright/test');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
+const { createServer } = require('node:http');
+const { deviceId, keyId, authorize, message, file, profile, startSite } = require('./fixtures/sync-e2ee.cjs');
 
 const heic = readFileSync(join(__dirname, 'fixtures/heic-gradient.heic'));
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1kAAAAASUVORK5CYII=', 'base64');
-const roomId = 'c5745baa-931f-4c83-9545-360fa055b57c';
-const deviceId = '5fb30917-af43-4394-8034-0c326c774b78';
-const token = 'a'.repeat(64);
+let server;
+let site;
+let failDownloads;
+let downloadAttempts;
+let beforeServe;
 
 test.beforeEach(async ({ page, isMobile }) => {
     test.skip(isMobile, 'attachment previews and device names are desktop windows');
-    await page.addInitScript(({ roomId, token }) => {
-        localStorage.setItem('portfolio-sync-space', JSON.stringify({ roomId, token }));
+    await page.addInitScript(() => {
         window.previewImageUrls = [];
         window.revokedPreviewImageUrls = [];
         const create = URL.createObjectURL.bind(URL);
@@ -25,49 +28,68 @@ test.beforeEach(async ({ page, isMobile }) => {
             window.revokedPreviewImageUrls.push(url);
             return revoke(url);
         };
-    }, { roomId, token });
-    await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
-    const devices = [{ deviceId, name: 'Mac', createdAt: Date.now() }];
-    await page.route('https://sync.test/**', route => {
-        const request = route.request();
-        const path = new URL(request.url()).pathname;
-        const headers = {
-            'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-            'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS'
-        };
-        if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
-        if (request.method() === 'PATCH') {
-            devices[0].name = request.postDataJSON().name.trim();
-            return route.fulfill({ headers, json: { ok: true } });
-        }
-        if (path.endsWith('/devices')) return route.fulfill({ headers, json: { deviceId, devices } });
-        if (path.endsWith('/download')) return route.fulfill({
-            headers,
-            json: { ticket: path.split('/').at(-2).padStart(64, '0'), expiresAt: Date.now() + 86400000 }
-        });
-        return route.fulfill({
-            headers: { ...headers, 'Content-Disposition': 'attachment' },
-            contentType: 'application/octet-stream', body: path.endsWith('1') ? heic : png
-        });
     });
-    await page.routeWebSocket('wss://sync.test/**', socket => socket.onMessage(message => {
-        if (message === 'ping') return socket.send('pong');
-        if (JSON.parse(message).type === 'auth') socket.send(JSON.stringify({
+    failDownloads = 0;
+    downloadAttempts = 0;
+    beforeServe = () => {};
+    const attachments = [file('camera.HEIC', 'application/octet-stream', heic), file('pixel.png', 'image/png', png)];
+    const devices = [profile('Mac')];
+    const headers = {
+        'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id, Range',
+        'Access-Control-Allow-Methods': 'GET, HEAD, POST, PATCH, OPTIONS', 'Access-Control-Expose-Headers': 'Content-Range'
+    };
+    server = createServer(async (request, response) => {
+        if (request.method === 'OPTIONS') { response.writeHead(204, headers); response.end(); return; }
+        const path = new URL(request.url, 'http://localhost').pathname;
+        if (request.method === 'PATCH') {
+            const chunks = [];
+            for await (const chunk of request) chunks.push(chunk);
+            devices[0].name = JSON.parse(Buffer.concat(chunks).toString()).name;
+            response.writeHead(200, { ...headers, 'Content-Type': 'application/json' }); response.end(JSON.stringify({ ok: true })); return;
+        }
+        if (path.endsWith('/key-grants')) {
+            response.writeHead(200, { ...headers, 'Content-Type': 'application/json' }); response.end(JSON.stringify({ grants: [], hasMore: false, keyId })); return;
+        }
+        if (path.endsWith('/devices')) {
+            response.writeHead(200, { ...headers, 'Content-Type': 'application/json' }); response.end(JSON.stringify({ deviceId, devices })); return;
+        }
+        if (path.endsWith('/download')) {
+            response.writeHead(200, { ...headers, 'Content-Type': 'application/json' });
+            response.end(JSON.stringify({ ticket: path.split('/').at(-2).padStart(64, '0'), expiresAt: Date.now() + 86400000 })); return;
+        }
+        if (request.method === 'GET' && path.includes('/downloads/')) {
+            downloadAttempts++;
+            if (failDownloads-- > 0) { response.writeHead(503, headers); response.end('Temporarily unavailable'); return; }
+        }
+        const encrypted = attachments[path.endsWith('1') ? 0 : 1].bytes;
+        const range = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range || '');
+        const start = range ? Number(range[1]) : 0;
+        const end = range ? Number(range[2]) : encrypted.length - 1;
+        const body = encrypted.subarray(start, end + 1);
+        response.writeHead(range ? 206 : 200, { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length),
+            ...(range ? { 'Content-Range': `bytes ${start}-${end}/${encrypted.length}` } : {}) });
+        response.end(request.method === 'HEAD' ? undefined : body);
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    site = await startSite(`http://127.0.0.1:${server.address().port}`, pathname => beforeServe(pathname));
+    await authorize(page, `${site.origin}/portfolio/`);
+    await page.routeWebSocket(`ws://127.0.0.1:${server.address().port}/**`, socket => socket.onMessage(data => {
+        if (data === 'ping') return socket.send('pong');
+        if (JSON.parse(data).type === 'auth') socket.send(JSON.stringify({
             type: 'ready', deviceId, pairing: null,
-            messages: [
-                { id: 1, name: 'camera.HEIC', type: 'application/octet-stream', body: heic },
-                { id: 2, name: 'pixel.png', type: 'image/png', body: png }
-            ].map(file => ({
-                id: file.id, clientId: `${roomId}-${file.id}`, deviceId, text: '', createdAt: Date.now(),
-                attachment: { name: file.name, type: file.type, size: file.body.length }
-            }))
+            messages: attachments.map((attachment, index) => message(index + 1, '', deviceId, attachment.metadata))
         }));
     }));
-    await page.goto('/portfolio/');
+    await page.goto(`${site.origin}/portfolio/`);
     await page.locator('[data-window-action="minimize"]').click();
     await page.locator('.desktop-shortcut[data-open-sync-space]').click();
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
     await expect(page.locator('[data-sync-preview-file]')).toHaveCount(2);
+});
+
+test.afterEach(async () => {
+    if (site) { await site.close(); site = null; }
+    if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); server = null; }
 });
 
 test('previews real HEIC locally, loads its decoder only when needed, and releases image URLs', async ({ page, context }) => {
@@ -109,7 +131,8 @@ test('closing during the HEIC decoder load cannot replace the next image or reta
     await page.evaluate(() => {
         const decode = HTMLImageElement.prototype.decode;
         HTMLImageElement.prototype.decode = function () {
-            if (window.previewImageUrls.some(entry => entry.url === this.src && entry.type === 'image/heic')) {
+            if (this.alt === 'camera.HEIC' && !window.forcedHeicFailure) {
+                window.forcedHeicFailure = true;
                 return Promise.reject(new DOMException('HEIC native decoding unavailable', 'EncodingError'));
             }
             return decode.call(this);
@@ -119,11 +142,11 @@ test('closing during the HEIC decoder load cannot replace the next image or reta
     let decoderRequested;
     const gate = new Promise(resolve => { releaseDecoder = resolve; });
     const requested = new Promise(resolve => { decoderRequested = resolve; });
-    await page.route('**/preview-heic.*.js', async route => {
+    beforeServe = async pathname => {
+        if (!/\/preview-heic\.[^/]+\.js$/.test(pathname)) return;
         decoderRequested();
         await gate;
-        await route.continue();
-    });
+    };
     try {
         await page.locator('[data-sync-preview-file]').first().click();
         await requested;
@@ -149,7 +172,9 @@ test('limits device names to eight Unicode characters and keeps the saved name a
     await expect(name).toHaveValue('苹果🤖Mac设备');
     const saved = page.waitForRequest(request => request.url().endsWith(`/devices/${deviceId}`) && request.method() === 'PATCH');
     await row.locator('[data-sync-device-save]').click();
-    expect((await saved).postDataJSON()).toEqual({ name: '苹果🤖Mac设备' });
+    const payload = (await saved).postDataJSON();
+    expect(payload.name).toMatch(/^e2ee1\./);
+    expect(payload.name).not.toContain('苹果🤖Mac设备');
     await expect(row.locator('strong')).toHaveText('苹果🤖Mac设备');
     await page.locator('[data-sync-devices-dismiss]').click();
     await expect(page.locator('.sync-message-meta').first()).toContainText('苹果🤖Mac设备');
@@ -163,18 +188,11 @@ test('limits device names to eight Unicode characters and keeps the saved name a
 });
 
 test('opening the same failed attachment retries without closing its preview window', async ({ page }) => {
-    let attempts = 0;
-    await page.route('https://sync.test/**/downloads/**', route => {
-        if (route.request().method() === 'HEAD') return route.fulfill({ status: 200, headers: { 'Access-Control-Allow-Origin': '*' } });
-        attempts++;
-        return route.fulfill(attempts === 1
-            ? { status: 503, body: 'Temporarily unavailable', headers: { 'Access-Control-Allow-Origin': '*' } }
-            : { body: png, contentType: 'image/png', headers: { 'Access-Control-Allow-Origin': '*' } });
-    });
+    failDownloads = 1;
     await page.locator('[data-sync-preview-file]').nth(1).click();
     await expect(page.locator('[data-sync-preview-status]')).toHaveText('文件无法预览，你仍可下载原文件。');
     await page.locator('[data-sync-preview-action="minimize"]').click();
     await page.locator('[data-sync-preview-file]').nth(1).click();
     await expect(page.locator('[data-sync-preview-body] img')).toHaveJSProperty('naturalWidth', 1);
-    expect(attempts).toBe(2);
+    expect(downloadAttempts).toBe(2);
 });

@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { after, before, test } from 'node:test';
+import { after, afterEach, before, test } from 'node:test';
 import { Miniflare } from 'miniflare';
+import { encryptedClient, cryptoClient } from './e2ee-client.mjs';
 
 const origin = 'https://lizuju.github.io';
 const fiveDays = 5 * 24 * 60 * 60 * 1000;
 let runtime;
 let nextIp = 1;
 const sockets = new Set();
+const socketSessions = new WeakMap();
 
 before(async () => {
   runtime = await createRuntime();
@@ -28,41 +30,20 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
             'daily-usage.js': { type: 'esm', contents: await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8') },
             'harness.js': {
               type: 'esm',
-              contents: `import { SyncRoom as ProductionSyncRoom, PairingRegistry as ProductionRegistry } from './index.js';
+              contents: `import { E2eeSyncRoom as ProductionSyncRoom, E2eePairingRegistry as ProductionRegistry } from './index.js';
                 export { default } from './index.js';
-                export { FileShard } from './index.js';
+                export { E2eeFileShard as FileShard } from './index.js';
                 export class PairingRegistry extends ProductionRegistry {
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   testDropAlarm() { return this.ctx.storage.deleteAlarm(); }
-                  testReadInvite(roomId) { return JSON.stringify(super.currentInvite(roomId)); }
-                  testExpireAfterInviteRead() { this.expireAfterInviteRead = true; }
-                  findInvite(code) {
-                    const invite = super.findInvite(code);
-                    if (this.expireAfterInviteRead && !invite.error) {
-                      this.expireAfterInviteRead = false;
-                      this.sql.exec('UPDATE invites SET expires_at = ? WHERE code = ?', Date.now() - 1, code);
-                    }
-                    return invite;
-                  }
-                  testHoldPairing() {
-                    this.holdPairing = true;
-                    this.pairingRead = new Promise(resolve => { this.pairingReadStarted = resolve; });
-                    this.pairingRelease = new Promise(resolve => { this.releasePairing = resolve; });
-                  }
-                  testWaitPairingRead() { return this.pairingRead; }
-                  testReleasePairing() { this.releasePairing(); }
                   testFailPairingRead() { this.failPairingRead = true; }
                   currentInvite(roomId) {
                     if (this.failPairingRead) {
                       this.failPairingRead = false;
                       throw new Error('test_pairing_read_failed');
                     }
-                    const pairing = super.currentInvite(roomId);
-                    if (!this.holdPairing) return pairing;
-                    this.holdPairing = false;
-                    this.pairingReadStarted();
-                    return this.pairingRelease.then(() => pairing);
+                    return super.currentInvite(roomId);
                   }
                 }
                 export class SyncRoom extends ProductionSyncRoom {
@@ -74,13 +55,13 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                   }
                   testWaitUploadBegin() { return this.uploadBeginStarted; }
                   testReleaseUploadBegin() { this.releaseUploadBegin(); }
-                  async beginUpload(deviceId, file) {
+                  async beginUpload(deviceId, file, keyId) {
                     if (this.uploadBeginRelease) {
                       this.startUploadBegin();
                       await this.uploadBeginRelease;
                       this.uploadBeginRelease = null;
                     }
-                    return super.beginUpload(deviceId, file);
+                    return super.beginUpload(deviceId, file, keyId);
                   }
                   testHoldMaintenance() {
                     this.maintenanceStarted = new Promise(resolve => { this.startMaintenance = resolve; });
@@ -102,29 +83,6 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                   testAgeActivity(timestamp) {
                     this.lastActivity = timestamp;
                     this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', String(timestamp), 'lastActiveAt');
-                  }
-                  testHoldDeviceAdd() {
-                    this.deviceAddStarted = new Promise(resolve => { this.startDeviceAdd = resolve; });
-                    this.deviceAddRelease = new Promise(resolve => { this.releaseDeviceAdd = resolve; });
-                  }
-                  testWaitDeviceAdd() { return this.deviceAddStarted; }
-                  testReleaseDeviceAdd() { this.releaseDeviceAdd(); }
-                  async addDevice() {
-                    if (this.deviceAddRelease) {
-                      this.startDeviceAdd();
-                      await this.deviceAddRelease;
-                      this.deviceAddRelease = null;
-                    }
-                    return super.addDevice();
-                  }
-                  testWatchPairingPublish() {
-                    this.pairingPublication = new Promise(resolve => { this.pairingPublishStarted = resolve; });
-                  }
-                  testWaitPairingPublish() { return this.pairingPublication; }
-                  publishPairing(roomId) {
-                    this.pairingPublishStarted?.();
-                    this.pairingPublishStarted = null;
-                    return super.publishPairing(roomId);
                   }
                   async testPublishPairingFailure(roomId) {
                     try { await super.publishPairing(roomId); return null; }
@@ -163,26 +121,17 @@ after(async () => {
   await runtime?.dispose();
 });
 
+afterEach(async () => {
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await storage.exec('DELETE FROM offers');
+  await storage.exec('DELETE FROM pair_candidates');
+  await storage.exec('DELETE FROM pair_requests');
+  client().state.offers.clear();
+});
+
 function client(instance = runtime) {
   const ip = `198.51.100.${nextIp++}`;
-  return async (path, { method = 'GET', token, json, body, headers = {} } = {}) => {
-    const requestHeaders = { Origin: origin, 'CF-Connecting-IP': ip, ...headers };
-    if (token !== undefined) requestHeaders.Authorization = `Bearer ${token}`;
-    if (json !== undefined) {
-      requestHeaders['Content-Type'] = 'application/json';
-      body = JSON.stringify(json);
-    }
-    const response = await instance.dispatchFetch(`https://sync.test${path}`, {
-      method, headers: requestHeaders, body
-    });
-    return {
-      status: response.status,
-      headers: response.headers,
-      body: response.headers.get('Content-Type')?.includes('application/json')
-        ? await response.json()
-        : await response.text()
-    };
-  };
+  return encryptedClient(instance, { origin, ip });
 }
 
 async function createSpace(request = client()) {
@@ -210,36 +159,30 @@ function socketEvent(socket, type = 'message', timeout = 3000) {
       socket.removeEventListener(type, onEvent);
       reject(new Error(`WebSocket ${type} event did not arrive`));
     }, timeout);
-    function onEvent(event) {
+    async function onEvent(event) {
+      if (type === 'message' && event.data !== 'pong' && ['key-rotation', 'rekey-required', 'pair-request', 'pair-finish'].includes(JSON.parse(event.data).type)) return;
       clearTimeout(timer);
       socket.removeEventListener(type, onEvent);
+      const entry = socketSessions.get(socket);
+      if (type === 'message' && entry && event.data !== 'pong') {
+        try {
+          await entry.request.update(entry.session);
+          resolve({ data: JSON.stringify(await entry.request.decode(JSON.parse(event.data), entry.session)) });
+        } catch (error) { reject(error); }
+        return;
+      }
       resolve(event);
     }
     socket.addEventListener(type, onEvent);
   });
 }
 
-function socketFrames(socket, count) {
-  return new Promise((resolve, reject) => {
-    const frames = [];
-    const timer = setTimeout(() => {
-      socket.removeEventListener('message', onMessage);
-      reject(new Error(`Expected ${count} WebSocket frames, received ${frames.length}`));
-    }, 3000);
-    function onMessage(event) {
-      frames.push(JSON.parse(event.data));
-      if (frames.length === count) {
-        clearTimeout(timer);
-        socket.removeEventListener('message', onMessage);
-        resolve(frames);
-      }
-    }
-    socket.addEventListener('message', onMessage);
-  });
-}
-
 async function authenticateSocket(space, instance = runtime) {
   const socket = await openSocket(space.roomId, instance);
+  const request = client(instance);
+  const session = request.state.sessions.get(space.token);
+  await request.update(session);
+  socketSessions.set(socket, { request, session });
   const ready = socketEvent(socket);
   socket.send(JSON.stringify({ type: 'auth', token: space.token }));
   const frame = JSON.parse((await ready).data);
@@ -251,9 +194,22 @@ async function authenticateSocket(space, instance = runtime) {
 test('health identifies the sync service and exposes release metadata instead of only reporting reachability', async () => {
   const health = await client()('/health');
   assert.equal(health.status, 200);
-  assert.deepEqual(health.body, { ok: true, service: 'portfolio-sync', apiVersion: 1, revision: null, versionId: null });
+  assert.deepEqual(health.body, { ok: true, service: 'portfolio-sync', apiVersion: 1, encryptionVersion: 1, revision: null, versionId: null });
   assert.equal(health.headers.get('Cache-Control'), 'no-store');
 });
+
+async function rotateRemaining(request, space) {
+  const session = request.state.sessions.get(space.token);
+  await request.update(session);
+  const listed = await request.raw(`/v1/spaces/${space.roomId}/devices`, { token: space.token });
+  const recipients = listed.body.devices.map(device => ({ deviceId: device.deviceId, publicKey: session.trustedDevices[device.deviceId] }));
+  const rotation = await cryptoClient.createKeyRotation(session, recipients);
+  const result = await request.raw(`/v1/spaces/${space.roomId}/key-rotation`, { method: 'POST', token: space.token,
+    headers: { 'X-Sync-Key-Id': rotation.previousKeyId },
+    json: { rotationId: rotation.rotationId, newKeyId: rotation.newKeyId, removedDeviceId: null, grants: rotation.grants } });
+  assert.equal(result.status, 200);
+  await request.update(session);
+}
 
 test('authenticated reconnects use separate device budgets even after the shared IP anonymous budget is exhausted', async () => {
   const space = await createSpace();
@@ -285,42 +241,27 @@ test('authenticated reconnects use separate device budgets even after the shared
   assert.equal((await closed).code, 4001, 'The first frame cannot change the device selected for rate limiting');
 });
 
-test('a four-digit invitation gives each device its own credential for the same space', async () => {
-  const first = client();
-  const second = client();
-  const third = client();
-  const startedAt = Date.now();
-  const created = await createSpace(first);
+test('a local four-digit PAKE invitation creates separate device credentials without exposing the code to the relay', async () => {
+  const request = client();
+  const created = await createSpace(request);
   assert.match(created.code, /^\d{4}$/);
-  assert.match(created.token, /^[0-9a-f]{64}$/);
-  assert.ok(created.expiresAt > startedAt);
-  assert.ok(created.expiresAt <= Date.now() + 10 * 60 * 1000);
-  assert.deepEqual(created.pairing, { code: created.code, expiresAt: created.expiresAt });
-
-  const joined = await second('/v1/pair', { method: 'POST', json: { code: created.code } });
-  const joinedAgain = await third('/v1/pair', { method: 'POST', json: { code: created.code } });
+  const wire = await request.raw(`/v1/spaces/${created.roomId}`, { token: created.token });
+  assert.equal(wire.status, 200);
+  assert.equal(wire.body.pairing.code, undefined);
+  assert.match(wire.body.pairing.secret, /^e2ee1\./);
+  const joined = await client()('/v1/pair', { method: 'POST', json: { code: created.code } });
   assert.equal(joined.status, 200);
-  assert.equal(joinedAgain.status, 200);
   assert.equal(joined.body.roomId, created.roomId);
-  assert.equal(joinedAgain.body.roomId, created.roomId);
-  assert.deepEqual(joined.body.pairing, created.pairing);
-  assert.deepEqual(joinedAgain.body.pairing, created.pairing);
-  assert.match(joined.body.token, /^[0-9a-f]{64}$/);
-  assert.equal(new Set([created.token, joined.body.token, joinedAgain.body.token]).size, 3);
-
-  for (const token of [created.token, joined.body.token, joinedAgain.body.token]) {
-    const info = await first(`/v1/spaces/${created.roomId}`, { token });
-    assert.equal(info.status, 200);
-    assert.equal(info.body.roomId, created.roomId);
-    assert.deepEqual(info.body.pairing, created.pairing);
-    assert.ok(info.body.createdAt >= startedAt);
-    assert.equal(info.headers.get('Cache-Control'), 'no-store');
-  }
-
+  assert.notEqual(joined.body.token, created.token);
+  assert.equal((await request(`/v1/spaces/${created.roomId}`, { token: created.token })).body.pairing, null);
+  const invitation = await request(`/v1/spaces/${created.roomId}/pair-code`, { method: 'POST', token: created.token });
+  const third = await client()('/v1/pair', { method: 'POST', json: { code: invitation.body.code } });
+  assert.equal(third.status, 200);
+  assert.equal(new Set([created.token, joined.body.token, third.body.token]).size, 3);
   const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: created.roomId });
   const stored = await storage.exec('SELECT token_hash FROM devices');
   assert.equal(stored.length, 3);
-  assert.ok(stored.every(row => ![created.token, joined.body.token, joinedAgain.body.token].includes(row.token_hash)));
+  assert.ok(stored.every(row => ![created.token, joined.body.token, third.body.token].includes(row.token_hash)));
 });
 
 test('credentials stay isolated between spaces and reject missing or forged tokens', async () => {
@@ -378,52 +319,26 @@ test('device lists identify the current device without exposing credentials or a
   assert.ok(unchanged.body.devices.every(device => device.name === ''));
 });
 
-test('every paired device can rename itself or a peer and names allow 8 Unicode characters after trimming', async () => {
+test('paired devices store encrypted profiles and the API rejects plaintext profiles', async () => {
   const request = client();
   const space = await createSpace(request);
   const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
-  assert.equal(paired.status, 200);
   const path = `/v1/spaces/${space.roomId}/devices`;
-  const own = await request(`${path}/${space.deviceId}`, {
-    method: 'PATCH', token: space.token, json: { name: '  我的 Mac  ' }
-  });
-  assert.equal(own.status, 200);
-  assert.deepEqual(own.body, { ok: true });
-  let listed = await request(path, { token: space.token });
-  assert.equal(listed.body.devices.find(device => device.deviceId === space.deviceId).name, '我的 Mac');
-  const peer = await request(`${path}/${space.deviceId}`, {
-    method: 'PATCH', token: paired.body.token, json: { name: '另一台电脑' }
-  });
-  assert.equal(peer.status, 200);
-  listed = await request(path, { token: space.token });
-  assert.equal(listed.body.devices.find(device => device.deviceId === space.deviceId).name, '另一台电脑');
-
-  for (const name of ['x'.repeat(8), '🤖'.repeat(8), ` \t${'中'.repeat(8)}\n `, 'Mac 工作站🤖', 'e\u0301'.repeat(4), '', ' \t\n ']) {
-    const renamed = await request(`${path}/${paired.body.deviceId}`, {
-      method: 'PATCH', token: space.token, json: { name }
-    });
-    assert.equal(renamed.status, 200, JSON.stringify(name));
-    listed = await request(path, { token: paired.body.token });
-    assert.equal(listed.body.devices.find(device => device.deviceId === paired.body.deviceId).name, name.trim());
+  for (const token of [space.token, paired.body.token]) {
+    assert.equal((await request(`${path}/${space.deviceId}`, { method: 'PATCH', token, json: { name: '我的 Mac' } })).status, 200);
+    assert.equal((await request(path, { token })).body.devices.find(device => device.deviceId === space.deviceId).name, '我的 Mac');
+    const wire = await request.raw(path, { token });
+    assert.ok(wire.body.devices.every(device => /^e2ee1\./.test(device.name)));
+    assert.ok(!JSON.stringify(wire.body).includes('我的 Mac'));
   }
-
-  for (const json of [{}, { name: null }, { name: 123 }, { name: [] }, { name: {} },
-    { name: 'x'.repeat(9) }, { name: '🤖'.repeat(9) }, { name: ` ${'中'.repeat(9)} ` }]) {
-    const invalid = await request(`${path}/${paired.body.deviceId}`, {
-      method: 'PATCH', token: space.token, json
-    });
-    assert.equal(invalid.status, 400, JSON.stringify(json));
-    assert.equal(invalid.body.error, 'invalid_name');
+  const session = request.state.sessions.get(space.token);
+  for (const name of [null, 123, [], {}, 'plaintext profile', 'e2ee1.invalid']) {
+    const result = await request.raw(`${path}/${space.deviceId}`, { method: 'PATCH', token: space.token,
+      headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: { name } });
+    assert.equal(result.status, 400);
   }
-  listed = await request(path, { token: space.token });
-  assert.equal(listed.body.devices.find(device => device.deviceId === paired.body.deviceId).name, '');
-  for (const method of ['PATCH', 'DELETE']) {
-    const missing = await request(`${path}/${randomUUID()}`, {
-      method, token: space.token, json: method === 'PATCH' ? { name: 'missing' } : undefined
-    });
-    assert.equal(missing.status, 404);
-    assert.equal(missing.body.error, 'device_not_found');
-  }
+  const missing = await request(`${path}/${randomUUID()}`, { method: 'PATCH', token: space.token, json: { name: 'missing' } });
+  assert.equal(missing.status, 404);
 });
 
 test('device names migrate from the old schema without revoking existing credentials', async () => {
@@ -499,67 +414,30 @@ test('unregistered room IDs reject forged HTTP credentials and sockets without a
   assert.deepEqual(await registry.exec('SELECT room_id, bytes, oldest_at FROM room_usage ORDER BY room_id'), usage);
 });
 
-test('empty-room maintenance preserves a valid invitation after the final device leaves', async t => {
-  const instance = await createRuntime();
-  t.after(() => instance.dispose());
-  const request = client(instance);
-  const space = await createSpace(request);
-  const left = await request(`/v1/spaces/${space.roomId}/device`, { method: 'DELETE', token: space.token });
-  assert.equal(left.status, 200);
-  const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
-  const registry = namespace.getByName('registry');
+test('a room without an online inviter cannot admit a new device from a retained offer', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  assert.equal((await request(`/v1/spaces/${space.roomId}/device`, { method: 'DELETE', token: space.token })).status, 200);
+  const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
   await registry.refreshRoom(space.roomId);
-  assert.equal(await registry.hasRoom(space.roomId), true);
-  assert.deepEqual(JSON.parse(await registry.testReadInvite(space.roomId)), space.pairing);
-  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
-  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM devices'), [{ count: 0 }]);
-
   const joined = await client(instance)('/v1/pair', { method: 'POST', json: { code: space.code } });
-  assert.equal(joined.status, 200);
-  assert.equal(joined.body.roomId, space.roomId);
-  const state = await request(`/v1/spaces/${space.roomId}`, { token: joined.body.token });
-  assert.equal(state.status, 200);
-  assert.deepEqual(state.body.messages, []);
+  assert.equal(joined.status, 401);
 });
 
-for (const maintenance of ['refresh', 'scheduled']) {
-  test(`empty-room ${maintenance} reclaims an expired unoccupied space and stale requests cannot recreate tables`, async t => {
-    const instance = await createRuntime();
-    t.after(() => instance.dispose());
-    const request = client(instance);
-    const space = await createSpace(request);
-    assert.equal((await request(`/v1/spaces/${space.roomId}/device`, { method: 'DELETE', token: space.token })).status, 200);
-    const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-    await registryStorage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
-    const registryNamespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
-    const registry = registryNamespace.getByName('registry');
-    if (maintenance === 'refresh') await registry.refreshRoom(space.roomId);
-    else {
-      await registry.maintainRooms();
-      await registry.testRunAlarm();
-    }
-    assert.equal(await registry.hasRoom(space.roomId), false);
-    assert.deepEqual(await registryStorage.exec('SELECT room_id FROM room_usage WHERE room_id = ?', space.roomId), []);
-    assert.deepEqual(await registryStorage.exec('SELECT code FROM invites WHERE room_id = ?', space.roomId), []);
-    const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
-    assert.deepEqual(await storage.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name'"), []);
-    assert.equal((await request(`/v1/spaces/${space.roomId}`, { token: space.token })).status, 404);
-    const paired = await client(instance)('/v1/pair', { method: 'POST', json: { code: space.code } });
-    assert.equal(paired.status, 404);
-    assert.equal(paired.body.error, 'code_expired');
-
-    await instance.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId });
-    const roomNamespace = await instance.getDurableObjectNamespace('SYNC_ROOMS');
-    const room = roomNamespace.getByName(space.roomId);
-    assert.deepEqual(await room.testSchema(), []);
-    assert.equal(await room.authorize(space.token), null);
-    assert.equal((await room.addDevice()).status, 404);
-    assert.deepEqual(await room.testSchema(), []);
-    await registry.refreshRoom(space.roomId);
-    assert.equal(await registry.hasRoom(space.roomId), false);
-    assert.deepEqual(await room.testSchema(), []);
-  });
-}
+test('empty rooms reclaim expired offers and stale credentials cannot recreate a database', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  await request(`/v1/spaces/${space.roomId}/device`, { method: 'DELETE', token: space.token });
+  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await registryStorage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+  const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  await registry.refreshRoom(space.roomId);
+  assert.equal(await registry.hasRoom(space.roomId), false);
+  const room = (await instance.getDurableObjectNamespace('SYNC_ROOMS')).getByName(space.roomId);
+  assert.deepEqual(await room.testSchema(), []);
+  assert.equal((await request.raw(`/v1/spaces/${space.roomId}`, { token: space.token })).status, 404);
+  assert.deepEqual(await room.testSchema(), []);
+});
 
 test('empty-room reclamation retains devices, history, uploads and remaining shard or chunk rows', async t => {
   const instance = await createRuntime();
@@ -593,7 +471,7 @@ test('empty-room reclamation retains devices, history, uploads and remaining sha
         for (let index = 0; index < 5; index += 1) await storage.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, ?, 8)', fileId, index);
       }
       if (retained !== 'device') await storage.exec('DELETE FROM devices');
-      await registryStorage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+      await registryStorage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
       await registry.refreshRoom(space.roomId);
       assert.equal(await registry.hasRoom(space.roomId), true);
       assert.ok((await storage.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'")).length);
@@ -614,7 +492,7 @@ test('daily maintenance reclaims a 30-day abandoned empty room despite old paire
   const roomStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   await roomStorage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 31 * 24 * 60 * 60 * 1000), 'lastActiveAt');
-  await registryStorage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+  await registryStorage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
   const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
   await registry.maintainRooms();
   await registry.testRunAlarm();
@@ -636,7 +514,7 @@ test('abandoned-room reclamation preserves recent activity, online devices, invi
     if (retained === 'history') await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'keep' } });
     if (retained === 'upload') await request(`/v1/spaces/${space.roomId}/files/uploads`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), name: 'pending.bin', type: 'application/octet-stream', size: 8 } });
     if (retained !== 'recent') await storage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 31 * 24 * 60 * 60 * 1000), 'lastActiveAt');
-    if (retained !== 'invitation') await registryStorage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+    if (retained !== 'invitation') await registryStorage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
     await registry.refreshRoom(space.roomId);
     assert.equal(await registry.hasRoom(space.roomId), true, retained);
     socket?.close();
@@ -676,42 +554,19 @@ test('closing a long-lived authenticated connection refreshes activity before an
   assert.equal(await room.reclaimIfEmpty(), false);
 });
 
-test('empty-room reclamation waits for a pairing already admitted with a valid invitation', async t => {
-  const instance = await createRuntime();
-  t.after(() => instance.dispose());
-  const request = client(instance);
+test('the relay requires a live PAKE transcript and never accepts a bare pairing code', async () => {
+  const request = client();
   const space = await createSpace(request);
-  assert.equal((await request(`/v1/spaces/${space.roomId}/device`, { method: 'DELETE', token: space.token })).status, 200);
-  const roomNamespace = await instance.getDurableObjectNamespace('SYNC_ROOMS');
-  const room = roomNamespace.getByName(space.roomId);
-  const registryNamespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
-  const registry = registryNamespace.getByName('registry');
-  const refreshRoom = registry.refreshRoom;
-  await room.testHoldDeviceAdd();
-  await registry.testExpireAfterInviteRead();
-  const joining = client(instance)('/v1/pair', { method: 'POST', json: { code: space.code } });
-  await room.testWaitDeviceAdd();
-  const refreshing = refreshRoom(space.roomId);
-  const refreshedBeforePairing = await Promise.race([
-    refreshing.then(() => true),
-    new Promise(resolve => setTimeout(() => resolve(false), 100))
-  ]);
-  await room.testReleaseDeviceAdd();
-  const [joined] = await Promise.all([joining, refreshing]);
-  assert.equal(refreshedBeforePairing, false);
-  assert.equal(joined.status, 200);
-  assert.equal(joined.body.roomId, space.roomId);
-  assert.equal(await registry.hasRoom(space.roomId), true);
-  const listed = await request(`/v1/spaces/${space.roomId}/devices`, { token: joined.body.token });
-  assert.equal(listed.status, 200);
-  assert.deepEqual(listed.body.devices.map(device => device.deviceId), [joined.body.deviceId]);
+  const result = await request.raw('/v1/pair', { method: 'POST', json: { code: space.code } });
+  assert.equal(result.status, 400);
+  assert.equal(result.body.error, 'invalid_pairing');
 });
 
-test('pairing accepts exactly four ASCII digits supplied as a string', async () => {
-  for (const code of ['1', '123', '12345', ' 1234', '1234 ', '１２３４', '12a4', 1234, null, {}, []]) {
-    const result = await client()('/v1/pair', { method: 'POST', json: { code } });
-    assert.equal(result.status, 400, JSON.stringify(code));
-    assert.equal(result.body.error, 'invalid_code');
+test('the relay rejects plaintext codes and malformed PAKE requests at its API boundary', async () => {
+  for (const code of ['1234', '123', 1234, null, {}, []]) {
+    const result = await client().raw('/v1/pair', { method: 'POST', json: { code } });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.error, 'invalid_pairing');
   }
 });
 
@@ -724,151 +579,48 @@ test('malformed and oversized pairing requests are rejected at the HTTP boundary
     assert.equal(result.status, 400);
     assert.equal(result.body.error, 'invalid_json');
   }
-  const oversized = await request('/v1/pair', { method: 'POST', json: { code: '1'.repeat(1024) } });
+  const oversized = await request.raw('/v1/pair', { method: 'POST', json: { code: '1'.repeat(32768) } });
   assert.equal(oversized.status, 413);
   const wrongType = await request('/v1/pair', { method: 'POST', body: '{"code":"1234"}' });
   assert.equal(wrongType.status, 400);
 });
 
-test('an expired invitation rejects new devices while existing devices keep access', async () => {
-  const owner = client();
-  const space = await createSpace(owner);
+test('expired encrypted invitations stop PAKE admission while existing devices retain access', async () => {
+  const request = client(), space = await createSpace(request);
   const registry = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  await registry.exec('UPDATE invites SET expires_at = ? WHERE code = ?', Date.now() - 1, space.code);
-
+  await registry.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
   const joined = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
   assert.equal(joined.status, 404);
-  assert.equal(joined.body.error, 'code_expired');
-  const info = await owner(`/v1/spaces/${space.roomId}`, { token: space.token });
-  assert.equal(info.status, 200);
-  assert.equal(info.body.pairing, null);
-  const reconnected = await authenticateSocket(space);
-  assert.equal(reconnected.frame.pairing, null);
+  assert.equal((await request(`/v1/spaces/${space.roomId}`, { token: space.token })).body.pairing, null);
 });
 
-test('paired devices concurrently reuse an active invitation without extending its expiry', async () => {
-  const owner = client();
-  const space = await createSpace(owner);
-  const device = client();
-  const joined = await device('/v1/pair', { method: 'POST', json: { code: space.code } });
-  assert.equal(joined.status, 200);
-
-  const registry = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  const expiresAt = Date.now() + 60000;
-  await registry.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', expiresAt, space.roomId);
-  const results = await Promise.all(Array.from({ length: 12 }, (_, index) => (index % 2 ? owner : device)(`/v1/spaces/${space.roomId}/pair-code`, {
-    method: 'POST', token: index % 2 ? space.token : joined.body.token
-  })));
-  for (const result of results) {
-    assert.equal(result.status, 200);
-    assert.deepEqual(result.body, { code: space.code, expiresAt });
-  }
-  assert.deepEqual(await registry.exec('SELECT code, expires_at AS expiresAt FROM invites WHERE room_id = ?', space.roomId), [{ code: space.code, expiresAt }]);
-  const newCode = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
-  assert.equal(newCode.status, 200);
-  const info = await device(`/v1/spaces/${space.roomId}`, { token: joined.body.token });
-  assert.equal(info.status, 200);
-  assert.deepEqual(info.body.pairing, { code: space.code, expiresAt });
+test('concurrent offer generation reuses one active encrypted offer without extending expiry', async () => {
+  const owner = client(), space = await createSpace(owner);
+  const results = await Promise.all(Array.from({ length: 8 }, () => owner(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token })));
+  assert.ok(results.every(result => result.status === 200));
+  const { code, ...wire } = results[0].body;
+  assert.deepEqual(wire, space.pairing);
+  assert.ok(results.every(result => result.body.code === code && result.body.expiresAt === space.expiresAt));
 });
 
-test('expired invitations are replaced once for concurrent devices and broadcast only inside the authenticated room', async () => {
-  const request = client();
-  const space = await createSpace(request);
-  const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
-  const unrelated = await createSpace();
-  const owner = await authenticateSocket(space);
-  const peer = await authenticateSocket(paired.body);
-  const other = await authenticateSocket(unrelated);
-  const unauthenticated = await openSocket(space.roomId);
-  const ownerFrames = socketFrames(owner.socket, 2);
-  const peerFrames = socketFrames(peer.socket, 2);
-  const otherFrames = [], privateFrames = [];
-  for (const [socket, frames] of [[other.socket, otherFrames], [unauthenticated, privateFrames]]) {
-    socket.addEventListener('message', event => frames.push(JSON.parse(event.data)));
-  }
-  assert.deepEqual(owner.frame.pairing, space.pairing);
-  assert.deepEqual(peer.frame.pairing, space.pairing);
-  const registry = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  await registry.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
-  const results = await Promise.all([space.token, paired.body.token].map(token => request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token })));
-  const pairing = results[0].body;
-  for (const result of results) { assert.equal(result.status, 200); assert.deepEqual(result.body, pairing); }
-  assert.ok(pairing.expiresAt > Date.now());
-  for (const frames of await Promise.all([ownerFrames, peerFrames])) assert.deepEqual(frames, [{ type: 'pairing', pairing }, { type: 'pairing', pairing }]);
-  assert.deepEqual(otherFrames, []);
-  assert.deepEqual(privateFrames, []);
-  for (const token of [undefined, unrelated.token]) {
-    const rejected = await request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token });
-    assert.equal(rejected.status, 401);
-    assert.ok(!JSON.stringify(rejected.body).includes(pairing.code));
-  }
-  const reconnected = await authenticateSocket(paired.body);
-  assert.deepEqual(reconnected.frame.pairing, pairing);
-  const info = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
-  assert.deepEqual(info.body.pairing, pairing);
-  assert.deepEqual(await registry.exec('SELECT code, expires_at AS expiresAt FROM invites WHERE room_id = ?', space.roomId), [pairing]);
-});
-
-test('pairing publication queues behind an in-flight authentication snapshot across invitation expiry', async t => {
-  const instance = await createRuntime();
-  t.after(() => instance.dispose());
-  const request = client(instance);
-  const space = await createSpace(request);
-  const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
-  const registry = namespace.getByName('registry');
-  const roomNamespace = await instance.getDurableObjectNamespace('SYNC_ROOMS');
-  const room = roomNamespace.getByName(space.roomId);
-  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  const socket = await openSocket(space.roomId, instance);
-  t.after(() => { if (socket.readyState === 1) socket.close(); });
-  const frames = socketFrames(socket, 2);
-  await registry.testHoldPairing();
-  socket.send(JSON.stringify({ type: 'auth', token: space.token }));
-  await registry.testWaitPairingRead();
-  await storage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
-  await room.testWatchPairingPublish();
-  const publishing = request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token });
-  await room.testWaitPairingPublish();
-  const refreshed = await registry.currentInvite(space.roomId);
-  const expected = { code: refreshed.code, expiresAt: refreshed.expiresAt };
-  await registry.testReleasePairing();
-  assert.equal((await publishing).status, 200);
-  const [ready, pairing] = await frames;
-  assert.equal(ready.type, 'ready');
-  assert.deepEqual(ready.pairing, space.pairing);
-  assert.deepEqual(pairing, { type: 'pairing', pairing: expected });
-});
-
-test('concurrent pairing publications stay ordered and a failed snapshot does not stop later authentication', async t => {
-  const instance = await createRuntime();
-  t.after(() => instance.dispose());
-  const request = client(instance);
-  const space = await createSpace(request);
-  const registryNamespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
-  const registry = registryNamespace.getByName('registry');
-  const roomNamespace = await instance.getDurableObjectNamespace('SYNC_ROOMS');
-  const room = roomNamespace.getByName(space.roomId);
-  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  const connected = await authenticateSocket(space, instance);
-  t.after(() => { if (connected.socket.readyState === 1) connected.socket.close(); });
-  const frames = socketFrames(connected.socket, 2);
-  await registry.testHoldPairing();
-  const first = room.publishPairing(space.roomId);
-  await registry.testWaitPairingRead();
-  await storage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
-  const refreshed = await registry.createInvite(space.roomId);
-  const pairing = { code: refreshed.code, expiresAt: refreshed.expiresAt };
-  await room.testWatchPairingPublish();
-  const second = room.publishPairing(space.roomId);
-  await room.testWaitPairingPublish();
-  await registry.testReleasePairing();
-  await Promise.all([first, second]);
-  assert.deepEqual(await frames, [{ type: 'pairing', pairing: space.pairing }, { type: 'pairing', pairing }]);
+test('offer publications are ordered and are never sent to another room or anonymous sockets', async () => {
+  const request = client(), space = await createSpace(request), unrelated = await createSpace();
+  const owner = await authenticateSocket(space), other = await authenticateSocket(unrelated);
+  const anonymous = await openSocket(space.roomId);
+  const observed = [], privateFrames = [];
+  other.socket.addEventListener('message', event => observed.push(event.data));
+  anonymous.addEventListener('message', event => privateFrames.push(event.data));
+  const next = socketEvent(owner.socket);
+  const offered = await request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token });
+  const { code, ...wire } = offered.body;
+  assert.deepEqual(JSON.parse((await next).data), { type: 'pairing', pairing: wire });
+  assert.deepEqual(observed, []); assert.deepEqual(privateFrames, []);
+  assert.ok(!JSON.stringify(wire).includes(`"code":"${code}"`));
+  const registry = (await runtime.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
   await registry.testFailPairingRead();
+  const room = (await runtime.getDurableObjectNamespace('SYNC_ROOMS')).getByName(space.roomId);
   assert.match(await room.testPublishPairingFailure(space.roomId), /test_pairing_read_failed/);
-  const reconnected = await authenticateSocket(space, instance);
-  t.after(() => { if (reconnected.socket.readyState === 1) reconnected.socket.close(); });
-  assert.deepEqual(reconnected.frame.pairing, pairing);
+  assert.equal((await authenticateSocket(space)).frame.type, 'ready');
 });
 
 test('creation is rate limited per IP while another IP can still create a space', async () => {
@@ -893,10 +645,11 @@ test('pairing attempts are rate limited and resume after the limit expires', asy
   assert.ok(Number(limited.headers.get('Retry-After')) > 0);
   const independent = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
   assert.equal(independent.status, 200);
+  const invitation = await client()(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token });
 
   const registry = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   await registry.exec('UPDATE attempts SET expires_at = ? WHERE key LIKE ?', Date.now() - 1, 'pair:%');
-  const resumed = await request('/v1/pair', { method: 'POST', json: { code: space.code } });
+  const resumed = await request('/v1/pair', { method: 'POST', json: { code: invitation.body.code } });
   assert.equal(resumed.status, 200);
   assert.equal(resumed.body.roomId, space.roomId);
 });
@@ -957,9 +710,10 @@ test('message input validates at the API boundary and another space cannot send 
   const request = client();
   const space = await createSpace(request);
   const unrelated = await createSpace(request);
-  for (const text of ['', ' \n\t ', null, 123, 'x'.repeat(10001)]) {
-    const result = await request(`/v1/spaces/${space.roomId}/messages`, {
-      method: 'POST', token: space.token, json: { clientId: randomUUID(), text }
+  const session = request.state.sessions.get(space.token);
+  for (const text of ['', ' \n\t ', null, 123, 'plaintext content', 'e2ee1.invalid']) {
+    const result = await request.raw(`/v1/spaces/${space.roomId}/messages`, {
+      method: 'POST', token: space.token, headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: { clientId: randomUUID(), text }
     });
     assert.equal(result.status, 400);
     assert.equal(result.body.error, 'invalid_text');
@@ -1050,9 +804,10 @@ test('device additions, renames and removals notify authenticated sockets and pe
   unauthenticated.addEventListener('message', event => privateFrames.push(event.data));
   await runtime.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId, webSockets: 'hibernate' });
 
+  const invitation = await request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token });
   const ownerAdded = socketEvent(owner.socket);
   const peerAdded = socketEvent(peer.socket);
-  const third = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
+  const third = await client()('/v1/pair', { method: 'POST', json: { code: invitation.body.code } });
   assert.equal(third.status, 200);
   assert.deepEqual(JSON.parse((await ownerAdded).data), { type: 'devices' });
   assert.deepEqual(JSON.parse((await peerAdded).data), { type: 'devices' });
@@ -1079,6 +834,7 @@ test('device additions, renames and removals notify authenticated sockets and pe
   assert.deepEqual(JSON.parse((await peerRemoved).data), { type: 'devices' });
   const remaining = await request(`/v1/spaces/${space.roomId}/devices`, { token: third.body.token });
   assert.deepEqual(remaining.body.devices.map(device => device.deviceId).sort(), [paired.body.deviceId, third.body.deviceId].sort());
+  await rotateRemaining(request, paired.body);
 
   for (const [method, suffix, json] of [
     ['GET', '', undefined],
@@ -1154,6 +910,7 @@ test('disconnecting one device revokes its HTTP and WebSocket access while peers
     method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'revoked' }
   });
   assert.equal(deniedSend.status, 401);
+  await rotateRemaining(request, paired.body);
   const peerMessage = socketEvent(peer.socket);
   const sent = await request(`/v1/spaces/${space.roomId}/messages`, {
     method: 'POST', token: paired.body.token, json: { clientId: randomUUID(), text: 'peer remains paired' }
@@ -1316,8 +1073,11 @@ test('combined room storage starts background cleanup, removes about 3 GB in glo
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   const registryNamespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
   const registry = registryNamespace.getByName('registry');
-  const snapshot = async () => (await Promise.all(storage.map(handle => handle.exec('SELECT text, created_at FROM messages'))))
-    .flat().sort((a, b) => a.created_at - b.created_at);
+  const snapshot = async () => (await Promise.all(storage.map(async (handle, index) => {
+    const session = request.state.sessions.get(spaces[index].token);
+    const rows = await handle.exec('SELECT text, client_id AS clientId, device_id AS deviceId, created_at FROM messages');
+    return Promise.all(rows.map(row => request.decode(row, session)));
+  }))).flat().sort((a, b) => a.created_at - b.created_at);
   const append = async (number, round) => {
     for (let index = 0; index < number; index += 1) {
       const space = spaces[index % 2];
@@ -1330,7 +1090,7 @@ test('combined room storage starts background cleanup, removes about 3 GB in glo
   await append(47, 1);
   const start = Date.now() - 120000;
   for (let index = 0; index < 47; index += 1) {
-    await storage[index % 2].exec('UPDATE messages SET created_at = ? WHERE text = ?', start + index * 1000, `round 1 message ${index}`);
+    await storage[index % 2].exec('UPDATE messages SET created_at = ? WHERE id = ?', start + index * 1000, Math.floor(index / 2) + 1);
   }
   for (const space of spaces) await registry.refreshRoom(space.roomId);
 
@@ -1460,7 +1220,7 @@ test('concurrent space creation admits only one room when storage has headroom f
   assert.equal(results.find(result => result.status === 507).body.error, 'storage_full');
   const expected = [existing.roomId, created.roomId].sort();
   assert.deepEqual((await registryStorage.exec('SELECT room_id FROM room_usage ORDER BY room_id')).map(row => row.room_id), expected);
-  assert.deepEqual((await registryStorage.exec('SELECT room_id FROM invites ORDER BY room_id')).map(row => row.room_id), expected);
+  assert.deepEqual((await registryStorage.exec('SELECT room_id FROM offers ORDER BY room_id')).map(row => row.room_id), expected);
   assert.equal((await instance.listDurableObjectIds('SYNC_ROOMS')).length, 2);
   assert.deepEqual(await registryStorage.exec('SELECT 1 FROM cleanup'), []);
 
@@ -1487,7 +1247,7 @@ test('space creation under storage pressure starts cleanup without allocating an
   assert.equal(blocked.body.error, 'storage_cleaning');
   assert.equal(blocked.headers.get('Retry-After'), '1');
   assert.deepEqual(await registryStorage.exec('SELECT room_id FROM room_usage'), [{ room_id: space.roomId }]);
-  assert.deepEqual(await registryStorage.exec('SELECT room_id FROM invites'), [{ room_id: space.roomId }]);
+  assert.deepEqual(await registryStorage.exec('SELECT room_id FROM offers'), [{ room_id: space.roomId }]);
   assert.equal((await instance.listDurableObjectIds('SYNC_ROOMS')).length, 1);
   assert.deepEqual(await registryStorage.exec('SELECT phase, cursor FROM cleanup'), [{ phase: 'refresh', cursor: '' }]);
   const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
@@ -1581,6 +1341,7 @@ test('history cursors return deltas and reset safely after clear, expiry and pru
   const response = await runtime.dispatchFetch(`https://sync.test/v1/spaces/${space.roomId}/socket?after=${first.id}&generation=${initial.history.generation}`, { headers: { Origin: origin, Upgrade: 'websocket', 'Sec-WebSocket-Protocol': `sync, auth.${space.token}` } });
   assert.equal(response.status, 101);
   const socket = response.webSocket; socket.accept(); sockets.add(socket);
+  socketSessions.set(socket, { request, session: request.state.sessions.get(space.token) });
   const ready = socketEvent(socket); socket.send(JSON.stringify({ type: 'auth', token: space.token }));
   const frame = JSON.parse((await ready).data);
   assert.equal(frame.historyMode, 'append'); assert.deepEqual(frame.messages, [second]);

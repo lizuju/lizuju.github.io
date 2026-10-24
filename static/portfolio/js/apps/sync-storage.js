@@ -2,6 +2,7 @@ export function setupSyncStorage(app) {
     const desktop = window.GavinDesktop;
     const button = app.querySelector('[data-sync-storage-refresh]');
     const notice = app.querySelector('[data-sync-storage-notice]');
+    const details = app.querySelector('[data-sync-storage-details]');
     const metrics = app.querySelector('[data-sync-storage-metrics]');
     const dailyMetrics = app.querySelector('[data-sync-daily-metrics]');
     const dailyNotice = app.querySelector('[data-sync-daily-notice]');
@@ -18,6 +19,7 @@ export function setupSyncStorage(app) {
     const timestamp = (value) => value ? new Date(value).toLocaleString(desktop.getLanguage()) : t().syncStorageNever;
     const bytes = (value) => `${(value / 1e9).toFixed(3)} GB`;
     const render = () => {
+        details.hidden = !data;
         metrics.replaceChildren();
         metrics.hidden = !data;
         dailyMetrics.replaceChildren();

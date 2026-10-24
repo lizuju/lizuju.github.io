@@ -84,8 +84,8 @@ async function createRuntime() {
         'index.js': { type: 'esm', contents: await readFile(new URL('../src/index.js', import.meta.url), 'utf8') },
         'daily-usage.js': { type: 'esm', contents: await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8') },
         'harness.js': { type: 'esm', contents: `
-          import worker, { PairingRegistry as ProductionRegistry } from './index.js';
-          export { SyncRoom, FileShard } from './index.js';
+          import worker, { E2eePairingRegistry as ProductionRegistry } from './index.js';
+          export { E2eeSyncRoom, E2eeFileShard } from './index.js';
           export default {
             async fetch(request, env) {
               const url = new URL(request.url);
@@ -103,7 +103,7 @@ async function createRuntime() {
             if (fail) throw new Error('private-provider-error');
             return Response.json(${JSON.stringify(payload(account))});
           };
-          export class PairingRegistry extends ProductionRegistry {
+          export class E2eePairingRegistry extends ProductionRegistry {
             testAnalyticsCalls() { return calls; }
             testAnalyticsCacheUntil() { return this.dailyUsageCacheUntil; }
             maintainRooms() { this.maintenanceCalls = (this.maintenanceCalls || 0) + 1; return super.maintainRooms(); }
@@ -124,11 +124,11 @@ async function createRuntime() {
         ALLOWED_ORIGINS: { type: 'text', value: 'https://lizuju.github.io' },
         CF_ACCOUNT_ID: { type: 'text', value: env.CF_ACCOUNT_ID },
         CF_ANALYTICS_TOKEN: { type: 'text', value: env.CF_ANALYTICS_TOKEN },
-        PAIRING_REGISTRY: { type: 'durable-object', worker: 'daily-usage-test', exportName: 'PairingRegistry' },
-        SYNC_ROOMS: { type: 'durable-object', worker: 'daily-usage-test', exportName: 'SyncRoom' },
-        FILE_SHARDS: { type: 'durable-object', worker: 'daily-usage-test', exportName: 'FileShard' }
+        PAIRING_REGISTRY: { type: 'durable-object', worker: 'daily-usage-test', exportName: 'E2eePairingRegistry' },
+        SYNC_ROOMS: { type: 'durable-object', worker: 'daily-usage-test', exportName: 'E2eeSyncRoom' },
+        FILE_SHARDS: { type: 'durable-object', worker: 'daily-usage-test', exportName: 'E2eeFileShard' }
       },
-      exports: Object.fromEntries(['PairingRegistry', 'SyncRoom', 'FileShard'].map(name => [name, { type: 'durable-object', storage: 'sqlite' }]))
+      exports: Object.fromEntries(['E2eePairingRegistry', 'E2eeSyncRoom', 'E2eeFileShard'].map(name => [name, { type: 'durable-object', storage: 'sqlite' }]))
     } }]
   });
   await instance.ready;

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { after, before, test } from 'node:test';
+import { after, afterEach, before, test } from 'node:test';
 import { Miniflare } from 'miniflare';
+import { encryptedClient, cryptoClient } from './e2ee-client.mjs';
 
 const origin = 'https://lizuju.github.io';
 const MiB = 1024 * 1024;
@@ -17,6 +18,11 @@ before(async () => { runtime = await createRuntime(); });
 after(async () => {
   for (const socket of sockets) if (socket.readyState === 1) socket.close();
   await runtime?.dispose();
+});
+afterEach(async () => {
+  const request = client();
+  for (const session of request.state.sessions.values()) await request.raw(`/v1/spaces/${session.roomId}/pair-code`, { method: 'DELETE', token: session.token });
+  request.state.offers.clear();
 });
 
 async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, observedLogs = [] } = {}) {
@@ -34,7 +40,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
             'daily-usage.js': { type: 'esm', contents: await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8') },
             'harness.js': {
               type: 'esm',
-              contents: `import worker, { SyncRoom as ProductionSyncRoom, PairingRegistry as ProductionRegistry, FileShard as ProductionFileShard } from './index.js';
+              contents: `import worker, { E2eeSyncRoom as ProductionSyncRoom, E2eePairingRegistry as ProductionRegistry, E2eeFileShard as ProductionFileShard } from './index.js';
                 export class FileShard extends ProductionFileShard {
                   databaseProbe() { this.probeCount = (this.probeCount || 0) + 1; return super.databaseProbe(); }
                   testProbeCount() { return this.probeCount || 0; }
@@ -97,23 +103,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
 
 function client(instance = runtime) {
   const ip = `198.51.100.${nextIp++}`;
-  return async (path, { method = 'GET', token, json, body, headers = {} } = {}) => {
-    const requestHeaders = { Origin: origin, 'CF-Connecting-IP': ip, ...headers };
-    if (requestHeaders.Origin === null) delete requestHeaders.Origin;
-    if (token !== undefined) requestHeaders.Authorization = `Bearer ${token}`;
-    if (json !== undefined) {
-      requestHeaders['Content-Type'] = 'application/json';
-      body = JSON.stringify(json);
-    }
-    const response = await instance.dispatchFetch(`https://sync.test${path}`, { method, headers: requestHeaders, body });
-    return {
-      status: response.status,
-      headers: response.headers,
-      body: method !== 'HEAD' && response.headers.get('Content-Type')?.includes('application/json')
-        ? await response.json()
-        : Buffer.from(await response.arrayBuffer())
-    };
-  };
+  return encryptedClient(instance, { origin, ip });
 }
 
 async function createSpace(request = client()) {
@@ -197,6 +187,9 @@ function socketEvent(socket, type = 'message') {
 }
 
 async function authenticateSocket(space, instance = runtime) {
+  const request = client(instance);
+  const session = request.state.sessions.get(space.token);
+  await request.update(session);
   const response = await instance.dispatchFetch(`https://sync.test/v1/spaces/${space.roomId}/socket`, {
     headers: { Origin: origin, Upgrade: 'websocket', 'CF-Connecting-IP': `203.0.113.${nextIp++}` }
   });
@@ -209,6 +202,8 @@ async function authenticateSocket(space, instance = runtime) {
   socket.send(JSON.stringify({ type: 'auth', token: space.token }));
   const frame = JSON.parse((await ready).data);
   assert.equal(frame.type, 'ready');
+  frame.messages = await Promise.all(frame.messages.map(async value => ({ ...value,
+    ...await cryptoClient.decryptPayload(session.keyring, session.roomId, `message:${value.deviceId}:${value.clientId}`, value.text) })));
   return { socket, frame };
 }
 
@@ -237,7 +232,8 @@ test('a binary file crosses 8 MiB upload chunks and 64 MiB shards without losing
   assert.equal(downloaded.headers.get('X-Content-Type-Options'), 'nosniff');
   assert.equal(downloaded.headers.get('Cache-Control'), 'no-store');
   assert.match(downloaded.headers.get('Content-Disposition'), /^attachment;/);
-  assert.ok(downloaded.headers.get('Content-Disposition').includes(`filename*=UTF-8''${encodeURIComponent(name)}`));
+  assert.ok(!downloaded.headers.get('Content-Disposition').includes(encodeURIComponent(name)));
+  assert.equal(downloaded.headers.get('Content-Disposition'), 'attachment; filename="encrypted-file"');
   assert.equal(downloaded.body.length, bytes.length);
   assert.equal(createHash('sha256').update(downloaded.body).digest('hex'), createHash('sha256').update(bytes).digest('hex'));
   for (const [start, end] of [[MiB - 9, MiB + 11], [64 * MiB - 17, 64 * MiB + 43], [64 * MiB + 107, bytes.length - 1]]) {
@@ -339,17 +335,18 @@ test('upload initialization validates the 2 GiB boundary and reserves an idempot
   const request = client();
   const space = await createSpace(request);
   const clientId = randomUUID();
-  const started = await initiate(request, space, { clientId, size: maximumFileSize, name: 'maximum.bin' });
+  const maximumCipherSize = maximumFileSize + Math.ceil(maximumFileSize / (chunkSize - 16)) * 16;
+  const started = await initiate(request, space, { clientId, size: maximumCipherSize, name: 'maximum.bin' });
   assert.equal(started.status, 201, JSON.stringify(started.body));
   assert.equal(started.body.chunkSize, chunkSize);
   assert.equal(started.body.receivedBytes, 0);
   assert.match(started.body.uploadId, /^[0-9a-f-]{36}$/);
-  const retry = await initiate(request, space, { clientId, size: maximumFileSize, name: 'maximum.bin' });
+  const retry = await initiate(request, space, { clientId, size: maximumCipherSize, name: 'maximum.bin' });
   assert.equal(retry.status, 200);
   assert.deepEqual(retry.body, started.body);
   const state = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
   assert.deepEqual(state.body.messages, []);
-  const tooLarge = await initiate(request, space, { size: maximumFileSize + 1 });
+  const tooLarge = await initiate(request, space, { size: maximumCipherSize + 1 });
   assert.equal(tooLarge.status, 413);
   for (const size of [-1, 1.5, '8', null]) {
     const invalid = await initiate(request, space, { size });
@@ -362,6 +359,10 @@ test('upload initialization validates the 2 GiB boundary and reserves an idempot
 test('upload metadata rejects invalid names, sizes, MIME types and text before creating an upload', async () => {
   const request = client();
   const space = await createSpace(request);
+  const session = request.state.sessions.get(space.token);
+  const clientId = randomUUID();
+  const text = await cryptoClient.encryptPayload(session.keyring, space.roomId, `message:${space.deviceId}:${clientId}`, { text: '', attachment: { name: 'private.bin', type: 'application/octet-stream', size: 0 } });
+  const validWire = { clientId, name: randomUUID(), type: 'application/octet-stream', size: 0, text, fingerprint: 'a'.repeat(64) };
   for (const fixture of [
     { clientId: '' }, { clientId: '1234' }, { clientId: '00000000-0000-1000-8000-000000000000' },
     { text: 'x'.repeat(10001) }, { text: null },
@@ -370,7 +371,9 @@ test('upload metadata rejects invalid names, sizes, MIME types and text before c
     { type: 'application' }, { type: 'text/' }, { type: '/plain' }, { type: 'text/plain; charset=utf-8' },
     { type: `application/${'x'.repeat(244)}` }
   ]) {
-    const result = await initiate(request, space, fixture);
+    const result = await request.raw(`/v1/spaces/${space.roomId}/files/uploads`, {
+      method: 'POST', token: space.token, headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: { ...validWire, ...fixture }
+    });
     assert.equal(result.status, 400, JSON.stringify(fixture));
   }
   const valid = await upload(request, space, {
@@ -426,7 +429,13 @@ test('chunk size checks, retries and concurrent completion preserve one file and
   const pong = socketEvent(connected.socket);
   connected.socket.send('ping');
   assert.equal((await pong).data, 'pong');
-  assert.deepEqual(frames.filter(frame => frame !== 'pong').map(frame => { const { history, ...event } = JSON.parse(frame); assert.equal(history.latestId, completed[0].body.id); return event; }), [
+  const session = request.state.sessions.get(space.token);
+  assert.deepEqual(await Promise.all(frames.filter(frame => frame !== 'pong').map(async frame => {
+    const { history, ...event } = JSON.parse(frame);
+    assert.equal(history.latestId, completed[0].body.id);
+    event.message = { ...event.message, ...await cryptoClient.decryptPayload(session.keyring, space.roomId, `message:${event.message.deviceId}:${event.message.clientId}`, event.message.text) };
+    return event;
+  })), [
     { type: 'message', message: completed[0].body }
   ]);
   const state = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
@@ -627,7 +636,7 @@ test('resuming the end of a 2 GiB file reads only the requested shard and reject
   assert.equal((await lastShard.testReadRequests()).length, 1);
 });
 
-test('ticket previews inline only safe media and PDF while retaining range and credential checks', async () => {
+test('encrypted ticket responses keep every private media type opaque while retaining range and credential checks', async () => {
   const request = client();
   const space = await createSpace(request);
   const bytes = Buffer.from('preview fixture bytes');
@@ -641,9 +650,8 @@ test('ticket previews inline only safe media and PDF while retaining range and c
     assert.equal(preview.headers.get('Content-Range'), `bytes 3-9/${bytes.length}`);
     assert.equal(preview.headers.get('Content-Length'), '7');
     assert.equal(preview.headers.get('X-Content-Type-Options'), 'nosniff');
-    const safe = !['text/html', 'image/svg+xml', 'application/octet-stream'].includes(type);
-    assert.equal(preview.headers.get('Content-Type'), safe ? type : 'application/octet-stream');
-    assert.ok(preview.headers.get('Content-Disposition').startsWith(safe ? 'inline;' : 'attachment;'));
+    assert.equal(preview.headers.get('Content-Type'), 'application/octet-stream');
+    assert.ok(preview.headers.get('Content-Disposition').startsWith('attachment;'));
     const head = await request(`${path}?preview=1`, { method: 'HEAD' });
     assert.equal(head.headers.get('Content-Type'), preview.headers.get('Content-Type'));
     assert.equal(head.body.length, 0);
@@ -779,13 +787,13 @@ test('clearing from a peer invalidates an unfinished upload before the original 
   assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM files'), [{ count: 0 }]);
 });
 
-test('file support initializes around the old message schema without changing existing message shape or credentials', async t => {
+test('file tables initialize around encrypted messages without changing their shape or device credentials', async t => {
   const instance = await createRuntime();
   t.after(() => instance.dispose());
   const request = client(instance);
   const space = await createSpace(request);
   const sent = await request(`/v1/spaces/${space.roomId}/messages`, {
-    method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'legacy message' }
+    method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'encrypted message before file tables' }
   });
   assert.equal(sent.status, 201);
   const storage = await roomStorage(space, instance);
@@ -886,6 +894,8 @@ for (const { separateRoom, unknownUsage, clearedHistory } of [
     });
     assert.equal(survivor.status, 201);
     const survivorStorage = await roomStorage(survivorSpace, instance);
+    const retainedCiphertext = await survivorStorage.exec('SELECT text FROM messages WHERE id = ?', survivor.body.id);
+    assert.match(retainedCiphertext[0].text, /^e2ee1\./);
     if (separateRoom) {
       await survivorStorage.exec('UPDATE messages SET created_at = ? WHERE id = ?', timestamp - 10000, survivor.body.id);
     }
@@ -907,7 +917,7 @@ for (const { separateRoom, unknownUsage, clearedHistory } of [
     while ((await registryStorage.exec('SELECT 1 FROM cleanup')).length) {
       assert.ok(turns++ < 5, 'pending file deletion must make bounded progress');
       await registry.testRunAlarm();
-      assert.deepEqual(await survivorStorage.exec('SELECT text FROM messages WHERE id = ?', survivor.body.id), [{ text: 'keep this history' }]);
+      assert.deepEqual(await survivorStorage.exec('SELECT text FROM messages WHERE id = ?', survivor.body.id), retainedCiphertext);
       for (const pending of await registryStorage.exec('SELECT phase, target_bytes FROM cleanup')) assert.deepEqual(pending, state);
     }
     assert.ok(before - await registry.storageBytes() >= 3_000_000_000);
@@ -966,9 +976,12 @@ test('capacity pruning cancels an older upload before removing newer messages', 
   const storage = await roomStorage(space);
   await storage.exec('UPDATE files SET created_at = ?', Date.now() - 10000);
   const sent = await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'newer history survives' } });
+  const ciphertext = await storage.exec('SELECT text FROM messages');
+  assert.match(ciphertext[0].text, /^e2ee1\./);
   const room = await roomObject(space);
   await room.pruneOldest();
-  assert.deepEqual(await storage.exec('SELECT text FROM messages'), [{ text: sent.body.text }]);
+  assert.deepEqual(await storage.exec('SELECT text FROM messages'), ciphertext);
+  assert.equal(sent.body.text, 'newer history survives');
   assert.deepEqual(await storage.exec('SELECT file_id FROM files WHERE file_id = ?', started.body.uploadId), []);
 });
 
@@ -1007,12 +1020,12 @@ test('a shard RPC download failure exposes only a generic stream error', async t
 
 test('upload resume compares persisted content identity and metadata before accepting an existing client ID', async () => {
   const request = client(), space = await createSpace(request);
-  const metadata = { clientId: randomUUID(), name: 'same.bin', type: 'application/octet-stream', size: 4, fingerprint: 'a'.repeat(64) };
+  const metadata = { clientId: randomUUID(), name: randomUUID(), type: 'application/octet-stream', size: 4, fingerprint: 'a'.repeat(64) };
   const started = await initiate(request, space, metadata);
   assert.equal(started.status, 201);
   const storage = await roomStorage(space);
   assert.equal((await storage.exec('SELECT fingerprint FROM files WHERE file_id = ?', started.body.uploadId))[0].fingerprint, metadata.fingerprint);
-  for (const change of [{ fingerprint: 'b'.repeat(64) }, { name: 'other.bin' }, { type: 'image/png' }, { size: 5 }, { fingerprint: undefined }]) {
+  for (const change of [{ fingerprint: 'b'.repeat(64) }, { name: randomUUID() }, { size: 5 }]) {
     const mismatched = await initiate(request, space, { ...metadata, ...change });
     assert.equal(mismatched.status, 409); assert.equal(mismatched.body.error, 'upload_conflict');
   }
@@ -1020,11 +1033,18 @@ test('upload resume compares persisted content identity and metadata before acce
   assert.equal(resumed.status, 200); assert.equal(resumed.body.uploadId, started.body.uploadId);
   assert.equal((await putChunk(request, space, started.body.uploadId, 0, Buffer.from('file'))).status, 200);
   assert.equal((await complete(request, space, started.body.uploadId)).status, 201);
-  assert.equal((await initiate(request, space, metadata)).body.message.attachment.name, 'same.bin');
+  assert.equal((await initiate(request, space, metadata)).body.message.attachment.name, metadata.name);
   assert.equal((await initiate(request, space, { ...metadata, fingerprint: 'b'.repeat(64) })).status, 409);
   const legacyId = randomUUID();
-  assert.equal((await initiate(request, space, { clientId: legacyId, size: 4 })).status, 201);
+  assert.equal((await initiate(request, space, { clientId: legacyId, size: 4, fingerprint: 'c'.repeat(64) })).status, 201);
   assert.equal((await initiate(request, space, { clientId: legacyId, size: 4, fingerprint: 'a'.repeat(64) })).status, 409);
+  const session = request.state.sessions.get(space.token);
+  const text = await cryptoClient.encryptPayload(session.keyring, space.roomId, `message:${space.deviceId}:${randomUUID()}`, { text: '' });
+  for (const change of [{ type: 'image/png' }, { fingerprint: undefined }]) {
+    const invalid = await request.raw(`/v1/spaces/${space.roomId}/files/uploads`, { method: 'POST', token: space.token,
+      headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: { ...metadata, text, ...change } });
+    assert.equal(invalid.status, 400);
+  }
   for (const fingerprint of ['', 'a'.repeat(63), 'A'.repeat(64), 123]) {
     const invalid = await initiate(request, space, { fingerprint });
     assert.equal(invalid.status, 400); assert.equal(invalid.body.error, 'invalid_fingerprint');

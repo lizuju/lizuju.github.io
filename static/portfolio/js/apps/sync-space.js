@@ -1,7 +1,18 @@
+import { createKeyring, createDeviceIdentity, encryptPayload, decryptPayload, createFileMetadata, encryptFileChunk,
+    keyedFingerprint, FILE_PLAIN_CHUNK_SIZE, FILE_CIPHER_CHUNK_SIZE, saveLocalSession, loadLocalSession,
+    deleteLocalSession, createKeyRotation, acceptKeyRotation } from './sync-crypto.js';
+import { EncryptedPairing } from './sync-pairing.js';
+import { openEncryptedFile } from './sync-e2ee-files.js';
+
 (() => {
     const desktopApi = window.GavinDesktop;
-    const CREDENTIAL_KEY = 'portfolio-sync-space';
+    const CREDENTIAL_KEY = 'portfolio-sync-space-e2ee1';
     const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
+    try {
+        const old = JSON.parse(localStorage.getItem('portfolio-sync-space') || 'null');
+        if (old?.roomId) sessionStorage.removeItem(`portfolio-sync-draft:${old.roomId}`);
+        localStorage.removeItem('portfolio-sync-space');
+    } catch { /* Storage availability is reported when opening a space. */ }
 
     desktopApi.apps.syncSpace = (manager, attachmentPreview) => {
         const app = document.querySelector('[data-sync-window]');
@@ -55,6 +66,10 @@
         let fileDragDepth = 0;
         let previewRequest = 0;
         const downloadTickets = new Map();
+        const fileCapabilities = new Map();
+        let keyRefresh;
+        let draftRevision = 0;
+        let rotationTask;
 
         const loadConfig = () => {
             if (!configPromise) {
@@ -143,7 +158,10 @@
                 invalid_file_type: 'syncFileInvalid', invalid_file_size: 'syncFileInvalid',
                 request_too_large: 'syncFileTooLarge', upload_expired: 'syncUploadFailed',
                 upload_unavailable: 'syncUploadFailed', not_found: 'syncUploadFailed',
-                upload_conflict: 'syncUploadConflict'
+                upload_conflict: 'syncUploadConflict',
+                invalid_ciphertext: 'syncDecryptFailed', key_unavailable: 'syncKeyUnavailable', key_changed: 'syncKeyChanged', rekey_required: 'syncKeyChanged',
+                pairing_limited: 'syncPairLimited', pairing_ambiguous: 'syncPairAmbiguous', pairing_busy: 'syncPairBusy',
+                encryption_unavailable: 'syncEncryptionUnavailable'
             };
             if (error.code === 'rate_limited' && action && error.retryAfter > 0) {
                 cooldowns[action] = Date.now() + error.retryAfter * 1000;
@@ -151,10 +169,24 @@
             }
             setNotice(keys[error.code] || 'syncError', true);
         };
+        const decodeMessage = async (message, session) => {
+            try {
+                const payload = await decryptPayload(session.keyring, session.roomId, `message:${message.deviceId}:${message.clientId}`, message.text);
+                if (typeof payload.text !== 'string' || payload.text.length > 10000) throw new Error('invalid_message');
+                if (payload.attachment && (typeof payload.attachment.name !== 'string' || typeof payload.attachment.key !== 'string'
+                    || !Number.isSafeInteger(payload.attachment.size) || payload.attachment.size < 0 || payload.attachment.size > MAX_FILE_BYTES)) throw new Error('invalid_attachment');
+                return { ...message, text: payload.text, attachment: payload.attachment || null };
+            } catch {
+                setNotice('syncDecryptFailed', true);
+                return { ...message, text: translate('syncDecryptFailed'), attachment: null, decryptionFailed: true };
+            }
+        };
         const api = async (path, options = {}, session = credentials) => {
             const base = await loadConfig();
             if (!base) throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
-            const headers = { 'Content-Type': 'application/json', ...options.headers, ...(session ? { Authorization: `Bearer ${session.token}` } : {}) };
+            const headers = { 'Content-Type': 'application/json', ...(session ? {
+                Authorization: `Bearer ${session.token}`, 'X-Sync-Key-Id': session.keyring.currentKeyId
+            } : {}), ...options.headers };
             const signal = options.signal || AbortSignal.timeout(15000);
             const response = options.uploadProgress ? await new Promise((resolve, reject) => {
                 signal.throwIfAborted();
@@ -174,6 +206,7 @@
             }) : await fetch(base + path, { ...options, headers, signal });
             const result = await response.json();
             if (!response.ok) {
+                if (result.error === 'key_changed' && session === credentials) await refreshKeys(session);
                 const retryAfter = response.headers.get('Retry-After');
                 const seconds = Number(retryAfter);
                 throw Object.assign(new Error(result.error), {
@@ -181,18 +214,77 @@
                     retryAfter: Number.isFinite(seconds) ? seconds : Math.max(0, (Date.parse(retryAfter) - Date.now()) / 1000)
                 });
             }
+            if (session?.keyring) {
+                if (result.messages) result.messages = await Promise.all(result.messages.map(message => decodeMessage(message, session)));
+                if (result.message) result.message = await decodeMessage(result.message, session);
+                if (result.clientId && result.text) return decodeMessage(result, session);
+                if (result.devices) result.devices = await Promise.all(result.devices.map(async (device) => {
+                    const profile = device.name ? await decryptPayload(session.keyring, session.roomId, `device:${device.deviceId}`, device.name) : { name: '', publicKey: '' };
+                    if (typeof profile.name !== 'string' || Array.from(profile.name).length > 8) throw new Error('invalid_device');
+                    return { ...device, name: profile.name, publicKey: profile.publicKey };
+                }));
+            }
             return result;
+        };
+        const persistSession = async (session) => {
+            const descriptor = await saveLocalSession(session);
+            session.vaultId = descriptor.vaultId;
+            session.revision = crypto.randomUUID();
+            localStorage.setItem(CREDENTIAL_KEY, JSON.stringify({ ...descriptor, revision: session.revision }));
+        };
+        const pairing = new EncryptedPairing({ api, getSession: () => credentials, onAccepted: async (session) => {
+            if (credentials !== session) return;
+            await refreshKeys(session);
+        }, onExpired: () => {
+            if (!credentials) return;
+            api(roomPath('/pair-code'), { method: 'DELETE' }).catch(() => {});
+            pairExpiresAt = 0;
+            find('pairing').hidden = true;
+            setNotice('syncPairLimited', true);
+        } });
+        const refreshKeys = (session = credentials) => {
+            if (keyRefresh?.session === session) return keyRefresh.promise;
+            const entry = { session };
+            entry.promise = (async () => {
+                for (;;) {
+                    const result = await api(`/v1/spaces/${session.roomId}/key-grants`, {}, session);
+                    if (credentials !== session) return;
+                    for (const grant of result.grants) {
+                        const next = await acceptKeyRotation(session, grant);
+                        session.keyring = next.keyring;
+                        session.trustedDevices = next.trustedDevices;
+                        session.revokedDevices = next.revokedDevices;
+                    }
+                    if (result.grants.length) {
+                        await persistSession(session);
+                        await api(`/v1/spaces/${session.roomId}/key-grants`, { method: 'DELETE', body: JSON.stringify({ through: result.grants.at(-1).id }) }, session);
+                        pairing.reset();
+                        if (pendingUpload && pendingUpload.keyId !== session.keyring.currentKeyId) {
+                            uploadController?.abort(Object.assign(new Error('key_changed'), { code: 'key_changed' }));
+                            discardUpload();
+                        }
+                    }
+                    if (!result.hasMore) break;
+                }
+            })().finally(() => { if (keyRefresh === entry) keyRefresh = null; });
+            keyRefresh = entry;
+            return entry.promise;
         };
         const roomPath = (suffix = '') => `/v1/spaces/${credentials.roomId}${suffix}`;
         const draftKey = () => `portfolio-sync-draft:${credentials.roomId}`;
         const saveDraft = () => {
             if (!credentials) return;
+            const session = credentials;
+            const revision = ++draftRevision;
             const upload = pendingUpload && {
                 clientId: pendingUpload.clientId, uploadId: pendingUpload.uploadId, text: pendingUpload.text, fingerprint: pendingUpload.fingerprint, receivedBytes: pendingUpload.receivedBytes || 0,
+                encryption: pendingUpload.encryption, encryptedText: pendingUpload.encryptedText, keyId: pendingUpload.keyId,
                 file: { name: pendingUpload.file.name, type: pendingUpload.file.type, size: pendingUpload.file.size, lastModified: pendingUpload.file.lastModified }
             };
-            try { sessionStorage.setItem(draftKey(), JSON.stringify({ text: input.value, pending, upload })); }
-            catch { setNotice('syncStorageError', true); }
+            const key = draftKey();
+            return encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, { text: input.value, pending, upload })
+                .then(encrypted => { if (revision === draftRevision) sessionStorage.setItem(key, encrypted); })
+                .catch(() => { if (credentials === session) setNotice('syncStorageError', true); });
         };
         const formatSize = (bytes) => bytes < 1024 ? `${bytes} B` : bytes < 1024 ** 2 ? `${(bytes / 1024).toFixed(1)} KB` : bytes < 1024 ** 3 ? `${(bytes / 1024 ** 2).toFixed(1)} MB` : `${(bytes / 1024 ** 3).toFixed(1)} GB`;
         const updateSelectedFile = () => {
@@ -202,7 +294,7 @@
             find('file-size').textContent = file ? formatSize(file.size) : '';
             find('upload-status').hidden = !sending || !pendingUpload;
             if (sending && pendingUpload) {
-                const transferred = Math.min(pendingUpload.file.size, (pendingUpload.receivedBytes || 0) + (pendingUpload.inflightBytes || 0));
+                const transferred = Math.min(pendingUpload.file.size, Math.floor((pendingUpload.receivedBytes || 0) / FILE_CIPHER_CHUNK_SIZE) * FILE_PLAIN_CHUNK_SIZE + (pendingUpload.inflightBytes || 0));
                 const percent = pendingUpload.file.size ? Math.floor(transferred / pendingUpload.file.size * 100) : 100;
                 let text = translate(pendingUpload.stage || 'syncUploadProgress', { filename: pendingUpload.file.name, percent });
                 if (pendingUpload.stage === 'syncUploadWaiting') text = translate('syncUploadWaiting', { seconds: Math.max(1, Math.ceil((pendingUpload.retryAt - Date.now()) / 1000)) });
@@ -220,6 +312,11 @@
         };
         const disposeAttachment = (id) => {
             downloadTickets.delete(id);
+            for (const [key, promise] of fileCapabilities) {
+                if (!key.startsWith(`${id}:`)) continue;
+                promise.then(capability => capability.dispose()).catch(() => {});
+                fileCapabilities.delete(key);
+            }
             attachmentPreview.remove(id);
         };
         const previewKind = (attachment) => {
@@ -265,18 +362,36 @@
                 throw Object.assign(new Error('download_unavailable'), { code: response.status === 404 ? 'attachment_expired' : 'download_unavailable' });
             }
         };
+        const encryptedFile = async (message, session, download) => {
+            const key = `${message.id}:${crypto.randomUUID()}`;
+            {
+                const promise = attachmentUrl(message, session)
+                    .then(url => openEncryptedFile({ url, metadata: message.attachment, download }))
+                    .then(capability => {
+                        if (credentials !== session || !messageNodes.has(message.id)) { capability.dispose(); throw new DOMException('Session ended', 'AbortError'); }
+                        const dispose = capability.dispose;
+                        capability.dispose = () => {
+                            dispose();
+                            if (fileCapabilities.get(key) === promise) fileCapabilities.delete(key);
+                        };
+                        capability.closed.then(() => { if (fileCapabilities.get(key) === promise) fileCapabilities.delete(key); });
+                        return capability;
+                    }).catch(error => { if (fileCapabilities.get(key) === promise) fileCapabilities.delete(key); throw error; });
+                fileCapabilities.set(key, promise);
+            }
+            return fileCapabilities.get(key);
+        };
         const downloadAttachment = async (message, button) => {
             const session = credentials;
             button.disabled = true;
             button.dataset.loading = 'true';
             button.textContent = translate('syncDownloading');
             try {
-                const url = await attachmentUrl(message, session);
-                if (credentials !== session || !messageNodes.has(message.id)) return;
+                const capability = await encryptedFile(message, session, true);
+                if (credentials !== session || !messageNodes.has(message.id)) { capability.dispose(); return; }
                 const frame = document.createElement('iframe');
                 frame.hidden = true;
-                frame.setAttribute('sandbox', 'allow-downloads');
-                frame.src = url;
+                frame.src = capability.url;
                 frame.addEventListener('load', () => frame.remove(), { once: true });
                 document.body.append(frame);
                 setTimeout(() => frame.remove(), 10 * 60 * 1000);
@@ -299,12 +414,12 @@
             }
             button.disabled = true;
             try {
-                const url = await attachmentUrl(message, session);
-                if (request !== previewRequest || credentials !== session || !active || !messageNodes.has(message.id)) return;
-                if (!app.classList.contains('is-active')) { setNotice('syncPreviewReady'); return; }
+                const capability = await encryptedFile(message, session, false);
+                if (request !== previewRequest || credentials !== session || !active || !messageNodes.has(message.id)) { capability.dispose(); return; }
+                if (!app.classList.contains('is-active')) { capability.dispose(); setNotice('syncPreviewReady'); return; }
                 attachmentPreview.open({
                     id: message.id, name: message.attachment.name, kind,
-                    url: `${url}?preview=1`
+                    url: capability.url, cleanup: capability.dispose
                 });
             } catch (error) {
                 if (credentials === session && active && messageNodes.has(message.id)) showAttachmentError(error);
@@ -381,7 +496,7 @@
                     }
                     text.append(document.createTextNode(message.text.slice(end)));
                     text.hidden = !message.text;
-                    copy.hidden = !message.text;
+                    copy.hidden = !message.text || message.decryptionFailed;
                     item.append(meta, text);
                     if (message.attachment) {
                         const attachment = document.createElement('div');
@@ -600,13 +715,14 @@
             }
             url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
             const connection = new WebSocket(url, ['sync', `auth.${session.token}`]);
+            let incoming = Promise.resolve();
             let awaitingPong = false;
             let authenticated = false;
             socket = connection;
             connection.addEventListener('open', () => {
                 if (socket === connection) connection.send(JSON.stringify({ type: 'auth', token: session.token }));
             });
-            connection.addEventListener('message', (event) => {
+            const receive = async (event) => {
                 if (socket !== connection) return;
                 if (event.data === 'pong') { awaitingPong = false; return; }
                 let data;
@@ -615,10 +731,13 @@
                     authenticated = true;
                     const initial = deviceId === null;
                     deviceId = data.deviceId;
+                    await refreshKeys(session);
+                    if (data.rekeyRequired) await rotateKeys(null);
+                    if (socket !== connection || credentials !== session) return;
                     retryDelay = 1000;
                     setConnection(true);
-                    showPairing(data.pairing);
-                    receiveHistory(data.messages, initial, data.historyMode, data.history);
+                    await showPairing(data.pairing);
+                    receiveHistory(await Promise.all(data.messages.map(message => decodeMessage(message, session))), initial, data.historyMode, data.history);
                     catchUp(data.history);
                     if (find('search').value.trim()) {
                         clearTimeout(searchTimer);
@@ -626,6 +745,7 @@
                     }
                     if (notice.dataset.i18n === 'syncUnavailable') setNotice('syncJoined');
                     loadDevices();
+                    pairing.resume().catch(error => { if (credentials === session && error.code !== 'invalid_code') showError(error); });
                     clearInterval(pingTimer);
                     pingTimer = setInterval(() => {
                         if (awaitingPong) connection.close();
@@ -634,9 +754,12 @@
                             connection.send('ping');
                         }
                     }, 30000);
-                } else if (data.type === 'message') addMessage(data.message, data.history);
-                else if (data.type === 'pairing') showPairing(data.pairing);
-                else if (data.type === 'history') receiveHistory(data.messages, false, data.historyMode, data.history);
+                } else if (data.type === 'message') addMessage(await decodeMessage(data.message, session), data.history);
+                else if (data.type === 'pairing') await showPairing(data.pairing);
+                else if (data.type === 'pair-request' || data.type === 'pair-finish') await pairing.handle(data);
+                else if (data.type === 'key-rotation') { await refreshKeys(session); await loadDevices(); }
+                else if (data.type === 'rekey-required') await rotateKeys(null);
+                else if (data.type === 'history') receiveHistory(await Promise.all(data.messages.map(message => decodeMessage(message, session))), false, data.historyMode, data.history);
                 else if (data.type === 'devices') loadDevices();
                 else if (data.type === 'cleared') {
                     uploadController?.abort(Object.assign(new Error('history_cleared'), { code: 'history_cleared' }));
@@ -646,6 +769,11 @@
                     receiveHistory([], false, 'replace', data.history);
                     setNotice('syncCleared');
                 }
+            };
+            connection.addEventListener('message', event => {
+                incoming = incoming.then(() => receive(event)).catch(error => {
+                    if (credentials === session && socket === connection && error.code !== 'invalid_code') showError(error);
+                });
             });
             connection.addEventListener('close', async (event) => {
                 if (socket !== connection) return;
@@ -674,21 +802,27 @@
                 if (credentials === session) retry();
             });
         };
-        const showPairing = (pairing) => {
-            pairingRevision++;
-            pairExpiresAt = pairing?.expiresAt || 0;
-            find('pairing').hidden = !pairing;
-            find('pair-code').textContent = pairing?.code || '';
+        const showPairing = async (value) => {
+            const revision = ++pairingRevision;
+            const session = credentials;
+            const offer = await pairing.readOffer(value, session);
+            if (revision !== pairingRevision || session !== credentials) return;
+            pairExpiresAt = offer?.expiresAt || 0;
+            find('pairing').hidden = !offer;
+            find('pair-code').textContent = offer?.code || '';
             startCountdowns();
         };
         const savedSession = () => {
             const saved = JSON.parse(localStorage.getItem(CREDENTIAL_KEY) || 'null');
-            return typeof saved?.roomId === 'string' && typeof saved?.token === 'string' ? saved : null;
+            return typeof saved?.roomId === 'string' && typeof saved?.token === 'string' && typeof saved?.vaultId === 'string' ? saved : null;
         };
-        const sameSession = (a, b) => a?.roomId === b?.roomId && a?.token === b?.token;
+        const sameSession = (a, b) => a?.roomId === b?.roomId && a?.token === b?.token && a?.revision === b?.revision;
         const reset = (forget = true) => {
             previewRequest++;
             downloadTickets.clear();
+            fileCapabilities.forEach(promise => promise.then(capability => capability.dispose()).catch(() => {}));
+            fileCapabilities.clear();
+            pairing.reset();
             attachmentPreview.close();
             if (confirmation.open) confirmation.close();
             if (devicesDialog.open) devicesDialog.close();
@@ -698,6 +832,7 @@
             if (forget) {
                 try { if (sameSession(savedSession(), credentials)) localStorage.removeItem(CREDENTIAL_KEY); }
                 catch { /* Storage may be blocked. */ }
+                if (credentials?.vaultId) deleteLocalSession(credentials.vaultId).catch(() => {});
             }
             sessionVersion++;
             credentials = null;
@@ -737,28 +872,37 @@
             updateSelectedFile();
             updateCountdowns();
         };
-        const enter = (session) => {
+        const enter = async (session) => {
             saveDraft();
             reset(false);
-            credentials = { roomId: session.roomId, token: session.token };
+            credentials = session;
             setup.hidden = true;
             room.hidden = false;
             try {
-                const draft = JSON.parse(sessionStorage.getItem(draftKey()) || 'null');
+                const encrypted = sessionStorage.getItem(draftKey());
+                const draft = encrypted ? await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted) : null;
+                if (credentials !== session) return;
                 input.value = draft?.text || '';
                 pending = draft?.pending || null;
                 pendingUpload = draft?.upload || null;
+                if (pendingUpload?.keyId !== session.keyring.currentKeyId) pendingUpload = null;
             } catch { input.value = ''; pending = null; pendingUpload = null; }
             showPairing(session.pairing);
             render();
             updateSelectedFile();
             connect();
         };
-        const reconcileSession = () => {
+        const reconcileSession = async () => {
             try {
                 const saved = savedSession();
                 if (!sameSession(saved, credentials)) {
-                    if (saved) { enter(saved); setNotice(pendingUpload ? 'syncUploadRestored' : 'syncJoined'); }
+                    if (saved) {
+                        const version = sessionVersion;
+                        const session = await loadLocalSession(saved);
+                        if (version !== sessionVersion) return;
+                        await enter({ ...session, revision: saved.revision });
+                        setNotice(pendingUpload ? 'syncUploadRestored' : 'syncJoined');
+                    }
                     else { saveDraft(); reset(false); setNotice('syncReady'); }
                 }
             } catch { setNotice('syncStorageError', true); }
@@ -828,7 +972,9 @@
             try {
                 const result = await api(roomPath('/devices'));
                 if (credentials !== session || request !== deviceRequest) return false;
-                devices = result.devices;
+                devices = result.devices.filter(device => session.trustedDevices[device.deviceId]
+                    && !session.revokedDevices.includes(device.deviceId)
+                    && session.trustedDevices[device.deviceId] === device.publicKey);
                 deviceId = result.deviceId;
                 renderDevices();
                 render();
@@ -874,7 +1020,7 @@
         document.querySelectorAll('[data-open-sync-space]').forEach((button) => button.addEventListener('click', entry.show));
         const pair = async (path, body, action) => {
             if (busy || sending || secondsLeft(cooldowns[action])) return;
-            const version = sessionVersion;
+            let version = sessionVersion;
             busy = true;
             updateControls();
             setNotice(action === 'create' ? 'syncCreating' : 'syncJoining');
@@ -883,10 +1029,21 @@
                 const previous = localStorage.getItem(CREDENTIAL_KEY);
                 if (previous !== null) localStorage.setItem(CREDENTIAL_KEY, previous);
                 else { localStorage.setItem(CREDENTIAL_KEY, 'null'); localStorage.removeItem(CREDENTIAL_KEY); }
-                const session = await api(path, { method: 'POST', body: JSON.stringify(body) }, null);
+                let session;
+                if (action === 'create') {
+                    const [keyring, identity] = await Promise.all([createKeyring(), createDeviceIdentity()]);
+                    session = { ...await api(path, { method: 'POST', body: JSON.stringify({ keyId: keyring.currentKeyId }) }, null), keyring, identity, trustedDevices: {}, revokedDevices: [] };
+                    session.trustedDevices[session.deviceId] = identity.publicKey;
+                    const name = await encryptPayload(keyring, session.roomId, `device:${session.deviceId}`, { name: '', publicKey: identity.publicKey });
+                    await api(`/v1/spaces/${session.roomId}/devices/${session.deviceId}`, { method: 'PATCH', body: JSON.stringify({ name }) }, session);
+                } else session = await pairing.join(body.code);
                 if (version !== sessionVersion) return;
-                localStorage.setItem(CREDENTIAL_KEY, JSON.stringify({ roomId: session.roomId, token: session.token }));
-                enter(session);
+                await persistSession(session);
+                await enter(session);
+                version = sessionVersion;
+                busy = true;
+                updateControls();
+                if (action === 'create') await showPairing(await pairing.createOffer());
                 setNotice(action === 'create' ? 'syncPaired' : 'syncJoined');
                 input.focus({ preventScroll: true });
             } catch (error) {
@@ -909,9 +1066,9 @@
             busy = true;
             updateControls();
             try {
-                const pairing = await api(roomPath('/pair-code'), { method: 'POST' });
+                const offer = await pairing.createOffer();
                 if (credentials !== session) return;
-                if (pairingRevision === revision) showPairing(pairing);
+                if (pairingRevision === revision) await showPairing(offer);
                 if (secondsLeft(pairExpiresAt)) setNotice('syncPaired');
             } catch (error) { if (credentials === session) showError(error, 'pair'); }
             finally { if (credentials === session) { busy = false; updateControls(); } }
@@ -971,17 +1128,20 @@
             });
             controller.signal.throwIfAborted();
             if (upload.fingerprint && upload.fingerprint !== fingerprint) throw Object.assign(new Error('upload_conflict'), { code: 'upload_conflict' });
-            if (!upload.fingerprint && upload.uploadId) {
-                api(`${path}/${upload.uploadId}`, { method: 'DELETE' }, session).catch(() => {});
-                upload.clientId = crypto.randomUUID();
-                upload.uploadId = null;
-                upload.receivedBytes = 0;
-            }
             upload.fingerprint = fingerprint;
+            upload.encryption ||= createFileMetadata(upload.file);
+            if (!upload.encryptedText || upload.keyId !== session.keyring.currentKeyId) {
+                const keyring = session.keyring;
+                upload.encryptedText = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${upload.clientId}`, { text: upload.text, attachment: upload.encryption });
+                upload.keyId = keyring.currentKeyId;
+            }
+            const wireSize = upload.file.size + Math.ceil(upload.file.size / FILE_PLAIN_CHUNK_SIZE) * 16;
+            const wireFingerprint = await keyedFingerprint(upload.encryption, fingerprint);
             saveDraft();
             const result = await request(path, {
                 method: 'POST',
-                body: JSON.stringify({ clientId: upload.clientId, name: upload.file.name, type: upload.file.type || 'application/octet-stream', size: upload.file.size, text: upload.text, fingerprint })
+                headers: { 'X-Sync-Key-Id': upload.keyId },
+                body: JSON.stringify({ clientId: upload.clientId, name: upload.encryption.fileId, type: 'application/octet-stream', size: wireSize, text: upload.encryptedText, fingerprint: wireFingerprint })
             }, 30000);
             if (credentials !== session || controller.signal.aborted || pendingUpload !== upload) return;
             if (result.message) return result.message;
@@ -993,10 +1153,15 @@
             saveDraft();
             upload.stage = 'syncUploadProgress';
             updateSelectedFile();
-            while (upload.receivedBytes < upload.file.size) {
+            if (result.chunkSize !== FILE_CIPHER_CHUNK_SIZE) throw new Error('invalid_chunk_size');
+            while (upload.receivedBytes < wireSize) {
                 const offset = upload.receivedBytes;
-                const chunk = upload.file.slice(offset, Math.min(offset + result.chunkSize, upload.file.size));
-                const received = await request(`${path}/${upload.uploadId}/chunks/${Math.floor(offset / result.chunkSize)}`, {
+                const index = Math.floor(offset / FILE_CIPHER_CHUNK_SIZE);
+                const plainOffset = index * FILE_PLAIN_CHUNK_SIZE;
+                const plaintext = await upload.file.slice(plainOffset, Math.min(plainOffset + FILE_PLAIN_CHUNK_SIZE, upload.file.size)).arrayBuffer();
+                const chunk = await encryptFileChunk(upload.encryption, index, plaintext);
+                controller.signal.throwIfAborted();
+                const received = await request(`${path}/${upload.uploadId}/chunks/${index}`, {
                     method: 'PUT', body: chunk, headers: { 'Content-Type': 'application/octet-stream' },
                     uploadProgress: (bytes) => {
                         if (pendingUpload !== upload || controller.signal.aborted) return;
@@ -1126,7 +1291,13 @@
                     const message = await uploadAttachment(upload, session, controller);
                     if (credentials === session && message && !controller.signal.aborted && pendingUpload === upload) addMessage(message, null, false);
                 } else {
-                    const message = await api(roomPath('/messages'), { method: 'POST', body: JSON.stringify(textDraft) });
+                    if (!textDraft.encrypted || textDraft.keyId !== session.keyring.currentKeyId) {
+                        const keyring = session.keyring;
+                        textDraft.encrypted = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${textDraft.clientId}`, { text });
+                        textDraft.keyId = keyring.currentKeyId;
+                        saveDraft();
+                    }
+                    const message = await api(roomPath('/messages'), { method: 'POST', headers: { 'X-Sync-Key-Id': textDraft.keyId }, body: JSON.stringify({ clientId: textDraft.clientId, text: textDraft.encrypted }) });
                     if (credentials === session) addMessage(message, null, false);
                 }
                 if (credentials !== session) return;
@@ -1253,7 +1424,10 @@
             busy = true;
             updateControls();
             try {
-                await api(roomPath(`/devices/${target}`), { method: 'PATCH', body: JSON.stringify({ name: text }) });
+                const profile = devices.find(device => device.deviceId === target);
+                const keyring = session.keyring;
+                const encryptedName = await encryptPayload(keyring, session.roomId, `device:${target}`, { name: text.trim(), publicKey: profile.publicKey });
+                await api(roomPath(`/devices/${target}`), { method: 'PATCH', headers: { 'X-Sync-Key-Id': keyring.currentKeyId }, body: JSON.stringify({ name: encryptedName }) });
                 if (credentials !== session) return;
                 if (name.value === text) { name.value = text.trim(); name.dataset.saved = text.trim(); }
                 const loaded = await loadDevices();
@@ -1261,6 +1435,27 @@
             } catch (error) { if (credentials === session) showError(error); }
             finally { if (credentials === session) { busy = false; updateControls(); } }
         });
+        const rotateKeys = (removedDeviceId) => {
+            if (rotationTask?.session === credentials) return rotationTask.promise;
+            const session = credentials;
+            const task = { session };
+            task.promise = (async () => {
+                await refreshKeys(session);
+                if (credentials !== session) return;
+                const result = await api(`/v1/spaces/${session.roomId}/devices`, {}, session);
+                if (credentials !== session) return;
+                const remaining = result.devices.filter(device => device.deviceId !== removedDeviceId
+                    && !session.revokedDevices.includes(device.deviceId)
+                    && session.trustedDevices[device.deviceId] === device.publicKey);
+                const { rotationId, previousKeyId, newKeyId, grants } = await createKeyRotation(session, remaining);
+                try {
+                    await api(roomPath('/key-rotation'), { method: 'POST', headers: { 'X-Sync-Key-Id': previousKeyId }, body: JSON.stringify({ rotationId, removedDeviceId, newKeyId, grants }) }, session);
+                } catch (error) { if (error.code !== 'key_changed') throw error; }
+                if (credentials === session) await refreshKeys(session);
+            })().finally(() => { if (rotationTask === task) rotationTask = null; });
+            rotationTask = task;
+            return task.promise;
+        };
         find('confirm-accept').addEventListener('click', async () => {
             if (busy || sending || !credentials) return;
             const action = confirmation.dataset.action;
@@ -1272,8 +1467,12 @@
             updateControls();
             const focusAtRequest = document.activeElement;
             try {
-                const suffix = action === 'clear' ? '/messages' : action === 'remove' ? `/devices/${target}` : '/device';
-                await api(roomPath(suffix), { method: 'DELETE' });
+                if (action === 'clear') await api(roomPath('/messages'), { method: 'DELETE' });
+                else {
+                    const removedDeviceId = action === 'remove' ? target : session.deviceId;
+                    if (removedDeviceId === session.deviceId) await api(roomPath('/device'), { method: 'DELETE' });
+                    else await rotateKeys(removedDeviceId);
+                }
                 if (credentials !== session) return;
                 if (action === 'clear') {
                     setNotice('syncCleared');

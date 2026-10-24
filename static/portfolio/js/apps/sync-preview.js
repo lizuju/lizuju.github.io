@@ -28,6 +28,7 @@ import { PreviewZoom } from './preview-zoom.js';
             });
             previous.pdfTask?.destroy().catch(() => {});
             previous.cleanup?.();
+            previous.release?.();
             if (previous.imageUrl) URL.revokeObjectURL(previous.imageUrl);
             body.querySelector('img')?.removeAttribute('src');
             const video = body.querySelector('video');
@@ -140,9 +141,13 @@ import { PreviewZoom } from './preview-zoom.js';
             setStatus('syncPreviewPdfPages', { count: state.pdf.numPages });
         };
         const open = async (file) => {
-            if (current?.id === file.id && !current.failed) { entry.show(); return; }
+            if (current?.id === file.id && !current.failed) {
+                if (file.cleanup !== current.release) file.cleanup?.();
+                entry.show();
+                return;
+            }
             dispose();
-            const state = { ...file, controller: new AbortController() };
+            const state = { ...file, release: file.cleanup, cleanup: null, controller: new AbortController() };
             current = state;
             zoom.reset();
             find('title').textContent = file.name;

@@ -6,7 +6,8 @@ const MESSAGE_LIFETIME = 5 * 24 * 60 * 60 * 1000;
 const STORAGE_HIGH_WATER = 4_700_000_000;
 const STORAGE_CLEANUP_BYTES = 3_000_000_000;
 const MESSAGE_WRITE_HEADROOM = 128 * 1024;
-const FILE_SIZE_LIMIT = 2 * 1024 * 1024 * 1024;
+const FILE_PLAINTEXT_LIMIT = 2 * 1024 * 1024 * 1024;
+const FILE_SIZE_LIMIT = FILE_PLAINTEXT_LIMIT + Math.ceil(FILE_PLAINTEXT_LIMIT / (8 * 1024 * 1024 - 16)) * 16;
 const FILE_CHUNK_SIZE = 8 * 1024 * 1024;
 const FILE_SHARD_SIZE = 64 * 1024 * 1024;
 const BLOB_CHUNK_SIZE = 1024 * 1024;
@@ -14,6 +15,8 @@ const UPLOAD_LIFETIME = 24 * 60 * 60 * 1000;
 const DOWNLOAD_LIFETIME = 24 * 60 * 60 * 1000;
 const ROOM_IDLE_LIFETIME = 30 * 24 * 60 * 60 * 1000;
 const ACTIVITY_WRITE_INTERVAL = 60 * 60 * 1000;
+const PAIR_CANDIDATE_LIMIT = 5;
+const PAIR_REQUEST_LIMIT = 100;
 const ROOM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function json(data, status = 200, headers = {}) {
@@ -26,6 +29,29 @@ function json(data, status = 200, headers = {}) {
 async function hash(value) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function encrypted(value, maximum = 65536, prefix = 'e2ee1') {
+  return typeof value === 'string' && value.length >= 64 && value.length <= maximum && value.startsWith(`${prefix}.`) && /^[A-Za-z0-9_-]+$/.test(value.slice(prefix.length + 1));
+}
+
+function envelopeKey(value) {
+  if (!encrypted(value, 262144)) return null;
+  try {
+    const encoded = value.slice(6).replace(/-/g, '+').replace(/_/g, '/');
+    const parsed = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded), character => character.charCodeAt(0))));
+    return ROOM_ID.test(parsed.keyId) ? parsed.keyId : null;
+  } catch { return null; }
+}
+
+function rotationFields(value) {
+  return ROOM_ID.test(value.rotationId) && ROOM_ID.test(value.newKeyId) && Array.isArray(value.grants) && value.grants.length > 0 && value.grants.length <= 20
+    && value.grants.every(grant => grant && ROOM_ID.test(grant.deviceId) && encrypted(grant.envelope, 262144))
+    && new Set(value.grants.map(grant => grant.deviceId)).size === value.grants.length;
+}
+
+function relayValue(value) {
+  return typeof value === 'string' && value.length >= 16 && value.length <= 8192 && /^[A-Za-z0-9+/=_-]+$/.test(value);
 }
 
 function credential() {
@@ -115,7 +141,7 @@ export default {
     const corsHeaders = {
       'Vary': 'Origin',
       'Access-Control-Allow-Methods': 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range, If-Range',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range, If-Range, X-Sync-Key-Id',
       'Access-Control-Expose-Headers': 'Retry-After, Content-Disposition, Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified',
       'Access-Control-Max-Age': '86400'
     };
@@ -142,7 +168,7 @@ export default {
   async route(request, env) {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/health') {
-      return json({ ok: true, service: 'portfolio-sync', apiVersion: 1, revision: env.RELEASE_REVISION || null, versionId: env.WORKER_VERSION?.id || null });
+      return json({ ok: true, service: 'portfolio-sync', apiVersion: 1, encryptionVersion: 1, revision: env.RELEASE_REVISION || null, versionId: env.WORKER_VERSION?.id || null });
     }
 
     const registry = env.PAIRING_REGISTRY.getByName('registry');
@@ -154,22 +180,43 @@ export default {
       const ipHash = await hash(request.headers.get('CF-Connecting-IP') || 'local');
       const limit = await registry.takeLimit(`create:${ipHash}`, 5, 60 * 60 * 1000);
       if (limit.error) return resultResponse(limit);
-      return resultResponse(await registry.createSpace(), 201);
+      const body = await readJson(request);
+      if (body.error) return resultResponse(body);
+      if (!ROOM_ID.test(body.value.keyId)) return json({ error: 'invalid_key' }, 400);
+      return resultResponse(await registry.createSpace(body.value.keyId), 201);
     }
 
+    if (request.method === 'GET' && url.pathname === '/v1/pair/offers') return json(await registry.publicOffers());
     if (request.method === 'POST' && url.pathname === '/v1/pair') {
       const ipHash = await hash(request.headers.get('CF-Connecting-IP') || 'local');
       const limit = await registry.takeLimit(`pair:${ipHash}`, 5, INVITE_LIFETIME);
       if (limit.error) return resultResponse(limit);
-      const body = await readJson(request);
+      const body = await readJson(request, 32768);
       if (body.error) return resultResponse(body);
-      if (typeof body.value.code !== 'string' || !/^\d{4}$/.test(body.value.code)) {
-        return json({ error: 'invalid_code' }, 400);
+      const { requestId, requestToken, requests } = body.value;
+      if (Object.keys(body.value).some(key => !['requestId', 'requestToken', 'requests'].includes(key)) || !ROOM_ID.test(requestId) || !/^[0-9a-f]{64}$/.test(requestToken)
+          || !Array.isArray(requests) || !requests.length || requests.length > PAIR_CANDIDATE_LIMIT
+          || requests.some(value => !value || Object.keys(value).some(key => !['offerId', 'startLoginRequest'].includes(key)) || !ROOM_ID.test(value.offerId) || !relayValue(value.startLoginRequest))
+          || new Set(requests.map(value => value.offerId)).size !== requests.length) return json({ error: 'invalid_pairing' }, 400);
+      return resultResponse(await registry.startPairing(requestId, requestToken, requests), 202);
+    }
+    const pairingRequest = url.pathname.match(/^\/v1\/pair\/([^/]+)$/);
+    if (pairingRequest && ROOM_ID.test(pairingRequest[1])) {
+      const token = request.headers.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
+      if (!token) return json({ error: 'unauthorized' }, 401);
+      if (request.method === 'GET') return resultResponse(await registry.readPairing(pairingRequest[1], token));
+      if (request.method === 'DELETE') return resultResponse(await registry.cancelPairing(pairingRequest[1], token));
+      if (request.method === 'POST') {
+        const body = await readJson(request, 8 * 1024 * 1024);
+        if (body.error) return resultResponse(body);
+        const { offerId, finishLoginRequest, clientData } = body.value;
+        if (Object.keys(body.value).some(key => !['offerId', 'finishLoginRequest', 'clientData'].includes(key)) || !ROOM_ID.test(offerId) || !relayValue(finishLoginRequest) || !encrypted(clientData, 262144, 'pair1')) return json({ error: 'invalid_pairing' }, 400);
+        return resultResponse(await registry.finishPairing(pairingRequest[1], token, offerId, finishLoginRequest, clientData));
       }
-      return resultResponse(await registry.joinSpace(body.value.code));
+      return json({ error: 'not_found' }, 404);
     }
 
-    const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/pair-code|\/messages|\/socket|\/device|\/devices(?:\/([^/]+))?|\/files(?:\/.*)?|\/downloads\/[0-9a-f]{64})?$/);
+    const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/key-rotation|\/key-grants|\/pair-code|\/pair-challenge|\/pair-accept|\/pair-requests|\/messages|\/socket|\/device|\/devices(?:\/([^/]+))?|\/files(?:\/.*)?|\/downloads\/[0-9a-f]{64})?$/);
     if (!match || !ROOM_ID.test(match[1]) || (match[3] && !ROOM_ID.test(match[3]))) return json({ error: 'not_found' }, 404);
     const roomId = match[1];
     if (!await registry.hasRoom(roomId)) return json({ error: 'not_found' }, 404);
@@ -189,20 +236,38 @@ export default {
     const token = request.headers.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
     const deviceId = token ? await room.authorize(token) : null;
     if (!deviceId) return json({ error: 'unauthorized' }, 401);
+    const keyId = request.headers.get('X-Sync-Key-Id');
+    if (request.method === 'GET' && match[2] === '/key-grants') return resultResponse(await room.keyGrants(deviceId, keyId));
+    if (request.method === 'DELETE' && match[2] === '/key-grants') {
+      const body = await readJson(request);
+      if (body.error) return resultResponse(body);
+      if (!Number.isSafeInteger(body.value.through) || body.value.through < 1) return json({ error: 'invalid_cursor' }, 400);
+      return resultResponse(await room.ackKeyGrants(deviceId, body.value.through));
+    }
+    if (request.method === 'POST' && match[2] === '/key-rotation') {
+      const body = await readJson(request, 8 * 1024 * 1024);
+      if (body.error) return resultResponse(body);
+      if (!rotationFields(body.value) || !(body.value.removedDeviceId === null || ROOM_ID.test(body.value.removedDeviceId))) return json({ error: 'invalid_rotation' }, 400);
+      return resultResponse(await registry.rotateKeys(roomId, deviceId, keyId, body.value));
+    }
+    const guarded = (request.method === 'POST' && ['/messages', '/files/uploads', '/pair-code', '/pair-challenge'].includes(match[2]))
+      || (request.method === 'PATCH' && match[3]) || (['PUT', 'POST'].includes(request.method) && match[2]?.startsWith('/files/uploads/'));
+    if (guarded) {
+      const state = await room.checkWrite(keyId);
+      if (state.error) return resultResponse(state);
+    }
 
     if (request.method === 'POST' && match[2] === '/files/uploads') {
-      const body = await readJson(request, 65536);
+      const body = await readJson(request, 73728);
       if (body.error) return resultResponse(body);
       const file = body.value;
       if (typeof file.clientId !== 'string' || !ROOM_ID.test(file.clientId)) return json({ error: 'invalid_client_id' }, 400);
-      if (typeof file.name !== 'string' || !file.name || file.name.length > 255 || /[\x00-\x1f\x7f/\\]/.test(file.name)) return json({ error: 'invalid_file_name' }, 400);
-      if (typeof file.type !== 'string' || file.type.length > 255 || (file.type && !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(file.type))) return json({ error: 'invalid_file_type' }, 400);
+      if (typeof file.name !== 'string' || !ROOM_ID.test(file.name)) return json({ error: 'invalid_file_name' }, 400);
+      if (file.type !== 'application/octet-stream') return json({ error: 'invalid_file_type' }, 400);
       if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > FILE_SIZE_LIMIT) return json({ error: 'file_too_large' }, 413);
-      if (file.fingerprint !== undefined && (typeof file.fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(file.fingerprint))) return json({ error: 'invalid_fingerprint' }, 400);
-      if (file.text === undefined) file.text = '';
-      if (typeof file.text !== 'string' || file.text.length > 10000) return json({ error: 'invalid_text' }, 400);
-      file.type ||= 'application/octet-stream';
-      const result = await registry.prepareUpload(roomId, deviceId, file);
+      if (typeof file.fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(file.fingerprint)) return json({ error: 'invalid_fingerprint' }, 400);
+      if (!encrypted(file.text)) return json({ error: 'invalid_text' }, 400);
+      const result = await registry.prepareUpload(roomId, deviceId, file, keyId);
       const { created, ...response } = result;
       return resultResponse(response, created ? 201 : 200);
     }
@@ -213,9 +278,9 @@ export default {
         const body = await readBytes(request, FILE_CHUNK_SIZE);
         if (body.error) return resultResponse(body);
         // The complete upload was reserved at initialization; retain that budget until completion or cancellation.
-        return resultResponse(await room.writeFileChunk(deviceId, upload[1], Number(upload[2]), body.bytes));
+        return resultResponse(await room.writeFileChunk(deviceId, upload[1], Number(upload[2]), body.bytes, keyId));
       } else if (request.method === 'POST' && upload[3]) {
-        result = await room.completeUpload(deviceId, upload[1]);
+        result = await room.completeUpload(deviceId, upload[1], keyId);
       } else if (request.method === 'DELETE' && !upload[2] && !upload[3]) {
         result = await room.cancelUpload(deviceId, upload[1]);
       } else return json({ error: 'not_found' }, 404);
@@ -233,10 +298,10 @@ export default {
       return resultResponse(await room.listDevices(deviceId));
     }
     if (request.method === 'PATCH' && match[3]) {
-      const body = await readJson(request);
+      const body = await readJson(request, 8192);
       if (body.error) return resultResponse(body);
-      if (typeof body.value.name !== 'string' || Array.from(body.value.name.trim()).length > 8) return json({ error: 'invalid_name' }, 400);
-      const result = await room.renameDevice(deviceId, match[3], body.value.name.trim());
+      if (!encrypted(body.value.name, 4096)) return json({ error: 'invalid_name' }, 400);
+      const result = await room.renameDevice(deviceId, match[3], body.value.name, keyId);
       await registry.refreshRoom(roomId);
       return resultResponse(result);
     }
@@ -252,10 +317,33 @@ export default {
       return json({ roomId, deviceId, ...info, pairing: await registry.currentInvite(roomId) });
     }
     if (request.method === 'POST' && match[2] === '/pair-code') {
-      const invite = await registry.createInvite(roomId);
+      const body = await readJson(request, 8192);
+      if (body.error) return resultResponse(body);
+      if (Object.keys(body.value).some(key => !['offerId', 'secret'].includes(key)) || !ROOM_ID.test(body.value.offerId) || !encrypted(body.value.secret, 4096)) return json({ error: 'invalid_pairing' }, 400);
+      const invite = await registry.createOffer(roomId, deviceId, body.value.offerId, body.value.secret, keyId);
       if (invite.error) return resultResponse(invite);
       await room.publishPairing(roomId);
       return resultResponse(invite);
+    }
+    if (request.method === 'DELETE' && match[2] === '/pair-code') {
+      const result = await registry.deleteOffer(roomId, deviceId);
+      if (!result.error) await room.publishPairing(roomId);
+      return resultResponse(result);
+    }
+    if (request.method === 'GET' && match[2] === '/pair-requests') return json(await registry.pendingPairings(roomId, deviceId));
+    if (request.method === 'POST' && match[2] === '/pair-challenge') {
+      const body = await readJson(request, 12288);
+      if (body.error) return resultResponse(body);
+      const { requestId, offerId, loginResponse } = body.value;
+      if (!ROOM_ID.test(requestId) || !ROOM_ID.test(offerId) || !relayValue(loginResponse)) return json({ error: 'invalid_pairing' }, 400);
+      return resultResponse(await registry.challengePairing(roomId, deviceId, requestId, offerId, loginResponse));
+    }
+    if (request.method === 'POST' && match[2] === '/pair-accept') {
+      const body = await readJson(request, 8 * 1024 * 1024);
+      if (body.error) return resultResponse(body);
+      const { requestId, offerId, deviceId: joinedId, token: joinedToken, name, grant } = body.value;
+      if (!ROOM_ID.test(requestId) || !ROOM_ID.test(offerId) || !ROOM_ID.test(joinedId) || !/^[0-9a-f]{64}$/.test(joinedToken) || !encrypted(name, 4096) || !encrypted(grant, 262144, 'pair1') || !rotationFields(body.value)) return json({ error: 'invalid_pairing' }, 400);
+      return resultResponse(await registry.acceptPairing(roomId, deviceId, requestId, offerId, joinedId, joinedToken, name, grant, keyId, body.value));
     }
     if (request.method === 'GET' && match[2] === '/messages') {
       const before = url.searchParams.get('before');
@@ -265,12 +353,12 @@ export default {
       return resultResponse(await room.messagePage({ before: before === null ? null : Number(before), after: after === null ? null : Number(after), limit: Number(limit), generation: url.searchParams.get('generation') }));
     }
     if (request.method === 'POST' && match[2] === '/messages') {
-      const body = await readJson(request, 65536);
+      const body = await readJson(request, 73728);
       if (body.error) return resultResponse(body);
       const { clientId, text } = body.value;
       if (typeof clientId !== 'string' || !ROOM_ID.test(clientId)) return json({ error: 'invalid_client_id' }, 400);
-      if (typeof text !== 'string' || !text.trim() || text.length > 10000) return json({ error: 'invalid_text' }, 400);
-      const result = await registry.storeMessage(roomId, deviceId, clientId, text);
+      if (!encrypted(text)) return json({ error: 'invalid_text' }, 400);
+      const result = await registry.storeMessage(roomId, deviceId, clientId, text, keyId);
       if (result.error) return resultResponse(result);
       return json(result.message, result.created ? 201 : 200);
     }
@@ -288,12 +376,14 @@ export default {
   }
 };
 
-export class PairingRegistry extends DurableObject {
+export class E2eePairingRegistry extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
-    this.sql.exec('CREATE TABLE IF NOT EXISTS invites (code TEXT PRIMARY KEY, room_id TEXT NOT NULL UNIQUE, expires_at INTEGER NOT NULL)');
-    this.sql.exec('CREATE INDEX IF NOT EXISTS invites_expiry ON invites(expires_at)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS offers (offer_id TEXT PRIMARY KEY, room_id TEXT NOT NULL UNIQUE, owner_device_id TEXT NOT NULL, secret TEXT NOT NULL, expires_at INTEGER NOT NULL)');
+    this.sql.exec('CREATE INDEX IF NOT EXISTS offers_expiry ON offers(expires_at)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS pair_requests (request_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, selected_offer TEXT, finish_request TEXT, client_data TEXT, grant TEXT, accepted_device TEXT)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS pair_candidates (request_id TEXT NOT NULL, offer_id TEXT NOT NULL, start_request TEXT NOT NULL, challenge TEXT, owner_device_id TEXT NOT NULL, PRIMARY KEY(request_id, offer_id))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL)');
     this.sql.exec('CREATE INDEX IF NOT EXISTS attempts_expiry ON attempts(expires_at)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS room_usage (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL, oldest_at INTEGER, deleting_files INTEGER)');
@@ -360,7 +450,7 @@ export class PairingRegistry extends DurableObject {
     const room = this.env.SYNC_ROOMS.getByName(roomId);
     const usage = await room.maintain(roomId);
     if (usage.oldestAt === null && !this.currentInvite(roomId) && await room.reclaimIfEmpty()) {
-      this.sql.exec('DELETE FROM invites WHERE room_id = ?', roomId);
+      this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
       this.sql.exec('DELETE FROM room_usage WHERE room_id = ?', roomId);
       this.sql.exec('DELETE FROM reservations WHERE room_id = ?', roomId);
       return null;
@@ -391,35 +481,21 @@ export class PairingRegistry extends DurableObject {
     });
   }
 
-  async joinSpace(code) {
-    const invite = this.findInvite(code);
-    if (invite.error) return invite;
-    return this.withRoom(invite.roomId, async () => {
-      if (!this.hasRoom(invite.roomId)) return { error: 'code_expired', status: 404 };
-      const device = await this.env.SYNC_ROOMS.getByName(invite.roomId).addDevice();
-      if (device.error) return device;
-      await this.refreshUsage(invite.roomId);
-      return { roomId: invite.roomId, ...device, pairing: this.currentInvite(invite.roomId) };
-    });
-  }
-
-  async createSpace() {
+  async createSpace(keyId) {
     const roomId = crypto.randomUUID();
     return this.withRoom(roomId, async () => {
       const denied = this.reserveCapacity(roomId, MESSAGE_WRITE_HEADROOM);
       if (denied) { await this.resumeCleanup(); return denied; }
       this.rememberUsage(roomId, { bytes: 0, oldestAt: null, deletingFiles: 0 });
       const room = this.env.SYNC_ROOMS.getByName(roomId);
-      const device = await room.initialize();
+      const device = await room.initialize(keyId);
       await room.maintain(roomId);
       await this.commitUsage(roomId, room);
-      const invite = this.allocateInvite(roomId);
-      if (invite.error) return invite;
-      return { roomId, ...device, ...invite, pairing: invite };
+      return { roomId, ...device, pairing: null, currentKeyId: keyId, encryptionVersion: 1 };
     });
   }
 
-  async storeMessage(roomId, deviceId, clientId, text) {
+  async storeMessage(roomId, deviceId, clientId, text, keyId) {
     return this.withRoom(roomId, async () => {
       if (!this.hasRoom(roomId)) return { error: 'not_found', status: 404 };
       const room = this.env.SYNC_ROOMS.getByName(roomId);
@@ -428,12 +504,12 @@ export class PairingRegistry extends DurableObject {
       if (existing) return existing;
       const denied = this.reserveCapacity(roomId, MESSAGE_WRITE_HEADROOM);
       if (denied) { await this.resumeCleanup(); return denied; }
-      try { return await room.addMessage(deviceId, clientId, text); }
+      try { return await room.addMessage(deviceId, clientId, text, keyId); }
       finally { await this.commitUsage(roomId, room); }
     });
   }
 
-  async prepareUpload(roomId, deviceId, file) {
+  async prepareUpload(roomId, deviceId, file, keyId) {
     return this.withRoom(roomId, async () => {
       if (!this.hasRoom(roomId)) return { error: 'not_found', status: 404 };
       const room = this.env.SYNC_ROOMS.getByName(roomId);
@@ -442,7 +518,7 @@ export class PairingRegistry extends DurableObject {
       if (existing) return existing;
       const denied = this.reserveCapacity(roomId, fileReserve(file.size));
       if (denied) { await this.resumeCleanup(); return denied; }
-      try { return await room.beginUpload(deviceId, file); }
+      try { return await room.beginUpload(deviceId, file, keyId); }
       finally { await this.commitUsage(roomId, room); }
     });
   }
@@ -572,39 +648,163 @@ export class PairingRegistry extends DurableObject {
     return { ok: true };
   }
 
-  createInvite(roomId) {
-    return this.withRoom(roomId, () => this.allocateInvite(roomId));
+  prunePairings() {
+    const now = Date.now();
+    this.sql.exec('DELETE FROM offers WHERE expires_at <= ?', now);
+    this.sql.exec('DELETE FROM pair_candidates WHERE request_id IN (SELECT request_id FROM pair_requests WHERE expires_at <= ?)', now);
+    this.sql.exec('DELETE FROM pair_requests WHERE expires_at <= ?', now);
   }
 
-  allocateInvite(roomId) {
-    if (!this.hasRoom(roomId)) return { error: 'not_found', status: 404 };
-    const existing = this.currentInvite(roomId);
-    if (existing) return existing;
-    const now = Date.now();
-    this.sql.exec('DELETE FROM invites WHERE expires_at <= ?', now);
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 10000).padStart(4, '0');
-      if (this.sql.exec('SELECT 1 FROM invites WHERE code = ?', code).toArray().length) continue;
-      this.sql.exec('DELETE FROM invites WHERE room_id = ?', roomId);
-      const expiresAt = now + INVITE_LIFETIME;
-      this.sql.exec('INSERT INTO invites (code, room_id, expires_at) VALUES (?, ?, ?)', code, roomId, expiresAt);
-      return { code, expiresAt };
-    }
-    return { error: 'codes_busy', status: 503, retryAfter: 60 };
+  publicOffers() {
+    this.prunePairings();
+    return { offers: this.sql.exec('SELECT offer_id AS offerId, expires_at AS expiresAt FROM offers ORDER BY expires_at, offer_id LIMIT ?', PAIR_CANDIDATE_LIMIT).toArray() };
   }
 
   currentInvite(roomId) {
-    return this.sql.exec('SELECT code, expires_at AS expiresAt FROM invites WHERE room_id = ? AND expires_at > ?', roomId, Date.now()).toArray()[0] || null;
+    return this.sql.exec('SELECT offer_id AS offerId, owner_device_id AS ownerDeviceId, secret, expires_at AS expiresAt, expires_at AS revision FROM offers WHERE room_id = ? AND expires_at > ?', roomId, Date.now()).toArray()[0] || null;
   }
 
-  findInvite(code) {
-    const invite = this.sql.exec('SELECT room_id, expires_at FROM invites WHERE code = ?', code).toArray()[0];
-    if (!invite || invite.expires_at <= Date.now()) return { error: 'code_expired', status: 404 };
-    return { roomId: invite.room_id };
+  createOffer(roomId, deviceId, offerId, secret, keyId) {
+    return this.withRoom(roomId, async () => {
+      this.prunePairings();
+      const room = this.env.SYNC_ROOMS.getByName(roomId);
+      const denied = await room.checkWrite(keyId, secret);
+      if (denied.error) return denied;
+      const existing = this.currentInvite(roomId);
+      if (existing && (existing.ownerDeviceId === deviceId || await room.deviceOnline(existing.ownerDeviceId))) return existing;
+      if (!existing && this.sql.exec('SELECT count(*) AS count FROM offers').one().count >= PAIR_CANDIDATE_LIMIT) return { error: 'pairing_busy', status: 503, retryAfter: 60 };
+      this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
+      this.sql.exec('INSERT INTO offers (offer_id, room_id, owner_device_id, secret, expires_at) VALUES (?, ?, ?, ?, ?)', offerId, roomId, deviceId, secret, Date.now() + INVITE_LIFETIME);
+      return this.currentInvite(roomId);
+    });
+  }
+
+  deleteOffer(roomId, deviceId) {
+    const existing = this.currentInvite(roomId);
+    if (existing && existing.ownerDeviceId !== deviceId) return { error: 'unauthorized', status: 403 };
+    this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
+    return { ok: true };
+  }
+
+  async startPairing(requestId, requestToken, requests) {
+    this.prunePairings();
+    const tokenHash = await hash(requestToken);
+    const existing = this.sql.exec('SELECT token_hash FROM pair_requests WHERE request_id = ?', requestId).toArray()[0];
+    if (existing) {
+      if (existing.token_hash !== tokenHash) return { error: 'unauthorized', status: 401 };
+      const candidates = this.sql.exec('SELECT offer_id AS offerId, start_request AS startLoginRequest FROM pair_candidates WHERE request_id = ? ORDER BY offer_id', requestId).toArray();
+      if (JSON.stringify(candidates) !== JSON.stringify([...requests].sort((a, b) => a.offerId.localeCompare(b.offerId)))) return { error: 'pairing_conflict', status: 409 };
+      return { requestId };
+    }
+    if (this.sql.exec('SELECT count(*) AS count FROM pair_requests').one().count >= PAIR_REQUEST_LIMIT) return { error: 'pairing_busy', status: 503, retryAfter: 60 };
+    const offers = requests.map(value => ({ ...value, offer: this.sql.exec('SELECT * FROM offers WHERE offer_id = ? AND expires_at > ?', value.offerId, Date.now()).toArray()[0] }));
+    if (offers.some(value => !value.offer)) return { error: 'code_expired', status: 404 };
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec('INSERT INTO pair_requests (request_id, token_hash, expires_at) VALUES (?, ?, ?)', requestId, tokenHash, Date.now() + INVITE_LIFETIME);
+      for (const value of offers) this.sql.exec('INSERT INTO pair_candidates (request_id, offer_id, start_request, owner_device_id) VALUES (?, ?, ?, ?)', requestId, value.offerId, value.startLoginRequest, value.offer.owner_device_id);
+    });
+    await Promise.all(offers.map(value => this.env.SYNC_ROOMS.getByName(value.offer.room_id).publishToDevice(value.offer.owner_device_id, { type: 'pair-request', requestId, offerId: value.offerId, startLoginRequest: value.startLoginRequest })));
+    return { requestId };
+  }
+
+  async pairRequest(requestId, token) {
+    this.prunePairings();
+    const request = this.sql.exec('SELECT * FROM pair_requests WHERE request_id = ?', requestId).toArray()[0];
+    if (!request) return { error: 'code_expired', status: 404 };
+    if (request.token_hash !== await hash(token)) return { error: 'unauthorized', status: 401 };
+    return request;
+  }
+
+  async readPairing(requestId, token) {
+    const request = await this.pairRequest(requestId, token);
+    if (request.error) return request;
+    if (!request.grant && request.selected_offer) {
+      const offer = this.sql.exec('SELECT room_id FROM offers WHERE offer_id = ?', request.selected_offer).toArray()[0];
+      if (offer) {
+        const accepted = await this.env.SYNC_ROOMS.getByName(offer.room_id).pairingAcceptance(requestId);
+        if (accepted) {
+          request.grant = accepted.grant;
+          this.sql.exec('UPDATE pair_requests SET grant = ?, accepted_device = ? WHERE request_id = ?', accepted.grant, accepted.deviceId, requestId);
+        }
+      }
+    }
+    return { requestId, responses: this.sql.exec('SELECT offer_id AS offerId, challenge AS loginResponse FROM pair_candidates WHERE request_id = ? AND challenge IS NOT NULL', requestId).toArray(), grant: request.grant, offerId: request.selected_offer };
+  }
+
+  async cancelPairing(requestId, token) {
+    const request = await this.pairRequest(requestId, token);
+    if (request.error) return request;
+    this.sql.exec('DELETE FROM pair_candidates WHERE request_id = ?', requestId);
+    this.sql.exec('DELETE FROM pair_requests WHERE request_id = ?', requestId);
+    return { ok: true };
+  }
+
+  async finishPairing(requestId, token, offerId, finishLoginRequest, clientData) {
+    const request = await this.pairRequest(requestId, token);
+    if (request.error) return request;
+    const candidate = this.sql.exec('SELECT * FROM pair_candidates WHERE request_id = ? AND offer_id = ? AND challenge IS NOT NULL', requestId, offerId).toArray()[0];
+    const offer = this.sql.exec('SELECT * FROM offers WHERE offer_id = ? AND expires_at > ?', offerId, Date.now()).toArray()[0];
+    if (!candidate || !offer || offer.owner_device_id !== candidate.owner_device_id) return { error: 'code_expired', status: 404 };
+    if (request.selected_offer && (request.selected_offer !== offerId || request.finish_request !== finishLoginRequest || request.client_data !== clientData)) return { error: 'pairing_conflict', status: 409 };
+    this.sql.exec('UPDATE pair_requests SET selected_offer = ?, finish_request = ?, client_data = ? WHERE request_id = ?', offerId, finishLoginRequest, clientData, requestId);
+    await this.env.SYNC_ROOMS.getByName(offer.room_id).publishToDevice(candidate.owner_device_id, { type: 'pair-finish', requestId, offerId, finishLoginRequest, clientData });
+    return { ok: true, requestId };
+  }
+
+  candidateForOwner(roomId, deviceId, requestId, offerId) {
+    this.prunePairings();
+    const offer = this.sql.exec('SELECT * FROM offers WHERE offer_id = ? AND room_id = ? AND owner_device_id = ? AND expires_at > ?', offerId, roomId, deviceId, Date.now()).toArray()[0];
+    const candidate = this.sql.exec('SELECT * FROM pair_candidates WHERE request_id = ? AND offer_id = ? AND owner_device_id = ?', requestId, offerId, deviceId).toArray()[0];
+    if (!offer || !candidate) return { error: 'code_expired', status: 404 };
+    return candidate;
+  }
+
+  challengePairing(roomId, deviceId, requestId, offerId, loginResponse) {
+    const candidate = this.candidateForOwner(roomId, deviceId, requestId, offerId);
+    if (candidate.error) return candidate;
+    if (candidate.challenge && candidate.challenge !== loginResponse) return { error: 'pairing_conflict', status: 409 };
+    this.sql.exec('UPDATE pair_candidates SET challenge = ? WHERE request_id = ? AND offer_id = ?', loginResponse, requestId, offerId);
+    return { accepted: true };
+  }
+
+  pendingPairings(roomId, deviceId) {
+    this.prunePairings();
+    const rows = this.sql.exec('SELECT r.request_id, r.selected_offer, r.finish_request, r.client_data, c.offer_id, c.start_request FROM pair_candidates c JOIN pair_requests r ON r.request_id = c.request_id JOIN offers o ON o.offer_id = c.offer_id WHERE o.room_id = ? AND c.owner_device_id = ? AND r.grant IS NULL ORDER BY r.expires_at, r.request_id', roomId, deviceId).toArray();
+    return { requests: rows.map(row => row.selected_offer === row.offer_id ? { type: 'pair-finish', requestId: row.request_id, offerId: row.offer_id, finishLoginRequest: row.finish_request, clientData: row.client_data } : { type: 'pair-request', requestId: row.request_id, offerId: row.offer_id, startLoginRequest: row.start_request }) };
+  }
+
+  acceptPairing(roomId, deviceId, requestId, offerId, joinedId, token, name, grant, keyId, rotation) {
+    return this.withRoom(roomId, async () => {
+      const request = this.sql.exec('SELECT * FROM pair_requests WHERE request_id = ? AND expires_at > ?', requestId, Date.now()).toArray()[0];
+      if (request?.grant) return request.accepted_device === joinedId && request.grant === grant ? { ok: true, requestId } : { error: 'pairing_conflict', status: 409 };
+      const candidate = this.candidateForOwner(roomId, deviceId, requestId, offerId);
+      if (candidate.error) return candidate;
+      if (!request || request.selected_offer !== offerId || !request.finish_request || !candidate.challenge) return { error: 'pairing_incomplete', status: 409 };
+      const room = this.env.SYNC_ROOMS.getByName(roomId);
+      const result = await room.admitDevice(deviceId, keyId, { ...rotation, joinedId, tokenHash: await hash(token), name, requestId, grant });
+      if (result.error) return result;
+      this.sql.exec('UPDATE pair_requests SET grant = ?, accepted_device = ? WHERE request_id = ?', grant, joinedId, requestId);
+      this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
+      await room.publishPairing(roomId);
+      await this.commitUsage(roomId, room);
+      return { ok: true, requestId };
+    });
+  }
+
+  rotateKeys(roomId, deviceId, keyId, rotation) {
+    return this.withRoom(roomId, async () => {
+      const room = this.env.SYNC_ROOMS.getByName(roomId);
+      const result = await room.rotateKeys(deviceId, keyId, rotation);
+      if (result.error) return result;
+      this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
+      await room.publishPairing(roomId);
+      await this.commitUsage(roomId, room);
+      return result;
+    });
   }
 }
 
-export class SyncRoom extends DurableObject {
+export class E2eeSyncRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
@@ -634,15 +834,19 @@ export class SyncRoom extends DurableObject {
     if (!fileColumns.some(column => column.name === 'fingerprint')) this.sql.exec('ALTER TABLE files ADD COLUMN fingerprint TEXT');
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_shards (file_id TEXT NOT NULL, shard_index INTEGER NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(file_id, shard_index))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_upload_chunks (file_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, size INTEGER NOT NULL, received INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(file_id, chunk_index))');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS pair_acceptances (request_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, token_hash TEXT NOT NULL, rotation_id TEXT NOT NULL, key_id TEXT NOT NULL, grant TEXT NOT NULL, expires_at INTEGER NOT NULL)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS key_grants (id INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL, rotation_id TEXT NOT NULL, previous_key_id TEXT NOT NULL, new_key_id TEXT NOT NULL, envelope TEXT NOT NULL, UNIQUE(device_id, rotation_id))');
+    this.sql.exec('CREATE INDEX IF NOT EXISTS key_grants_device ON key_grants(device_id, id)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS download_tickets (ticket TEXT PRIMARY KEY, file_id TEXT NOT NULL, device_id TEXT NOT NULL, expires_at INTEGER NOT NULL)');
     this.sql.exec('CREATE INDEX IF NOT EXISTS download_tickets_device_file ON download_tickets(device_id, file_id, expires_at)');
     this.sql.exec("CREATE TRIGGER IF NOT EXISTS delete_message_files AFTER DELETE ON messages BEGIN UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE message_id = OLD.id; END");
     this.initialized = true;
   }
 
-  async initialize() {
+  async initialize(keyId) {
     this.initializeStorage();
     this.sql.exec('INSERT INTO metadata (key, value) VALUES (?, ?)', 'createdAt', String(Date.now()));
+    this.sql.exec('INSERT INTO metadata (key, value) VALUES (?, ?)', 'currentKeyId', keyId);
     return this.addDevice();
   }
 
@@ -654,6 +858,106 @@ export class SyncRoom extends DurableObject {
     this.touchActivity();
     this.broadcast({ type: 'devices' });
     return { token, deviceId };
+  }
+
+  keyState() {
+    if (!this.initialized) return { currentKeyId: null, rekeyRequired: false };
+    return { currentKeyId: this.sql.exec("SELECT value FROM metadata WHERE key = 'currentKeyId'").toArray()[0]?.value || null,
+      rekeyRequired: this.sql.exec("SELECT value FROM metadata WHERE key = 'rekeyRequired'").toArray()[0]?.value === '1' };
+  }
+
+  checkWrite(keyId, envelope = null, allowRekey = false) {
+    const state = this.keyState();
+    if (!keyId || keyId !== state.currentKeyId) return { error: 'key_changed', status: 409 };
+    if (state.rekeyRequired && !allowRekey) return { error: 'rekey_required', status: 409 };
+    if (envelope !== null && envelopeKey(envelope) !== state.currentKeyId) return { error: 'key_changed', status: 409 };
+    return { ok: true };
+  }
+
+  deviceOnline(deviceId) {
+    return this.ctx.getWebSockets().some(socket => socket.readyState === WebSocket.OPEN && socket.deserializeAttachment()?.deviceId === deviceId && !socket.deserializeAttachment()?.closing);
+  }
+
+  publishToDevice(deviceId, frame) {
+    for (const socket of this.ctx.getWebSockets()) if (socket.readyState === WebSocket.OPEN && socket.deserializeAttachment()?.deviceId === deviceId && !socket.deserializeAttachment()?.closing) socket.send(JSON.stringify(frame));
+  }
+
+  keyGrants(deviceId, keyId) {
+    const state = this.keyState();
+    if (keyId === state.currentKeyId) return { grants: [], hasMore: false, currentKeyId: state.currentKeyId };
+    const start = this.sql.exec('SELECT id FROM key_grants WHERE device_id = ? AND previous_key_id = ? ORDER BY id LIMIT 1', deviceId, keyId).toArray()[0];
+    if (!start) return { error: 'key_unavailable', status: 409 };
+    const rows = this.sql.exec('SELECT id, rotation_id AS rotationId, envelope FROM key_grants WHERE device_id = ? AND id >= ? ORDER BY id LIMIT 51', deviceId, start.id).toArray();
+    return { grants: rows.slice(0, 50), hasMore: rows.length > 50, currentKeyId: state.currentKeyId };
+  }
+
+  ackKeyGrants(deviceId, through) {
+    this.sql.exec('DELETE FROM key_grants WHERE device_id = ? AND id <= ?', deviceId, through);
+    return { ok: true };
+  }
+
+  validateRotation(deviceId, keyId, rotation, joining = null) {
+    const denied = this.checkWrite(keyId, null, true);
+    if (denied.error) return denied;
+    const members = this.sql.exec('SELECT device_id FROM devices ORDER BY device_id').toArray().map(value => value.device_id);
+    if (!members.includes(deviceId)) return { error: 'unauthorized', status: 401 };
+    if (rotation.newKeyId === keyId) return { error: 'invalid_rotation', status: 400 };
+    if (rotation.removedDeviceId && (!members.includes(rotation.removedDeviceId) || rotation.removedDeviceId === deviceId)) return { error: 'invalid_rotation', status: 400 };
+    const recipients = members.filter(id => id !== rotation.removedDeviceId);
+    if (joining && (members.includes(joining.joinedId) || members.length >= 20 || envelopeKey(joining.name) !== rotation.newKeyId)) return { error: 'invalid_pairing', status: 400 };
+    if (recipients.length !== rotation.grants.length || rotation.grants.some(grant => !recipients.includes(grant.deviceId) || envelopeKey(grant.envelope) !== keyId)) return { error: 'invalid_rotation', status: 400 };
+    if (this.sql.exec('SELECT 1 FROM key_grants WHERE rotation_id = ? LIMIT 1', rotation.rotationId).toArray().length) return { error: 'rotation_conflict', status: 409 };
+    return { ok: true };
+  }
+
+  applyRotation(keyId, rotation) {
+    for (const grant of rotation.grants) this.sql.exec('INSERT INTO key_grants (device_id, rotation_id, previous_key_id, new_key_id, envelope) VALUES (?, ?, ?, ?, ?)', grant.deviceId, rotation.rotationId, keyId, rotation.newKeyId, grant.envelope);
+    this.sql.exec("UPDATE metadata SET value = ? WHERE key = 'currentKeyId'", rotation.newKeyId);
+    this.sql.exec("INSERT INTO metadata (key, value) VALUES ('rekeyRequired', '0') ON CONFLICT(key) DO UPDATE SET value = '0'");
+    this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading'");
+    if (rotation.removedDeviceId) {
+      this.sql.exec('DELETE FROM devices WHERE device_id = ?', rotation.removedDeviceId);
+      this.sql.exec('DELETE FROM key_grants WHERE device_id = ?', rotation.removedDeviceId);
+    }
+  }
+
+  async finishRotation(removedDeviceId) {
+    if (removedDeviceId) for (const socket of this.ctx.getWebSockets()) if (socket.deserializeAttachment()?.deviceId === removedDeviceId) { socket.serializeAttachment({ closing: true }); socket.close(4001, 'Device removed'); }
+    this.broadcast({ type: 'key-rotation' });
+    this.broadcast({ type: 'devices' });
+    await this.scheduleAlarm();
+  }
+
+  async rotateKeys(deviceId, keyId, rotation) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const denied = this.validateRotation(deviceId, keyId, rotation);
+      if (denied.error) return denied;
+      this.ctx.storage.transactionSync(() => this.applyRotation(keyId, rotation));
+      await this.finishRotation(rotation.removedDeviceId);
+      return { ok: true, currentKeyId: rotation.newKeyId };
+    });
+  }
+
+  pairingAcceptance(requestId) {
+    return this.sql.exec('SELECT device_id AS deviceId, grant FROM pair_acceptances WHERE request_id = ? AND expires_at > ?', requestId, Date.now()).toArray()[0] || null;
+  }
+
+  async admitDevice(deviceId, keyId, admission) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      this.sql.exec('DELETE FROM pair_acceptances WHERE expires_at <= ?', Date.now());
+      const accepted = this.sql.exec('SELECT * FROM pair_acceptances WHERE request_id = ?', admission.requestId).toArray()[0];
+      if (accepted) return accepted.device_id === admission.joinedId && accepted.token_hash === admission.tokenHash && accepted.rotation_id === admission.rotationId && accepted.key_id === admission.newKeyId && accepted.grant === admission.grant ? { ok: true, currentKeyId: accepted.key_id } : { error: 'pairing_conflict', status: 409 };
+      const rotation = { ...admission, removedDeviceId: null };
+      const denied = this.validateRotation(deviceId, keyId, rotation, admission);
+      if (denied.error) return denied;
+      this.ctx.storage.transactionSync(() => {
+        this.applyRotation(keyId, rotation);
+        this.sql.exec('INSERT INTO devices (token_hash, device_id, created_at, name) VALUES (?, ?, ?, ?)', admission.tokenHash, admission.joinedId, Date.now(), admission.name);
+        this.sql.exec('INSERT INTO pair_acceptances (request_id, device_id, token_hash, rotation_id, key_id, grant, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)', admission.requestId, admission.joinedId, admission.tokenHash, admission.rotationId, admission.newKeyId, admission.grant, Date.now() + INVITE_LIFETIME);
+      });
+      await this.finishRotation(null);
+      return { ok: true, currentKeyId: admission.newKeyId };
+    });
   }
 
   async authorize(token) {
@@ -681,7 +985,9 @@ export class SyncRoom extends DurableObject {
     };
   }
 
-  renameDevice(deviceId, targetDeviceId, name) {
+  renameDevice(deviceId, targetDeviceId, name, keyId) {
+    const denied = this.checkWrite(keyId, name);
+    if (denied.error) return denied;
     if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) {
       return { error: 'unauthorized', status: 401 };
     }
@@ -695,6 +1001,8 @@ export class SyncRoom extends DurableObject {
   info() {
     if (!this.initialized) return null;
     return {
+      ...this.keyState(),
+      encryptionVersion: 1,
       createdAt: Number(this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'createdAt').one().value),
       ...this.messagePage()
     };
@@ -851,7 +1159,9 @@ export class SyncRoom extends DurableObject {
     file.received_chunks = progress.count;
   }
 
-  async beginUpload(deviceId, file) {
+  async beginUpload(deviceId, file, keyId) {
+    const denied = this.checkWrite(keyId, file.text);
+    if (denied.error) return denied;
     const existing = this.uploadInfo(deviceId, file.clientId, file) || this.findMessage(deviceId, file.clientId);
     if (existing) return existing;
     const uploadId = crypto.randomUUID();
@@ -860,9 +1170,11 @@ export class SyncRoom extends DurableObject {
     return { uploadId, chunkSize: FILE_CHUNK_SIZE, receivedBytes: 0, created: true };
   }
 
-  async writeFileChunk(deviceId, uploadId, index, bytes) {
+  async writeFileChunk(deviceId, uploadId, index, bytes, keyId) {
     return this.ctx.blockConcurrencyWhile(async () => {
       if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+      const denied = this.checkWrite(keyId);
+      if (denied.error) return denied;
       const file = this.sql.exec("SELECT * FROM files WHERE file_id = ? AND device_id = ? AND status = 'uploading'", uploadId, deviceId).toArray()[0];
       if (!file || file.updated_at + UPLOAD_LIFETIME <= Date.now()) return { error: 'not_found', status: 404 };
       const count = Math.ceil(file.size / FILE_CHUNK_SIZE);
@@ -896,9 +1208,11 @@ export class SyncRoom extends DurableObject {
     });
   }
 
-  async completeUpload(deviceId, uploadId) {
+  async completeUpload(deviceId, uploadId, keyId) {
     return this.ctx.blockConcurrencyWhile(async () => {
       if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+      const denied = this.checkWrite(keyId);
+      if (denied.error) return denied;
       const file = this.sql.exec('SELECT * FROM files WHERE file_id = ? AND device_id = ?', uploadId, deviceId).toArray()[0];
       if (!file || file.status === 'deleting' || (file.status === 'uploading' && file.updated_at + UPLOAD_LIFETIME <= Date.now())) return { error: 'not_found', status: 404 };
       const existing = this.findMessage(deviceId, file.client_id);
@@ -961,7 +1275,9 @@ export class SyncRoom extends DurableObject {
     return { ticket, expiresAt };
   }
 
-  async addMessage(deviceId, clientId, text) {
+  async addMessage(deviceId, clientId, text, keyId) {
+    const denied = this.checkWrite(keyId, text);
+    if (denied.error) return denied;
     const existing = this.findMessage(deviceId, clientId);
     if (existing) return existing;
     const message = this.sql.exec(
@@ -997,6 +1313,11 @@ export class SyncRoom extends DurableObject {
       if (socket.deserializeAttachment()?.deviceId !== deviceId) continue;
       socket.serializeAttachment({ closing: true });
       socket.close(4001, 'Device disconnected');
+    }
+    this.sql.exec('DELETE FROM key_grants WHERE device_id = ?', deviceId);
+    if (this.sql.exec('SELECT 1 FROM devices LIMIT 1').toArray().length) {
+      this.sql.exec("INSERT INTO metadata (key, value) VALUES ('rekeyRequired', '1') ON CONFLICT(key) DO UPDATE SET value = '1'");
+      this.broadcast({ type: 'rekey-required' });
     }
     this.broadcast({ type: 'devices' });
     return { ok: true };
@@ -1045,11 +1366,9 @@ export class SyncRoom extends DurableObject {
       if (!deviceId || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return json({ error: 'unauthorized' }, 401);
       if (!file || !this.sql.exec('SELECT 1 FROM messages WHERE id = ?', file.message_id).toArray().length || file.created_at + MESSAGE_LIFETIME <= Date.now()) return json({ error: 'not_found' }, 404);
       this.touchActivity();
-      const filename = encodeURIComponent(file.name).replace(/['()*]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
-      const inline = ticketMatch && url.searchParams.get('preview') === '1' && ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'video/ogg', 'application/pdf'].includes(file.type.toLowerCase());
       const headers = {
-        'Content-Type': inline ? file.type.toLowerCase() : 'application/octet-stream', 'Content-Length': String(file.size),
-        'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="download"; filename*=UTF-8''${filename}`,
+        'Content-Type': 'application/octet-stream', 'Content-Length': String(file.size),
+        'Content-Disposition': 'attachment; filename="encrypted-file"',
         'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes',
         'ETag': `"${file.file_id}"`, 'Last-Modified': new Date(file.created_at).toUTCString()
       };
@@ -1181,7 +1500,7 @@ export class SyncRoom extends DurableObject {
       this.pruneExpired();
       this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'roomId', attachment.roomId);
       socket.serializeAttachment({ deviceId });
-      socket.send(JSON.stringify({ type: 'ready', deviceId, ...this.messagePage({ after: attachment.after ?? null, generation: attachment.generation }), pairing }));
+      socket.send(JSON.stringify({ type: 'ready', deviceId, ...this.keyState(), encryptionVersion: 1, ...this.messagePage({ after: attachment.after ?? null, generation: attachment.generation }), pairing }));
       return true;
     });
     await this.scheduleAlarm();
@@ -1234,7 +1553,7 @@ export class SyncRoom extends DurableObject {
   }
 }
 
-export class FileShard extends DurableObject {
+export class E2eeFileShard extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;

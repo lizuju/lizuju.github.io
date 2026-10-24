@@ -32,8 +32,8 @@
     <link rel="preload" as="image" type="image/webp" href="assets/portfolio-hero-960.webp"
         imagesrcset="assets/portfolio-hero-480.webp 480w, assets/portfolio-hero-960.webp 960w, assets/portfolio-hero.webp 1672w"
         imagesizes="(max-width: 560px) calc(100vw - 48px), (max-width: 900px) calc(100vw - 56px), (max-width: 1040px) 620px, calc(42.5vw - 145px)">
-    <link rel="stylesheet" href="css/main.css?v=dbf657cfadab">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=dbf657cfadab">
+    <link rel="stylesheet" href="css/main.css?v=0633bed75703">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=0633bed75703">
 </head>
 
 <body>
@@ -162,6 +162,7 @@
                     <p class="sync-hint" data-i18n="syncPairHint">配对码 10 分钟内有效，请只分享给信任的人。</p>
                 </div>
                 <div class="sync-room" data-sync-room hidden>
+                    <p class="sync-hint" data-i18n="syncEncrypted">消息与附件已端到端加密</p>
                     <div class="sync-room-toolbar">
                         <p class="sync-connection" data-sync-status data-state="connecting" role="status"
                             data-i18n="syncConnecting">正在连接…</p>
@@ -177,6 +178,7 @@
                         </div>
                     </div>
                     <div class="sync-pairing" data-sync-pairing hidden>
+                        <p class="sync-hint" data-i18n="syncPairOnline">配对时请保持原设备在线。</p>
                         <div class="sync-pairing-heading">
                             <span data-i18n="syncPairCodeLabel">在另一台设备输入</span>
                             <code data-sync-pair-code></code>
@@ -331,17 +333,19 @@
             <div class="sync-storage-view" data-sync-storage-view hidden>
                 <div class="sync-storage-body">
                     <button class="sync-button" type="button" data-sync-storage-refresh data-i18n="syncStorageRefresh">刷新</button>
-                    <p data-i18n="syncStorageHint">所有同步空间共用存储，历史最长保留 5 天。</p>
-                    <dl class="sync-storage-metrics" data-sync-storage-metrics hidden></dl>
-                    <p data-i18n="syncStorageSampleHint">健康检查轮换抽样，不代表每个空间和附件均已检查。</p>
-                    <p data-i18n="syncStorageProjectHint">统计仅包含本项目。</p>
-                    <h3 data-i18n="syncDailyTitle">账户每日额度</h3>
-                    <p data-sync-daily-notice></p>
-                    <dl class="sync-storage-metrics" data-sync-daily-metrics hidden></dl>
-                    <p data-sync-daily-checked></p>
-                    <p data-i18n="syncDailyHint">账户内所有项目共用额度。Cloudflare 统计存在延迟与抽样，每日北京时间 08:00 重置。</p>
+                    <div data-sync-storage-details hidden>
+                        <p data-i18n="syncStorageHint">所有同步空间共用存储，历史最长保留 5 天。</p>
+                        <dl class="sync-storage-metrics" data-sync-storage-metrics hidden></dl>
+                        <p data-i18n="syncStorageSampleHint">健康检查轮换抽样，不代表每个空间和附件均已检查。</p>
+                        <p data-i18n="syncStorageProjectHint">统计仅包含本项目。</p>
+                        <h3 data-i18n="syncDailyTitle">账户每日额度</h3>
+                        <p data-sync-daily-notice></p>
+                        <dl class="sync-storage-metrics" data-sync-daily-metrics hidden></dl>
+                        <p data-sync-daily-checked></p>
+                        <p data-i18n="syncDailyHint">账户内所有项目共用额度。Cloudflare 统计存在延迟与抽样，每日北京时间 08:00 重置。</p>
+                    </div>
                 </div>
-                <p class="sync-notice" role="status" aria-live="polite" data-sync-storage-notice data-i18n="syncStorageReady">打开此页面查看联络站存储。</p>
+                <p class="sync-notice" role="status" aria-live="polite" data-sync-storage-notice data-i18n="syncStorageReady">点击刷新查看存储与额度。</p>
             </div>
             <button class="window-resize-handle" type="button" data-control-panel-resize data-i18n-aria="controlPanelResize" aria-label="调整控制面板窗口大小"></button>
         </section>
@@ -518,7 +522,7 @@
                     <div class="hero-actions">
                         <a class="primary-action" href="#experience" data-i18n="heroPrimary">查看工作经历</a>
                         <a class="secondary-action" href="#contact" data-i18n="heroSecondary">联系我</a>
-                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=dbf657cfadab"
+                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=0633bed75703"
                             download="李祖钜简历.pdf" data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                     </div>
                 </div>
@@ -774,7 +778,7 @@
                     </div>
                     <div class="contact-item">
                         <span class="contact-label" data-i18n="contactResume">个人简历</span>
-                        <a href="assets/li-zuju-resume.pdf?v=dbf657cfadab" download="李祖钜简历.pdf"
+                        <a href="assets/li-zuju-resume.pdf?v=0633bed75703" download="李祖钜简历.pdf"
                             data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                         <span class="contact-note" data-i18n="resumeDetails">中文版 · 5 页 · 577 KB</span>
                     </div>
@@ -1733,10 +1737,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=dbf657cfadab"></script>
-    <script src="js/gomoku-game.js?v=dbf657cfadab"></script>
-    <script src="js/content.js?v=dbf657cfadab"></script>
-    <script src="js/main.js?v=dbf657cfadab"></script>
+    <script src="js/gomoku-engine.js?v=0633bed75703"></script>
+    <script src="js/gomoku-game.js?v=0633bed75703"></script>
+    <script src="js/content.js?v=0633bed75703"></script>
+    <script src="js/main.js?v=0633bed75703"></script>
 </body>
 
 </html>

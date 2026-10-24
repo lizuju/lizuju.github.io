@@ -1,16 +1,13 @@
 const { test, expect } = require('@playwright/test');
 
-const roomId = 'c5745baa-931f-4c83-9545-360fa055b57c';
-const deviceId = '5fb30917-af43-4394-8034-0c326c774b78';
-const token = 'a'.repeat(64);
+const { roomId, deviceId, keyId, authorize, message } = require('./fixtures/sync-e2ee.cjs');
 const headers = {
-    'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS', 'Access-Control-Expose-Headers': 'Retry-After'
 };
-const message = (id, text = `Message ${id}`) => ({ id, clientId: `message-${id}`, deviceId, text, createdAt: Date.now() });
 const bounds = (latestId, continuationId = latestId, hasNewer = false) => ({ generation: '1', oldestId: 1, latestId, continuationId, hasNewer });
 const prepare = async (page) => {
-    await page.addInitScript(({ roomId, token }) => localStorage.setItem('portfolio-sync-space', JSON.stringify({ roomId, token })), { roomId, token });
+    await authorize(page);
     await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
 };
 const open = async (page) => {
@@ -21,7 +18,7 @@ const open = async (page) => {
 };
 const routeDefault = (route) => {
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
-    return route.fulfill({ headers, json: { deviceId, devices: [] } });
+    return route.fulfill({ headers, json: { deviceId, devices: [], grants: [], hasMore: false, keyId } });
 };
 
 test('confirms a text send from HTTP before a delayed socket echo and keeps the next draft', async ({ page, isMobile }) => {
@@ -34,7 +31,7 @@ test('confirms a text send from HTTP before a delayed socket echo and keeps the 
         if (route.request().method() === 'OPTIONS') return routeDefault(route);
         if (route.request().url().endsWith('/messages')) {
             const body = route.request().postDataJSON();
-            sent = { ...message(1, body.text), clientId: body.clientId };
+            sent = { id: 1, deviceId, clientId: body.clientId, text: body.text, createdAt: Date.now() };
             await new Promise(resolve => { release = resolve; });
             return route.fulfill({ headers, json: sent });
         }
@@ -167,7 +164,7 @@ test('reports in-flight chunk progress and cancels the active XHR without retryi
         const send = XMLHttpRequest.prototype.send;
         XMLHttpRequest.prototype.send = function (body) {
             send.call(this, body);
-            if (body instanceof Blob) setTimeout(() => this.upload.dispatchEvent(new ProgressEvent('progress', { loaded: body.size / 2, total: body.size, lengthComputable: true })), 200);
+            if (body instanceof ArrayBuffer) setTimeout(() => this.upload.dispatchEvent(new ProgressEvent('progress', { loaded: 512, total: body.byteLength, lengthComputable: true })), 200);
         };
     });
     let chunkRequests = 0;
@@ -176,7 +173,7 @@ test('reports in-flight chunk progress and cancels the active XHR without retryi
     await page.route('https://sync.test/**', async route => {
         if (route.request().method() === 'OPTIONS') return routeDefault(route);
         const path = new URL(route.request().url()).pathname;
-        if (path.endsWith('/uploads')) return route.fulfill({ headers, json: { uploadId: 'test-upload', receivedBytes: 0, chunkSize: 1024 } });
+        if (path.endsWith('/uploads')) return route.fulfill({ headers, json: { uploadId: 'test-upload', receivedBytes: 0, chunkSize: 8 * 1024 * 1024 } });
         if (path.includes('/chunks/')) {
             chunkRequests++;
             await new Promise(resolve => { release = resolve; });
@@ -211,7 +208,7 @@ test('rejects a resumed file with matching metadata but different content', asyn
         const path = new URL(route.request().url()).pathname;
         if (path.endsWith('/uploads')) {
             uploads.push(route.request().postDataJSON());
-            return route.fulfill({ headers, json: { uploadId: 'test-upload', receivedBytes: 0, chunkSize: 1024 } });
+            return route.fulfill({ headers, json: { uploadId: 'test-upload', receivedBytes: 0, chunkSize: 8 * 1024 * 1024 } });
         }
         if (path.includes('/chunks/')) { chunks++; return route.fulfill({ status: 400, headers, json: { error: 'upload_expired' } }); }
         return routeDefault(route);
@@ -246,7 +243,7 @@ test('rejects a resumed file with matching metadata but different content', asyn
     expect(uploads[1].fingerprint).not.toBe(uploads[0].fingerprint);
 });
 
-test('restarts a legacy unverified upload instead of appending new bytes to it', async ({ page, isMobile }) => {
+test('ignores a plaintext legacy draft after enabling encrypted sessions', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
     await prepare(page);
     const previousClientId = 'c5a99e5b-639c-42a4-a65d-acf89b5b9493';
@@ -262,7 +259,7 @@ test('restarts a legacy unverified upload instead of appending new bytes to it',
         if (route.request().method() === 'DELETE') { deleted.push(path); return route.fulfill({ headers, json: { ok: true } }); }
         if (path.endsWith('/uploads')) {
             uploaded = route.request().postDataJSON();
-            return route.fulfill({ headers, json: { uploadId: 'new-upload', receivedBytes: 0, chunkSize: 1024 } });
+            return route.fulfill({ headers, json: { uploadId: 'new-upload', receivedBytes: 0, chunkSize: 8 * 1024 * 1024 } });
         }
         if (path.includes('/chunks/')) return route.fulfill({ status: 400, headers, json: { error: 'upload_expired' } });
         return routeDefault(route);
@@ -281,5 +278,5 @@ test('restarts a legacy unverified upload instead of appending new bytes to it',
     await page.locator('[data-sync-send]').click();
     await expect.poll(() => uploaded?.fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(uploaded.clientId).not.toBe(previousClientId);
-    expect(deleted).toEqual([`/v1/spaces/${roomId}/files/uploads/old-upload`]);
+    expect(deleted).toEqual([]);
 });
