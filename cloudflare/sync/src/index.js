@@ -104,10 +104,7 @@ function resultResponse(result, status = 200) {
 
 export default {
   async scheduled(event, env) {
-    const registry = env.PAIRING_REGISTRY.getByName('registry');
-    const work = [registry.dailyUsage()];
-    if (event.cron === '17 0 * * *') work.push(registry.maintainRooms());
-    await Promise.all(work);
+    await env.PAIRING_REGISTRY.getByName('registry').maintainRooms();
   },
 
   async fetch(request, env) {
@@ -508,7 +505,7 @@ export class PairingRegistry extends DurableObject {
       } else if (this.dailyUsageSnapshot?.day === measured.day) {
         this.dailyUsageCache = { ...this.dailyUsageSnapshot, status: 'stale', stale: true, failureCode: measured.failureCode };
       } else this.dailyUsageCache = measured;
-      this.dailyUsageCacheUntil = Date.now() + (measured.available ? 5 * 60 * 1000 : 60 * 1000);
+      this.dailyUsageCacheUntil = Date.now() + (measured.available ? 15 * 60 * 1000 : 60 * 1000);
       await this.ctx.storage.put('dailyUsageCache', { value: this.dailyUsageCache, snapshot: this.dailyUsageSnapshot || null, expiresAt: this.dailyUsageCacheUntil }).catch(() => {});
       return this.dailyUsageCache;
     };

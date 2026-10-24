@@ -233,3 +233,66 @@ test('keeps failed checks visible across language changes and distinguishes samp
     await expect(quota).toBeEmpty();
     await expect(notice).toContainText('Checked:');
 });
+
+test('refreshes storage every fifteen minutes only while its detail page is visible', async ({ page }) => {
+    let requests = 0;
+    await page.clock.install();
+    await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
+    await page.route('https://sync.test/v1/status', route => {
+        requests++;
+        return route.fulfill({ headers: { 'Access-Control-Allow-Origin': '*' }, json: {
+            ok: true, checkedAt: Date.now(), database: { registry: { ok: true } },
+            storage: { bytes: 1200000000, highWaterBytes: 4700000000, roomCount: 3, reservedBytes: 0 },
+            maintenance: { phase: null, scannedRooms: null, lastSuccessAt: Date.now(), nextAlarmAt: null }
+        } });
+    });
+    await page.goto('/portfolio/');
+    await page.clock.fastForward('15:00');
+    expect(requests).toBe(0);
+    await page.locator('[data-start-toggle]').click();
+    await page.locator('[data-open-control-panel]').click();
+    await page.clock.fastForward('15:00');
+    expect(requests).toBe(0);
+    const panel = page.locator('[data-control-panel-window]');
+    const item = panel.locator('[data-open-sync-storage]');
+    const notice = panel.locator('[data-sync-storage-notice]');
+    await item.click();
+    await expect(notice).toContainText('检查时间');
+    expect(requests).toBe(1);
+    await page.clock.fastForward('14:59');
+    expect(requests).toBe(1);
+    await page.clock.fastForward('00:01');
+    await expect.poll(() => requests).toBe(2);
+    await expect(notice).toContainText('检查时间');
+    await panel.locator('[data-control-panel-action="minimize"]').click();
+    await page.clock.fastForward('15:00');
+    expect(requests).toBe(2);
+    await page.locator('[data-control-panel-task]').click();
+    await expect.poll(() => requests).toBe(3);
+    await expect(notice).toContainText('检查时间');
+    await panel.locator('[data-control-panel-back]').click();
+    await page.clock.fastForward('30:00');
+    expect(requests).toBe(3);
+    await item.click();
+    await expect.poll(() => requests).toBe(4);
+    await expect(notice).toContainText('检查时间');
+    await panel.locator('[data-control-panel-action="close"]').click();
+    await page.clock.fastForward('15:00');
+    expect(requests).toBe(4);
+    await page.locator('[data-start-toggle]').click();
+    await page.locator('[data-open-control-panel]').click();
+    await item.click();
+    await expect.poll(() => requests).toBe(5);
+    await expect(notice).toContainText('检查时间');
+    await page.evaluate(() => {
+        Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+        document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.clock.fastForward('15:00');
+    expect(requests).toBe(5);
+    await page.evaluate(() => {
+        delete document.hidden;
+        document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await expect.poll(() => requests).toBe(6);
+});

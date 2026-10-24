@@ -6,8 +6,12 @@ export function setupSyncStorage(app) {
     const dailyMetrics = app.querySelector('[data-sync-daily-metrics]');
     const dailyNotice = app.querySelector('[data-sync-daily-notice]');
     const dailyChecked = app.querySelector('[data-sync-daily-checked]');
+    const panel = app.closest('[data-control-panel-window]');
+    const refreshInterval = 15 * 60 * 1000;
     let request;
     let data;
+    let refreshTimer;
+    let lastLoadAt = 0;
     let noticeKey = 'syncStorageReady';
     const t = () => desktop.t();
     const timestamp = (value) => value ? new Date(value).toLocaleString(desktop.getLanguage()) : t().syncStorageNever;
@@ -76,10 +80,33 @@ export function setupSyncStorage(app) {
         notice.dataset.state = name === 'syncStorageFailed' ? 'error' : '';
         notice.textContent = t()[name];
     };
+    const isViewing = () => !app.hidden && !panel.inert && !document.hidden
+        && !panel.classList.contains('is-closed') && !panel.classList.contains('is-minimized');
+    const updatePolling = () => {
+        clearTimeout(refreshTimer);
+        if (!isViewing()) {
+            if (request) lastLoadAt = 0;
+            request?.abort();
+            request = null;
+            button.disabled = false;
+            if (noticeKey === 'syncStorageLoading') {
+                noticeKey = data ? '' : 'syncStorageReady';
+                render();
+            }
+            return;
+        }
+        if (request) return;
+        const remaining = refreshInterval - (Date.now() - lastLoadAt);
+        if (!lastLoadAt || remaining <= 0) load();
+        else refreshTimer = setTimeout(load, remaining);
+    };
     const load = async () => {
+        if (!isViewing()) return;
+        clearTimeout(refreshTimer);
         request?.abort();
         const controller = new AbortController();
         request = controller;
+        lastLoadAt = Date.now();
         button.disabled = true;
         setNotice('syncStorageLoading');
         try {
@@ -99,17 +126,26 @@ export function setupSyncStorage(app) {
         } catch {
             if (request === controller && !controller.signal.aborted) setNotice('syncStorageFailed');
         } finally {
-            if (request === controller) { button.disabled = false; request = null; }
+            if (request === controller) {
+                button.disabled = false;
+                request = null;
+                lastLoadAt = Date.now();
+                updatePolling();
+            }
         }
     };
     button.addEventListener('click', load);
     window.addEventListener('portfolio-language-change', render);
+    document.addEventListener('visibilitychange', updatePolling);
+    new MutationObserver(updatePolling).observe(panel, { attributes: true, attributeFilter: ['class', 'inert'] });
     return {
-        show: () => { if (!data && !request) load(); },
+        show: updatePolling,
         reset: () => {
+            clearTimeout(refreshTimer);
             request?.abort();
             request = null;
             data = null;
+            lastLoadAt = 0;
             noticeKey = 'syncStorageReady';
             button.disabled = false;
             render();

@@ -105,6 +105,7 @@ async function createRuntime() {
           };
           export class PairingRegistry extends ProductionRegistry {
             testAnalyticsCalls() { return calls; }
+            testAnalyticsCacheUntil() { return this.dailyUsageCacheUntil; }
             maintainRooms() { this.maintenanceCalls = (this.maintenanceCalls || 0) + 1; return super.maintainRooms(); }
             testMaintenanceCalls() { return this.maintenanceCalls || 0; }
             testFailAnalytics() { fail = true; this.dailyUsageCacheUntil = 0; }
@@ -145,6 +146,8 @@ test('public status coalesces collection, restores persistent cache and isolates
   const results = await Promise.all(Array.from({ length: 5 }, status));
   assert.equal(await registry.testAnalyticsCalls(), 1);
   assert.ok(results.every(result => result.ok && result.dailyUsage.status === 'ready'));
+  const cacheRemaining = await registry.testAnalyticsCacheUntil() - Date.now();
+  assert.ok(cacheRemaining > 14 * 60 * 1000 && cacheRemaining <= 15 * 60 * 1000);
   const persisted = { ...results[0].dailyUsage, checkedAt: Date.now() - 20000 };
   await registry.testSeedCache(persisted, Date.now() + 60000);
   await registry.testDropMemory();
@@ -170,13 +173,13 @@ test('public status coalesces collection, restores persistent cache and isolates
   assert.equal(health.status, 200); assert.equal((await health.json()).ok, true);
 });
 
-test('quarter-hour monitoring does not run daily maintenance and provider failure cannot interrupt the daily sweep', async t => {
+test('daily maintenance never collects account analytics in the background', async t => {
   const runtime = await createRuntime(); t.after(() => runtime.dispose());
   const registry = (await runtime.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
   const scheduled = cron => runtime.dispatchFetch(`https://sync.test/test-scheduled?cron=${encodeURIComponent(cron)}`);
-  assert.equal((await scheduled('*/15 * * * *')).status, 200);
-  assert.equal(await registry.testAnalyticsCalls(), 1); assert.equal(await registry.testMaintenanceCalls(), 0);
   await registry.testFailAnalytics();
   assert.equal((await scheduled('17 0 * * *')).status, 200);
-  assert.equal(await registry.testAnalyticsCalls(), 2); assert.equal(await registry.testMaintenanceCalls(), 1);
+  assert.equal(await registry.testAnalyticsCalls(), 0); assert.equal(await registry.testMaintenanceCalls(), 1);
+  const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
+  assert.deepEqual(config.triggers.crons, ['17 0 * * *']);
 });
