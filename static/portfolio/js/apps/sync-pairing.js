@@ -13,15 +13,19 @@ const pause = (signal, delay = 500) => new Promise((resolve, reject) => {
     if (signal.aborted) abort();
 });
 
-async function useAttempts(id, requests) {
+async function useAttempts(id, requestId) {
     if (!navigator.locks) throw failure('encryption_unavailable');
     return navigator.locks.request(`gavin-sync-pair:${id}`, () => {
         const key = `gavin-sync-pair-attempts:${id}`;
         let saved = JSON.parse(localStorage.getItem(key) || 'null');
         if (!saved || saved.expiresAt <= Date.now()) saved = { ids: [], expiresAt: Date.now() + 10 * 60 * 1000 };
-        if (requests.some(request => saved.ids.includes(request))) return false;
-        if (saved.ids.length + requests.length > 5) throw failure('pairing_limited');
-        saved.ids.push(...requests);
+        // Older join counters stored a separate request:offer entry for every candidate.
+        saved.ids = [...new Set(saved.ids.map(request => request.split(':')[0]))];
+        if (saved.ids.includes(requestId)) return false;
+        if (saved.ids.length >= 20) throw Object.assign(failure('pairing_limited'), {
+            retryAfter: Math.max(1, Math.ceil((saved.expiresAt - Date.now()) / 1000))
+        });
+        saved.ids.push(requestId);
         localStorage.setItem(key, JSON.stringify(saved));
         return true;
     });
@@ -80,7 +84,7 @@ export class EncryptedPairing {
         if (event.type === 'pair-request') {
             if (this.hosts.has(event.requestId)) return;
             try {
-                if (!await useAttempts(`host:${offer.offerId}`, [event.requestId])) return;
+                if (!await useAttempts(`host:${offer.offerId}`, event.requestId)) return;
             } catch (error) {
                 if (error.code === 'pairing_limited') this.onExpired();
                 throw error;
@@ -147,7 +151,7 @@ export class EncryptedPairing {
         if (!Array.isArray(offers) || !offers.length || offers.length > 30 || new Set(offers.map(offer => offer.offerId)).size !== offers.length) throw failure('invalid_code');
         const requestId = crypto.randomUUID();
         const requestToken = randomToken();
-        await useAttempts('join', [requestId]);
+        await useAttempts('join', requestId);
         const states = new Map();
         const requests = [];
         for (const offer of offers) {

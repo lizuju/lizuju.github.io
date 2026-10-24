@@ -732,7 +732,7 @@ test('creation is rate limited per IP while another IP can still create a space'
 test('pairing attempts are rate limited and resume after the limit expires', async () => {
   const space = await createSpace();
   const request = client();
-  for (let index = 0; index < 5; index += 1) {
+  for (let index = 0; index < 20; index += 1) {
     const result = await request('/v1/pair', { method: 'POST', json: { code: 'invalid' } });
     assert.equal(result.status, 400);
   }

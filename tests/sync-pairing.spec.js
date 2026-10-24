@@ -181,9 +181,12 @@ test('refuses two matching pairing codes before granting access to either room',
     expect(result).toEqual({ code: 'pairing_ambiguous', admitted: 0, cancelled: 1 });
 });
 
-test('allows five join submissions with thirty candidates and limits the sixth submission', async ({ page }) => {
+test('allows the twentieth join with thirty candidates and limits the twenty-first submission', async ({ page }) => {
     const result = await page.evaluate(async () => {
         const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        localStorage.setItem('gavin-sync-pair-attempts:join', JSON.stringify({
+            ids: Array.from({ length: 19 }, () => crypto.randomUUID()), expiresAt: Date.now() + 60000
+        }));
         const offers = Array.from({ length: 30 }, () => ({ offerId: crypto.randomUUID(), expiresAt: Date.now() + 600000 }));
         let submissions = 0;
         const pairing = new EncryptedPairing({ getSession: () => null, api: async (path) => {
@@ -192,15 +195,15 @@ test('allows five join submissions with thirty candidates and limits the sixth s
             throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
         } });
         const errors = [];
-        for (let index = 0; index < 6; index++) {
+        for (let index = 0; index < 2; index++) {
             try { await pairing.join('1234'); } catch (error) { errors.push(error.code); }
         }
         return { submissions, errors, attempts: JSON.parse(localStorage.getItem('gavin-sync-pair-attempts:join')).ids.length };
     });
-    expect(result).toEqual({ submissions: 5, errors: [...Array(5).fill('unavailable'), 'pairing_limited'], attempts: 5 });
+    expect(result).toEqual({ submissions: 1, errors: ['unavailable', 'pairing_limited'], attempts: 20 });
 });
 
-test('retains the five-attempt limit for each hosting offer', async ({ page }) => {
+test('retains the twenty-attempt limit for each hosting offer', async ({ page }) => {
     const result = await page.evaluate(async () => {
         const c = await import('/__sync-pairing-test__/crypto.js');
         const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
@@ -215,12 +218,93 @@ test('retains the five-attempt limit for each hosting offer', async ({ page }) =
         } });
         await pairing.createOffer();
         let code;
-        for (let index = 0; index < 6; index++) {
+        for (let index = 0; index < 21; index++) {
             const client = await c.startPairingClient('9999', pairing.offer.offerId);
             try { await pairing.handle({ type: 'pair-request', offerId: pairing.offer.offerId, requestId: crypto.randomUUID(), startLoginRequest: client.startLoginRequest }); }
             catch (error) { code = error.code; }
         }
         return { challenges, expired, code };
     });
-    expect(result).toEqual({ challenges: 5, expired: 1, code: 'pairing_limited' });
+    expect(result).toEqual({ challenges: 20, expired: 1, code: 'pairing_limited' });
+});
+
+test('counts each join once when five spaces are waiting for pairing', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const offers = Array.from({ length: 5 }, () => ({ offerId: crypto.randomUUID() }));
+        const sent = [];
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async (path, options) => {
+            if (path === '/v1/pair/offers') return { offers };
+            sent.push(JSON.parse(options.body).requests.length);
+            throw new Error('relay-unavailable');
+        } });
+        const outcomes = [];
+        for (let index = 0; index < 2; index++) {
+            try { await pairing.join('1234'); }
+            catch (error) { outcomes.push(error.code || error.message); }
+        }
+        return { sent, outcomes, count: JSON.parse(localStorage.getItem('gavin-sync-pair-attempts:join')).ids.length };
+    });
+    expect(result).toEqual({ sent: [5, 5], outcomes: ['relay-unavailable', 'relay-unavailable'], count: 2 });
+});
+
+test('allows twenty joins, returns a cooldown on the twenty-first and resumes after expiry', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const key = 'gavin-sync-pair-attempts:join';
+        localStorage.setItem(key, JSON.stringify({ ids: Array.from({ length: 19 }, () => crypto.randomUUID()), expiresAt: Date.now() + 60000 }));
+        const offers = Array.from({ length: 5 }, () => ({ offerId: crypto.randomUUID() }));
+        let sent = 0;
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async path => {
+            if (path === '/v1/pair/offers') return { offers };
+            sent++;
+            throw new Error('relay-unavailable');
+        } });
+        const attempt = async () => {
+            try { await pairing.join('1234'); }
+            catch (error) { return { code: error.code || error.message, retryAfter: error.retryAfter }; }
+        };
+        const allowed = await attempt();
+        const count = JSON.parse(localStorage.getItem(key)).ids.length;
+        const blocked = await attempt();
+        const saved = JSON.parse(localStorage.getItem(key));
+        saved.expiresAt = Date.now() - 1;
+        localStorage.setItem(key, JSON.stringify(saved));
+        const resumed = await attempt();
+        return { allowed, count, blocked, resumed, sent, resumedCount: JSON.parse(localStorage.getItem(key)).ids.length };
+    });
+    expect(result.allowed.code).toBe('relay-unavailable');
+    expect(result.count).toBe(20);
+    expect(result.blocked.code).toBe('pairing_limited');
+    expect(result.blocked.retryAfter).toBeGreaterThan(0);
+    expect(result.blocked.retryAfter).toBeLessThanOrEqual(60);
+    expect(result.resumed.code).toBe('relay-unavailable');
+    expect(result.sent).toBe(2);
+    expect(result.resumedCount).toBe(1);
+});
+
+test('corrects old per-candidate counts without clearing genuine attempts or extending the window', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const key = 'gavin-sync-pair-attempts:join';
+        const offers = Array.from({ length: 5 }, () => ({ offerId: crypto.randomUUID() }));
+        const previousRequest = crypto.randomUUID();
+        const expiresAt = Date.now() + 60000;
+        localStorage.setItem(key, JSON.stringify({ ids: offers.map(offer => `${previousRequest}:${offer.offerId}`), expiresAt }));
+        let sent = 0;
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async path => {
+            if (path === '/v1/pair/offers') return { offers };
+            sent++;
+            throw new Error('relay-unavailable');
+        } });
+        try { await pairing.join('1234'); } catch {}
+        const saved = JSON.parse(localStorage.getItem(key));
+        const previous = Array.from({ length: 20 }, () => crypto.randomUUID());
+        localStorage.setItem(key, JSON.stringify({ ids: previous, expiresAt }));
+        let blocked;
+        try { await pairing.join('1234'); }
+        catch (error) { blocked = error.code; }
+        return { count: saved.ids.length, keptPrevious: saved.ids.includes(previousRequest), sameExpiry: saved.expiresAt === expiresAt, sent, blocked };
+    });
+    expect(result).toEqual({ count: 2, keptPrevious: true, sameExpiry: true, sent: 1, blocked: 'pairing_limited' });
 });

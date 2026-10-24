@@ -46,7 +46,7 @@ npm run dev
 | `PATCH /v1/spaces/:roomId/devices/:deviceId`，`{ name }` | 写入加密资料；备注在设备端限制为 8 个 Unicode 字符 |
 | `DELETE /v1/spaces/:roomId/devices/:deviceId` | 撤销设备及连接，并阻止旧密钥继续写入，直至保留成员完成轮换 |
 
-四位码不是永久密码，只分享给信任的人；任何成功加入的设备拥有相同的空间管理权限。创建空间每 IP 每小时最多五次，配对每 IP 每十分钟最多五次，返回 `429` 时等待 `Retry-After`。
+四位码不是永久密码，只分享给信任的人；任何成功加入的设备拥有相同的空间管理权限。创建空间每 IP 每小时最多五次，配对每 IP 每十分钟最多 20 次，返回 `429` 时等待 `Retry-After`。
 
 ## 消息与实时连接
 

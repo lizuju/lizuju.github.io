@@ -163,7 +163,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                 pairing_limited: 'syncPairLimited', pairing_ambiguous: 'syncPairAmbiguous', pairing_busy: 'syncPairBusy',
                 encryption_unavailable: 'syncEncryptionUnavailable'
             };
-            if (error.code === 'rate_limited' && action && error.retryAfter > 0) {
+            if (['rate_limited', 'pairing_limited'].includes(error.code) && action && error.retryAfter > 0) {
                 cooldowns[action] = Date.now() + error.retryAfter * 1000;
                 startCountdowns();
             }
