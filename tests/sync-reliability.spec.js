@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./sync-fixtures');
 
 const roomId = 'c5745baa-931f-4c83-9545-360fa055b57c';
 const deviceId = '5fb30917-af43-4394-8034-0c326c774b78';

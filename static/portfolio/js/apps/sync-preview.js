@@ -171,7 +171,7 @@ import { PreviewZoom } from './preview-zoom.js';
                             await image.decode();
                         } catch {
                             if (current !== state) return;
-                            const { heicTo } = await import(/* webpackChunkName: "preview-heic" */ 'heic-to');
+                            const { heicTo } = await import(/* webpackChunkName: "preview-heic" */ 'heic-to/csp');
                             if (current !== state) return;
                             const converted = await heicTo({ blob: original, type: 'image/jpeg', quality: 0.9 });
                             if (current !== state) return;

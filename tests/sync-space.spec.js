@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect, allowSyncOrigin } = require('./sync-fixtures');
 const { createServer } = require('node:http');
 
 const roomId = 'c5745baa-931f-4c83-9545-360fa055b57c';
@@ -81,6 +81,7 @@ test('a reclaimed room returns to pairing instead of repeatedly reconnecting wit
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
         await page.addInitScript(({ roomId, token }) => localStorage.setItem('portfolio-sync-space', JSON.stringify({ roomId, token })), { roomId, token });
+        await allowSyncOrigin(page, `http://127.0.0.1:${server.address().port}`);
         await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: `http://127.0.0.1:${server.address().port}` } }));
         await page.goto('/portfolio/');
         await page.locator('[data-window-action="minimize"]').click();

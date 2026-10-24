@@ -8,7 +8,7 @@ const origin = 'https://lizuju.github.io';
 const MiB = 1024 * 1024;
 const chunkSize = 8 * MiB;
 const maximumFileSize = 2 * 1024 * MiB;
-const fiveDays = 5 * 24 * 60 * 60 * 1000;
+const sevenDays = 7 * 24 * 60 * 60 * 1000;
 let runtime;
 let nextIp = 1;
 const sockets = new Set();
@@ -259,6 +259,23 @@ test('a binary file crosses 8 MiB upload chunks and 64 MiB shards without losing
   assert.equal((await request(`/v1/spaces/${space.roomId}/files/${plain.body.id}`, { token: space.token })).status, 404);
   connected.socket.close();
   restored.socket.close();
+});
+
+test('expired device credentials revoke download tickets and abandoned uploads without deleting shared history', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const peer = (await client()('/v1/pair', { method: 'POST', json: { code: space.code } })).body;
+  const sent = await upload(request, space);
+  const ticket = await request(`/v1/spaces/${space.roomId}/files/${sent.body.id}/download`, { method: 'POST', token: space.token });
+  const pending = await initiate(request, space, { size: 1024 });
+  const storage = await roomStorage(space);
+  await storage.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ?', Date.now() - sevenDays, space.deviceId);
+  assert.equal((await request(`/v1/spaces/${space.roomId}/downloads/${ticket.body.ticket}`)).status, 401);
+  assert.deepEqual(await storage.exec('SELECT ticket FROM download_tickets'), []);
+  assert.equal((await storage.exec('SELECT status FROM files WHERE file_id = ?', pending.body.uploadId))[0].status, 'deleting');
+  const received = await request(`/v1/spaces/${space.roomId}/files/${sent.body.id}`, { token: peer.token });
+  assert.equal(received.status, 200);
+  assert.equal(received.body.toString(), 'attachment');
 });
 
 test('empty files and Chinese image names complete without allocating unnecessary upload chunks', async () => {
@@ -620,7 +637,7 @@ test('resuming the end of a 2 GiB file reads only the requested shard and reject
   assert.equal((await request(path, { method: 'HEAD' })).headers.get('Content-Length'), String(maximumFileSize));
   assert.equal((await lastShard.testReadRequests()).length, 1);
 
-  await storage.exec('UPDATE files SET created_at = ?', Date.now() - fiveDays - 1);
+  await storage.exec('UPDATE files SET created_at = ?', Date.now() - sevenDays - 1);
   for (const method of ['GET', 'HEAD']) {
     assert.equal((await request(path, { method, headers: { Range: 'bytes=-23' } })).status, 404);
   }
@@ -658,8 +675,8 @@ test('ticket previews inline only safe media and PDF while retaining range and c
   const issued = await request(`/v1/spaces/${space.roomId}/files/${sent.body.id}/download`, { method: 'POST', token: paired.body.token });
   const path = `/v1/spaces/${space.roomId}/downloads/${issued.body.ticket}?preview=1`;
   await request(`/v1/spaces/${space.roomId}/devices/${paired.body.deviceId}`, { method: 'DELETE', token: space.token });
-  assert.equal((await request(path)).status, 401);
-  assert.equal((await request(path, { method: 'HEAD' })).status, 401);
+  assert.equal((await request(path)).status, 404);
+  assert.equal((await request(path, { method: 'HEAD' })).status, 404);
 });
 
 test('clearing history removes file manifests, upload rows and physical shard bytes from storage usage', async () => {
@@ -696,7 +713,7 @@ test('expired messages delete their shards while live attachments remain downloa
   const survivor = await upload(request, space, { bytes: survivorBytes, name: 'surviving.txt', type: 'text/plain' });
   assert.equal(survivor.status, 201);
   const storage = await roomStorage(space);
-  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - fiveDays - 1000, expired.body.id);
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - sevenDays - 1000, expired.body.id);
   const room = await roomObject(space);
   await room.testRunAlarm();
   await drainDeletedFiles(space);
@@ -826,7 +843,7 @@ test('global pressure rejects new reservations, prunes old file shards and allow
   const registry = registryNamespace.getByName('registry');
   for (const space of spaces) await registry.refreshRoom(space.roomId);
   const before = await registry.storageBytes();
-  assert.ok(before >= 4_700_000_000);
+  assert.ok(before >= 4_800_000_000);
   const blocked = await initiate(request, spaces[0], { size: 1024 });
   assert.equal(blocked.status, 503);
   assert.equal(blocked.body.error, 'storage_cleaning');

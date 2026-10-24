@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./sync-fixtures');
 const XLSX = require('xlsx');
 
 const roomId = '0f91b47d-d2a7-426e-aa14-48cd174ad752';

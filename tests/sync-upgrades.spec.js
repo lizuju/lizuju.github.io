@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect, allowSyncOrigin } = require('./sync-fixtures');
 const { createServer } = require('node:http');
 const { readFileSync } = require('node:fs');
 const XLSX = require('xlsx');
@@ -158,6 +158,7 @@ test('downloads real XLSX bytes from a cross-origin server inside the immersive 
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
         await authorize(page);
+        await allowSyncOrigin(page, `http://127.0.0.1:${server.address().port}`);
         await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: `http://127.0.0.1:${server.address().port}` } }));
         await page.routeWebSocket(`ws://127.0.0.1:${server.address().port}/**`, socket => socket.onMessage(message => {
             if (message === 'ping') return socket.send('pong');

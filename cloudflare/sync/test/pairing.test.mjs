@@ -5,7 +5,7 @@ import { after, before, test } from 'node:test';
 import { Miniflare } from 'miniflare';
 
 const origin = 'https://lizuju.github.io';
-const fiveDays = 5 * 24 * 60 * 60 * 1000;
+const sevenDays = 7 * 24 * 60 * 60 * 1000;
 let runtime;
 let nextIp = 1;
 const sockets = new Set();
@@ -99,6 +99,13 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   testSchema() { return this.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name' ORDER BY name").toArray(); }
+                  testAgeConnection(deviceId, timestamp) {
+                    this.sql.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ?', timestamp, deviceId);
+                    for (const socket of this.ctx.getWebSockets()) {
+                      const attachment = socket.deserializeAttachment();
+                      if (attachment?.deviceId === deviceId) socket.serializeAttachment({ ...attachment, connectedAt: timestamp });
+                    }
+                  }
                   testAgeActivity(timestamp) {
                     this.lastActivity = timestamp;
                     this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', String(timestamp), 'lastActiveAt');
@@ -463,6 +470,74 @@ test('device names migrate from the old schema without revoking existing credent
   assert.equal(reloaded.status, 200);
   assert.equal(reloaded.body.devices.find(device => device.deviceId === space.deviceId).name, '迁移后的 Mac');
   assert.equal((await storage.exec('PRAGMA table_info(devices)')).filter(column => column.name === 'name').length, 1);
+  assert.ok((await storage.exec('SELECT last_active_at FROM devices')).every(device => device.last_active_at >= Date.now() - 10000));
+});
+
+test('upgrading an abandoned legacy room grants seven days before either its devices or room can expire', async () => {
+  const space = await createSpace();
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  await storage.exec('DROP INDEX devices_activity');
+  await storage.exec('ALTER TABLE devices DROP COLUMN last_active_at');
+  await storage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 8 * 24 * 60 * 60 * 1000), 'lastActiveAt');
+  const registryStorage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await registryStorage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+  await runtime.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId });
+  const registry = (await runtime.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  await registry.refreshRoom(space.roomId);
+  assert.equal(await registry.hasRoom(space.roomId), true);
+  assert.equal((await client()(`/v1/spaces/${space.roomId}/devices`, { token: space.token })).status, 200);
+});
+
+test('seven days of device inactivity rejects HTTP and WebSocket credentials without waiting for maintenance', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  await storage.exec('UPDATE devices SET last_active_at = ?', Date.now() - sevenDays);
+  const denied = await request(`/v1/spaces/${space.roomId}/devices`, { token: space.token });
+  assert.equal(denied.status, 401);
+  assert.deepEqual(await storage.exec('SELECT device_id FROM devices'), []);
+  const socket = await openSocket(space.roomId);
+  const closed = socketEvent(socket, 'close');
+  socket.send(JSON.stringify({ type: 'auth', token: space.token }));
+  assert.equal((await closed).code, 4001);
+});
+
+test('active devices renew independently and maintenance removes only inactive devices', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const peer = (await client()('/v1/pair', { method: 'POST', json: { code: space.code } })).body;
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  await storage.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ?', Date.now() - sevenDays + 60000, space.deviceId);
+  await storage.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ?', Date.now() - sevenDays - 1, peer.deviceId);
+  assert.equal((await request(`/v1/spaces/${space.roomId}/devices`, { token: space.token })).status, 200);
+  const room = (await runtime.getDurableObjectNamespace('SYNC_ROOMS')).getByName(space.roomId);
+  await room.maintain(space.roomId);
+  const remaining = await storage.exec('SELECT device_id, last_active_at FROM devices');
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].device_id, space.deviceId);
+  assert.ok(remaining[0].last_active_at >= Date.now() - 10000);
+  assert.equal((await request(`/v1/spaces/${space.roomId}/devices`, { token: space.token })).status, 200);
+  assert.equal((await request(`/v1/spaces/${space.roomId}/messages`, { token: peer.token })).status, 401);
+});
+
+test('hibernating WebSocket heartbeats renew a device, while abandoned sockets expire', async () => {
+  const space = await createSpace();
+  const peer = (await client()('/v1/pair', { method: 'POST', json: { code: space.code } })).body;
+  const active = (await authenticateSocket(space)).socket;
+  const abandoned = (await authenticateSocket({ ...peer, roomId: space.roomId })).socket;
+  const room = (await runtime.getDurableObjectNamespace('SYNC_ROOMS')).getByName(space.roomId);
+  await room.testAgeConnection(space.deviceId, Date.now() - sevenDays - 1);
+  await room.testAgeConnection(peer.deviceId, Date.now() - sevenDays - 1);
+  const pong = socketEvent(active);
+  active.send('ping');
+  assert.equal((await pong).data, 'pong');
+  const closed = socketEvent(abandoned, 'close');
+  await room.testRunAlarm();
+  assert.equal((await closed).code, 4001);
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  assert.deepEqual((await storage.exec('SELECT device_id FROM devices')).map(row => row.device_id), [space.deviceId]);
+  assert.ok(await room.testReadAlarm() > Date.now());
+  active.close();
 });
 
 test('unregistered room IDs reject forged HTTP credentials and sockets without allocating SQLite databases', async t => {
@@ -607,13 +682,14 @@ test('empty-room reclamation retains devices, history, uploads and remaining sha
   }
 });
 
-test('daily maintenance reclaims a 30-day abandoned empty room despite old paired devices', async t => {
+test('daily maintenance reclaims a seven-day abandoned empty room despite old paired devices', async t => {
   const instance = await createRuntime();
   t.after(() => instance.dispose());
   const space = await createSpace(client(instance));
   const roomStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  await roomStorage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 31 * 24 * 60 * 60 * 1000), 'lastActiveAt');
+  await roomStorage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 8 * 24 * 60 * 60 * 1000), 'lastActiveAt');
+  await roomStorage.exec('UPDATE devices SET last_active_at = ?', Date.now() - sevenDays - 1);
   await registryStorage.exec('UPDATE invites SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
   const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
   await registry.maintainRooms();
@@ -1210,11 +1286,11 @@ test('history retains the latest 500 messages and clearing releases the stored m
   assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 0 }]);
 });
 
-test('the alarm removes five-day history without a page visit and broadcasts the surviving history', async () => {
+test('the alarm removes seven-day history without a page visit and broadcasts the surviving history', async () => {
   const request = client();
   const space = await createSpace(request);
   const sent = [];
-  for (const text of ['expired history', 'still within five days']) {
+  for (const text of ['expired history', 'still within seven days']) {
     const result = await request(`/v1/spaces/${space.roomId}/messages`, {
       method: 'POST', token: space.token, json: { clientId: randomUUID(), text }
     });
@@ -1224,8 +1300,8 @@ test('the alarm removes five-day history without a page visit and broadcasts the
   const connected = await authenticateSocket(space);
   const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
   const now = Date.now();
-  const survivorTime = now - fiveDays + 60000;
-  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', now - fiveDays - 60000, sent[0].id);
+  const survivorTime = now - sevenDays + 60000;
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', now - sevenDays - 60000, sent[0].id);
   await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', survivorTime, sent[1].id);
   const namespace = await runtime.getDurableObjectNamespace('SYNC_ROOMS');
   const room = namespace.getByName(space.roomId);
@@ -1233,9 +1309,9 @@ test('the alarm removes five-day history without a page visit and broadcasts the
   await room.testRunAlarm();
   const frame = JSON.parse((await history).data);
   assert.equal(frame.type, 'history');
-  assert.deepEqual(frame.messages.map(message => message.text), ['still within five days']);
+  assert.deepEqual(frame.messages.map(message => message.text), ['still within seven days']);
   assert.deepEqual(await storage.exec('SELECT id FROM messages'), [{ id: sent[1].id }]);
-  assert.equal(await room.testReadAlarm(), survivorTime + fiveDays);
+  assert.equal(await room.testReadAlarm(), survivorTime + sevenDays);
   const state = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
   assert.deepEqual(state.body.messages, frame.messages);
   const reconnected = await authenticateSocket(space);
@@ -1251,7 +1327,7 @@ test('HTTP reads and a first WebSocket authentication never restore expired mess
     });
     assert.equal(sent.status, 201);
     const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
-    await storage.exec('UPDATE messages SET created_at = ?', Date.now() - fiveDays - 1000);
+    await storage.exec('UPDATE messages SET created_at = ?', Date.now() - sevenDays - 1000);
     if (throughSocket) {
       const reconnected = await authenticateSocket(space);
       assert.deepEqual(reconnected.frame.messages, []);
@@ -1273,18 +1349,20 @@ test('message expiry and pending authentication share the earliest alarm without
   assert.equal(sent.status, 201);
   const namespace = await runtime.getDurableObjectNamespace('SYNC_ROOMS');
   const room = namespace.getByName(space.roomId);
-  assert.equal(await room.testReadAlarm(), sent.body.createdAt + fiveDays);
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  const deviceDeadline = (await storage.exec('SELECT min(last_active_at) AS oldest FROM devices'))[0].oldest + sevenDays;
+  assert.equal(await room.testReadAlarm(), Math.min(deviceDeadline, sent.body.createdAt + sevenDays));
   const socket = await openSocket(space.roomId);
   const authAlarm = await room.testReadAlarm();
   assert.ok(authAlarm > Date.now() && authAlarm <= Date.now() + 10000);
   const ready = socketEvent(socket);
   socket.send(JSON.stringify({ type: 'auth', token: space.token }));
   assert.equal(JSON.parse((await ready).data).type, 'ready');
-  assert.equal(await room.testReadAlarm(), sent.body.createdAt + fiveDays);
+  assert.equal(await room.testReadAlarm(), sent.body.createdAt + sevenDays);
   const cleared = socketEvent(socket);
   await request(`/v1/spaces/${space.roomId}/messages`, { method: 'DELETE', token: space.token });
   assert.equal(JSON.parse((await cleared).data).type, 'cleared');
-  assert.equal(await room.testReadAlarm(), null);
+  assert.equal(await room.testReadAlarm(), (await storage.exec('SELECT min(last_active_at) AS oldest FROM devices'))[0].oldest + sevenDays);
 });
 
 test('pruning real large text rows reduces the measured SQLite storage usage', async () => {
@@ -1327,9 +1405,9 @@ test('combined room storage starts background cleanup, removes about 3 GB in glo
       assert.equal(sent.status, 201);
     }
   };
-  await append(47, 1);
+  await append(48, 1);
   const start = Date.now() - 120000;
-  for (let index = 0; index < 47; index += 1) {
+  for (let index = 0; index < 48; index += 1) {
     await storage[index % 2].exec('UPDATE messages SET created_at = ? WHERE text = ?', start + index * 1000, `round 1 message ${index}`);
   }
   for (const space of spaces) await registry.refreshRoom(space.roomId);
@@ -1337,9 +1415,9 @@ test('combined room storage starts background cleanup, removes about 3 GB in glo
   for (const round of [1, 2]) {
     if (round === 2) await append(30, 2);
     const original = await snapshot();
-    assert.equal(original.length, 47);
+    assert.equal(original.length, 48);
     const before = await registry.storageBytes();
-    assert.ok(before >= 4_700_000_000);
+    assert.ok(before >= 4_800_000_000);
     const blocked = await request(`/v1/spaces/${spaces[1].roomId}/messages`, {
       method: 'POST', token: spaces[1].token, json: { clientId: randomUUID(), text: 'wait for automatic cleanup' }
     });
@@ -1348,7 +1426,7 @@ test('combined room storage starts background cleanup, removes about 3 GB in glo
     assert.equal(blocked.headers.get('Retry-After'), '1');
     assert.deepEqual(await registryStorage.exec('SELECT phase, cursor, target_bytes FROM cleanup'), [{ phase: 'refresh', cursor: '', target_bytes: null }]);
     assert.ok(await registry.testReadAlarm() !== null);
-    assert.equal((await snapshot()).length, 47);
+    assert.equal((await snapshot()).length, 48);
 
     let turns = 0;
     let fixedTarget;
@@ -1380,8 +1458,8 @@ test('combined room storage starts background cleanup, removes about 3 GB in glo
     assert.ok(before - after >= 3_000_000_000 - 128 * 1024);
     assert.ok(before - after < 3_100_000_000);
     if (fixedTarget !== undefined) assert.ok(after <= fixedTarget);
-    assert.equal((await snapshot()).length, 17);
-    assert.deepEqual((await snapshot()).map(message => message.text), expected.slice(-17).map(message => message.text));
+    assert.equal((await snapshot()).length, 18);
+    assert.deepEqual((await snapshot()).map(message => message.text), expected.slice(-18).map(message => message.text));
     if (round === 1) assert.ok(turns > 1, 'cleanup should continue through background alarms');
   }
 });
@@ -1449,7 +1527,7 @@ test('concurrent space creation admits only one room when storage has headroom f
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
   const registry = namespace.getByName('registry');
-  const availableBefore = 4_700_000_000 - 200_000;
+  const availableBefore = 4_800_000_000 - 200_000;
   const total = await registry.storageBytes();
   await registryStorage.exec('UPDATE room_usage SET bytes = bytes + ? WHERE room_id = ?', availableBefore - total, existing.roomId);
   assert.equal(await registry.storageBytes(), availableBefore);
@@ -1481,7 +1559,7 @@ test('space creation under storage pressure starts cleanup without allocating an
   });
   assert.equal(sent.status, 201);
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  await registryStorage.exec('UPDATE room_usage SET bytes = ? WHERE room_id = ?', 4_700_000_000, space.roomId);
+  await registryStorage.exec('UPDATE room_usage SET bytes = ? WHERE room_id = ?', 4_800_000_000, space.roomId);
   const blocked = await client(instance)('/v1/spaces', { method: 'POST' });
   assert.equal(blocked.status, 503);
   assert.equal(blocked.body.error, 'storage_cleaning');
@@ -1495,7 +1573,7 @@ test('space creation under storage pressure starts cleanup without allocating an
 });
 
 test('full storage with no removable history returns 507 while paired credentials keep working', async t => {
-  const instance = await createRuntime({ virtualBaseBytes: 2_350_000_000 });
+  const instance = await createRuntime({ virtualBaseBytes: 2_400_000_000 });
   t.after(() => instance.dispose());
   const request = client(instance);
   const spaces = [await createSpace(request), await createSpace(request)];
@@ -1525,7 +1603,7 @@ test('daily maintenance repairs unattended expiry and resumes interrupted cleanu
     });
     assert.equal(sent.status, 201);
   }
-  await storage[0].exec('UPDATE messages SET created_at = ?', Date.now() - fiveDays - 60000);
+  await storage[0].exec('UPDATE messages SET created_at = ?', Date.now() - sevenDays - 60000);
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
   const registry = namespace.getByName('registry');
@@ -1591,7 +1669,7 @@ test('history cursors return deltas and reset safely after clear, expiry and pru
   assert.equal(delta.body.historyMode, 'replace'); assert.deepEqual(delta.body.messages, [third]);
   const afterClear = delta.body.history, fourth = await post('survivor');
   const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
-  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - fiveDays - 1, third.id);
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - sevenDays - 1, third.id);
   delta = await request(`/v1/spaces/${space.roomId}/messages?before=${fourth.id}&generation=${afterClear.generation}`, { token: space.token });
   assert.equal(delta.body.historyMode, 'replace'); assert.deepEqual(delta.body.messages, [fourth]);
   assert.notEqual(delta.body.history.generation, afterClear.generation);
@@ -1613,7 +1691,7 @@ test('public storage status is read only, aggregate only and distinguishes proje
   assert.equal(response.body.database.registry.ok, true); assert.equal(response.body.database.sampledRoom.ok, true);
   assert.equal(response.body.storage.roomCount, 1); assert.equal(response.body.storage.scope, 'this-project');
   assert.equal(response.body.storage.accountUsageAvailable, false);
-  assert.equal(response.body.storage.highWaterBytes, 4_700_000_000); assert.equal(response.body.storage.cleanupBytes, 3_000_000_000);
+  assert.equal(response.body.storage.highWaterBytes, 4_800_000_000); assert.equal(response.body.storage.cleanupBytes, 3_000_000_000);
   assert.ok(response.body.storage.bytes > 0);
   for (const privateValue of ['private content', space.roomId, space.deviceId, space.token]) assert.equal(JSON.stringify(response.body).includes(privateValue), false);
   const publicStrings = Object.values(response.body).flatMap(function strings(value) {
