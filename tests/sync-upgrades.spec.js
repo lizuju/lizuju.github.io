@@ -23,15 +23,11 @@ const openSync = async (page) => {
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
 };
 
-test('loads earlier messages without jumping, reconnects incrementally, and discards a stale page after clearing', async ({ page, isMobile }) => {
+test('loads earlier messages without jumping, searches retained history, and reconnects incrementally', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
     await page.clock.install();
     await authorize(page);
     await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
-    let releaseOlder;
-    let pageRequested;
-    let deferOlder = false;
-    const olderRequested = new Promise(resolve => { pageRequested = resolve; });
     await page.route('https://sync.test/**', async route => {
         const url = new URL(route.request().url());
         if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
@@ -39,10 +35,6 @@ test('loads earlier messages without jumping, reconnects incrementally, and disc
         if (url.pathname.endsWith('/messages')) {
             const before = Number(url.searchParams.get('before'));
             const messages = Array.from({ length: Math.min(50, before - 1) }, (_, index) => makeMessage(Math.max(1, before - 50) + index));
-            if (deferOlder) {
-                pageRequested();
-                await new Promise(resolve => { releaseOlder = resolve; });
-            }
             return route.fulfill({ headers, json: { messages, history: bounds(), historyMode: 'prepend' } });
         }
         return route.fulfill({ headers, json: { ok: true } });
@@ -72,25 +64,18 @@ test('loads earlier messages without jumping, reconnects incrementally, and disc
     expect(Math.abs((await anchor.boundingBox()).y - before.y)).toBeLessThan(2);
     await page.locator('[data-sync-search]').fill('History message 90');
     await expect(page.locator('.sync-message:visible')).toHaveCount(1);
+    await page.clock.runFor(200);
+    await expect(page.locator('.sync-message')).toHaveCount(120);
     sockets.at(-1).close({ code: 1012, reason: 'Reconnect test' });
     await page.clock.runFor(1600);
-    await expect(page.locator('.sync-message')).toHaveCount(101);
+    await expect(page.locator('.sync-message')).toHaveCount(121);
     expect(socketUrls.at(-1).searchParams.get('after')).toBe('120');
     expect(socketUrls.at(-1).searchParams.get('generation')).toBe('1');
-    await expect(page.locator('.sync-message-text').first()).toHaveText('History message 21');
+    await expect(page.locator('.sync-message-text').first()).toHaveText('History message 1');
     await expect(page.locator('[data-sync-search]')).toHaveValue('History message 90');
     await expect(page.locator('[data-sync-unread]')).toHaveText('1');
     await page.locator('[data-sync-search]').fill('');
     expect(Math.abs((await anchor.boundingBox()).y - before.y)).toBeLessThan(2);
-    deferOlder = true;
-    await page.locator('[data-sync-feed]').evaluate(feed => { feed.scrollTop = 0; });
-    await page.locator('[data-sync-history-more]').click();
-    await olderRequested;
-    sockets.at(-1).send(JSON.stringify({ type: 'cleared', history: { generation: '2', oldestId: null, latestId: null, hasMore: false } }));
-    await expect(page.locator('.sync-message')).toHaveCount(0);
-    releaseOlder();
-    await page.clock.runFor(100);
-    await expect(page.locator('.sync-message')).toHaveCount(0);
     await expect(page.locator('[data-sync-history-more]')).toBeHidden();
 });
 

@@ -349,6 +349,9 @@
 
         const hideWindow = (element, task, state, { hideTask = false } = {}) => {
             closeWindowMenus();
+            if (window.innerWidth > 900 && isWindowVisible(element) && !element.classList.contains('is-maximized')) {
+                restoreGeometry.set(element, getWindowGeometry(element));
+            }
             element.classList.remove('is-minimized', 'is-closed');
             element.classList.add(state);
             element.classList.remove('is-active');
@@ -433,7 +436,7 @@
             const previousWindow = previousState?.windows?.[entry.id];
             const geometry = window.innerWidth > 900 && isWindowVisible(entry.element) && !maximized
                 ? getWindowGeometry(entry.element)
-                : previousWindow?.geometry || null;
+                : restoreGeometry.get(entry.element) || previousWindow?.geometry || null;
 
             return {
                 geometry,
@@ -484,6 +487,7 @@
                     if (!state) return;
 
                     if (state.maximized) {
+                        if (state.geometry) restoreGeometry.set(element, state.geometry);
                         clearWindowGeometry(element);
                         element.classList.add('is-maximized');
                     } else {

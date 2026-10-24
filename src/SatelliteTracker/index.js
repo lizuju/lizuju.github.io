@@ -115,6 +115,7 @@ function formatElementAge(record) {
 function isActive() {
     return initialized
         && !document.hidden
+        && !windowElement.inert
         && !windowElement.classList.contains('is-minimized')
         && !windowElement.classList.contains('is-closed');
 }
@@ -157,7 +158,7 @@ function createStars() {
 
 function initializeScene() {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputEncoding = THREE.sRGBEncoding;
     renderer.setClearColor(0x020713, 1);
 
@@ -238,7 +239,7 @@ function resize() {
 }
 
 function renderNow() {
-    if (!renderer) return;
+    if (!renderer || !isActive()) return;
     controls?.update();
     renderer.render(scene, camera);
     canvas.dataset.rendered = 'true';
@@ -516,7 +517,7 @@ function handleWorkerMessage(event) {
         dataLoaded = true;
         setLoading(false);
         setStatus(dataStatusKey);
-        worker.postMessage({ type: 'propagate', timestamp: Date.now(), selectedIndex });
+        if (isActive()) worker.postMessage({ type: 'propagate', timestamp: Date.now(), selectedIndex });
         syncAnimation();
         return;
     }
@@ -580,7 +581,7 @@ function initialize() {
     worker.addEventListener('message', handleWorkerMessage);
     new MutationObserver(syncAnimation).observe(windowElement, {
         attributes: true,
-        attributeFilter: ['class']
+        attributeFilter: ['class', 'inert']
     });
     document.addEventListener('visibilitychange', syncAnimation);
     canvas.addEventListener('click', handleCanvasClick);

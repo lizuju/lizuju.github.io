@@ -187,3 +187,58 @@ test('moves keyboard focus into opened windows and windows selected from the tas
     await expect(previewClose).toBeFocused();
     await expect(previewWindow).toHaveClass(/is-active/);
 });
+
+test('restores the original window geometry after reloading a maximized window', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'desktop windows preserve their movable geometry');
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-project-folder]').click();
+    const folderWindow = page.locator('[data-project-folder-window]');
+    const handle = await page.locator('[data-project-folder-resize]').boundingBox();
+    await page.mouse.move(handle.x + 4, handle.y + 4);
+    await page.mouse.down();
+    await page.mouse.move(handle.x - 100, handle.y - 60, { steps: 8 });
+    await page.mouse.up();
+    const geometry = await folderWindow.boundingBox();
+    await folderWindow.locator('[data-project-folder-action="maximize"]').click();
+    await expect(folderWindow).toHaveClass(/is-maximized/);
+
+    for (let reload = 0; reload < 2; reload += 1) {
+        await page.reload();
+        await expect(folderWindow).toHaveClass(/is-maximized/);
+    }
+    await folderWindow.locator('[data-project-folder-action="maximize"]').click();
+    await expect(folderWindow).not.toHaveClass(/is-maximized/);
+    expect(await folderWindow.boundingBox()).toEqual(geometry);
+});
+
+for (const action of ['minimize', 'close']) {
+    test(`preserves resized window geometry when reloading after ${action}`, async ({ page, isMobile }) => {
+        test.skip(isMobile, 'desktop windows preserve their movable geometry');
+        await page.goto('/portfolio/');
+        await page.locator('[data-window-action="minimize"]').click();
+        await page.locator('.desktop-shortcut[data-open-project-folder]').click();
+        const folderWindow = page.locator('[data-project-folder-window]');
+        const handle = await page.locator('[data-project-folder-resize]').boundingBox();
+        await page.mouse.move(handle.x + 4, handle.y + 4);
+        await page.mouse.down();
+        await page.mouse.move(handle.x - 100, handle.y - 60, { steps: 8 });
+        await page.mouse.up();
+        const titlebar = await page.locator('[data-project-folder-drag]').boundingBox();
+        await page.mouse.move(titlebar.x + 100, titlebar.y + 10);
+        await page.mouse.down();
+        await page.mouse.move(titlebar.x + 145, titlebar.y + 55, { steps: 8 });
+        await page.mouse.up();
+        const geometry = await folderWindow.boundingBox();
+
+        await folderWindow.locator(`[data-project-folder-action="${action}"]`).click();
+        await expect(folderWindow).toBeHidden();
+        await page.reload();
+        await expect(folderWindow).toBeHidden();
+        const opener = action === 'minimize'
+            ? '[data-project-folder-task]'
+            : '.desktop-shortcut[data-open-project-folder]';
+        await page.locator(opener).click();
+        expect(await folderWindow.boundingBox()).toEqual(geometry);
+    });
+}

@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { collectDailyUsage, unavailableDailyUsage } from './daily-usage.js';
 
 const INVITE_LIFETIME = 10 * 60 * 1000;
 const MESSAGE_LIFETIME = 5 * 24 * 60 * 60 * 1000;
@@ -103,7 +104,10 @@ function resultResponse(result, status = 200) {
 
 export default {
   async scheduled(event, env) {
-    await env.PAIRING_REGISTRY.getByName('registry').maintainRooms();
+    const registry = env.PAIRING_REGISTRY.getByName('registry');
+    const work = [registry.dailyUsage()];
+    if (event.cron === '17 0 * * *') work.push(registry.maintainRooms());
+    await Promise.all(work);
   },
 
   async fetch(request, env) {
@@ -145,7 +149,10 @@ export default {
     }
 
     const registry = env.PAIRING_REGISTRY.getByName('registry');
-    if (request.method === 'GET' && url.pathname === '/v1/status') return json(await registry.diagnostics());
+    if (request.method === 'GET' && url.pathname === '/v1/status') {
+      const [status, dailyUsage] = await Promise.all([registry.diagnostics(), registry.dailyUsage()]);
+      return json({ ...status, dailyUsage });
+    }
     if (request.method === 'POST' && url.pathname === '/v1/spaces') {
       const ipHash = await hash(request.headers.get('CF-Connecting-IP') || 'local');
       const limit = await registry.takeLimit(`create:${ipHash}`, 5, 60 * 60 * 1000);
@@ -194,6 +201,7 @@ export default {
       if (typeof file.name !== 'string' || !file.name || file.name.length > 255 || /[\x00-\x1f\x7f/\\]/.test(file.name)) return json({ error: 'invalid_file_name' }, 400);
       if (typeof file.type !== 'string' || file.type.length > 255 || (file.type && !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(file.type))) return json({ error: 'invalid_file_type' }, 400);
       if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > FILE_SIZE_LIMIT) return json({ error: 'file_too_large' }, 413);
+      if (file.fingerprint !== undefined && (typeof file.fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(file.fingerprint))) return json({ error: 'invalid_fingerprint' }, 400);
       if (file.text === undefined) file.text = '';
       if (typeof file.text !== 'string' || file.text.length > 10000) return json({ error: 'invalid_text' }, 400);
       file.type ||= 'application/octet-stream';
@@ -433,7 +441,7 @@ export class PairingRegistry extends DurableObject {
       if (!this.hasRoom(roomId)) return { error: 'not_found', status: 404 };
       const room = this.env.SYNC_ROOMS.getByName(roomId);
       if (!await this.refreshUsage(roomId)) return { error: 'not_found', status: 404 };
-      const existing = await room.findMessage(deviceId, file.clientId) || await room.uploadInfo(deviceId, file.clientId);
+      const existing = await room.uploadInfo(deviceId, file.clientId, file) || await room.findMessage(deviceId, file.clientId);
       if (existing) return existing;
       const denied = this.reserveCapacity(roomId, fileReserve(file.size));
       if (denied) { await this.resumeCleanup(); return denied; }
@@ -450,18 +458,62 @@ export class PairingRegistry extends DurableObject {
     const roomCount = this.sql.exec('SELECT count(*) AS count FROM room_usage').one().count;
     const roomBytes = this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM room_usage').one().bytes;
     const reservedBytes = this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM reservations').one().bytes;
-    const sample = this.sql.exec('SELECT room_id FROM room_usage ORDER BY room_id LIMIT 1').toArray()[0];
+    const sample = this.sql.exec('SELECT room_id FROM room_usage WHERE room_id > ? ORDER BY room_id LIMIT 1', this.diagnosticRoomCursor || '').toArray()[0]
+      || this.sql.exec('SELECT room_id FROM room_usage ORDER BY room_id LIMIT 1').toArray()[0];
     let roomDatabase = null;
+    let shardDatabase = null;
     if (sample) {
-      try { roomDatabase = await this.env.SYNC_ROOMS.getByName(sample.room_id).databaseProbe(); }
+      this.diagnosticRoomCursor = sample.room_id;
+      try {
+        const { sampledShard, ...room } = await this.env.SYNC_ROOMS.getByName(sample.room_id).databaseProbe();
+        roomDatabase = room;
+        shardDatabase = sampledShard;
+      }
       catch { roomDatabase = { ok: false }; }
     }
+    const nextAlarmAt = await this.ctx.storage.getAlarm();
+    const lastSuccessAt = metadata.lastMaintenanceSuccessAt || null;
+    const lastFailureAt = metadata.lastMaintenanceFailureAt || null;
+    const stale = !lastSuccessAt || checkedAt - lastSuccessAt > 26 * 60 * 60 * 1000;
+    const overdue = Boolean(cleanup && (nextAlarmAt === null || nextAlarmAt < checkedAt - 60000)) || Boolean(lastSuccessAt && stale);
+    const failed = Boolean(lastFailureAt && (!lastSuccessAt || lastFailureAt > lastSuccessAt));
+    const status = overdue ? 'overdue' : cleanup ? 'running' : failed ? 'failed' : !lastSuccessAt ? 'never' : 'healthy';
     return {
-      ok: probe && roomDatabase?.ok !== false, checkedAt,
-      database: { registry: { ok: probe, bytes: this.sql.databaseSize }, sampledRoom: roomDatabase },
+      ok: probe && roomDatabase?.ok !== false && shardDatabase?.ok !== false, checkedAt,
+      database: { registry: { ok: probe, bytes: this.sql.databaseSize }, sampledRoom: roomDatabase, sampledShard: shardDatabase },
       storage: { scope: 'this-project', bytes: this.sql.databaseSize + roomBytes + reservedBytes, roomBytes, reservedBytes, roomCount, highWaterBytes: STORAGE_HIGH_WATER, cleanupBytes: STORAGE_CLEANUP_BYTES, accountUsageAvailable: false },
-      maintenance: { running: Boolean(cleanup), phase: cleanup?.phase || null, scannedRooms: cleanup?.phase === 'refresh' ? this.sql.exec('SELECT count(*) AS count FROM room_usage WHERE room_id <= ?', cleanup.cursor).one().count : null, targetBytes: cleanup?.targetBytes ?? null, startedAt: metadata.maintenanceStartedAt || null, lastSuccessAt: metadata.lastMaintenanceSuccessAt || null, lastFailureAt: metadata.lastMaintenanceFailureAt || null, lastFailureCode: metadata.lastMaintenanceFailureAt ? 'maintenance_failed' : null, nextAlarmAt: await this.ctx.storage.getAlarm() }
+      maintenance: { status, stale, overdue, running: Boolean(cleanup), phase: cleanup?.phase || null, scannedRooms: cleanup?.phase === 'refresh' ? this.sql.exec('SELECT count(*) AS count FROM room_usage WHERE room_id <= ?', cleanup.cursor).one().count : null, targetBytes: cleanup?.targetBytes ?? null, startedAt: metadata.maintenanceStartedAt || null, lastSuccessAt, lastFailureAt, lastFailureCode: failed ? 'maintenance_failed' : null, nextAlarmAt }
     };
+  }
+
+  async dailyUsage() {
+    const now = Date.now();
+    if (!this.env.CF_ACCOUNT_ID || !this.env.CF_ANALYTICS_TOKEN) return unavailableDailyUsage(now, 'not_configured');
+    const day = new Date(now).toISOString().slice(0, 10);
+    if (this.dailyUsageCache?.day === day && this.dailyUsageCacheUntil > now) return this.dailyUsageCache;
+    if (this.dailyUsageRefresh) return this.dailyUsageRefresh;
+    const refresh = async () => {
+      if (!this.dailyUsageSnapshotLoaded) {
+        const saved = await this.ctx.storage.get('dailyUsageCache').catch(() => null);
+        this.dailyUsageSnapshot = saved?.snapshot;
+        this.dailyUsageCache = saved?.value;
+        this.dailyUsageCacheUntil = saved?.expiresAt;
+        this.dailyUsageSnapshotLoaded = true;
+      }
+      if (this.dailyUsageCache?.day === day && this.dailyUsageCacheUntil > now) return this.dailyUsageCache;
+      const measured = await collectDailyUsage(this.env, { now, clock: Date.now });
+      if (measured.available) {
+        this.dailyUsageSnapshot = measured;
+        this.dailyUsageCache = measured;
+      } else if (this.dailyUsageSnapshot?.day === measured.day) {
+        this.dailyUsageCache = { ...this.dailyUsageSnapshot, status: 'stale', stale: true, failureCode: measured.failureCode };
+      } else this.dailyUsageCache = measured;
+      this.dailyUsageCacheUntil = Date.now() + (measured.available ? 5 * 60 * 1000 : 60 * 1000);
+      await this.ctx.storage.put('dailyUsageCache', { value: this.dailyUsageCache, snapshot: this.dailyUsageSnapshot || null, expiresAt: this.dailyUsageCacheUntil }).catch(() => {});
+      return this.dailyUsageCache;
+    };
+    this.dailyUsageRefresh = refresh().finally(() => { this.dailyUsageRefresh = null; });
+    return this.dailyUsageRefresh;
   }
 
   async alarm() {
@@ -582,6 +634,7 @@ export class SyncRoom extends DurableObject {
     const fileColumns = this.sql.exec('PRAGMA table_info(files)').toArray();
     if (!fileColumns.some(column => column.name === 'received_bytes')) this.sql.exec('ALTER TABLE files ADD COLUMN received_bytes INTEGER');
     if (!fileColumns.some(column => column.name === 'received_chunks')) this.sql.exec('ALTER TABLE files ADD COLUMN received_chunks INTEGER');
+    if (!fileColumns.some(column => column.name === 'fingerprint')) this.sql.exec('ALTER TABLE files ADD COLUMN fingerprint TEXT');
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_shards (file_id TEXT NOT NULL, shard_index INTEGER NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(file_id, shard_index))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_upload_chunks (file_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, size INTEGER NOT NULL, received INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(file_id, chunk_index))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS download_tickets (ticket TEXT PRIMARY KEY, file_id TEXT NOT NULL, device_id TEXT NOT NULL, expires_at INTEGER NOT NULL)');
@@ -674,12 +727,15 @@ export class SyncRoom extends DurableObject {
       rows = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages WHERE id < ? ORDER BY id DESC LIMIT ?', before, limit).toArray().reverse();
       historyMode = 'prepend';
     } else if (after !== null && generation === bounds.generation && (after === bounds.latestId || (bounds.oldestId !== null && after >= bounds.oldestId && after <= bounds.latestId))) {
-      rows = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages WHERE id > ? ORDER BY id', after).toArray();
+      rows = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages WHERE id > ? ORDER BY id LIMIT ?', after, limit).toArray();
       historyMode = 'append';
     } else {
       rows = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages ORDER BY id DESC LIMIT ?', limit).toArray().reverse();
     }
-    return { messages: rows.map(publicMessage), history: this.historySnapshot(rows[0]?.id ?? before ?? after ?? undefined), historyMode };
+    const history = this.historySnapshot(rows[0]?.id ?? before ?? after ?? undefined);
+    history.continuationId = rows.at(-1)?.id ?? after ?? null;
+    history.hasNewer = history.continuationId !== null && history.latestId > history.continuationId;
+    return { messages: rows.map(publicMessage), history, historyMode };
   }
 
   historyChanged(type = 'history') {
@@ -688,8 +744,18 @@ export class SyncRoom extends DurableObject {
     this.broadcast({ type, messages: rows.map(publicMessage), history: this.historySnapshot(rows[0]?.id), historyMode: 'replace' });
   }
 
-  databaseProbe() {
-    return { ok: this.sql.exec('SELECT 1 AS ok').one().ok === 1, initialized: this.initialized, bytes: this.sql.databaseSize };
+  async databaseProbe() {
+    const room = { ok: this.sql.exec('SELECT 1 AS ok').one().ok === 1 && this.initialized, initialized: this.initialized, bytes: this.sql.databaseSize };
+    if (!this.initialized) return { ...room, sampledShard: null };
+    const shard = this.sql.exec("SELECT s.file_id, s.shard_index FROM file_shards s JOIN files f ON f.file_id = s.file_id WHERE f.status = 'complete' AND (s.file_id > ? OR (s.file_id = ? AND s.shard_index > ?)) ORDER BY s.file_id, s.shard_index LIMIT 1", this.diagnosticFileCursor || '', this.diagnosticFileCursor || '', this.diagnosticShardCursor ?? -1).toArray()[0]
+      || this.sql.exec("SELECT s.file_id, s.shard_index FROM file_shards s JOIN files f ON f.file_id = s.file_id WHERE f.status = 'complete' ORDER BY s.file_id, s.shard_index LIMIT 1").toArray()[0];
+    if (!shard) return { ...room, sampledShard: null };
+    this.diagnosticFileCursor = shard.file_id;
+    this.diagnosticShardCursor = shard.shard_index;
+    let sampledShard;
+    try { sampledShard = await this.env.FILE_SHARDS.getByName(`${shard.file_id}:${shard.shard_index}`).databaseProbe(); }
+    catch { sampledShard = { ok: false }; }
+    return { ...room, sampledShard };
   }
 
   storageUsage() {
@@ -769,10 +835,12 @@ export class SyncRoom extends DurableObject {
     return null;
   }
 
-  uploadInfo(deviceId, clientId) {
+  uploadInfo(deviceId, clientId, identity = null) {
     if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
-    const file = this.sql.exec('SELECT file_id, status, received_bytes, received_chunks FROM files WHERE device_id = ? AND client_id = ?', deviceId, clientId).toArray()[0];
+    const file = this.sql.exec('SELECT file_id, status, received_bytes, received_chunks, name, type, size, fingerprint FROM files WHERE device_id = ? AND client_id = ?', deviceId, clientId).toArray()[0];
     if (!file) return null;
+    if (identity && (file.name !== identity.name || file.type !== identity.type || file.size !== identity.size || file.fingerprint !== (identity.fingerprint ?? null))) return { error: 'upload_conflict', status: 409 };
+    if (file.status === 'complete') return this.findMessage(deviceId, clientId);
     if (file.status !== 'uploading') return { error: 'upload_unavailable', status: 409 };
     this.uploadProgress(file);
     return { uploadId: file.file_id, chunkSize: FILE_CHUNK_SIZE, receivedBytes: file.received_bytes };
@@ -787,10 +855,10 @@ export class SyncRoom extends DurableObject {
   }
 
   async beginUpload(deviceId, file) {
-    const existing = this.findMessage(deviceId, file.clientId) || this.uploadInfo(deviceId, file.clientId);
+    const existing = this.uploadInfo(deviceId, file.clientId, file) || this.findMessage(deviceId, file.clientId);
     if (existing) return existing;
     const uploadId = crypto.randomUUID();
-    this.sql.exec('INSERT INTO files (file_id, device_id, client_id, name, type, size, text, status, created_at, updated_at, reserved_bytes, received_bytes, received_chunks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)', uploadId, deviceId, file.clientId, file.name, file.type, file.size, file.text, 'uploading', Date.now(), Date.now(), fileReserve(file.size));
+    this.sql.exec('INSERT INTO files (file_id, device_id, client_id, name, type, size, text, status, created_at, updated_at, reserved_bytes, received_bytes, received_chunks, fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)', uploadId, deviceId, file.clientId, file.name, file.type, file.size, file.text, 'uploading', Date.now(), Date.now(), fileReserve(file.size), file.fingerprint ?? null);
     await this.scheduleAlarm();
     return { uploadId, chunkSize: FILE_CHUNK_SIZE, receivedBytes: 0, created: true };
   }
@@ -1173,12 +1241,16 @@ export class FileShard extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
-    this.sql.exec('CREATE TABLE IF NOT EXISTS chunks (chunk_index INTEGER PRIMARY KEY, data BLOB NOT NULL)');
-    this.sql.exec('CREATE TABLE IF NOT EXISTS parts (part_index INTEGER PRIMARY KEY, hash TEXT NOT NULL)');
+    this.initialized = this.sql.exec("SELECT count(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('chunks', 'parts')").one().count === 2;
   }
 
   async writePart(index, contents) {
     return this.ctx.blockConcurrencyWhile(async () => {
+      if (!this.initialized) {
+        this.sql.exec('CREATE TABLE IF NOT EXISTS chunks (chunk_index INTEGER PRIMARY KEY, data BLOB NOT NULL)');
+        this.sql.exec('CREATE TABLE IF NOT EXISTS parts (part_index INTEGER PRIMARY KEY, hash TEXT NOT NULL)');
+        this.initialized = true;
+      }
       const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', contents)), value => value.toString(16).padStart(2, '0')).join('');
       const existing = this.sql.exec('SELECT hash FROM parts WHERE part_index = ?', index).toArray()[0];
       if (existing) return existing.hash === digest ? { bytes: this.sql.databaseSize } : { error: 'chunk_conflict', status: 409 };
@@ -1198,7 +1270,7 @@ export class FileShard extends DurableObject {
     return new ReadableStream({
       type: 'bytes',
       pull: (controller) => {
-        if (offset >= end) { controller.close(); return; }
+        if (!this.initialized || offset >= end) { controller.close(); return; }
         const chunk = this.sql.exec('SELECT data FROM chunks WHERE chunk_index = ?', Math.floor(offset / BLOB_CHUNK_SIZE)).toArray()[0];
         if (!chunk) controller.close();
         else {
@@ -1214,7 +1286,12 @@ export class FileShard extends DurableObject {
     return this.sql.databaseSize;
   }
 
+  databaseProbe() {
+    return { ok: this.initialized && this.sql.exec('SELECT 1 FROM chunks LIMIT 1').toArray().length !== 0, initialized: this.initialized, bytes: this.sql.databaseSize };
+  }
+
   erase() {
+    this.initialized = false;
     return this.ctx.storage.deleteAll();
   }
 }

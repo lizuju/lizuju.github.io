@@ -500,12 +500,18 @@
     border-style: inset;
 }
 
+.window-scroll,
+.project-folder-scroll,
+.control-panel-body,
+.sync-storage-body {
+    border: 2px inset #efefef;
+}
+
 .window-scroll {
     position: relative;
     min-height: 0;
     flex: 1;
     overflow: auto;
-    border: 2px inset #efefef;
     background-color: var(--paper);
     background-image:
         linear-gradient(rgba(34, 34, 34, 0.025) 1px, transparent 1px),

@@ -609,12 +609,18 @@ summary:focus-visible {
     border-style: inset;
 }
 
+.window-scroll,
+.project-folder-scroll,
+.control-panel-body,
+.sync-storage-body {
+    border: 2px inset #efefef;
+}
+
 .window-scroll {
     position: relative;
     min-height: 0;
     flex: 1;
     overflow: auto;
-    border: 2px inset #efefef;
     background-color: var(--paper);
     background-image:
         linear-gradient(rgba(34, 34, 34, 0.025) 1px, transparent 1px),
@@ -1424,7 +1430,6 @@ summary:focus-visible {
     min-height: 0;
     flex: 1;
     overflow: auto;
-    border: 2px inset #efefef;
     background-color: #fff;
     background-image:
         linear-gradient(rgba(34, 34, 34, 0.018) 1px, transparent 1px),
@@ -3437,6 +3442,22 @@ summary:focus-visible {
 
 .sync-storage-metrics dd {
     font-weight: 700;
+}
+
+.sync-storage-body h3 {
+    margin: 24px 0 8px;
+    font-size: 13px;
+}
+
+.sync-storage-metrics dd[data-level="warning"],
+.sync-storage-body p[data-state="stale"] {
+    color: #885000;
+}
+
+.sync-storage-metrics dd[data-level="critical"],
+.sync-storage-metrics dd[data-level="exceeded"],
+.sync-storage-body p[data-state="unavailable"] {
+    color: #9b1616;
 }
 
 .control-panel-window {

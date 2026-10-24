@@ -333,7 +333,13 @@
                     <button class="sync-button" type="button" data-sync-storage-refresh data-i18n="syncStorageRefresh">刷新</button>
                     <p data-i18n="syncStorageHint">所有同步空间共用存储，历史最长保留 5 天。</p>
                     <dl class="sync-storage-metrics" data-sync-storage-metrics hidden></dl>
+                    <p data-i18n="syncStorageSampleHint">健康检查轮换抽样，不代表每个空间和附件均已检查。</p>
                     <p data-i18n="syncStorageProjectHint">统计仅包含本项目。</p>
+                    <h3 data-i18n="syncDailyTitle">账户每日额度</h3>
+                    <p data-sync-daily-notice></p>
+                    <dl class="sync-storage-metrics" data-sync-daily-metrics hidden></dl>
+                    <p data-sync-daily-checked></p>
+                    <p data-i18n="syncDailyHint">账户内所有项目共用额度。Cloudflare 统计存在延迟与抽样，每日北京时间 08:00 重置。</p>
                 </div>
                 <p class="sync-notice" role="status" aria-live="polite" data-sync-storage-notice data-i18n="syncStorageReady">打开此页面查看联络站存储。</p>
             </div>

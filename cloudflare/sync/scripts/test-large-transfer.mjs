@@ -14,6 +14,7 @@ const directory = await mkdtemp(join(tmpdir(), 'portfolio-2gib-'));
 const disk = await statfs(directory);
 assert.ok(disk.bavail * disk.bsize > 7 * 1024 ** 3, 'This isolated acceptance needs at least 7 GiB of free temporary disk space');
 const contents = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
+const dailyUsageContents = await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8');
 let runtime;
 let space;
 let ip = 1;
@@ -24,7 +25,7 @@ async function startRuntime() {
     resourcePersistencePath: directory,
     workers: [{ config: {
       name: 'sync-large-transfer', compatibilityDate: '2026-10-23',
-      manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents } } },
+      manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents }, 'daily-usage.js': { type: 'esm', contents: dailyUsageContents } } },
       env: {
         ALLOWED_ORIGINS: { type: 'text', value: origin },
         PAIRING_REGISTRY: { type: 'durable-object', worker: 'sync-large-transfer', exportName: 'PairingRegistry' },

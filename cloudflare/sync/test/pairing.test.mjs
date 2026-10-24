@@ -25,6 +25,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
           mainModule: 'harness.js',
           modules: {
             'index.js': { type: 'esm', contents: await readFile(new URL('../src/index.js', import.meta.url), 'utf8') },
+            'daily-usage.js': { type: 'esm', contents: await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8') },
             'harness.js': {
               type: 'esm',
               contents: `import { SyncRoom as ProductionSyncRoom, PairingRegistry as ProductionRegistry } from './index.js';
@@ -65,6 +66,8 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                   }
                 }
                 export class SyncRoom extends ProductionSyncRoom {
+                  databaseProbe() { this.probeCount = (this.probeCount || 0) + 1; return super.databaseProbe(); }
+                  testProbeCount() { return this.probeCount || 0; }
                   testHoldUploadBegin() {
                     this.uploadBeginStarted = new Promise(resolve => { this.startUploadBegin = resolve; });
                     this.uploadBeginRelease = new Promise(resolve => { this.releaseUploadBegin = resolve; });
@@ -1625,6 +1628,62 @@ test('public storage status is read only, aggregate only and distinguishes proje
   await registry.testRunAlarm();
   const finished = await request('/v1/status');
   assert.equal(finished.body.maintenance.running, false); assert.ok(finished.body.maintenance.lastSuccessAt >= running.body.maintenance.startedAt);
+});
+
+test('reconnect catch-up pages are bounded and continuation visits every retained message once', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  const text = '汉'.repeat(10000);
+  for (let index = 0; index < 135; index += 1) await storage.exec('INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?)', randomUUID(), space.deviceId, text, Date.now());
+  const initial = (await request(`/v1/spaces/${space.roomId}`, { token: space.token })).body;
+  const response = await instance.dispatchFetch(`https://sync.test/v1/spaces/${space.roomId}/socket?after=1&generation=${initial.history.generation}`, { headers: { Origin: origin, Upgrade: 'websocket', 'Sec-WebSocket-Protocol': `sync, auth.${space.token}` } });
+  const reconnect = response.webSocket; reconnect.accept(); sockets.add(reconnect);
+  const ready = socketEvent(reconnect); reconnect.send(JSON.stringify({ type: 'auth', token: space.token }));
+  let page = JSON.parse((await ready).data);
+  assert.equal(page.historyMode, 'append'); assert.equal(page.messages.length, 50);
+  assert.equal(page.history.continuationId, 51); assert.equal(page.history.hasNewer, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(page)) < 1_600_000);
+  const ids = page.messages.map(message => message.id);
+  while (page.history.hasNewer) {
+    page = (await request(`/v1/spaces/${space.roomId}/messages?after=${page.history.continuationId}&limit=50&generation=${page.history.generation}`, { token: space.token })).body;
+    assert.ok(page.messages.length <= 50);
+    ids.push(...page.messages.map(message => message.id));
+  }
+  assert.deepEqual(ids, Array.from({ length: 134 }, (_, index) => index + 2));
+  assert.equal(page.history.continuationId, 135);
+  reconnect.close(); sockets.delete(reconnect);
+});
+
+test('status rotates room probes and distinguishes missing, stale, overdue and recovered maintenance', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), first = await createSpace(request), second = await createSpace(request);
+  const namespace = await instance.getDurableObjectNamespace('SYNC_ROOMS');
+  const rooms = [namespace.getByName(first.roomId), namespace.getByName(second.roomId)];
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  let response = await request('/v1/status');
+  assert.equal(response.body.maintenance.status, 'never'); assert.equal(response.body.maintenance.lastSuccessAt, null);
+  assert.equal(response.body.maintenance.stale, true); assert.equal(response.body.maintenance.overdue, false);
+  await request('/v1/status');
+  assert.deepEqual(await Promise.all(rooms.map(room => room.testProbeCount())), [1, 1]);
+  const oldSuccess = Date.now() - 27 * 60 * 60 * 1000;
+  await storage.exec('INSERT INTO registry_metadata (key, value) VALUES (?, ?)', 'lastMaintenanceSuccessAt', oldSuccess);
+  response = await request('/v1/status');
+  assert.equal(response.body.maintenance.status, 'overdue'); assert.equal(response.body.maintenance.stale, true);
+  const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  await registry.maintainRooms(); await registry.testDropAlarm();
+  response = await request('/v1/status');
+  assert.equal(response.body.maintenance.overdue, true); assert.equal(response.body.maintenance.nextAlarmAt, null);
+  await registry.testRunAlarm();
+  response = await request('/v1/status');
+  assert.equal(response.body.maintenance.status, 'healthy'); assert.equal(response.body.maintenance.stale, false);
+  const recentFailure = Date.now() + 1000;
+  await storage.exec('INSERT INTO registry_metadata (key, value) VALUES (?, ?)', 'lastMaintenanceFailureAt', recentFailure);
+  response = await request('/v1/status');
+  assert.equal(response.body.maintenance.status, 'failed'); assert.equal(response.body.maintenance.lastFailureCode, 'maintenance_failed');
+  await storage.exec('UPDATE registry_metadata SET value = ? WHERE key = ?', recentFailure + 1000, 'lastMaintenanceSuccessAt');
+  response = await request('/v1/status');
+  assert.equal(response.body.maintenance.status, 'healthy'); assert.equal(response.body.maintenance.lastFailureCode, null);
 });
 
 test('in-flight upload reservations protect global capacity while another room remains responsive', async t => {

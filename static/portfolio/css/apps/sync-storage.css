@@ -33,3 +33,19 @@
 .sync-storage-metrics dd {
     font-weight: 700;
 }
+
+.sync-storage-body h3 {
+    margin: 24px 0 8px;
+    font-size: 13px;
+}
+
+.sync-storage-metrics dd[data-level="warning"],
+.sync-storage-body p[data-state="stale"] {
+    color: #885000;
+}
+
+.sync-storage-metrics dd[data-level="critical"],
+.sync-storage-metrics dd[data-level="exceeded"],
+.sync-storage-body p[data-state="unavailable"] {
+    color: #9b1616;
+}

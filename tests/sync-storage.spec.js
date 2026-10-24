@@ -182,3 +182,54 @@ test('keeps the storage page scrollable in short and narrow windows', async ({ p
         await expect(storage).toBeHidden();
     }
 });
+
+test('keeps failed checks visible across language changes and distinguishes sampled health from daily quotas', async ({ page }) => {
+    let fail = false;
+    let quotaStatus = 'ready';
+    const collectedAt = Date.UTC(2026, 9, 24, 2);
+    const dailyMetrics = {
+        workersRequests: { used: 81000, limit: 100000, level: 'warning' },
+        durableRequests: { used: 96000, limit: 100000, level: 'critical' },
+        rowsRead: { used: 100, limit: 5000000, level: 'normal' },
+        rowsWritten: { used: 100100, limit: 100000, level: 'exceeded' },
+        duration: { used: 1.25, limit: 13000, level: 'normal' }
+    };
+    await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
+    await page.route('https://sync.test/v1/status', route => route.fulfill({ status: fail ? 503 : 200, headers: { 'Access-Control-Allow-Origin': '*' }, json: fail ? { error: 'unavailable' } : {
+        ok: false, checkedAt: collectedAt,
+        database: { registry: { ok: true }, sampledRoom: { ok: true }, sampledShard: { ok: false } },
+        storage: { bytes: 1200000000, highWaterBytes: 4700000000, roomCount: 3, reservedBytes: 0 },
+        maintenance: { status: 'overdue', phase: null, scannedRooms: null, lastSuccessAt: collectedAt - 48 * 3600000, lastFailureAt: null, nextAlarmAt: null },
+        dailyUsage: { status: quotaStatus, available: quotaStatus !== 'not_configured', day: '2026-10-24', checkedAt: quotaStatus === 'not_configured' ? null : collectedAt,
+            resetsAt: Date.UTC(2026, 9, 25), metrics: quotaStatus === 'not_configured' ? null : dailyMetrics, estimated: true }
+    } }));
+    await page.goto('/portfolio/');
+    await page.locator('[data-start-toggle]').click();
+    await page.locator('[data-open-control-panel]').click();
+    await page.locator('[data-open-sync-storage]').click();
+    const metrics = page.locator('[data-sync-storage-metrics]');
+    const quota = page.locator('[data-sync-daily-metrics]');
+    const notice = page.locator('[data-sync-storage-notice]');
+    await expect(metrics).toContainText('维护逾期');
+    await expect(metrics.locator('dt', { hasText: '附件抽样' }).locator('+ dd')).toHaveText('异常');
+    await expect(quota).toContainText('81,000 / 100,000 (81%)');
+    await expect(quota.locator('[data-level="exceeded"]')).toContainText('100.1%');
+    fail = true;
+    await page.locator('[data-sync-storage-refresh]').click();
+    await expect(notice).toHaveText('暂时无法检查服务，请重试。');
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(notice).toHaveText('Unable to check the service. Please retry.');
+    await expect(notice).toHaveAttribute('data-state', 'error');
+    await expect(page.locator('[data-sync-daily-checked]')).toContainText('2026-10-24 (UTC)');
+    fail = false;
+    quotaStatus = 'stale';
+    await page.locator('[data-sync-storage-refresh]').click();
+    await expect(page.locator('[data-sync-daily-notice]')).toContainText('last successful snapshot');
+    await expect(quota).toBeVisible();
+    quotaStatus = 'not_configured';
+    await page.locator('[data-sync-storage-refresh]').click();
+    await expect(page.locator('[data-sync-daily-notice]')).toContainText('not connected');
+    await expect(quota).toBeHidden();
+    await expect(quota).toBeEmpty();
+    await expect(notice).toContainText('Checked:');
+});

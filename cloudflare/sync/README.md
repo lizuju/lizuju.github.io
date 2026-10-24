@@ -44,7 +44,7 @@ npm run dev
 
 消息为 `{ id, clientId, deviceId, text, createdAt, attachment? }`，附件元数据为 `{ name, type, size }`，大小以字节计。`id` 是空间内递增整数，`clientId` 是客户端生成的 UUID v4，同设备重试同一个 `clientId` 会返回已有消息。文字最多 10,000 个 UTF-16 码元，纯文字消息不能全为空白；带附件时文字可留空。每个空间最多保留 5 天、最近 500 条，删除消息时同步清理附件。已清空或超出保留范围的旧消息不再参与重试去重。前端 Enter 发送，Shift+Enter 换行；输入法选词不会触发发送。
 
-连接 `GET /v1/spaces/:roomId/socket` 并升级 WebSocket，地址中不携带凭据。浏览器使用子协议 `['sync', 'auth.' + token]`，后端在升级前校验凭据，正常连接按空间内设备分别限制为每十分钟 60 次；匿名或伪造凭据的连接共用每 IP 每十分钟 30 次的额度。服务器只选择 `sync` 子协议。升级后仍须在十秒内发送首帧 `{ "type": "auth", "token": "..." }`；首帧必须与升级时验证的设备一致。认证成功返回 `{ type: "ready", deviceId, messages, history, historyMode, pairing }`。首次只传最新 50 条，前端通过“加载更早消息”向前翻页。`history` 包含 `{ generation, oldestId, latestId, hasMore }`。重连可带 `?after=:lastId&generation=:generation`，版本一致且游标仍在保留范围内时只传缺少的消息，`historyMode` 为 `append`；否则返回最新一页并以 `replace` 替换。历史清空、过期或容量淘汰都会更新版本，较早页面的过时响应不能重新加入列表。重连也从 Registry 读取最新配对码，不依赖设备本地保存的旧码。未认证连接不会收到历史、配对码或广播。
+连接 `GET /v1/spaces/:roomId/socket` 并升级 WebSocket，地址中不携带凭据。浏览器使用子协议 `['sync', 'auth.' + token]`，后端在升级前校验凭据，正常连接按空间内设备分别限制为每十分钟 60 次；匿名或伪造凭据的连接共用每 IP 每十分钟 30 次的额度。服务器只选择 `sync` 子协议。升级后仍须在十秒内发送首帧 `{ "type": "auth", "token": "..." }`；首帧必须与升级时验证的设备一致。认证成功返回 `{ type: "ready", deviceId, messages, history, historyMode, pairing }`。首次只传最新 50 条，前端通过“加载更早消息”向前翻页。`history` 包含 `{ generation, oldestId, latestId, hasMore, continuationId, hasNewer }`。重连可带 `?after=:lastId&generation=:generation`，版本一致且游标仍在保留范围内时，每次最多传 50 条缺少的消息，`historyMode` 为 `append`；`hasNewer` 为真时继续以 `continuationId` 作为 `after` 分页补齐，实时广播不会跳过尚未补齐的消息；否则返回最新一页并以 `replace` 替换。历史清空、过期或容量淘汰都会更新版本，较早页面的过时响应不能重新加入列表。重连也从 Registry 读取最新配对码，不依赖设备本地保存的旧码。未认证连接不会收到历史、配对码或广播。
 
 后续服务端广播 `{ type: "message", message, history }`、`{ type: "cleared", history, ... }` 或 `{ type: "history", messages, history, historyMode: "replace" }`。自动清理通过 `history` 同步最新一页，客户端替换已有列表。任一已配对设备调用 `POST /pair-code` 后，向同一空间的已认证连接广播 `{ type: "pairing", pairing }`，包括复用现有码时；该 HTTP 接口仍返回顶层 `{ code, expiresAt }`。客户端按 `expiresAt` 隐藏过期码，过期本身不主动广播；创建、加入、读取空间及重连的响应都会携带当前 `pairing`。配对码只持久保存在 Registry。设备加入、改名和撤销后广播 `{ type: "devices" }`，客户端可重新读取设备列表；被撤销的设备以 `4001` 断开，不再接收广播。客户端消息发送仍使用上述 HTTP 接口。需要保活时发送字符串 `ping`，运行时直接回复字符串 `pong`，不会唤醒闲置对象。客户端按指数退避并加入少量随机延迟重连；首次连接失败且确认空间已回收或凭据已撤销时，返回重新配对界面。
 
@@ -74,7 +74,7 @@ npm run dev
 
 ticket 路径添加 `?preview=1` 可流式内联预览 PNG、JPEG、GIF、WebP、AVIF、MP4、WebM、OGG 视频和 PDF；后端仅对白名单 MIME 返回对应 `Content-Type` 与 `inline`，HTML、SVG 及其余格式仍作为二进制附件下载。预览共用下载的 Range、HEAD、有效期和撤销检查。
 
-失败后使用同一 `clientId` 重新初始化，再从 `receivedBytes` 继续顺序上传；同一块可以重试，内容冲突返回 `409 chunk_conflict`。进度字节数与块数在成功确认块时事务更新，重复块不重复计数；旧上传第一次恢复时从已有块记录补齐计数，以后不再逐块重复聚合整张记录。初始化、块上传和完成的可重试错误遵守 `Retry-After`（秒数或 HTTP 日期）；缺少该头时按指数退避，等待可取消。刷新页面会保留上传标识，重新选择同一文件并发送即可续传；上传期间可取消，保留输入的文字。未完成上传在最后活动 24 小时后回收。取消或清空后的上传不能继续完成。文件名最多 255 个 UTF-16 码元，不能包含路径分隔符或控制字符。空间成员可下载该空间的完整附件，但上传、续传和取消只能由原上传设备操作。
+前端上传前在 Worker 内采样文件首部、中部和尾部各 64 KiB，并与文件大小一起计算 SHA-256，将 `fingerprint` 随初始化请求发送。后端保存该指纹，同一 `clientId` 的指纹、名称、类型或大小不同会返回 `409 upload_conflict`；旧版无指纹的未完成上传不能用新指纹直接续传，需重新开始。采样能识别常见误选文件，不等于完整文件的校验和。失败后使用同一 `clientId` 重新初始化，再从 `receivedBytes` 继续顺序上传；同一块可以重试，内容冲突返回 `409 chunk_conflict`。进度字节数与块数在成功确认块时事务更新，重复块不重复计数；旧上传第一次恢复时从已有块记录补齐计数，以后不再逐块重复聚合整张记录。初始化、块上传和完成的可重试错误遵守 `Retry-After`（秒数或 HTTP 日期）；缺少该头时按指数退避，等待可取消。刷新页面会保留上传标识，重新选择同一文件并发送即可续传；上传期间可取消，保留输入的文字。未完成上传在最后活动 24 小时后回收。取消或清空后的上传不能继续完成。文件名最多 255 个 UTF-16 码元，不能包含路径分隔符或控制字符。空间成员可下载该空间的完整附件，但上传、续传和取消只能由原上传设备操作。
 
 下载使用 `Content-Disposition: attachment` 和流式响应，浏览器直接保存文件，不先缓存整个 2 GiB。两种下载路径均支持单个 `Range: bytes=start-end`、`bytes=start-` 或 `bytes=-suffix`，返回 `206` 和准确的 `Content-Range`、`Content-Length`；无效、越界或多段请求返回 `416` 和 `Content-Range: bytes */总字节数`。`HEAD` 返回完整元信息和长度，不读取文件字节，也不处理 Range。文件返回稳定的 `ETag` 与 `Last-Modified`；`If-Range` 匹配时返回分段，失配时返回完整 `200`。流从所需分片偏移读取，每个分片最多一次 RPC，完整 2 GiB 下载为 32 个分片读取。ticket 可在 24 小时内重试或继续下载，但设备撤销、消息删除或附件满 5 天后立即不可用。
 
@@ -86,13 +86,29 @@ ticket 路径添加 `?preview=1` 可流式内联预览 PNG、JPEG、GIF、WebP�
 
 Registry 对同一房间的操作按队列执行，跨房间等待不使用全局锁。跨房间写入前持久化预留容量，完成后原子替换为实际占用，防止并发上传同时通过容量检查。每日复核也校准中断操作留下的预留。单个房间维护较慢时，其他房间可以继续发送。
 
-这里统计本项目登记的所有同步空间，不是账户实时剩余容量。Cloudflare 的 5 GB 免费存储由账户共享，其他 Worker 的存储不在此汇总中；本项目未接入需要额外凭据的账户 Analytics API。容量清理阈值使用十进制 GB，单文件及分块大小使用二进制 GiB/MiB。
+这里统计本项目登记的所有同步空间，不是账户实时剩余容量。Cloudflare 的 5 GB 免费存储由账户共享，其他 Worker 的存储不在此汇总中；账户每日请求、读写和执行用量可通过下述 Analytics API 连接查询，账户总存储余额尚未接入。容量清理阈值使用十进制 GB，单文件及分块大小使用二进制 GiB/MiB。
 
 ## 联络站存储与日志
 
 桌面开始菜单的“控制面板”打开设置窗口，点击“联络站存储”进入同一窗口的二级页面，点击“上一级”返回。公开只读接口 `GET /v1/status` 不需要设备凭据或管理员密钥，进入详情时加载一次，可手动刷新，不持续轮询。
 
-状态接口只读，显示 Registry 与抽样房间的真实 SQLite 探测、本项目存储和写入预留量、空间数、清理阶段及目标、最近维护时间和下次 alarm；不触发清理，也不返回房间 ID、消息、配对码、设备或下载凭据。这里只统计本项目；Cloudflare 账户级免费用量仍需账户持有人登录控制台查看，释放存储不会恢复当日请求、读写或执行额度。
+状态接口只读探测应用数据，轮换抽样已登记房间及其已完成附件的现有分片，缺失分片不会被重新建表。显示本项目存储和写入预留量、空间数、清理阶段及目标、最近维护时间和下次 alarm；不触发清理，也不返回房间 ID、消息、配对码、设备或下载凭据。维护从未成功时显示未执行，不会显示正常；超过 26 小时没有成功记录、待处理维护缺少 alarm 或 alarm 逾期一分钟以上会提示逾期。存储容量只统计本项目；账户存储与精确账单仍需账户持有人登录控制台查看，释放存储不会恢复当日请求、读写或执行额度。
+
+### 账户每日额度监控
+
+控制面板也可显示整个 Cloudflare 账户当天的 Workers 请求、Durable Objects 请求、SQLite 读写行数和执行时长。后端通过官方 GraphQL Analytics API 获取 UTC 当天 00:00 至查询时刻的账户汇总，不按本项目过滤；额度在 UTC 00:00 重置。统计属于平台可能采样、延迟的估算，不能作为精确账单，也不代表达到额度前一定可用。Durable Objects 的 `hibernation` 入站 WebSocket 消息从 invocations 数据集读取，普通 WebSocket 入站消息从 periodic 数据集读取，分别按 20 条折算 1 次请求后相加，其余请求类型正常计数；执行时长保留官方 `duration` 的 GB·秒单位。免费额度参考值分别为每日 100,000、100,000、5,000,000、100,000 和 13,000 GB·秒；达到 80%、95%、100% 会提高提示级别。
+
+`wrangler.jsonc` 中的 `CF_ACCOUNT_ID` 是账户标识，不是密钥。启用查询还需账户持有人创建仅限该账户、具有 Analytics Read / Account Analytics 只读权限的 API Token，然后在本目录执行以下命令，按提示输入；不要把 Token 写进配置、前端或 Git：
+
+```sh
+npx wrangler secret put CF_ANALYTICS_TOKEN
+```
+
+本地隔离调试可以使用未跟踪的 `.dev.vars`；测试自带虚构响应，不需要真实凭据。缺少凭据时返回 `dailyUsage.status = "not_configured"`、`available = false`、`metrics = null`，不会显示成用量为零。API 返回错误时，不向公开接口或日志透出原始错误及请求内容。
+
+Registry 合并并发查询，将成功结果缓存在内存和持久存储中 5 分钟；失败结果缓存 1 分钟，避免公开刷新连续请求 Analytics API。每 15 分钟的 Cron 更新统计，原有 UTC 00:17 的每日维护保留。同一天查询失败时，可以展示最近成功值，但标为 `stale` 并保留原查询时间；跨过 UTC 午夜后不会把昨日结果显示为今日用量。监控故障不影响 `/health`、数据库探测或清理任务。
+
+`GET /v1/status` 增加 `dailyUsage`：`status` 为 `ready`、`stale`、`not_configured` 或 `unavailable`；`day` 为查询对应的 UTC 日期，`checkedAt` 为最近成功时间，`resetsAt` 为下次 UTC 午夜。`metrics` 中的 `workersRequests`、`durableRequests`、`rowsRead`、`rowsWritten`、`duration` 各含 `used`、`limit`、`level`，后者为 `normal`、`warning`、`critical` 或 `exceeded`。公开响应仅包含汇总用量，不包含账户 ID、Token 或 Worker 名称。存储容量仍按本项目统计，不能用账户每日请求用量推算存储余额。
 
 配置开启 10% 采样的 Workers Logs，关闭默认 invocation logs，避免记录下载票据所在的完整 URL。应用错误日志只包含固定路由类别、HTTP 状态、耗时和通用错误码；不记录请求体、原始异常、凭据、配对码或票据路径。维护失败记录时间并产生 `sync_maintenance_error`，平台可重试 alarm。
 

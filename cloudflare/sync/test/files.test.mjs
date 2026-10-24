@@ -31,10 +31,13 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
           mainModule: 'harness.js',
           modules: {
             'index.js': { type: 'esm', contents: await readFile(new URL('../src/index.js', import.meta.url), 'utf8') },
+            'daily-usage.js': { type: 'esm', contents: await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8') },
             'harness.js': {
               type: 'esm',
               contents: `import worker, { SyncRoom as ProductionSyncRoom, PairingRegistry as ProductionRegistry, FileShard as ProductionFileShard } from './index.js';
                 export class FileShard extends ProductionFileShard {
+                  databaseProbe() { this.probeCount = (this.probeCount || 0) + 1; return super.databaseProbe(); }
+                  testProbeCount() { return this.probeCount || 0; }
                   testFailRead() { this.failRead = true; }
                   readStream(offset, length) {
                     if (this.failRead) throw new Error('private-rpc-sentinel-ticket-and-secret');
@@ -119,9 +122,9 @@ async function createSpace(request = client()) {
   return result.body;
 }
 
-function initiate(request, space, { clientId = randomUUID(), name = 'file.bin', type = 'application/octet-stream', size = 0, text = '' } = {}) {
+function initiate(request, space, { clientId = randomUUID(), name = 'file.bin', type = 'application/octet-stream', size = 0, text = '', fingerprint } = {}) {
   return request(`/v1/spaces/${space.roomId}/files/uploads`, {
-    method: 'POST', token: space.token, json: { clientId, name, type, size, text }
+    method: 'POST', token: space.token, json: { clientId, name, type, size, text, fingerprint }
   });
 }
 
@@ -602,10 +605,10 @@ test('resuming the end of a 2 GiB file reads only the requested shard and reject
   await storage.exec("UPDATE files SET status = 'complete', message_id = ?, reserved_bytes = 0 WHERE file_id = ?", id, fileId);
   const shardNamespace = await instance.getDurableObjectNamespace('FILE_SHARDS');
   const lastShard = shardNamespace.getByName(`${fileId}:31`);
-  await lastShard.storageBytes();
+  await lastShard.writePart(255, new Uint8Array([0]).buffer);
   const shardStorage = await instance.unsafeGetDurableObjectStorage('sync-files-test', 'FileShard', { name: `${fileId}:31` });
   const lastMiB = randomBytes(MiB);
-  await shardStorage.exec('INSERT INTO chunks (chunk_index, data) VALUES (?, ?)', 63, lastMiB);
+  await shardStorage.exec('INSERT OR REPLACE INTO chunks (chunk_index, data) VALUES (?, ?)', 63, lastMiB);
   const issued = await request(`/v1/spaces/${space.roomId}/files/${id}/download`, { method: 'POST', token: space.token });
   const path = `/v1/spaces/${space.roomId}/downloads/${issued.body.ticket}`;
   const ranged = await request(path, { headers: { Range: 'bytes=-23' } });
@@ -1000,4 +1003,60 @@ test('a shard RPC download failure exposes only a generic stream error', async t
     await response.arrayBuffer();
   }, error => !String(error).includes('private-rpc-sentinel-ticket-and-secret'));
   assert.equal(observedLogs.some(message => message.includes('private-rpc-sentinel-ticket-and-secret')), false);
+});
+
+test('upload resume compares persisted content identity and metadata before accepting an existing client ID', async () => {
+  const request = client(), space = await createSpace(request);
+  const metadata = { clientId: randomUUID(), name: 'same.bin', type: 'application/octet-stream', size: 4, fingerprint: 'a'.repeat(64) };
+  const started = await initiate(request, space, metadata);
+  assert.equal(started.status, 201);
+  const storage = await roomStorage(space);
+  assert.equal((await storage.exec('SELECT fingerprint FROM files WHERE file_id = ?', started.body.uploadId))[0].fingerprint, metadata.fingerprint);
+  for (const change of [{ fingerprint: 'b'.repeat(64) }, { name: 'other.bin' }, { type: 'image/png' }, { size: 5 }, { fingerprint: undefined }]) {
+    const mismatched = await initiate(request, space, { ...metadata, ...change });
+    assert.equal(mismatched.status, 409); assert.equal(mismatched.body.error, 'upload_conflict');
+  }
+  const resumed = await initiate(request, space, metadata);
+  assert.equal(resumed.status, 200); assert.equal(resumed.body.uploadId, started.body.uploadId);
+  assert.equal((await putChunk(request, space, started.body.uploadId, 0, Buffer.from('file'))).status, 200);
+  assert.equal((await complete(request, space, started.body.uploadId)).status, 201);
+  assert.equal((await initiate(request, space, metadata)).body.message.attachment.name, 'same.bin');
+  assert.equal((await initiate(request, space, { ...metadata, fingerprint: 'b'.repeat(64) })).status, 409);
+  const legacyId = randomUUID();
+  assert.equal((await initiate(request, space, { clientId: legacyId, size: 4 })).status, 201);
+  assert.equal((await initiate(request, space, { clientId: legacyId, size: 4, fingerprint: 'a'.repeat(64) })).status, 409);
+  for (const fingerprint of ['', 'a'.repeat(63), 'A'.repeat(64), 123]) {
+    const invalid = await initiate(request, space, { fingerprint });
+    assert.equal(invalid.status, 400); assert.equal(invalid.body.error, 'invalid_fingerprint');
+  }
+});
+
+test('public diagnostics rotates existing shard samples without creating missing shard tables', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  await upload(request, space, { bytes: Buffer.from('one') });
+  await upload(request, space, { bytes: Buffer.from('two') });
+  const storage = await roomStorage(space, instance);
+  const files = await storage.exec('SELECT file_id FROM files ORDER BY file_id');
+  const namespace = await instance.getDurableObjectNamespace('FILE_SHARDS');
+  const shards = files.map(file => namespace.getByName(`${file.file_id}:0`));
+  for (let i = 0; i < 2; i += 1) {
+    const status = await request('/v1/status');
+    assert.equal(status.body.database.sampledShard.ok, true);
+    assert.equal(status.body.database.sampledShard.initialized, true);
+  }
+  assert.deepEqual(await Promise.all(shards.map(shard => shard.testProbeCount())), [1, 1]);
+  await storage.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, 9, 1)', files[0].file_id);
+  const missing = await instance.unsafeGetDurableObjectStorage('sync-files-test', 'FileShard', { name: `${files[0].file_id}:9` });
+  const schema = "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('chunks', 'parts')";
+  assert.deepEqual(await missing.exec(schema), []);
+  let missingStatus;
+  for (let i = 0; i < 3; i += 1) {
+    const status = await request('/v1/status');
+    if (!status.body.database.sampledShard.ok) missingStatus = status.body;
+  }
+  assert.ok(missingStatus); assert.equal(missingStatus.ok, false);
+  assert.equal(missingStatus.database.sampledShard.initialized, false);
+  assert.deepEqual(await missing.exec(schema), []);
+  assert.deepEqual(await storage.exec('SELECT file_id FROM files ORDER BY file_id'), files);
 });

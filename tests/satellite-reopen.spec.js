@@ -88,3 +88,69 @@ test('preserves loading and failure translations and retries on satellite reopen
     await expect(loading).toBeHidden();
     expect(requests).toBe(2);
 });
+
+test('pauses satellite rendering and propagation during shutdown and resumes after restart', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'satellite windows are only available in the desktop layout');
+    await page.addInitScript(() => {
+        window.__satelliteActivity = { draws: 0, propagations: 0 };
+        for (const Context of [window.WebGLRenderingContext, window.WebGL2RenderingContext].filter(Boolean)) {
+            for (const method of ['drawArrays', 'drawElements']) {
+                const draw = Context.prototype[method];
+                Context.prototype[method] = function (...args) {
+                    if (this.canvas.matches('[data-satellite-canvas]')) window.__satelliteActivity.draws += 1;
+                    return draw.apply(this, args);
+                };
+            }
+        }
+        const postMessage = Worker.prototype.postMessage;
+        Worker.prototype.postMessage = function (message, ...args) {
+            if (message.type === 'propagate') window.__satelliteActivity.propagations += 1;
+            return postMessage.call(this, message, ...args);
+        };
+    });
+    await page.route('https://celestrak.org/**', (route) => route.fulfill({
+        contentType: 'application/json', body: JSON.stringify(satelliteRecords)
+    }));
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-satellite]').click();
+    await expect(page.locator('[data-satellite-status]')).toHaveText('实时推算运行中');
+    await expect.poll(() => page.evaluate(() => window.__satelliteActivity.propagations)).toBeGreaterThan(0);
+    await expect.poll(() => page.evaluate(() => window.__satelliteActivity.draws)).toBeGreaterThan(0);
+
+    await page.locator('[data-start-toggle]').click();
+    await page.locator('[data-shutdown]').click();
+    await expect(page.locator('[data-shutdown-screen]')).toBeVisible();
+    await expect(page.locator('[data-satellite-window]')).toHaveAttribute('inert', '');
+    const paused = await page.evaluate(() => ({ ...window.__satelliteActivity }));
+    await page.waitForTimeout(1250);
+    expect(await page.evaluate(() => window.__satelliteActivity)).toEqual(paused);
+
+    await page.locator('[data-restart]').click();
+    await expect(page.locator('[data-shutdown-screen]')).toBeHidden();
+    await expect.poll(() => page.evaluate(() => window.__satelliteActivity.propagations)).toBeGreaterThan(paused.propagations);
+    await expect.poll(() => page.evaluate(() => window.__satelliteActivity.draws)).toBeGreaterThan(paused.draws);
+});
+
+test.describe('satellite rendering on high density screens', () => {
+    test.use({ deviceScaleFactor: 3 });
+
+    test('limits canvas resolution to two device pixels per CSS pixel', async ({ page, isMobile }) => {
+        test.skip(isMobile, 'satellite windows are only available in the desktop layout');
+        await page.route('https://celestrak.org/**', (route) => route.fulfill({
+            contentType: 'application/json', body: JSON.stringify(satelliteRecords)
+        }));
+        await page.goto('/portfolio/');
+        await page.locator('[data-window-action="minimize"]').click();
+        await page.locator('.desktop-shortcut[data-open-satellite]').click();
+        await expect(page.locator('[data-satellite-status]')).toHaveText('实时推算运行中');
+        const canvas = page.locator('[data-satellite-canvas]');
+        const density = () => canvas.evaluate((element) => ({
+            width: element.width / element.clientWidth,
+            height: element.height / element.clientHeight
+        }));
+        await expect.poll(density).toEqual({ width: 2, height: 2 });
+        await page.setViewportSize({ width: 1100, height: 700 });
+        await expect.poll(density).toEqual({ width: 2, height: 2 });
+    });
+});

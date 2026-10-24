@@ -6,10 +6,11 @@
   "workers_dev": true,
   "version_metadata": { "binding": "WORKER_VERSION" },
   "triggers": {
-    "crons": ["17 0 * * *"]
+    "crons": ["17 0 * * *", "*/15 * * * *"]
   },
   "vars": {
-    "ALLOWED_ORIGINS": "https://lizuju.github.io,http://127.0.0.1:3090,http://localhost:3090"
+    "ALLOWED_ORIGINS": "https://lizuju.github.io,http://127.0.0.1:3090,http://localhost:3090",
+    "CF_ACCOUNT_ID": "0be0dce5142b529358029d497d38de65"
   },
   "durable_objects": {
     "bindings": [

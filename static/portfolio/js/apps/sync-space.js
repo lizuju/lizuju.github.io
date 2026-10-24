@@ -23,8 +23,13 @@
         let devices = [];
         let history = [];
         let historyState = null;
+        let reconnectCursor = null;
         let loadingOlder = false;
         let historyRequest = 0;
+        let searchTimer;
+        let searchController;
+        let catchupController;
+        let catchingUp = false;
         let socket = null;
         let retryTimer = null;
         let pingTimer = null;
@@ -137,7 +142,8 @@
                 invalid_filename: 'syncFileInvalid', invalid_file_name: 'syncFileInvalid',
                 invalid_file_type: 'syncFileInvalid', invalid_file_size: 'syncFileInvalid',
                 request_too_large: 'syncFileTooLarge', upload_expired: 'syncUploadFailed',
-                upload_unavailable: 'syncUploadFailed', not_found: 'syncUploadFailed'
+                upload_unavailable: 'syncUploadFailed', not_found: 'syncUploadFailed',
+                upload_conflict: 'syncUploadConflict'
             };
             if (error.code === 'rate_limited' && action && error.retryAfter > 0) {
                 cooldowns[action] = Date.now() + error.retryAfter * 1000;
@@ -148,11 +154,24 @@
         const api = async (path, options = {}, session = credentials) => {
             const base = await loadConfig();
             if (!base) throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
-            const response = await fetch(base + path, {
-                ...options,
-                headers: { 'Content-Type': 'application/json', ...options.headers, ...(session ? { Authorization: `Bearer ${session.token}` } : {}) },
-                signal: options.signal || AbortSignal.timeout(15000)
-            });
+            const headers = { 'Content-Type': 'application/json', ...options.headers, ...(session ? { Authorization: `Bearer ${session.token}` } : {}) };
+            const signal = options.signal || AbortSignal.timeout(15000);
+            const response = options.uploadProgress ? await new Promise((resolve, reject) => {
+                signal.throwIfAborted();
+                const xhr = new XMLHttpRequest();
+                const cleanup = () => signal.removeEventListener('abort', abort);
+                const abort = () => { xhr.abort(); cleanup(); reject(signal.reason); };
+                xhr.open(options.method, base + path);
+                for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+                xhr.upload.addEventListener('progress', (event) => options.uploadProgress(event.loaded));
+                xhr.addEventListener('load', () => {
+                    cleanup();
+                    resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'Retry-After': xhr.getResponseHeader('Retry-After') || '' } }));
+                });
+                xhr.addEventListener('error', () => { cleanup(); reject(new TypeError('Upload network request failed')); });
+                signal.addEventListener('abort', abort, { once: true });
+                xhr.send(options.body);
+            }) : await fetch(base + path, { ...options, headers, signal });
             const result = await response.json();
             if (!response.ok) {
                 const retryAfter = response.headers.get('Retry-After');
@@ -169,7 +188,7 @@
         const saveDraft = () => {
             if (!credentials) return;
             const upload = pendingUpload && {
-                clientId: pendingUpload.clientId, uploadId: pendingUpload.uploadId, text: pendingUpload.text, receivedBytes: pendingUpload.receivedBytes || 0,
+                clientId: pendingUpload.clientId, uploadId: pendingUpload.uploadId, text: pendingUpload.text, fingerprint: pendingUpload.fingerprint, receivedBytes: pendingUpload.receivedBytes || 0,
                 file: { name: pendingUpload.file.name, type: pendingUpload.file.type, size: pendingUpload.file.size, lastModified: pendingUpload.file.lastModified }
             };
             try { sessionStorage.setItem(draftKey(), JSON.stringify({ text: input.value, pending, upload })); }
@@ -183,13 +202,14 @@
             find('file-size').textContent = file ? formatSize(file.size) : '';
             find('upload-status').hidden = !sending || !pendingUpload;
             if (sending && pendingUpload) {
-                const percent = pendingUpload.file.size ? Math.floor((pendingUpload.receivedBytes || 0) / pendingUpload.file.size * 100) : 100;
+                const transferred = Math.min(pendingUpload.file.size, (pendingUpload.receivedBytes || 0) + (pendingUpload.inflightBytes || 0));
+                const percent = pendingUpload.file.size ? Math.floor(transferred / pendingUpload.file.size * 100) : 100;
                 let text = translate(pendingUpload.stage || 'syncUploadProgress', { filename: pendingUpload.file.name, percent });
                 if (pendingUpload.stage === 'syncUploadWaiting') text = translate('syncUploadWaiting', { seconds: Math.max(1, Math.ceil((pendingUpload.retryAt - Date.now()) / 1000)) });
                 if (pendingUpload.stage === 'syncUploadProgress') {
                     text += ` · ${pendingUpload.bytesPerSecond > 0 ? translate('syncUploadRate', {
                         speed: formatSize(pendingUpload.bytesPerSecond),
-                        seconds: Math.ceil((pendingUpload.file.size - pendingUpload.receivedBytes) / pendingUpload.bytesPerSecond)
+                        seconds: Math.ceil((pendingUpload.file.size - transferred) / pendingUpload.bytesPerSecond)
                     }) : translate('syncUploadRatePending')}`;
                 }
                 find('upload-status').textContent = text;
@@ -319,6 +339,8 @@
             }
             find('empty').hidden = history.length !== 0 || !!query;
             find('no-results').hidden = !query || count !== 0;
+            setText(find('no-results'), searchController && !searchController.signal.aborted ? 'syncSearching'
+                : historyState && history[0]?.id > historyState.oldestId ? 'syncSearchIncomplete' : 'syncNoResults');
         };
         const render = (scroll = false, preserve = false) => {
             const follow = !preserve && (scroll || (atBottom() && isReading()));
@@ -434,35 +456,117 @@
             const scrollTop = feed.scrollTop;
             const previousHeight = feed.scrollHeight;
             if (mode === 'replace') {
+                searchController?.abort();
+                catchupController?.abort();
+                catchingUp = false;
                 historyRequest++;
                 loadingOlder = false;
                 history = incoming;
             } else history = [...history, ...incoming.filter((message) => !known.has(message.id))].sort((a, b) => a.id - b.id);
-            if (metadata) historyState = metadata;
+            if (metadata) {
+                historyState = historyState?.generation === metadata.generation
+                    ? { ...metadata, latestId: Math.max(historyState.latestId || 0, metadata.latestId || 0) || null }
+                    : metadata;
+                history = history.filter((message) => metadata.oldestId === null || message.id >= metadata.oldestId);
+            }
+            if (mode !== 'prepend') reconnectCursor = metadata?.continuationId ?? incoming.at(-1)?.id ?? null;
             render(initial, mode === 'prepend');
             if (mode === 'prepend') {
                 const addedHeight = feed.scrollHeight - previousHeight;
                 if (searchScrollTop !== null) searchScrollTop += addedHeight;
                 feed.scrollTop = scrollTop + addedHeight;
             }
+            if (mode === 'replace' && find('search').value.trim()) {
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(searchHistory, 180);
+            }
         };
-        const addMessage = (message, metadata = null) => {
+        const loadOlder = async (signal) => {
+            if (!online || loadingOlder || !history.length || !historyState || history[0].id <= historyState.oldestId) return false;
+            const session = credentials;
+            const request = ++historyRequest;
+            const firstId = history[0].id;
+            loadingOlder = true;
+            updateControls();
+            try {
+                const query = new URLSearchParams({ before: firstId, generation: historyState.generation, limit: 50 });
+                const result = await api(roomPath(`/messages?${query}`), signal ? { signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) } : {});
+                if (credentials !== session || request !== historyRequest || signal?.aborted) return false;
+                receiveHistory(result.messages, false, result.historyMode, result.history);
+                return history.length > 0 && history[0].id < firstId;
+            } catch (error) {
+                if (credentials === session && request === historyRequest && error.name !== 'AbortError') showError(error);
+                return false;
+            } finally {
+                if (credentials === session && request === historyRequest) { loadingOlder = false; updateControls(); }
+            }
+        };
+        const searchHistory = async () => {
+            if (!find('search').value.trim() || !active || !online) return;
+            if (loadingOlder) { searchTimer = setTimeout(searchHistory, 180); return; }
+            searchController?.abort();
+            const controller = new AbortController();
+            searchController = controller;
+            applySearch();
+            try {
+                for (let page = 0; page < 10 && !controller.signal.aborted; page++) {
+                    if (!await loadOlder(controller.signal)) break;
+                }
+            } finally {
+                if (searchController === controller) { searchController = null; applySearch(); }
+            }
+        };
+        const catchUp = async (metadata) => {
+            catchupController?.abort();
+            if (!metadata?.hasNewer) { catchupController = null; catchingUp = false; return; }
+            const controller = new AbortController();
+            catchupController = controller;
+            catchingUp = true;
+            const session = credentials;
+            let cursor = metadata.continuationId;
+            try {
+                for (let page = 0; page < 10 && !controller.signal.aborted; page++) {
+                    const query = new URLSearchParams({ after: cursor, generation: metadata.generation, limit: 50 });
+                    const result = await api(roomPath(`/messages?${query}`), { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) }, session);
+                    if (credentials !== session || controller.signal.aborted) return;
+                    receiveHistory(result.messages, false, result.historyMode, result.history);
+                    if (!result.history.hasNewer) { catchingUp = false; return; }
+                    if (result.history.continuationId <= cursor) break;
+                    cursor = result.history.continuationId;
+                }
+            } catch (error) {
+                if (credentials === session && !controller.signal.aborted) showError(error);
+            } finally {
+                if (catchupController === controller) {
+                    catchupController = null;
+                    if (catchingUp && !controller.signal.aborted && credentials === session) socket?.close();
+                }
+            }
+        };
+        const addMessage = (message, metadata = null, advanceCursor = true) => {
             reconcileUpload([message]);
             const known = history.some((item) => item.id === message.id);
             if (metadata) {
                 if (historyState && metadata.generation !== historyState.generation) {
+                    searchController?.abort();
+                    catchupController?.abort();
+                    if (catchingUp) socket?.close();
                     historyRequest++;
                     loadingOlder = false;
                 }
                 historyState = metadata;
                 history = history.filter((item) => item.id >= metadata.oldestId);
             }
+            if (advanceCursor && !catchingUp) reconnectCursor = Math.max(reconnectCursor || 0, message.id);
             if (known) { render(); return; }
             if (message.deviceId !== deviceId && !(isReading() && atBottom())) unread.add(message.id);
             history = [...history, message].sort((a, b) => a.id - b.id).slice(-500);
             render();
         };
         const disconnect = () => {
+            searchController?.abort();
+            catchupController?.abort();
+            catchupController = null;
             clearTimeout(retryTimer);
             clearInterval(pingTimer);
             retryTimer = null;
@@ -490,8 +594,8 @@
                 return;
             }
             const url = new URL(base + roomPath('/socket'));
-            if (historyState && history.length) {
-                url.searchParams.set('after', history[history.length - 1].id);
+            if (historyState && reconnectCursor !== null) {
+                url.searchParams.set('after', reconnectCursor);
                 url.searchParams.set('generation', historyState.generation);
             }
             url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -515,6 +619,11 @@
                     setConnection(true);
                     showPairing(data.pairing);
                     receiveHistory(data.messages, initial, data.historyMode, data.history);
+                    catchUp(data.history);
+                    if (find('search').value.trim()) {
+                        clearTimeout(searchTimer);
+                        searchTimer = setTimeout(searchHistory, 180);
+                    }
                     if (notice.dataset.i18n === 'syncUnavailable') setNotice('syncJoined');
                     loadDevices();
                     clearInterval(pingTimer);
@@ -602,6 +711,8 @@
             find('file-input').value = '';
             history = [];
             historyState = null;
+            reconnectCursor = null;
+            catchingUp = false;
             historyRequest++;
             loadingOlder = false;
             input.value = '';
@@ -750,6 +861,7 @@
                 if (devicesDialog.open) devicesDialog.close();
                 manager.hideWindow(app, entry.task, state, { hideTask: state === 'is-closed' });
                 if (state === 'is-closed') {
+                    clearTimeout(searchTimer);
                     previewRequest++;
                     active = false;
                     fileDragDepth = 0;
@@ -824,6 +936,7 @@
                         }, session);
                     } catch (error) {
                         if (controller.signal.aborted || credentials !== session || attempt === 2 || (error.code && !['storage_cleaning', 'rate_limited'].includes(error.code))) throw error;
+                        upload.inflightBytes = 0;
                         const stage = upload.stage;
                         upload.retryAt = Date.now() + Math.max(error.retryAfter || 0, 2 ** attempt) * 1000;
                         upload.stage = 'syncUploadWaiting';
@@ -846,9 +959,29 @@
             };
             upload.stage = 'syncPreparingUpload';
             updateSelectedFile();
+            const fingerprint = await new Promise((resolve, reject) => {
+                controller.signal.throwIfAborted();
+                const worker = new Worker(new URL('./sync-upload-fingerprint-worker.js', import.meta.url), { type: 'module', name: 'upload-fingerprint' });
+                const cleanup = () => { worker.terminate(); controller.signal.removeEventListener('abort', abort); };
+                const abort = () => { cleanup(); reject(controller.signal.reason); };
+                worker.onmessage = ({ data }) => { cleanup(); data.error ? reject(new Error(data.error)) : resolve(data.fingerprint); };
+                worker.onerror = (event) => { cleanup(); reject(new Error(event.message)); };
+                controller.signal.addEventListener('abort', abort, { once: true });
+                worker.postMessage(upload.file);
+            });
+            controller.signal.throwIfAborted();
+            if (upload.fingerprint && upload.fingerprint !== fingerprint) throw Object.assign(new Error('upload_conflict'), { code: 'upload_conflict' });
+            if (!upload.fingerprint && upload.uploadId) {
+                api(`${path}/${upload.uploadId}`, { method: 'DELETE' }, session).catch(() => {});
+                upload.clientId = crypto.randomUUID();
+                upload.uploadId = null;
+                upload.receivedBytes = 0;
+            }
+            upload.fingerprint = fingerprint;
+            saveDraft();
             const result = await request(path, {
                 method: 'POST',
-                body: JSON.stringify({ clientId: upload.clientId, name: upload.file.name, type: upload.file.type || 'application/octet-stream', size: upload.file.size, text: upload.text })
+                body: JSON.stringify({ clientId: upload.clientId, name: upload.file.name, type: upload.file.type || 'application/octet-stream', size: upload.file.size, text: upload.text, fingerprint })
             }, 30000);
             if (credentials !== session || controller.signal.aborted || pendingUpload !== upload) return;
             if (result.message) return result.message;
@@ -864,10 +997,18 @@
                 const offset = upload.receivedBytes;
                 const chunk = upload.file.slice(offset, Math.min(offset + result.chunkSize, upload.file.size));
                 const received = await request(`${path}/${upload.uploadId}/chunks/${Math.floor(offset / result.chunkSize)}`, {
-                    method: 'PUT', body: chunk, headers: { 'Content-Type': 'application/octet-stream' }
+                    method: 'PUT', body: chunk, headers: { 'Content-Type': 'application/octet-stream' },
+                    uploadProgress: (bytes) => {
+                        if (pendingUpload !== upload || controller.signal.aborted) return;
+                        upload.inflightBytes = bytes;
+                        const elapsed = (performance.now() - upload.startedAt) / 1000;
+                        upload.bytesPerSecond = elapsed > 0 ? (offset + bytes - upload.baselineBytes) / elapsed : 0;
+                        updateSelectedFile();
+                    }
                 }, 300000);
                 if (credentials !== session || controller.signal.aborted || pendingUpload !== upload) return;
                 upload.receivedBytes = received.receivedBytes;
+                upload.inflightBytes = 0;
                 const elapsed = (performance.now() - upload.startedAt) / 1000;
                 upload.bytesPerSecond = elapsed > 0 ? (upload.receivedBytes - upload.baselineBytes) / elapsed : 0;
                 updateSelectedFile();
@@ -983,8 +1124,11 @@
             try {
                 if (file) {
                     const message = await uploadAttachment(upload, session, controller);
-                    if (credentials === session && message && !controller.signal.aborted && pendingUpload === upload) addMessage(message);
-                } else await api(roomPath('/messages'), { method: 'POST', body: JSON.stringify(textDraft) });
+                    if (credentials === session && message && !controller.signal.aborted && pendingUpload === upload) addMessage(message, null, false);
+                } else {
+                    const message = await api(roomPath('/messages'), { method: 'POST', body: JSON.stringify(textDraft) });
+                    if (credentials === session) addMessage(message, null, false);
+                }
                 if (credentials !== session) return;
                 if (upload?.confirmed || (file && pendingUpload !== upload)) return;
                 controller?.signal.throwIfAborted();
@@ -1000,7 +1144,10 @@
             } catch (error) {
                 if (credentials === session) {
                     if (upload?.confirmed) return;
-                    if (file && pendingUpload === upload && ['not_found', 'upload_unavailable'].includes(error.code)) pendingUpload = null;
+                    if (file && pendingUpload === upload && ['not_found', 'upload_unavailable', 'upload_conflict'].includes(error.code)) {
+                        if (error.code === 'upload_conflict') discardUpload();
+                        else pendingUpload = null;
+                    }
                     saveDraft();
                     if (error.code === 'history_cleared') setNotice('syncCleared');
                     else if (error.code === 'upload_cancelled') return;
@@ -1023,6 +1170,8 @@
             else updateCountdowns();
         });
         find('search').addEventListener('input', () => {
+            clearTimeout(searchTimer);
+            searchController?.abort();
             if (find('search').value.trim() && searchScrollTop === null) {
                 searchScrollTop = feed.scrollTop;
                 const top = feed.getBoundingClientRect().top;
@@ -1039,6 +1188,7 @@
                 searchAnchor = null;
                 markRead();
             }
+            if (find('search').value.trim()) searchTimer = setTimeout(searchHistory, 180);
         });
         find('latest').addEventListener('click', () => {
             find('search').value = '';
@@ -1048,23 +1198,7 @@
             feed.scrollTop = feed.scrollHeight;
             markRead();
         });
-        find('history-more').addEventListener('click', async () => {
-            if (!online || loadingOlder || !history.length || !historyState) return;
-            const session = credentials;
-            const request = ++historyRequest;
-            loadingOlder = true;
-            updateControls();
-            try {
-                const query = new URLSearchParams({ before: history[0].id, generation: historyState.generation, limit: 50 });
-                const result = await api(roomPath(`/messages?${query}`));
-                if (credentials !== session || request !== historyRequest) return;
-                receiveHistory(result.messages, false, result.historyMode, result.history);
-            } catch (error) {
-                if (credentials === session && request === historyRequest) showError(error);
-            } finally {
-                if (credentials === session && request === historyRequest) { loadingOlder = false; updateControls(); }
-            }
-        });
+        find('history-more').addEventListener('click', () => loadOlder());
         feed.addEventListener('scroll', markRead);
         new MutationObserver(markRead).observe(app, { attributes: true, attributeFilter: ['class'] });
         find('devices').addEventListener('click', () => {
