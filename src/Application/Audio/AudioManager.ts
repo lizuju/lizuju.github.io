@@ -37,7 +37,7 @@ export default class Audio {
         });
 
         UIEventBus.on('loadingScreenDone', () => {
-            if (!getMuteState()) this.context.resume().catch(() => undefined);
+            if (!getMuteState()) this.syncContextState();
         });
 
         UIEventBus.on('muteToggle', (mute: boolean) => {
@@ -51,17 +51,28 @@ export default class Audio {
                     const positionalObject = this.scene.getObjectByName(key);
                     if (positionalObject) this.scene.remove(positionalObject);
                 }
-                this.context.suspend().catch(() => undefined);
             } else {
                 this.application.camera.instance.add(this.listener);
-                this.context.resume().catch(() => undefined);
             }
+            this.syncContextState();
         });
         this.listener.setMasterVolume(getMuteState() ? 0 : 1);
         if (getMuteState()) {
             this.application.camera.instance.remove(this.listener);
-            this.context.suspend().catch(() => undefined);
+            this.syncContextState();
         }
+    }
+
+    private syncContextState() {
+        const transition = getMuteState() ? this.context.suspend() : this.context.resume();
+        transition.then(() => {
+            if (this.application.eventController.signal.aborted) return;
+            // An earlier transition can finish after a newer mute toggle.
+            const outOfSync = getMuteState()
+                ? this.context.state === 'running'
+                : this.context.state === 'suspended';
+            if (outOfSync) this.syncContextState();
+        }).catch(() => undefined);
     }
 
     playAudio(
@@ -80,7 +91,7 @@ export default class Audio {
         } = {}
     ) {
         if (getMuteState()) return '';
-        this.context.resume().catch(() => undefined);
+        this.syncContextState();
 
         // Get the audio source
         sourceName = this.getRandomVariant(sourceName);

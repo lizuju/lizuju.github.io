@@ -21,7 +21,7 @@ test.beforeEach(async ({ page, isMobile }) => {
     test.setTimeout(60000);
     await page.addInitScript(() => {
         const NativeAudioContext = window.AudioContext || window.webkitAudioContext;
-        window.__sceneAudio = { contexts: [], sources: [], errors: [] };
+        window.__sceneAudio = { contexts: [], sources: [], errors: [], heldTransitions: [] };
         window.addEventListener('unhandledrejection', (event) => {
             window.__sceneAudio.errors.push(String(event.reason));
         });
@@ -29,6 +29,19 @@ test.beforeEach(async ({ page, isMobile }) => {
             construct(target, args) {
                 const context = Reflect.construct(target, args);
                 window.__sceneAudio.contexts.push(context);
+                for (const method of ['resume', 'suspend']) {
+                    const transition = context[method].bind(context);
+                    context[method] = () => {
+                        if (window.__sceneAudio.holdNextTransition !== method) return transition();
+                        window.__sceneAudio.holdNextTransition = null;
+                        return new Promise((resolve, reject) => {
+                            window.__sceneAudio.heldTransitions.push({
+                                method,
+                                release: () => transition().then(resolve, reject),
+                            });
+                        });
+                    };
+                }
                 const createBufferSource = context.createBufferSource.bind(context);
                 context.createBufferSource = () => {
                     const node = createBufferSource();
@@ -165,6 +178,46 @@ test('starts deferred ambience once after unmuting and honors rapid final mute s
     expect(await page.evaluate(() => window.__sceneAudio.sources.filter(({ node }) => node.loop).length)).toBe(1);
     expect(await page.evaluate(() => window.__sceneAudio.errors)).toEqual([]);
 });
+
+for (const delayedTransition of ['resume', 'suspend']) {
+    test(`honors the final mute choice when an older ${delayedTransition} completes late`, async ({ page }) => {
+        await startScene(page);
+        const taskbarAudio = page.frameLocator('#computer-screen').locator('[data-audio-toggle]');
+        await expect(taskbarAudio).toBeVisible();
+        if (delayedTransition === 'resume') {
+            await taskbarAudio.evaluate((button) => button.click());
+            await expect.poll(() => page.evaluate(() => window.__sceneAudio.contexts[0].state)).toBe('suspended');
+        }
+        await page.evaluate((method) => {
+            window.__sceneAudio.holdNextTransition = method;
+        }, delayedTransition);
+        await taskbarAudio.evaluate((button) => button.click());
+        await expect.poll(() => page.evaluate(() => window.__sceneAudio.heldTransitions.length)).toBe(1);
+        await taskbarAudio.evaluate((button) => button.click());
+        const finalMuted = delayedTransition === 'resume';
+        await expect(taskbarAudio).toHaveAttribute('aria-pressed', String(finalMuted));
+        await page.evaluate(() => window.__sceneAudio.heldTransitions[0].release());
+        await expect.poll(() => page.evaluate(() => window.__sceneAudio.contexts[0].state)).toBe(finalMuted ? 'suspended' : 'running');
+
+        if (!finalMuted) {
+            const resumedAt = await page.evaluate(() => window.__sceneAudio.contexts[0].currentTime);
+            await expect.poll(() => page.evaluate(() => window.__sceneAudio.contexts[0].currentTime)).toBeGreaterThan(resumedAt + 0.1);
+            await taskbarAudio.evaluate((button) => button.click());
+            await expect.poll(() => page.evaluate(() => window.__sceneAudio.contexts[0].state)).toBe('suspended');
+        }
+        const pausedAt = await page.evaluate(() => window.__sceneAudio.contexts[0].currentTime);
+        await page.waitForTimeout(250);
+        expect(await page.evaluate(() => window.__sceneAudio.contexts[0].currentTime) - pausedAt).toBeLessThan(0.02);
+        await taskbarAudio.evaluate((button) => button.click());
+        await expect.poll(() => page.evaluate(() => window.__sceneAudio.contexts[0].state)).toBe('running');
+        await expect.poll(() => page.evaluate(() => window.__sceneAudio.contexts[0].currentTime)).toBeGreaterThan(pausedAt + 0.1);
+        const loops = await page.evaluate(() => (
+            window.__sceneAudio.sources.filter(({ node }) => node.loop).map(({ starts, stops }) => ({ starts: starts.length, stops }))
+        ));
+        expect(loops).toEqual([{ starts: 1, stops: 0 }]);
+        expect(await page.evaluate(() => window.__sceneAudio.errors)).toEqual([]);
+    });
+}
 
 test('keeps native media playback and volume independent of both background mute controls', async ({ page }) => {
     await startScene(page);
