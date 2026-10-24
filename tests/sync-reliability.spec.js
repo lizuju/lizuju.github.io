@@ -1,6 +1,7 @@
 const { test, expect } = require('./fixtures/sync-e2ee.cjs');
+const { readFile } = require('node:fs/promises');
 
-const { roomId, deviceId, keyId, authorize, message } = require('./fixtures/sync-e2ee.cjs');
+const { roomId, deviceId, keyId, session, authorize, message } = require('./fixtures/sync-e2ee.cjs');
 const headers = {
     'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS', 'Access-Control-Expose-Headers': 'Retry-After'
@@ -20,6 +21,75 @@ const routeDefault = (route) => {
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
     return route.fulfill({ headers, json: { deviceId, devices: [], grants: [], hasMore: false, keyId } });
 };
+
+test('reconnects after a temporary key initialization failure without reopening the window', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the sync application is a desktop window');
+    await prepare(page);
+    let keyRequests = 0;
+    let connections = 0;
+    await page.route('https://sync.test/**', route => {
+        if (route.request().method() !== 'OPTIONS' && route.request().url().endsWith('/key-grants')) {
+            if (++keyRequests === 1) return route.fulfill({ status: 503, headers, json: { error: 'unavailable' } });
+        }
+        return routeDefault(route);
+    });
+    await page.routeWebSocket('wss://sync.test/**', socket => {
+        connections++;
+        socket.onMessage(data => {
+            if (data === 'ping') return socket.send('pong');
+            socket.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null, history: bounds(null), historyMode: 'replace' }));
+        });
+    });
+    await open(page);
+    expect(connections).toBe(2);
+    expect(keyRequests).toBe(2);
+    await page.locator('[data-sync-input]').fill('Recovered connection');
+    await expect(page.locator('[data-sync-send]')).toBeEnabled();
+});
+
+for (const size of [1024 * 1024, 9 * 1024 * 1024]) {
+    test(`keeps upload progress at 100 percent while confirming a ${size}-byte file`, async ({ page, isMobile }) => {
+        test.skip(isMobile, 'the sync application is a desktop window');
+        await prepare(page);
+        let uploaded;
+        let receivedBytes = 0;
+        let release;
+        let completing = false;
+        await page.route('https://sync.test/**', async route => {
+            if (route.request().method() === 'OPTIONS') return routeDefault(route);
+            const path = new URL(route.request().url()).pathname;
+            if (path.endsWith('/uploads')) {
+                uploaded = route.request().postDataJSON();
+                return route.fulfill({ headers, json: { uploadId: 'tail-upload', receivedBytes: 0, chunkSize: 8 * 1024 * 1024 } });
+            }
+            if (path.includes('/chunks/')) {
+                receivedBytes += route.request().postDataBuffer().length;
+                return route.fulfill({ headers, json: { receivedBytes } });
+            }
+            if (path.endsWith('/complete')) {
+                completing = true;
+                await new Promise(resolve => { release = resolve; });
+                return route.fulfill({ headers, json: { id: 1, clientId: uploaded.clientId, deviceId, text: uploaded.text, createdAt: Date.now() } });
+            }
+            return routeDefault(route);
+        });
+        await page.routeWebSocket('wss://sync.test/**', socket => socket.onMessage(data => {
+            if (data === 'ping') return socket.send('pong');
+            socket.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null, history: bounds(null), historyMode: 'replace' }));
+        }));
+        await open(page);
+        await page.locator('[data-sync-file-input]').setInputFiles({ name: 'tail.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(size, 7) });
+        await page.locator('[data-sync-send]').click();
+        try {
+            await expect.poll(() => completing).toBe(true);
+            expect(receivedBytes).toBe(uploaded.size);
+            await expect(page.locator('[data-sync-upload-status]')).toHaveText('正在完成上传…');
+            await expect(page.locator('[data-sync-upload-progress]')).toHaveJSProperty('value', 100);
+        } finally { release?.(); }
+        await expect(page.locator('[data-sync-selected-file]')).toBeHidden();
+        await expect(page.locator('.sync-message')).toHaveCount(1);
+    });
+}
 
 test('confirms a text send from HTTP before a delayed socket echo and keeps the next draft', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
@@ -279,4 +349,90 @@ test('ignores a plaintext legacy draft after enabling encrypted sessions', async
     await expect.poll(() => uploaded?.fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(uploaded.clientId).not.toBe(previousClientId);
     expect(deleted).toEqual([]);
+});
+
+test('discards an old attachment key after revocation even when acknowledging its grant fails', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the sync application is a desktop window');
+    await prepare(page);
+    await page.route('**/__sync-reliability-crypto.js', async route => route.fulfill({
+        contentType: 'text/javascript', body: await readFile(require.resolve('../static/portfolio/js/apps/sync-crypto.js'), 'utf8')
+    }));
+    const uploads = [];
+    let rotation;
+    let socket;
+    let held = false;
+    let aborted = false;
+    let ackFailures = 0;
+    let release;
+    page.on('requestfailed', request => {
+        if (request.url().endsWith('/revocation-upload-1/chunks/0')) aborted = true;
+    });
+    await page.route('https://sync.test/**', async route => {
+        const request = route.request();
+        if (request.method() === 'OPTIONS') return routeDefault(route);
+        const path = new URL(request.url()).pathname;
+        if (path.endsWith('/key-grants')) {
+            if (request.method() === 'DELETE') { ackFailures++; return route.abort('failed'); }
+            const grants = rotation && request.headers()['x-sync-key-id'] === keyId
+                ? [{ id: 1, rotationId: rotation.rotationId, envelope: rotation.grants.find(grant => grant.deviceId === deviceId).envelope }] : [];
+            return route.fulfill({ headers, json: { grants, hasMore: false, keyId: rotation?.newKeyId || keyId } });
+        }
+        if (path.endsWith('/uploads')) {
+            uploads.push(request.postDataJSON());
+            return route.fulfill({ headers, json: { uploadId: `revocation-upload-${uploads.length}`, receivedBytes: 0, chunkSize: 8 * 1024 * 1024 } });
+        }
+        if (path.includes('/chunks/')) {
+            if (path.includes('/revocation-upload-1/')) {
+                held = true;
+                await new Promise(resolve => { release = resolve; });
+                return route.fulfill({ status: 409, headers, json: { error: 'key_changed' } });
+            }
+            return route.fulfill({ headers, json: { receivedBytes: request.postDataBuffer().length } });
+        }
+        if (path.endsWith('/complete')) {
+            const upload = uploads.at(-1);
+            return route.fulfill({ headers, json: { id: 1, clientId: upload.clientId, deviceId, text: upload.text, createdAt: Date.now() } });
+        }
+        return routeDefault(route);
+    });
+    await page.routeWebSocket('wss://sync.test/**', connection => {
+        socket = connection;
+        connection.onMessage(data => {
+            if (data === 'ping') return connection.send('pong');
+            connection.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null, history: bounds(null), historyMode: 'replace' }));
+        });
+    });
+    await open(page);
+    const file = { name: 'revoked-attachment.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(1024, 7) };
+    await page.locator('[data-sync-file-input]').setInputFiles(file);
+    await page.locator('[data-sync-send]').click();
+    try {
+        await expect.poll(() => held).toBe(true);
+        rotation = await page.evaluate(async session => {
+            const crypto = await import('/__sync-reliability-crypto.js');
+            return crypto.createKeyRotation(session, [{ deviceId: session.deviceId, publicKey: session.identity.publicKey }]);
+        }, session);
+        socket.send(JSON.stringify({ type: 'key-rotation' }));
+        await expect.poll(() => ackFailures).toBeGreaterThan(0);
+        await expect.poll(() => aborted).toBe(true);
+        await expect.poll(() => page.evaluate(async ({ keyring, roomId, deviceId }) => {
+            const crypto = await import('/__sync-reliability-crypto.js');
+            const envelope = sessionStorage.getItem(`portfolio-sync-draft:${roomId}`);
+            const draft = await crypto.decryptPayload(keyring, roomId, `draft:${deviceId}`, envelope);
+            return draft.upload ?? null;
+        }, { keyring: rotation.next.keyring, roomId, deviceId })).toBeNull();
+        release();
+        await page.locator('[data-sync-file-input]').setInputFiles(file);
+        await expect(page.locator('[data-sync-send]')).toBeEnabled();
+        await page.locator('[data-sync-send]').click();
+        await expect(page.locator('.sync-attachment-name')).toHaveText(file.name);
+        expect(uploads).toHaveLength(2);
+        expect(uploads[1].clientId).not.toBe(uploads[0].clientId);
+        const attachments = await page.evaluate(async ({ uploads, keyring, roomId, deviceId }) => {
+            const crypto = await import('/__sync-reliability-crypto.js');
+            return Promise.all(uploads.map(async upload => (await crypto.decryptPayload(keyring, roomId, `message:${deviceId}:${upload.clientId}`, upload.text)).attachment));
+        }, { uploads, keyring: rotation.next.keyring, roomId, deviceId });
+        expect(attachments[1].fileId).not.toBe(attachments[0].fileId);
+        expect(attachments[1].key).not.toBe(attachments[0].key);
+    } finally { release?.(); }
 });

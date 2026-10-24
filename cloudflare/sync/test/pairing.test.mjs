@@ -1135,7 +1135,8 @@ test('message expiry and pending authentication share the earliest alarm without
   const ready = socketEvent(socket);
   socket.send(JSON.stringify({ type: 'auth', token: space.token }));
   assert.equal(JSON.parse((await ready).data).type, 'ready');
-  assert.equal(await room.testReadAlarm(), sent.body.createdAt + sevenDays);
+  const authenticatedDeviceDeadline = (await storage.exec('SELECT min(last_active_at) AS oldest FROM devices'))[0].oldest + sevenDays;
+  assert.equal(await room.testReadAlarm(), Math.min(authenticatedDeviceDeadline, sent.body.createdAt + sevenDays));
   const cleared = socketEvent(socket);
   await request(`/v1/spaces/${space.roomId}/messages`, { method: 'DELETE', token: space.token });
   assert.equal(JSON.parse((await cleared).data).type, 'cleared');

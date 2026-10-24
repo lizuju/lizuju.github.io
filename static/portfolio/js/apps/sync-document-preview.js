@@ -1,7 +1,7 @@
 import mammoth from 'mammoth/mammoth.browser';
 import DOMPurify from 'dompurify';
 
-export async function renderDocumentPreview({ container, url, kind, signal, translate }) {
+export async function renderDocumentPreview({ container, url, name, kind, signal, translate }) {
     const response = await fetch(url, { signal });
     if (!response.ok) throw new Error('Document preview could not be loaded');
     const root = document.createElement('section');
@@ -72,7 +72,7 @@ export async function renderDocumentPreview({ container, url, kind, signal, tran
                 for (const request of pending.values()) request.reject(new Error(event.message));
                 pending.clear();
             };
-            const sheets = await request({ type: 'load', buffer }, [buffer]);
+            const sheets = await request({ type: 'load', buffer, delimited: /\.(?:csv|tsv)$/i.test(name) }, [buffer]);
             if (signal.aborted) return cleanup;
             root.className = 'sync-document-workbook';
             const tabs = document.createElement('nav');

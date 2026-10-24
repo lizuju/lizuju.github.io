@@ -6,6 +6,7 @@ const { deviceId, keyId, authorize, message, file, profile, startSite } = requir
 
 const heic = readFileSync(join(__dirname, 'fixtures/heic-gradient.heic'));
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1kAAAAASUVORK5CYII=', 'base64');
+const mp4 = readFileSync(join(__dirname, '../static/textures/monitor/video/static-texture-layer.mp4'));
 let server;
 let site;
 let failDownloads;
@@ -32,7 +33,12 @@ test.beforeEach(async ({ page, isMobile }) => {
     failDownloads = 0;
     downloadAttempts = 0;
     beforeServe = () => {};
-    const attachments = [file('camera.HEIC', 'application/octet-stream', heic), file('pixel.png', 'image/png', png)];
+    const attachments = [
+        file('camera.HEIC', 'application/octet-stream', heic),
+        file('pixel.png', 'application/octet-stream', png),
+        file('capture.MP4', 'application/octet-stream', mp4),
+        file('payload.bin', 'application/octet-stream', png)
+    ];
     const devices = [profile('Mac')];
     const headers = {
         'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id, Range',
@@ -61,7 +67,7 @@ test.beforeEach(async ({ page, isMobile }) => {
             downloadAttempts++;
             if (failDownloads-- > 0) { response.writeHead(503, headers); response.end('Temporarily unavailable'); return; }
         }
-        const encrypted = attachments[path.endsWith('1') ? 0 : 1].bytes;
+        const encrypted = attachments[Number(path.split('/').at(-1)) - 1].bytes;
         const range = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range || '');
         const start = range ? Number(range[1]) : 0;
         const end = range ? Number(range[2]) : encrypted.length - 1;
@@ -84,7 +90,7 @@ test.beforeEach(async ({ page, isMobile }) => {
     await page.locator('[data-window-action="minimize"]').click();
     await page.locator('.desktop-shortcut[data-open-sync-space]').click();
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
-    await expect(page.locator('[data-sync-preview-file]')).toHaveCount(2);
+    await expect(page.locator('[data-sync-preview-file]')).toHaveCount(3);
 });
 
 test.afterEach(async () => {
@@ -195,4 +201,28 @@ test('opening the same failed attachment retries without closing its preview win
     await page.locator('[data-sync-preview-file]').nth(1).click();
     await expect(page.locator('[data-sync-preview-body] img')).toHaveJSProperty('naturalWidth', 1);
     expect(downloadAttempts).toBe(2);
+});
+
+test('previews a PNG with a generic MIME type and keeps unsupported extensions download-only', async ({ page }) => {
+    const imageMessage = page.locator('.sync-message').filter({ hasText: 'pixel.png' });
+    await imageMessage.locator('[data-sync-preview-file]').click();
+    const preview = page.locator('[data-sync-preview-window]');
+    await expect(preview.locator('img')).toHaveJSProperty('naturalWidth', 1);
+    await expect(preview.locator('img')).toHaveJSProperty('naturalHeight', 1);
+    await preview.locator('[data-sync-preview-action="close"]').click();
+    const unsupported = page.locator('.sync-message').filter({ hasText: 'payload.bin' });
+    await expect(unsupported.locator('[data-sync-preview-file]')).toHaveCount(0);
+    await expect(unsupported.locator('[data-sync-download-file]')).toBeVisible();
+});
+
+test('recognizes a generic-MIME MP4 by its extension and decodes its real video metadata', async ({ page }) => {
+    const videoMessage = page.locator('.sync-message').filter({ hasText: 'capture.MP4' });
+    await videoMessage.locator('[data-sync-preview-file]').click();
+    const preview = page.locator('[data-sync-preview-window]');
+    const video = preview.locator('video');
+    await expect(video).toHaveJSProperty('controls', true);
+    await expect(video).toHaveJSProperty('videoWidth', 480);
+    await expect(video).toHaveJSProperty('videoHeight', 360);
+    await preview.locator('[data-sync-preview-action="close"]').click();
+    await expect(preview.locator('[data-sync-preview-body]')).toBeEmpty();
 });

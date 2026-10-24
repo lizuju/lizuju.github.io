@@ -16,6 +16,13 @@ XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(
 XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([]), 'Empty');
 const xlsx = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx', compression: true });
 const csv = Buffer.from('名称,金额\n示例,12.50\n', 'utf8');
+const encodedDocuments = [
+    ['gbk.csv', Buffer.from('c3fbb3c62cbdf0b6ee0acabec0fd2c31322e35300a', 'hex')],
+    ['bom.csv', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), csv])],
+    ['gbk.tsv', Buffer.from('c3fbb3c609bdf0b6ee0acabec0fd0931322e35300a', 'hex')],
+    ['utf16le.tsv', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('名称\t金额\n示例\t12.50\n', 'utf16le')])],
+    ['utf16be.tsv', Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from('名称\t金额\n示例\t12.50\n', 'utf16le').swap16()])]
+];
 
 test.beforeEach(async ({ page, isMobile }) => {
     test.skip(isMobile, 'document previews are desktop windows');
@@ -49,7 +56,8 @@ test.beforeEach(async ({ page, isMobile }) => {
     });
     const files = [
         { id: 1, ...file('sample.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xlsx) },
-        { id: 2, ...file('sample.csv', 'text/csv', csv) }
+        { id: 2, ...file('sample.csv', 'text/csv', csv) },
+        ...encodedDocuments.map(([name, bytes], index) => ({ id: index + 3, ...file(name, 'application/octet-stream', bytes) }))
     ];
     const headers = {
         'Access-Control-Allow-Origin': '*',
@@ -63,7 +71,7 @@ test.beforeEach(async ({ page, isMobile }) => {
         if (request.url.endsWith('/key-grants')) return json({ grants: [], hasMore: false, keyId });
         if (request.url.endsWith('/devices')) return json({ deviceId, devices: [profile()] });
         if (request.url.endsWith('/download')) return json({ ticket: request.url.split('/').at(-2).padStart(64, '0'), expiresAt: Date.now() + 86400000 });
-        const encrypted = files[request.url.endsWith('1') ? 0 : 1].bytes;
+        const encrypted = files.find(file => file.id === Number(request.url.split('/').at(-1))).bytes;
         const range = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range || '');
         const start = range ? Number(range[1]) : 0;
         const end = range ? Number(range[2]) : encrypted.length - 1;
@@ -151,4 +159,16 @@ test('previews UTF-8 CSV through the same worker and closes it when another atta
     await expect(preview.locator('.sync-document-sheet')).toContainText('Amount');
     expect(await page.evaluate(() => window.closedSpreadsheetWorkers)).toBe(1);
     expect(await page.evaluate(() => window.spreadsheetWorkers)).toBe(2);
+});
+
+test('previews Chinese CSV and TSV with GBK, UTF-8 BOM, and UTF-16 BOM encodings', async ({ page }) => {
+    const preview = page.locator('[data-sync-preview-window]');
+    for (let index = 0; index < encodedDocuments.length; index++) {
+        await page.locator('[data-sync-preview-file]').nth(index + 2).click();
+        await expect(preview.locator('[data-sync-preview-title]')).toHaveText(encodedDocuments[index][0]);
+        const sheet = preview.locator('.sync-document-sheet');
+        await expect(sheet.locator('tbody tr[aria-rowindex="2"] td')).toHaveText(['名称', '金额']);
+        await expect(sheet.locator('tbody tr[aria-rowindex="3"] td')).toHaveText(['示例', '12.50']);
+        await preview.locator('[data-sync-preview-action="close"]').click();
+    }
 });

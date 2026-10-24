@@ -178,7 +178,7 @@ try {
   } catch { closed = true; }
   finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
   assert.equal(closed, true, 'Revocation must stop the active stream within its bounded buffers');
-  const revoked = await request(downloadPath, { token: null }); assert.equal(revoked.status, 401); await revoked.body.cancel();
+  const revoked = await request(downloadPath, { token: null }); await expectJson(revoked, 404);
   console.log('PASS active-download device revocation');
   console.log(JSON.stringify({ ok: true, scope: 'isolated-local', uploadedBytes: fileSize, chunks: Math.ceil(fileSize / plainChunkSize), downloadSha256: expectedHash, runtimeRestartAtBytes: 64 * chunkSize, slowReadPauseMsPer8MiB: 25, nodePeakRssBytes: peakRss, durationMs: Date.now() - startedAt }));
 } finally {

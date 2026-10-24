@@ -16,7 +16,8 @@ const DOWNLOAD_LIFETIME = 24 * 60 * 60 * 1000;
 const DEVICE_IDLE_LIFETIME = 7 * 24 * 60 * 60 * 1000;
 const ROOM_IDLE_LIFETIME = 7 * 24 * 60 * 60 * 1000;
 const ACTIVITY_WRITE_INTERVAL = 60 * 60 * 1000;
-const PAIR_CANDIDATE_LIMIT = 5;
+const DEVICE_ACTIVITY_WRITE_INTERVAL = 60 * 1000;
+const PAIR_CANDIDATE_LIMIT = 30;
 const PAIR_REQUEST_LIMIT = 100;
 const ROOM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -516,7 +517,7 @@ export class E2eePairingRegistry extends DurableObject {
       const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
       if (!await this.refreshUsage(roomId)) return { error: 'not_found', status: 404 };
       const existing = await room.uploadInfo(deviceId, file.clientId, file) || await room.findMessage(deviceId, file.clientId);
-      if (existing) return existing;
+      if (existing) return existing.uploadId ? room.beginUpload(deviceId, file, keyId) : existing;
       const denied = this.reserveCapacity(roomId, fileReserve(file.size));
       if (denied) { await this.resumeCleanup(); return denied; }
       try { return await room.beginUpload(deviceId, file, keyId); }
@@ -921,11 +922,11 @@ export class E2eeSyncRoom extends DurableObject {
     return { ok: true };
   }
 
-  applyRotation(keyId, rotation) {
+  applyRotation(keyId, rotation, preserveUploads = false) {
     for (const grant of rotation.grants) this.sql.exec('INSERT INTO key_grants (device_id, rotation_id, previous_key_id, new_key_id, envelope) VALUES (?, ?, ?, ?, ?)', grant.deviceId, rotation.rotationId, keyId, rotation.newKeyId, grant.envelope);
     this.sql.exec("UPDATE metadata SET value = ? WHERE key = 'currentKeyId'", rotation.newKeyId);
     this.sql.exec("INSERT INTO metadata (key, value) VALUES ('rekeyRequired', '0') ON CONFLICT(key) DO UPDATE SET value = '0'");
-    this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading'");
+    if (!preserveUploads) this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading'");
     if (rotation.removedDeviceId) {
       this.sql.exec('DELETE FROM devices WHERE device_id = ?', rotation.removedDeviceId);
       this.sql.exec('DELETE FROM key_grants WHERE device_id = ?', rotation.removedDeviceId);
@@ -962,7 +963,7 @@ export class E2eeSyncRoom extends DurableObject {
       const denied = this.validateRotation(deviceId, keyId, rotation, admission);
       if (denied.error) return denied;
       this.ctx.storage.transactionSync(() => {
-        this.applyRotation(keyId, rotation);
+        this.applyRotation(keyId, rotation, !this.keyState().rekeyRequired);
         const now = Date.now();
         this.sql.exec('INSERT INTO devices (token_hash, device_id, created_at, name, last_active_at) VALUES (?, ?, ?, ?, ?)', admission.tokenHash, admission.joinedId, now, admission.name, now);
         this.sql.exec('INSERT INTO pair_acceptances (request_id, device_id, token_hash, rotation_id, key_id, grant, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)', admission.requestId, admission.joinedId, admission.tokenHash, admission.rotationId, admission.newKeyId, admission.grant, Date.now() + INVITE_LIFETIME);
@@ -984,7 +985,7 @@ export class E2eeSyncRoom extends DurableObject {
       const attachment = socket.deserializeAttachment();
       if (!attachment?.deviceId || attachment.closing) continue;
       const lastActiveAt = this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime() || attachment.connectedAt;
-      if (lastActiveAt) this.sql.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ? AND last_active_at < ?', lastActiveAt, attachment.deviceId, lastActiveAt);
+      if (lastActiveAt) this.sql.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ? AND last_active_at <= ?', lastActiveAt, attachment.deviceId, lastActiveAt - DEVICE_ACTIVITY_WRITE_INTERVAL);
     }
   }
 
@@ -997,7 +998,7 @@ export class E2eeSyncRoom extends DurableObject {
       this.removeDevice(deviceId);
       return false;
     }
-    this.sql.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ?', now, deviceId);
+    if (now - device.last_active_at >= DEVICE_ACTIVITY_WRITE_INTERVAL) this.sql.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ?', now, deviceId);
     this.touchActivity();
     return true;
   }
@@ -1200,7 +1201,10 @@ export class E2eeSyncRoom extends DurableObject {
     const denied = this.checkWrite(keyId, file.text);
     if (denied.error) return denied;
     const existing = this.uploadInfo(deviceId, file.clientId, file) || this.findMessage(deviceId, file.clientId);
-    if (existing) return existing;
+    if (existing) {
+      if (existing.uploadId) this.sql.exec('UPDATE files SET text = ? WHERE file_id = ?', file.text, existing.uploadId);
+      return existing;
+    }
     const uploadId = crypto.randomUUID();
     this.sql.exec('INSERT INTO files (file_id, device_id, client_id, name, type, size, text, status, created_at, updated_at, reserved_bytes, received_bytes, received_chunks, fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)', uploadId, deviceId, file.clientId, file.name, file.type, file.size, file.text, 'uploading', Date.now(), Date.now(), fileReserve(file.size), file.fingerprint ?? null);
     await this.scheduleAlarm();
@@ -1254,6 +1258,8 @@ export class E2eeSyncRoom extends DurableObject {
       if (!file || file.status === 'deleting' || (file.status === 'uploading' && file.updated_at + UPLOAD_LIFETIME <= Date.now())) return { error: 'not_found', status: 404 };
       const existing = this.findMessage(deviceId, file.client_id);
       if (existing) return existing;
+      const metadata = this.checkWrite(keyId, file.text);
+      if (metadata.error) return metadata;
       this.uploadProgress(file);
       if (file.received_bytes !== file.size) return { error: 'upload_incomplete', status: 409 };
       for (const shard of this.sql.exec('SELECT shard_index FROM file_shards WHERE file_id = ?', uploadId).toArray()) {

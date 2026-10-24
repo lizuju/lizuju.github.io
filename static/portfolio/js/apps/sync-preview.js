@@ -204,7 +204,7 @@ import { PreviewZoom } from './preview-zoom.js';
                 } else {
                     const { renderDocumentPreview } = await import(/* webpackChunkName: "sync-documents" */ './sync-document-preview.js');
                     if (current !== state) return;
-                    state.cleanup = await renderDocumentPreview({ container: body, url: file.url, kind: file.kind, signal: state.controller.signal, translate });
+                    state.cleanup = await renderDocumentPreview({ container: body, url: file.url, name: file.name, kind: file.kind, signal: state.controller.signal, translate });
                     if (current === state) setStatus('syncPreviewDocumentHint');
                 }
             } catch { fail(state); }

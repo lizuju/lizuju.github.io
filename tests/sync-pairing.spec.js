@@ -82,3 +82,145 @@ test('an epoch change during PAKE admission cannot release new room keys using t
     });
     expect(result).toEqual({ changed: true, accepted: 0, trustedCount: 1 });
 });
+
+test('finds the unique matching room among thirty real PAKE candidates without consuming thirty attempts', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the thirty-candidate protocol is exercised once per browser engine');
+    test.setTimeout(120000);
+    const result = await page.evaluate(async () => {
+        const c = await import('/__sync-pairing-test__/crypto.js');
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const offers = Array.from({ length: 30 }, () => ({ offerId: crypto.randomUUID(), expiresAt: Date.now() + 600000 }));
+        const secrets = new Map();
+        for (const [index, offer] of offers.entries()) {
+            secrets.set(offer.offerId, await c.createPairingSecret(index === 29 ? '1234' : String(2000 + index), offer.offerId));
+        }
+        const roomId = crypto.randomUUID();
+        const deviceId = crypto.randomUUID();
+        const keyring = await c.createKeyring();
+        let pending;
+        let grant;
+        let selected;
+        let frameCount;
+        let payloadBytes;
+        const hosts = new Map();
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async (path, options = {}) => {
+            if (path === '/v1/pair/offers') return { offers };
+            if (path === '/v1/pair') {
+                pending = JSON.parse(options.body);
+                frameCount = pending.requests.length;
+                payloadBytes = new TextEncoder().encode(options.body).length;
+                for (const frame of pending.requests) {
+                    hosts.set(frame.offerId, await c.startPairingHost(secrets.get(frame.offerId), frame.offerId, pending.requestId, frame.startLoginRequest));
+                }
+                return { accepted: true };
+            }
+            if (options.method === 'DELETE') return {};
+            if (options.method === 'POST') {
+                const body = JSON.parse(options.body);
+                selected = body.offerId;
+                const sessionKey = await c.finishPairingHost(hosts.get(selected).serverState, body.finishLoginRequest);
+                const client = await c.decryptPairing(sessionKey, selected, pending.requestId, body.clientData);
+                grant = await c.encryptPairing(sessionKey, selected, pending.requestId, {
+                    roomId, deviceId, keyring, token: 'a'.repeat(64), trustedDevices: { [deviceId]: client.publicKey }, revokedDevices: [], nonce: client.nonce
+                });
+                return { accepted: true };
+            }
+            return grant ? { grant } : { responses: [...hosts].map(([offerId, host]) => ({ offerId, loginResponse: host.loginResponse })) };
+        } });
+        let ticks = 0;
+        const timer = setInterval(() => { ticks++; }, 0);
+        const startedAt = performance.now();
+        try {
+            const joined = await pairing.join('1234');
+            return {
+                joined: joined.roomId === roomId && joined.trustedDevices[joined.deviceId] === joined.identity.publicKey,
+                selectedLast: selected === offers[29].offerId, frameCount, payloadBytes, ticks,
+                attempts: JSON.parse(localStorage.getItem('gavin-sync-pair-attempts:join')).ids.length,
+                elapsed: performance.now() - startedAt
+            };
+        } finally { clearInterval(timer); }
+    });
+    expect(result.joined).toBe(true);
+    expect(result.selectedLast).toBe(true);
+    expect(result.frameCount).toBe(30);
+    expect(result.payloadBytes).toBeLessThan(32768);
+    expect(result.attempts).toBe(1);
+    expect(result.ticks).toBeGreaterThan(30);
+    console.log(`Thirty-candidate PAKE: ${Math.round(result.elapsed)}ms, ${result.payloadBytes} request bytes`);
+});
+
+test('refuses two matching pairing codes before granting access to either room', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const c = await import('/__sync-pairing-test__/crypto.js');
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const offers = Array.from({ length: 2 }, () => ({ offerId: crypto.randomUUID(), expiresAt: Date.now() + 600000 }));
+        const secrets = new Map();
+        for (const offer of offers) secrets.set(offer.offerId, await c.createPairingSecret('1234', offer.offerId));
+        let responses;
+        let admitted = 0;
+        let cancelled = 0;
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async (path, options = {}) => {
+            if (path === '/v1/pair/offers') return { offers };
+            if (path === '/v1/pair') {
+                const body = JSON.parse(options.body);
+                responses = [];
+                for (const frame of body.requests) {
+                    const host = await c.startPairingHost(secrets.get(frame.offerId), frame.offerId, body.requestId, frame.startLoginRequest);
+                    responses.push({ offerId: frame.offerId, loginResponse: host.loginResponse });
+                }
+                return {};
+            }
+            if (options.method === 'DELETE') { cancelled++; return {}; }
+            if (options.method === 'POST') { admitted++; return {}; }
+            return { responses };
+        } });
+        let code;
+        try { await pairing.join('1234'); } catch (error) { code = error.code; }
+        return { code, admitted, cancelled };
+    });
+    expect(result).toEqual({ code: 'pairing_ambiguous', admitted: 0, cancelled: 1 });
+});
+
+test('allows five join submissions with thirty candidates and limits the sixth submission', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const offers = Array.from({ length: 30 }, () => ({ offerId: crypto.randomUUID(), expiresAt: Date.now() + 600000 }));
+        let submissions = 0;
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async (path) => {
+            if (path === '/v1/pair/offers') return { offers };
+            submissions++;
+            throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
+        } });
+        const errors = [];
+        for (let index = 0; index < 6; index++) {
+            try { await pairing.join('1234'); } catch (error) { errors.push(error.code); }
+        }
+        return { submissions, errors, attempts: JSON.parse(localStorage.getItem('gavin-sync-pair-attempts:join')).ids.length };
+    });
+    expect(result).toEqual({ submissions: 5, errors: [...Array(5).fill('unavailable'), 'pairing_limited'], attempts: 5 });
+});
+
+test('retains the five-attempt limit for each hosting offer', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const c = await import('/__sync-pairing-test__/crypto.js');
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const session = { roomId: crypto.randomUUID(), deviceId: crypto.randomUUID(), keyring: await c.createKeyring() };
+        let challenges = 0;
+        let expired = 0;
+        const pairing = new EncryptedPairing({ getSession: () => session, onExpired: () => { expired++; }, api: async (path, options) => {
+            const body = JSON.parse(options.body);
+            if (path.endsWith('/pair-code')) return { ...body, ownerDeviceId: session.deviceId, expiresAt: Date.now() + 600000 };
+            challenges++;
+            return { accepted: true };
+        } });
+        await pairing.createOffer();
+        let code;
+        for (let index = 0; index < 6; index++) {
+            const client = await c.startPairingClient('9999', pairing.offer.offerId);
+            try { await pairing.handle({ type: 'pair-request', offerId: pairing.offer.offerId, requestId: crypto.randomUUID(), startLoginRequest: client.startLoginRequest }); }
+            catch (error) { code = error.code; }
+        }
+        return { challenges, expired, code };
+    });
+    expect(result).toEqual({ challenges: 5, expired: 1, code: 'pairing_limited' });
+});

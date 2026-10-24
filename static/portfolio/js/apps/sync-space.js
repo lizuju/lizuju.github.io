@@ -246,6 +246,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             if (keyRefresh?.session === session) return keyRefresh.promise;
             const entry = { session };
             entry.promise = (async () => {
+                const revoked = new Set(session.revokedDevices);
                 for (;;) {
                     const result = await api(`/v1/spaces/${session.roomId}/key-grants`, {}, session);
                     if (credentials !== session) return;
@@ -254,15 +255,15 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                         session.keyring = next.keyring;
                         session.trustedDevices = next.trustedDevices;
                         session.revokedDevices = next.revokedDevices;
+                        if (pendingUpload && session.revokedDevices.some(id => !revoked.has(id))) {
+                            uploadController?.abort(Object.assign(new Error('key_changed'), { code: 'key_changed' }));
+                            discardUpload();
+                        }
                     }
                     if (result.grants.length) {
                         await persistSession(session);
                         await api(`/v1/spaces/${session.roomId}/key-grants`, { method: 'DELETE', body: JSON.stringify({ through: result.grants.at(-1).id }) }, session);
                         pairing.reset();
-                        if (pendingUpload && pendingUpload.keyId !== session.keyring.currentKeyId) {
-                            uploadController?.abort(Object.assign(new Error('key_changed'), { code: 'key_changed' }));
-                            discardUpload();
-                        }
                     }
                     if (!result.hasMore) break;
                 }
@@ -278,7 +279,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             const revision = ++draftRevision;
             const upload = pendingUpload && {
                 clientId: pendingUpload.clientId, uploadId: pendingUpload.uploadId, text: pendingUpload.text, fingerprint: pendingUpload.fingerprint, receivedBytes: pendingUpload.receivedBytes || 0,
-                encryption: pendingUpload.encryption, encryptedText: pendingUpload.encryptedText, keyId: pendingUpload.keyId,
+                encryption: pendingUpload.encryption, encryptedText: pendingUpload.encryptedText, keyId: pendingUpload.keyId, revokedDevices: pendingUpload.revokedDevices,
                 file: { name: pendingUpload.file.name, type: pendingUpload.file.type, size: pendingUpload.file.size, lastModified: pendingUpload.file.lastModified }
             };
             const key = draftKey();
@@ -294,7 +295,8 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             find('file-size').textContent = file ? formatSize(file.size) : '';
             find('upload-status').hidden = !sending || !pendingUpload;
             if (sending && pendingUpload) {
-                const transferred = Math.min(pendingUpload.file.size, Math.floor((pendingUpload.receivedBytes || 0) / FILE_CIPHER_CHUNK_SIZE) * FILE_PLAIN_CHUNK_SIZE + (pendingUpload.inflightBytes || 0));
+                const wireBytes = (pendingUpload.receivedBytes || 0) + (pendingUpload.inflightBytes || 0);
+                const transferred = Math.min(pendingUpload.file.size, Math.floor(wireBytes / FILE_CIPHER_CHUNK_SIZE) * FILE_PLAIN_CHUNK_SIZE + Math.min(wireBytes % FILE_CIPHER_CHUNK_SIZE, FILE_PLAIN_CHUNK_SIZE));
                 const percent = pendingUpload.file.size ? Math.floor(transferred / pendingUpload.file.size * 100) : 100;
                 let text = translate(pendingUpload.stage || 'syncUploadProgress', { filename: pendingUpload.file.name, percent });
                 if (pendingUpload.stage === 'syncUploadWaiting') text = translate('syncUploadWaiting', { seconds: Math.max(1, Math.ceil((pendingUpload.retryAt - Date.now()) / 1000)) });
@@ -323,8 +325,8 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             const type = attachment.type;
             const extension = attachment.name.split('.').pop().toLowerCase();
             if (['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence'].includes(type) || ['heic', 'heif', 'hif'].includes(extension)) return 'heic';
-            if (['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'].includes(type)) return 'image';
-            if (['video/mp4', 'video/webm', 'video/ogg'].includes(type)) return 'video';
+            if (['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'].includes(type) || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif'].includes(extension)) return 'image';
+            if (['video/mp4', 'video/webm', 'video/ogg'].includes(type) || ['mp4', 'webm', 'ogg', 'ogv'].includes(extension)) return 'video';
             if (type === 'application/pdf' || extension === 'pdf') return 'pdf';
             if (extension === 'docx') return 'word';
             if (['xlsx', 'xls', 'ods', 'csv', 'tsv'].includes(extension)) return 'spreadsheet';
@@ -718,6 +720,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             let incoming = Promise.resolve();
             let awaitingPong = false;
             let authenticated = false;
+            let initialized = false;
             socket = connection;
             connection.addEventListener('open', () => {
                 if (socket === connection) connection.send(JSON.stringify({ type: 'auth', token: session.token }));
@@ -735,7 +738,6 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                     if (data.rekeyRequired) await rotateKeys(null);
                     if (socket !== connection || credentials !== session) return;
                     retryDelay = 1000;
-                    setConnection(true);
                     await showPairing(data.pairing);
                     receiveHistory(await Promise.all(data.messages.map(message => decodeMessage(message, session))), initial, data.historyMode, data.history);
                     catchUp(data.history);
@@ -754,6 +756,8 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                             connection.send('ping');
                         }
                     }, 30000);
+                    initialized = true;
+                    setConnection(true);
                 } else if (data.type === 'message') addMessage(await decodeMessage(data.message, session), data.history);
                 else if (data.type === 'pairing') await showPairing(data.pairing);
                 else if (data.type === 'pair-request' || data.type === 'pair-finish') await pairing.handle(data);
@@ -772,7 +776,10 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             };
             connection.addEventListener('message', event => {
                 incoming = incoming.then(() => receive(event)).catch(error => {
-                    if (credentials === session && socket === connection && error.code !== 'invalid_code') showError(error);
+                    if (credentials === session && socket === connection) {
+                        if (error.code !== 'invalid_code') showError(error);
+                        if (!initialized) connection.close();
+                    }
                 });
             });
             connection.addEventListener('close', async (event) => {
@@ -885,7 +892,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                 input.value = draft?.text || '';
                 pending = draft?.pending || null;
                 pendingUpload = draft?.upload || null;
-                if (pendingUpload?.keyId !== session.keyring.currentKeyId) pendingUpload = null;
+                if (pendingUpload && session.revokedDevices.some(id => !(pendingUpload.revokedDevices || []).includes(id))) pendingUpload = null;
             } catch { input.value = ''; pending = null; pendingUpload = null; }
             showPairing(session.pairing);
             render();
@@ -1129,59 +1136,72 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             controller.signal.throwIfAborted();
             if (upload.fingerprint && upload.fingerprint !== fingerprint) throw Object.assign(new Error('upload_conflict'), { code: 'upload_conflict' });
             upload.fingerprint = fingerprint;
-            upload.encryption ||= createFileMetadata(upload.file);
-            if (!upload.encryptedText || upload.keyId !== session.keyring.currentKeyId) {
-                const keyring = session.keyring;
-                upload.encryptedText = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${upload.clientId}`, { text: upload.text, attachment: upload.encryption });
-                upload.keyId = keyring.currentKeyId;
+            if (!upload.encryption) {
+                upload.encryption = createFileMetadata(upload.file);
+                upload.revokedDevices = [...session.revokedDevices];
             }
             const wireSize = upload.file.size + Math.ceil(upload.file.size / FILE_PLAIN_CHUNK_SIZE) * 16;
             const wireFingerprint = await keyedFingerprint(upload.encryption, fingerprint);
-            saveDraft();
-            const result = await request(path, {
-                method: 'POST',
-                headers: { 'X-Sync-Key-Id': upload.keyId },
-                body: JSON.stringify({ clientId: upload.clientId, name: upload.encryption.fileId, type: 'application/octet-stream', size: wireSize, text: upload.encryptedText, fingerprint: wireFingerprint })
-            }, 30000);
-            if (credentials !== session || controller.signal.aborted || pendingUpload !== upload) return;
-            if (result.message) return result.message;
-            upload.uploadId = result.uploadId;
-            upload.receivedBytes = result.receivedBytes;
-            upload.baselineBytes = result.receivedBytes;
-            upload.startedAt = performance.now();
-            upload.bytesPerSecond = 0;
-            saveDraft();
-            upload.stage = 'syncUploadProgress';
-            updateSelectedFile();
-            if (result.chunkSize !== FILE_CIPHER_CHUNK_SIZE) throw new Error('invalid_chunk_size');
-            while (upload.receivedBytes < wireSize) {
-                const offset = upload.receivedBytes;
-                const index = Math.floor(offset / FILE_CIPHER_CHUNK_SIZE);
-                const plainOffset = index * FILE_PLAIN_CHUNK_SIZE;
-                const plaintext = await upload.file.slice(plainOffset, Math.min(plainOffset + FILE_PLAIN_CHUNK_SIZE, upload.file.size)).arrayBuffer();
-                const chunk = await encryptFileChunk(upload.encryption, index, plaintext);
-                controller.signal.throwIfAborted();
-                const received = await request(`${path}/${upload.uploadId}/chunks/${index}`, {
-                    method: 'PUT', body: chunk, headers: { 'Content-Type': 'application/octet-stream' },
-                    uploadProgress: (bytes) => {
-                        if (pendingUpload !== upload || controller.signal.aborted) return;
-                        upload.inflightBytes = bytes;
+            for (;;) {
+                upload.completing = false;
+                try {
+                    if (!upload.encryptedText || upload.keyId !== session.keyring.currentKeyId) {
+                        const keyring = session.keyring;
+                        upload.encryptedText = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${upload.clientId}`, { text: upload.text, attachment: upload.encryption });
+                        upload.keyId = keyring.currentKeyId;
+                    }
+                    saveDraft();
+                    const result = await request(path, {
+                        method: 'POST',
+                        headers: { 'X-Sync-Key-Id': upload.keyId },
+                        body: JSON.stringify({ clientId: upload.clientId, name: upload.encryption.fileId, type: 'application/octet-stream', size: wireSize, text: upload.encryptedText, fingerprint: wireFingerprint })
+                    }, 30000);
+                    if (credentials !== session || controller.signal.aborted || pendingUpload !== upload) return;
+                    if (result.message) return result.message;
+                    upload.uploadId = result.uploadId;
+                    upload.receivedBytes = result.receivedBytes;
+                    upload.inflightBytes = 0;
+                    upload.baselineBytes = result.receivedBytes;
+                    upload.startedAt = performance.now();
+                    upload.bytesPerSecond = 0;
+                    saveDraft();
+                    upload.stage = 'syncUploadProgress';
+                    updateSelectedFile();
+                    if (result.chunkSize !== FILE_CIPHER_CHUNK_SIZE) throw new Error('invalid_chunk_size');
+                    while (upload.receivedBytes < wireSize && upload.keyId === session.keyring.currentKeyId) {
+                        const offset = upload.receivedBytes;
+                        const index = Math.floor(offset / FILE_CIPHER_CHUNK_SIZE);
+                        const plainOffset = index * FILE_PLAIN_CHUNK_SIZE;
+                        const plaintext = await upload.file.slice(plainOffset, Math.min(plainOffset + FILE_PLAIN_CHUNK_SIZE, upload.file.size)).arrayBuffer();
+                        const chunk = await encryptFileChunk(upload.encryption, index, plaintext);
+                        controller.signal.throwIfAborted();
+                        const received = await request(`${path}/${upload.uploadId}/chunks/${index}`, {
+                            method: 'PUT', body: chunk, headers: { 'Content-Type': 'application/octet-stream' },
+                            uploadProgress: (bytes) => {
+                                if (pendingUpload !== upload || controller.signal.aborted) return;
+                                upload.inflightBytes = bytes;
+                                const elapsed = (performance.now() - upload.startedAt) / 1000;
+                                upload.bytesPerSecond = elapsed > 0 ? (offset + bytes - upload.baselineBytes) / elapsed : 0;
+                                updateSelectedFile();
+                            }
+                        }, 300000);
+                        if (credentials !== session || controller.signal.aborted || pendingUpload !== upload) return;
+                        upload.receivedBytes = received.receivedBytes;
+                        upload.inflightBytes = 0;
                         const elapsed = (performance.now() - upload.startedAt) / 1000;
-                        upload.bytesPerSecond = elapsed > 0 ? (offset + bytes - upload.baselineBytes) / elapsed : 0;
+                        upload.bytesPerSecond = elapsed > 0 ? (upload.receivedBytes - upload.baselineBytes) / elapsed : 0;
                         updateSelectedFile();
                     }
-                }, 300000);
-                if (credentials !== session || controller.signal.aborted || pendingUpload !== upload) return;
-                upload.receivedBytes = received.receivedBytes;
-                upload.inflightBytes = 0;
-                const elapsed = (performance.now() - upload.startedAt) / 1000;
-                upload.bytesPerSecond = elapsed > 0 ? (upload.receivedBytes - upload.baselineBytes) / elapsed : 0;
-                updateSelectedFile();
+                    if (upload.keyId !== session.keyring.currentKeyId) continue;
+                    upload.completing = true;
+                    upload.stage = 'syncCompletingUpload';
+                    updateSelectedFile();
+                    return await request(`${path}/${upload.uploadId}/complete`, { method: 'POST' }, 30000);
+                } catch (error) {
+                    if (error.code !== 'key_changed' || upload.keyId === session.keyring.currentKeyId
+                        || controller.signal.aborted || credentials !== session) throw error;
+                }
             }
-            upload.completing = true;
-            upload.stage = 'syncCompletingUpload';
-            updateSelectedFile();
-            return request(`${path}/${upload.uploadId}/complete`, { method: 'POST' }, 30000);
         };
         find('attach').addEventListener('click', () => find('file-input').click());
         const selectFile = (file) => {

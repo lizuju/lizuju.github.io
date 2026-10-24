@@ -5,8 +5,8 @@ import {
 
 const failure = (code) => Object.assign(new Error(code), { code });
 const randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
-const pause = (signal) => new Promise((resolve, reject) => {
-    const timer = setTimeout(done, 500);
+const pause = (signal, delay = 500) => new Promise((resolve, reject) => {
+    const timer = setTimeout(done, delay);
     function done() { signal.removeEventListener('abort', abort); resolve(); }
     function abort() { clearTimeout(timer); reject(signal.reason); }
     signal.addEventListener('abort', abort, { once: true });
@@ -144,16 +144,18 @@ export class EncryptedPairing {
         const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]);
         const identity = await createDeviceIdentity();
         const { offers } = await this.api('/v1/pair/offers', { signal }, null);
-        if (!Array.isArray(offers) || !offers.length || offers.length > 5 || new Set(offers.map(offer => offer.offerId)).size !== offers.length) throw failure('invalid_code');
+        if (!Array.isArray(offers) || !offers.length || offers.length > 30 || new Set(offers.map(offer => offer.offerId)).size !== offers.length) throw failure('invalid_code');
         const requestId = crypto.randomUUID();
         const requestToken = randomToken();
-        await useAttempts('join', offers.map(offer => `${requestId}:${offer.offerId}`));
+        await useAttempts('join', [requestId]);
         const states = new Map();
         const requests = [];
         for (const offer of offers) {
+            signal.throwIfAborted();
             const result = await startPairingClient(code, offer.offerId);
             states.set(offer.offerId, result.clientState);
             requests.push({ offerId: offer.offerId, startLoginRequest: result.startLoginRequest });
+            await pause(signal, 0);
         }
         const path = `/v1/pair/${requestId}`;
         const headers = { Authorization: `Bearer ${requestToken}` };
@@ -167,11 +169,13 @@ export class EncryptedPairing {
                 const result = await this.api(path, { signal, headers }, null);
                 for (const response of result.responses) {
                     if (!states.has(response.offerId) || tried.has(response.offerId)) continue;
+                    signal.throwIfAborted();
                     tried.add(response.offerId);
                     try { matches.set(response.offerId, await finishPairingClient(states.get(response.offerId), response.offerId, requestId, response.loginResponse)); }
                     catch (error) { if (error.code !== 'invalid_code') throw error; }
+                    if (matches.size > 1) throw failure('pairing_ambiguous');
+                    await pause(signal, 0);
                 }
-                if (matches.size > 1) throw failure('pairing_ambiguous');
                 if (tried.size < offers.length) await pause(signal);
             }
             if (matches.size !== 1) throw failure('invalid_code');
