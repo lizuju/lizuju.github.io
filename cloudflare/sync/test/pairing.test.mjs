@@ -100,9 +100,9 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
         },
         env: {
           ALLOWED_ORIGINS: { type: 'text', value: origin },
-          PAIRING_REGISTRY: { type: 'durable-object', worker: 'sync-test', exportName: 'PairingRegistry' },
-          SYNC_ROOMS: { type: 'durable-object', worker: 'sync-test', exportName: 'SyncRoom' },
-          FILE_SHARDS: { type: 'durable-object', worker: 'sync-test', exportName: 'FileShard' }
+          E2EE_PAIRING_REGISTRY: { type: 'durable-object', worker: 'sync-test', exportName: 'PairingRegistry' },
+          E2EE_SYNC_ROOMS: { type: 'durable-object', worker: 'sync-test', exportName: 'SyncRoom' },
+          E2EE_FILE_SHARDS: { type: 'durable-object', worker: 'sync-test', exportName: 'FileShard' }
         },
         exports: {
           PairingRegistry: { type: 'durable-object', storage: 'sqlite' },
@@ -387,7 +387,7 @@ test('unregistered room IDs reject forged HTTP credentials and sockets without a
   await createSpace(request);
   const registry = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   const usage = await registry.exec('SELECT room_id, bytes, oldest_at FROM room_usage ORDER BY room_id');
-  const databases = await instance.listDurableObjectIds('SYNC_ROOMS');
+  const databases = await instance.listDurableObjectIds('E2EE_SYNC_ROOMS');
   assert.equal(databases.length, 1);
 
   for (const [method, suffix, json] of [
@@ -410,7 +410,7 @@ test('unregistered room IDs reject forged HTTP credentials and sockets without a
   });
   assert.equal(socket.status, 404);
   assert.equal(socket.body.error, 'not_found');
-  assert.deepEqual(await instance.listDurableObjectIds('SYNC_ROOMS'), databases);
+  assert.deepEqual(await instance.listDurableObjectIds('E2EE_SYNC_ROOMS'), databases);
   assert.deepEqual(await registry.exec('SELECT room_id, bytes, oldest_at FROM room_usage ORDER BY room_id'), usage);
 });
 
@@ -418,7 +418,7 @@ test('a room without an online inviter cannot admit a new device from a retained
   const instance = await createRuntime(); t.after(() => instance.dispose());
   const request = client(instance), space = await createSpace(request);
   assert.equal((await request(`/v1/spaces/${space.roomId}/device`, { method: 'DELETE', token: space.token })).status, 200);
-  const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   await registry.refreshRoom(space.roomId);
   const joined = await client(instance)('/v1/pair', { method: 'POST', json: { code: space.code } });
   assert.equal(joined.status, 401);
@@ -430,10 +430,10 @@ test('empty rooms reclaim expired offers and stale credentials cannot recreate a
   await request(`/v1/spaces/${space.roomId}/device`, { method: 'DELETE', token: space.token });
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   await registryStorage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
-  const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   await registry.refreshRoom(space.roomId);
   assert.equal(await registry.hasRoom(space.roomId), false);
-  const room = (await instance.getDurableObjectNamespace('SYNC_ROOMS')).getByName(space.roomId);
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
   assert.deepEqual(await room.testSchema(), []);
   assert.equal((await request.raw(`/v1/spaces/${space.roomId}`, { token: space.token })).status, 404);
   assert.deepEqual(await room.testSchema(), []);
@@ -443,7 +443,7 @@ test('empty-room reclamation retains devices, history, uploads and remaining sha
   const instance = await createRuntime();
   t.after(() => instance.dispose());
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY');
   const registry = namespace.getByName('registry');
   for (const retained of ['device', 'message', 'upload', 'shard', 'chunk', 'deleting shards']) {
     await t.test(retained, async () => {
@@ -493,7 +493,7 @@ test('daily maintenance reclaims a 30-day abandoned empty room despite old paire
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   await roomStorage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 31 * 24 * 60 * 60 * 1000), 'lastActiveAt');
   await registryStorage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
-  const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   await registry.maintainRooms();
   await registry.testRunAlarm();
   assert.equal(await registry.hasRoom(space.roomId), false);
@@ -504,7 +504,7 @@ test('daily maintenance reclaims a 30-day abandoned empty room despite old paire
 test('abandoned-room reclamation preserves recent activity, online devices, invitations and pending contents', async t => {
   const instance = await createRuntime();
   t.after(() => instance.dispose());
-  const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   for (const retained of ['recent', 'online', 'invitation', 'history', 'upload']) {
     const request = client(instance);
@@ -534,7 +534,7 @@ test('successful authentication refreshes stale activity and existing rooms rece
   assert.ok(Number((await storage.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt'))[0].value) > old);
   await storage.exec('DELETE FROM metadata WHERE key = ?', 'lastActiveAt');
   await instance.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId });
-  const room = (await instance.getDurableObjectNamespace('SYNC_ROOMS')).getByName(space.roomId);
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
   assert.equal(await room.reclaimIfEmpty(), false);
   assert.ok(Number((await storage.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt'))[0].value) >= Date.now() - 10000);
 });
@@ -544,7 +544,7 @@ test('closing a long-lived authenticated connection refreshes activity before an
   t.after(() => instance.dispose());
   const space = await createSpace(client(instance));
   const { socket } = await authenticateSocket(space, instance);
-  const room = (await instance.getDurableObjectNamespace('SYNC_ROOMS')).getByName(space.roomId);
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
   await room.testAgeActivity(Date.now() - 31 * 24 * 60 * 60 * 1000);
   const closed = socketEvent(socket, 'close');
   socket.close();
@@ -616,9 +616,9 @@ test('offer publications are ordered and are never sent to another room or anony
   assert.deepEqual(JSON.parse((await next).data), { type: 'pairing', pairing: wire });
   assert.deepEqual(observed, []); assert.deepEqual(privateFrames, []);
   assert.ok(!JSON.stringify(wire).includes(`"code":"${code}"`));
-  const registry = (await runtime.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  const registry = (await runtime.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   await registry.testFailPairingRead();
-  const room = (await runtime.getDurableObjectNamespace('SYNC_ROOMS')).getByName(space.roomId);
+  const room = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
   assert.match(await room.testPublishPairingFailure(space.roomId), /test_pairing_read_failed/);
   assert.equal((await authenticateSocket(space)).frame.type, 'ready');
 });
@@ -984,7 +984,7 @@ test('the alarm removes five-day history without a page visit and broadcasts the
   const survivorTime = now - fiveDays + 60000;
   await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', now - fiveDays - 60000, sent[0].id);
   await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', survivorTime, sent[1].id);
-  const namespace = await runtime.getDurableObjectNamespace('SYNC_ROOMS');
+  const namespace = await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
   const room = namespace.getByName(space.roomId);
   const history = socketEvent(connected.socket);
   await room.testRunAlarm();
@@ -1028,7 +1028,7 @@ test('message expiry and pending authentication share the earliest alarm without
     method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'retention deadline' }
   });
   assert.equal(sent.status, 201);
-  const namespace = await runtime.getDurableObjectNamespace('SYNC_ROOMS');
+  const namespace = await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
   const room = namespace.getByName(space.roomId);
   assert.equal(await room.testReadAlarm(), sent.body.createdAt + fiveDays);
   const socket = await openSocket(space.roomId);
@@ -1053,7 +1053,7 @@ test('pruning real large text rows reduces the measured SQLite storage usage', a
     });
     assert.equal(result.status, 201);
   }
-  const namespace = await runtime.getDurableObjectNamespace('SYNC_ROOMS');
+  const namespace = await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
   const room = namespace.getByName(space.roomId);
   const before = await room.storageUsage();
   const after = await room.pruneOldest();
@@ -1071,7 +1071,7 @@ test('combined room storage starts background cleanup, removes about 3 GB in glo
   const spaces = [await createSpace(request), await createSpace(request)];
   const storage = await Promise.all(spaces.map(space => instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId })));
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  const registryNamespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const registryNamespace = await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY');
   const registry = registryNamespace.getByName('registry');
   const snapshot = async () => (await Promise.all(storage.map(async (handle, index) => {
     const session = request.state.sessions.get(spaces[index].token);
@@ -1163,7 +1163,7 @@ test('stale high usage is refreshed before background cleanup can delete current
     method: 'POST', token: spaces[1].token, json: { clientId: randomUUID(), text: 'retry after refresh' }
   });
   assert.equal(blocked.status, 503);
-  const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY');
   await namespace.getByName('registry').testRunAlarm();
   assert.deepEqual(await registryStorage.exec('SELECT 1 FROM cleanup'), []);
   for (const [index, space] of spaces.entries()) {
@@ -1207,7 +1207,7 @@ test('concurrent space creation admits only one room when storage has headroom f
   t.after(() => instance.dispose());
   const existing = await createSpace(client(instance));
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY');
   const registry = namespace.getByName('registry');
   const availableBefore = 4_700_000_000 - 200_000;
   const total = await registry.storageBytes();
@@ -1221,7 +1221,7 @@ test('concurrent space creation admits only one room when storage has headroom f
   const expected = [existing.roomId, created.roomId].sort();
   assert.deepEqual((await registryStorage.exec('SELECT room_id FROM room_usage ORDER BY room_id')).map(row => row.room_id), expected);
   assert.deepEqual((await registryStorage.exec('SELECT room_id FROM offers ORDER BY room_id')).map(row => row.room_id), expected);
-  assert.equal((await instance.listDurableObjectIds('SYNC_ROOMS')).length, 2);
+  assert.equal((await instance.listDurableObjectIds('E2EE_SYNC_ROOMS')).length, 2);
   assert.deepEqual(await registryStorage.exec('SELECT 1 FROM cleanup'), []);
 
   for (const space of [existing, created]) {
@@ -1248,9 +1248,9 @@ test('space creation under storage pressure starts cleanup without allocating an
   assert.equal(blocked.headers.get('Retry-After'), '1');
   assert.deepEqual(await registryStorage.exec('SELECT room_id FROM room_usage'), [{ room_id: space.roomId }]);
   assert.deepEqual(await registryStorage.exec('SELECT room_id FROM offers'), [{ room_id: space.roomId }]);
-  assert.equal((await instance.listDurableObjectIds('SYNC_ROOMS')).length, 1);
+  assert.equal((await instance.listDurableObjectIds('E2EE_SYNC_ROOMS')).length, 1);
   assert.deepEqual(await registryStorage.exec('SELECT phase, cursor FROM cleanup'), [{ phase: 'refresh', cursor: '' }]);
-  const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY');
   assert.ok(await namespace.getByName('registry').testReadAlarm() !== null);
 });
 
@@ -1287,7 +1287,7 @@ test('daily maintenance repairs unattended expiry and resumes interrupted cleanu
   }
   await storage[0].exec('UPDATE messages SET created_at = ?', Date.now() - fiveDays - 60000);
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  const namespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY');
   const registry = namespace.getByName('registry');
   await registry.maintainRooms();
   assert.ok(await registry.testReadAlarm() !== null);
@@ -1316,7 +1316,7 @@ test('a slow room maintenance does not hold another room behind a registry-wide 
   const instance = await createRuntime(); t.after(() => instance.dispose());
   const request = client(instance);
   const slow = await createSpace(request), fast = await createSpace(request);
-  const held = (await instance.getDurableObjectNamespace('SYNC_ROOMS')).getByName(slow.roomId);
+  const held = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(slow.roomId);
   await held.testHoldMaintenance();
   const waiting = request(`/v1/spaces/${slow.roomId}`, { token: slow.token });
   await held.testWaitMaintenance();
@@ -1357,7 +1357,7 @@ test('history cursors return deltas and reset safely after clear, expiry and pru
   assert.equal(delta.body.historyMode, 'replace'); assert.deepEqual(delta.body.messages, [fourth]);
   assert.notEqual(delta.body.history.generation, afterClear.generation);
   const beforePrune = delta.body.history;
-  await (await runtime.getDurableObjectNamespace('SYNC_ROOMS')).getByName(space.roomId).pruneOldest();
+  await (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId).pruneOldest();
   delta = await request(`/v1/spaces/${space.roomId}/messages?after=${fourth.id}&generation=${beforePrune.generation}`, { token: space.token });
   assert.equal(delta.body.historyMode, 'replace'); assert.deepEqual(delta.body.messages, []);
   assert.notEqual(delta.body.history.generation, beforePrune.generation);
@@ -1382,7 +1382,7 @@ test('public storage status is read only, aggregate only and distinguishes proje
   });
   assert.equal(publicStrings.includes(space.code), false);
   assert.deepEqual(await storage.exec('SELECT * FROM room_usage'), before);
-  const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   await registry.maintainRooms(); await registry.testDropAlarm();
   const running = await request('/v1/status');
   assert.equal(running.body.maintenance.running, true); assert.ok(running.body.maintenance.startedAt > 0);
@@ -1419,7 +1419,7 @@ test('reconnect catch-up pages are bounded and continuation visits every retaine
 test('status rotates room probes and distinguishes missing, stale, overdue and recovered maintenance', async t => {
   const instance = await createRuntime(); t.after(() => instance.dispose());
   const request = client(instance), first = await createSpace(request), second = await createSpace(request);
-  const namespace = await instance.getDurableObjectNamespace('SYNC_ROOMS');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
   const rooms = [namespace.getByName(first.roomId), namespace.getByName(second.roomId)];
   const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   let response = await request('/v1/status');
@@ -1431,7 +1431,7 @@ test('status rotates room probes and distinguishes missing, stale, overdue and r
   await storage.exec('INSERT INTO registry_metadata (key, value) VALUES (?, ?)', 'lastMaintenanceSuccessAt', oldSuccess);
   response = await request('/v1/status');
   assert.equal(response.body.maintenance.status, 'overdue'); assert.equal(response.body.maintenance.stale, true);
-  const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   await registry.maintainRooms(); await registry.testDropAlarm();
   response = await request('/v1/status');
   assert.equal(response.body.maintenance.overdue, true); assert.equal(response.body.maintenance.nextAlarmAt, null);
@@ -1450,7 +1450,7 @@ test('status rotates room probes and distinguishes missing, stale, overdue and r
 test('in-flight upload reservations protect global capacity while another room remains responsive', async t => {
   const instance = await createRuntime({ virtualBaseBytes: 1_000_000_000 }); t.after(() => instance.dispose());
   const request = client(instance), first = await createSpace(request), second = await createSpace(request);
-  const namespace = await instance.getDurableObjectNamespace('SYNC_ROOMS'), held = namespace.getByName(first.roomId);
+  const namespace = await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS'), held = namespace.getByName(first.roomId);
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   await held.testHoldUploadBegin();
   const begin = space => request(`/v1/spaces/${space.roomId}/files/uploads`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), name: 'large.bin', size: 2 * 1024 ** 3, type: 'application/octet-stream' } });

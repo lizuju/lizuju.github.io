@@ -85,9 +85,9 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
         },
         env: {
           ALLOWED_ORIGINS: { type: 'text', value: origin },
-          PAIRING_REGISTRY: { type: 'durable-object', worker: 'sync-files-test', exportName: 'PairingRegistry' },
-          SYNC_ROOMS: { type: 'durable-object', worker: 'sync-files-test', exportName: 'SyncRoom' },
-          FILE_SHARDS: { type: 'durable-object', worker: 'sync-files-test', exportName: 'FileShard' }
+          E2EE_PAIRING_REGISTRY: { type: 'durable-object', worker: 'sync-files-test', exportName: 'PairingRegistry' },
+          E2EE_SYNC_ROOMS: { type: 'durable-object', worker: 'sync-files-test', exportName: 'SyncRoom' },
+          E2EE_FILE_SHARDS: { type: 'durable-object', worker: 'sync-files-test', exportName: 'FileShard' }
         },
         exports: {
           PairingRegistry: { type: 'durable-object', storage: 'sqlite' },
@@ -147,7 +147,7 @@ async function roomStorage(space, instance = runtime) {
 }
 
 async function roomObject(space, instance = runtime) {
-  const namespace = await instance.getDurableObjectNamespace('SYNC_ROOMS');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
   return namespace.getByName(space.roomId);
 }
 
@@ -218,7 +218,7 @@ test('a binary file crosses 8 MiB upload chunks and 64 MiB shards without losing
   assert.deepEqual(sent.body.attachment, { name, type: 'video/quicktime', size: bytes.length });
   assert.equal(sent.body.deviceId, space.deviceId);
   assert.equal(sent.body.text, '跨分片中文说明');
-  const shardIds = await runtime.listDurableObjectIds('FILE_SHARDS');
+  const shardIds = await runtime.listDurableObjectIds('E2EE_FILE_SHARDS');
   assert.equal(shardIds.length, 2);
   const chunks = await shardRows(shardIds);
   assert.equal(chunks.length, 65);
@@ -286,7 +286,7 @@ test('upload chunks retain the initial global reservation without running regist
   const space = await createSpace(request);
   const started = await initiate(request, space, { size: chunkSize * 2 + 3 });
   assert.equal(started.status, 201);
-  const namespace = await runtime.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const namespace = await runtime.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY');
   const registry = namespace.getByName('registry');
   const registryStorage = await runtime.unsafeGetDurableObjectStorage('sync-files-test', 'PairingRegistry', { name: 'registry' });
   const snapshot = await registryStorage.exec('SELECT bytes FROM room_usage WHERE room_id = ?', space.roomId);
@@ -612,7 +612,7 @@ test('resuming the end of a 2 GiB file reads only the requested shard and reject
   const attachment = JSON.stringify({ name: 'file.bin', type: 'application/octet-stream', size: maximumFileSize });
   const [{ id }] = await storage.exec('INSERT INTO messages (client_id, device_id, text, created_at, attachment) VALUES (?, ?, ?, ?, ?) RETURNING id', clientId, space.deviceId, '', Date.now(), attachment);
   await storage.exec("UPDATE files SET status = 'complete', message_id = ?, reserved_bytes = 0 WHERE file_id = ?", id, fileId);
-  const shardNamespace = await instance.getDurableObjectNamespace('FILE_SHARDS');
+  const shardNamespace = await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS');
   const lastShard = shardNamespace.getByName(`${fileId}:31`);
   await lastShard.writePart(255, new Uint8Array([0]).buffer);
   const shardStorage = await instance.unsafeGetDurableObjectStorage('sync-files-test', 'FileShard', { name: `${fileId}:31` });
@@ -625,7 +625,7 @@ test('resuming the end of a 2 GiB file reads only the requested shard and reject
   assert.deepEqual(ranged.body, lastMiB.subarray(MiB - 23));
   assert.equal(ranged.headers.get('Content-Range'), `bytes ${maximumFileSize - 23}-${maximumFileSize - 1}/${maximumFileSize}`);
   assert.deepEqual(await lastShard.testReadRequests(), [{ offset: 64 * MiB - 23, length: 23 }]);
-  assert.equal((await instance.listDurableObjectIds('FILE_SHARDS')).length, 1);
+  assert.equal((await instance.listDurableObjectIds('E2EE_FILE_SHARDS')).length, 1);
   assert.equal((await request(path, { method: 'HEAD' })).headers.get('Content-Length'), String(maximumFileSize));
   assert.equal((await lastShard.testReadRequests()).length, 1);
 
@@ -673,10 +673,10 @@ test('encrypted ticket responses keep every private media type opaque while reta
 test('clearing history removes file manifests, upload rows and physical shard bytes from storage usage', async () => {
   const request = client();
   const space = await createSpace(request);
-  const previous = await runtime.listDurableObjectIds('FILE_SHARDS');
+  const previous = await runtime.listDurableObjectIds('E2EE_FILE_SHARDS');
   const sent = await upload(request, space, { bytes: randomBytes(2 * MiB + 97) });
   assert.equal(sent.status, 201);
-  const shardIds = (await runtime.listDurableObjectIds('FILE_SHARDS')).filter(id => !previous.includes(id));
+  const shardIds = (await runtime.listDurableObjectIds('E2EE_FILE_SHARDS')).filter(id => !previous.includes(id));
   const room = await roomObject(space);
   const before = await room.storageUsage();
   assert.ok(before.bytes > 2 * MiB);
@@ -696,10 +696,10 @@ test('clearing history removes file manifests, upload rows and physical shard by
 test('expired messages delete their shards while live attachments remain downloadable', async () => {
   const request = client();
   const space = await createSpace(request);
-  const previous = await runtime.listDurableObjectIds('FILE_SHARDS');
+  const previous = await runtime.listDurableObjectIds('E2EE_FILE_SHARDS');
   const expired = await upload(request, space, { bytes: randomBytes(MiB + 9), name: 'expired.bin' });
   assert.equal(expired.status, 201);
-  const expiredShards = (await runtime.listDurableObjectIds('FILE_SHARDS')).filter(id => !previous.includes(id));
+  const expiredShards = (await runtime.listDurableObjectIds('E2EE_FILE_SHARDS')).filter(id => !previous.includes(id));
   const survivorBytes = Buffer.from('keep this attachment');
   const survivor = await upload(request, space, { bytes: survivorBytes, name: 'surviving.txt', type: 'text/plain' });
   assert.equal(survivor.status, 201);
@@ -718,10 +718,10 @@ test('expired messages delete their shards while live attachments remain downloa
 test('the 500-message limit marks an evicted attachment for bounded shard cleanup', async () => {
   const request = client();
   const space = await createSpace(request);
-  const previous = await runtime.listDurableObjectIds('FILE_SHARDS');
+  const previous = await runtime.listDurableObjectIds('E2EE_FILE_SHARDS');
   const expired = await upload(request, space, { bytes: randomBytes(MiB + 31) });
   assert.equal(expired.status, 201);
-  const expiredShards = (await runtime.listDurableObjectIds('FILE_SHARDS')).filter(id => !previous.includes(id));
+  const expiredShards = (await runtime.listDurableObjectIds('E2EE_FILE_SHARDS')).filter(id => !previous.includes(id));
   const storage = await roomStorage(space);
   const timestamp = Date.now();
   for (let index = 0; index < 499; index += 1) {
@@ -746,11 +746,11 @@ test('cancelling and expiring unfinished uploads release uploaded shards and the
   const baseline = await room.storageUsage();
   const storage = await roomStorage(space);
   for (const abandon of ['cancel', 'expire']) {
-    const previous = await runtime.listDurableObjectIds('FILE_SHARDS');
+    const previous = await runtime.listDurableObjectIds('E2EE_FILE_SHARDS');
     const started = await initiate(request, space, { size: chunkSize + 1 });
     assert.equal(started.status, 201);
     assert.equal((await putChunk(request, space, started.body.uploadId, 0, randomBytes(chunkSize))).status, 200);
-    const shardIds = (await runtime.listDurableObjectIds('FILE_SHARDS')).filter(id => !previous.includes(id));
+    const shardIds = (await runtime.listDurableObjectIds('E2EE_FILE_SHARDS')).filter(id => !previous.includes(id));
     assert.ok((await room.storageUsage()).bytes > baseline.bytes + chunkSize);
     if (abandon === 'cancel') {
       const cancelled = await request(`/v1/spaces/${space.roomId}/files/uploads/${started.body.uploadId}`, { method: 'DELETE', token: space.token });
@@ -820,17 +820,17 @@ test('global pressure rejects new reservations, prunes old file shards and allow
   const files = [];
   for (let index = 0; index < 5; index += 1) {
     const space = spaces[index % 2];
-    const previous = await instance.listDurableObjectIds('FILE_SHARDS');
+    const previous = await instance.listDurableObjectIds('E2EE_FILE_SHARDS');
     const sent = await upload(request, space, { bytes: randomBytes(1000 + index), name: `old-${index}.bin` });
     assert.equal(sent.status, 201, JSON.stringify(sent.body));
-    const shardIds = (await instance.listDurableObjectIds('FILE_SHARDS')).filter(id => !previous.includes(id));
+    const shardIds = (await instance.listDurableObjectIds('E2EE_FILE_SHARDS')).filter(id => !previous.includes(id));
     files.push({ space, message: sent.body, shardIds });
   }
   const storage = await Promise.all(spaces.map(space => roomStorage(space, instance)));
   for (let index = 0; index < files.length; index += 1) {
     await storage[index % 2].exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - 60000 + index * 1000, files[index].message.id);
   }
-  const registryNamespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const registryNamespace = await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY');
   const registry = registryNamespace.getByName('registry');
   for (const space of spaces) await registry.refreshRoom(space.roomId);
   const before = await registry.storageBytes();
@@ -899,7 +899,7 @@ for (const { separateRoom, unknownUsage, clearedHistory } of [
     if (separateRoom) {
       await survivorStorage.exec('UPDATE messages SET created_at = ? WHERE id = ?', timestamp - 10000, survivor.body.id);
     }
-    const registryNamespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+    const registryNamespace = await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY');
     const registry = registryNamespace.getByName('registry');
     if (separateRoom) await registry.refreshRoom(survivorSpace.roomId);
     const blocked = await initiate(request, survivorSpace, { size: maximumFileSize });
@@ -951,7 +951,7 @@ test('capacity cleanup preserves a newer active upload when older completed file
   const blocked = await initiate(request, space, { size: maximumFileSize });
   assert.equal(blocked.status, 503);
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-files-test', 'PairingRegistry', { name: 'registry' });
-  const registryNamespace = await instance.getDurableObjectNamespace('PAIRING_REGISTRY');
+  const registryNamespace = await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY');
   const registry = registryNamespace.getByName('registry');
   await registry.testRunAlarm();
   const before = await registry.storageBytes();
@@ -1008,7 +1008,7 @@ test('a shard RPC download failure exposes only a generic stream error', async t
   const sent = await upload(request, space, { bytes: Buffer.from('private file bytes') });
   const storage = await roomStorage(space, instance);
   const [{ file_id: fileId }] = await storage.exec('SELECT file_id FROM files WHERE message_id = ?', sent.body.id);
-  const namespace = await instance.getDurableObjectNamespace('FILE_SHARDS');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS');
   await namespace.getByName(`${fileId}:0`).testFailRead();
   await assert.rejects(async () => {
     const response = await instance.dispatchFetch(`https://sync.test/v1/spaces/${space.roomId}/files/${sent.body.id}`, { headers: { Origin: origin, Authorization: `Bearer ${space.token}` } });
@@ -1058,7 +1058,7 @@ test('public diagnostics rotates existing shard samples without creating missing
   await upload(request, space, { bytes: Buffer.from('two') });
   const storage = await roomStorage(space, instance);
   const files = await storage.exec('SELECT file_id FROM files ORDER BY file_id');
-  const namespace = await instance.getDurableObjectNamespace('FILE_SHARDS');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS');
   const shards = files.map(file => namespace.getByName(`${file.file_id}:0`));
   for (let i = 0; i < 2; i += 1) {
     const status = await request('/v1/status');

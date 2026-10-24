@@ -16,7 +16,7 @@ before(async () => {
       'index.js': { type: 'esm', contents: await readFile(new URL('../src/index.js', import.meta.url), 'utf8') },
       'daily-usage.js': { type: 'esm', contents: await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8') }
     } }, env: { ALLOWED_ORIGINS: { type: 'text', value: origin },
-      ...Object.fromEntries([['PAIRING_REGISTRY','E2eePairingRegistry'],['SYNC_ROOMS','E2eeSyncRoom'],['FILE_SHARDS','E2eeFileShard']].map(([key,name]) => [key,{type:'durable-object',worker:'sync-e2ee-test',exportName:name}])) },
+      ...Object.fromEntries([['E2EE_PAIRING_REGISTRY','E2eePairingRegistry'],['E2EE_SYNC_ROOMS','E2eeSyncRoom'],['E2EE_FILE_SHARDS','E2eeFileShard']].map(([key,name]) => [key,{type:'durable-object',worker:'sync-e2ee-test',exportName:name}])) },
     exports: Object.fromEntries(['E2eePairingRegistry','E2eeSyncRoom','E2eeFileShard'].map(name => [name,{type:'durable-object',storage:'sqlite'}]))
   } }] });
   await runtime.ready;

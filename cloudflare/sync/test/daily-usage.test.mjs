@@ -124,9 +124,9 @@ async function createRuntime() {
         ALLOWED_ORIGINS: { type: 'text', value: 'https://lizuju.github.io' },
         CF_ACCOUNT_ID: { type: 'text', value: env.CF_ACCOUNT_ID },
         CF_ANALYTICS_TOKEN: { type: 'text', value: env.CF_ANALYTICS_TOKEN },
-        PAIRING_REGISTRY: { type: 'durable-object', worker: 'daily-usage-test', exportName: 'E2eePairingRegistry' },
-        SYNC_ROOMS: { type: 'durable-object', worker: 'daily-usage-test', exportName: 'E2eeSyncRoom' },
-        FILE_SHARDS: { type: 'durable-object', worker: 'daily-usage-test', exportName: 'E2eeFileShard' }
+        E2EE_PAIRING_REGISTRY: { type: 'durable-object', worker: 'daily-usage-test', exportName: 'E2eePairingRegistry' },
+        E2EE_SYNC_ROOMS: { type: 'durable-object', worker: 'daily-usage-test', exportName: 'E2eeSyncRoom' },
+        E2EE_FILE_SHARDS: { type: 'durable-object', worker: 'daily-usage-test', exportName: 'E2eeFileShard' }
       },
       exports: Object.fromEntries(['E2eePairingRegistry', 'E2eeSyncRoom', 'E2eeFileShard'].map(name => [name, { type: 'durable-object', storage: 'sqlite' }]))
     } }]
@@ -137,7 +137,7 @@ async function createRuntime() {
 
 test('public status coalesces collection, restores persistent cache and isolates stale failures across UTC rollover', async t => {
   const runtime = await createRuntime(); t.after(() => runtime.dispose());
-  const registry = (await runtime.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  const registry = (await runtime.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   const status = async () => {
     const response = await runtime.dispatchFetch('https://sync.test/v1/status');
     assert.equal(response.status, 200);
@@ -175,7 +175,7 @@ test('public status coalesces collection, restores persistent cache and isolates
 
 test('daily maintenance never collects account analytics in the background', async t => {
   const runtime = await createRuntime(); t.after(() => runtime.dispose());
-  const registry = (await runtime.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  const registry = (await runtime.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   const scheduled = cron => runtime.dispatchFetch(`https://sync.test/test-scheduled?cron=${encodeURIComponent(cron)}`);
   await registry.testFailAnalytics();
   assert.equal((await scheduled('17 0 * * *')).status, 200);

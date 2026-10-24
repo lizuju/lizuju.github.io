@@ -14,9 +14,9 @@
   },
   "durable_objects": {
     "bindings": [
-      { "name": "PAIRING_REGISTRY", "class_name": "E2eePairingRegistry" },
-      { "name": "SYNC_ROOMS", "class_name": "E2eeSyncRoom" },
-      { "name": "FILE_SHARDS", "class_name": "E2eeFileShard" }
+      { "name": "E2EE_PAIRING_REGISTRY", "class_name": "E2eePairingRegistry" },
+      { "name": "E2EE_SYNC_ROOMS", "class_name": "E2eeSyncRoom" },
+      { "name": "E2EE_FILE_SHARDS", "class_name": "E2eeFileShard" }
     ]
   },
   "migrations": [

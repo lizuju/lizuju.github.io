@@ -32,9 +32,9 @@ async function startRuntime() {
       manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents }, 'daily-usage.js': { type: 'esm', contents: dailyUsageContents } } },
       env: {
         ALLOWED_ORIGINS: { type: 'text', value: origin },
-        PAIRING_REGISTRY: { type: 'durable-object', worker: 'sync-large-transfer', exportName: 'E2eePairingRegistry' },
-        SYNC_ROOMS: { type: 'durable-object', worker: 'sync-large-transfer', exportName: 'E2eeSyncRoom' },
-        FILE_SHARDS: { type: 'durable-object', worker: 'sync-large-transfer', exportName: 'E2eeFileShard' }
+        E2EE_PAIRING_REGISTRY: { type: 'durable-object', worker: 'sync-large-transfer', exportName: 'E2eePairingRegistry' },
+        E2EE_SYNC_ROOMS: { type: 'durable-object', worker: 'sync-large-transfer', exportName: 'E2eeSyncRoom' },
+        E2EE_FILE_SHARDS: { type: 'durable-object', worker: 'sync-large-transfer', exportName: 'E2eeFileShard' }
       },
       exports: Object.fromEntries(['E2eePairingRegistry', 'E2eeSyncRoom', 'E2eeFileShard'].map(name => [name, { type: 'durable-object', storage: 'sqlite' }]))
     } }]

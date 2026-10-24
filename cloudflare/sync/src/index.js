@@ -130,7 +130,7 @@ function resultResponse(result, status = 200) {
 
 export default {
   async scheduled(event, env) {
-    await env.PAIRING_REGISTRY.getByName('registry').maintainRooms();
+    await env.E2EE_PAIRING_REGISTRY.getByName('registry').maintainRooms();
   },
 
   async fetch(request, env) {
@@ -171,7 +171,7 @@ export default {
       return json({ ok: true, service: 'portfolio-sync', apiVersion: 1, encryptionVersion: 1, revision: env.RELEASE_REVISION || null, versionId: env.WORKER_VERSION?.id || null });
     }
 
-    const registry = env.PAIRING_REGISTRY.getByName('registry');
+    const registry = env.E2EE_PAIRING_REGISTRY.getByName('registry');
     if (request.method === 'GET' && url.pathname === '/v1/status') {
       const [status, dailyUsage] = await Promise.all([registry.diagnostics(), registry.dailyUsage()]);
       return json({ ...status, dailyUsage });
@@ -220,7 +220,7 @@ export default {
     if (!match || !ROOM_ID.test(match[1]) || (match[3] && !ROOM_ID.test(match[3]))) return json({ error: 'not_found' }, 404);
     const roomId = match[1];
     if (!await registry.hasRoom(roomId)) return json({ error: 'not_found' }, 404);
-    const room = env.SYNC_ROOMS.getByName(roomId);
+    const room = env.E2EE_SYNC_ROOMS.getByName(roomId);
     if (request.method === 'GET' && match[2] === '/socket') {
       const protocols = (request.headers.get('Sec-WebSocket-Protocol') || '').split(',').map(value => value.trim());
       const token = protocols.find(value => /^auth\.[0-9a-f]{64}$/.test(value))?.slice(5);
@@ -447,7 +447,7 @@ export class E2eePairingRegistry extends DurableObject {
 
   async refreshUsage(roomId) {
     if (!this.hasRoom(roomId)) return null;
-    const room = this.env.SYNC_ROOMS.getByName(roomId);
+    const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
     const usage = await room.maintain(roomId);
     if (usage.oldestAt === null && !this.currentInvite(roomId) && await room.reclaimIfEmpty()) {
       this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
@@ -487,7 +487,7 @@ export class E2eePairingRegistry extends DurableObject {
       const denied = this.reserveCapacity(roomId, MESSAGE_WRITE_HEADROOM);
       if (denied) { await this.resumeCleanup(); return denied; }
       this.rememberUsage(roomId, { bytes: 0, oldestAt: null, deletingFiles: 0 });
-      const room = this.env.SYNC_ROOMS.getByName(roomId);
+      const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
       const device = await room.initialize(keyId);
       await room.maintain(roomId);
       await this.commitUsage(roomId, room);
@@ -498,7 +498,7 @@ export class E2eePairingRegistry extends DurableObject {
   async storeMessage(roomId, deviceId, clientId, text, keyId) {
     return this.withRoom(roomId, async () => {
       if (!this.hasRoom(roomId)) return { error: 'not_found', status: 404 };
-      const room = this.env.SYNC_ROOMS.getByName(roomId);
+      const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
       if (!await this.refreshUsage(roomId)) return { error: 'not_found', status: 404 };
       const existing = await room.findMessage(deviceId, clientId);
       if (existing) return existing;
@@ -512,7 +512,7 @@ export class E2eePairingRegistry extends DurableObject {
   async prepareUpload(roomId, deviceId, file, keyId) {
     return this.withRoom(roomId, async () => {
       if (!this.hasRoom(roomId)) return { error: 'not_found', status: 404 };
-      const room = this.env.SYNC_ROOMS.getByName(roomId);
+      const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
       if (!await this.refreshUsage(roomId)) return { error: 'not_found', status: 404 };
       const existing = await room.uploadInfo(deviceId, file.clientId, file) || await room.findMessage(deviceId, file.clientId);
       if (existing) return existing;
@@ -538,7 +538,7 @@ export class E2eePairingRegistry extends DurableObject {
     if (sample) {
       this.diagnosticRoomCursor = sample.room_id;
       try {
-        const { sampledShard, ...room } = await this.env.SYNC_ROOMS.getByName(sample.room_id).databaseProbe();
+        const { sampledShard, ...room } = await this.env.E2EE_SYNC_ROOMS.getByName(sample.room_id).databaseProbe();
         roomDatabase = room;
         shardDatabase = sampledShard;
       }
@@ -627,7 +627,7 @@ export class E2eePairingRegistry extends DurableObject {
         if (!usage || this.storageBytes() <= state.target_bytes || usage.deletingFiles) return;
         const first = this.sql.exec('SELECT room_id, oldest_at FROM room_usage WHERE oldest_at IS NOT NULL ORDER BY oldest_at, room_id LIMIT 2').toArray();
         if (first[0]?.room_id !== oldest.room_id) return;
-        this.rememberUsage(oldest.room_id, await this.env.SYNC_ROOMS.getByName(oldest.room_id).pruneOldest(first[1]?.oldest_at ?? Number.MAX_SAFE_INTEGER));
+        this.rememberUsage(oldest.room_id, await this.env.E2EE_SYNC_ROOMS.getByName(oldest.room_id).pruneOldest(first[1]?.oldest_at ?? Number.MAX_SAFE_INTEGER));
       });
     }
     if (this.storageBytes() <= state.target_bytes || !this.sql.exec('SELECT 1 FROM room_usage WHERE oldest_at IS NOT NULL LIMIT 1').toArray().length) this.finishCleanup();
@@ -667,7 +667,7 @@ export class E2eePairingRegistry extends DurableObject {
   createOffer(roomId, deviceId, offerId, secret, keyId) {
     return this.withRoom(roomId, async () => {
       this.prunePairings();
-      const room = this.env.SYNC_ROOMS.getByName(roomId);
+      const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
       const denied = await room.checkWrite(keyId, secret);
       if (denied.error) return denied;
       const existing = this.currentInvite(roomId);
@@ -703,7 +703,7 @@ export class E2eePairingRegistry extends DurableObject {
       this.sql.exec('INSERT INTO pair_requests (request_id, token_hash, expires_at) VALUES (?, ?, ?)', requestId, tokenHash, Date.now() + INVITE_LIFETIME);
       for (const value of offers) this.sql.exec('INSERT INTO pair_candidates (request_id, offer_id, start_request, owner_device_id) VALUES (?, ?, ?, ?)', requestId, value.offerId, value.startLoginRequest, value.offer.owner_device_id);
     });
-    await Promise.all(offers.map(value => this.env.SYNC_ROOMS.getByName(value.offer.room_id).publishToDevice(value.offer.owner_device_id, { type: 'pair-request', requestId, offerId: value.offerId, startLoginRequest: value.startLoginRequest })));
+    await Promise.all(offers.map(value => this.env.E2EE_SYNC_ROOMS.getByName(value.offer.room_id).publishToDevice(value.offer.owner_device_id, { type: 'pair-request', requestId, offerId: value.offerId, startLoginRequest: value.startLoginRequest })));
     return { requestId };
   }
 
@@ -721,7 +721,7 @@ export class E2eePairingRegistry extends DurableObject {
     if (!request.grant && request.selected_offer) {
       const offer = this.sql.exec('SELECT room_id FROM offers WHERE offer_id = ?', request.selected_offer).toArray()[0];
       if (offer) {
-        const accepted = await this.env.SYNC_ROOMS.getByName(offer.room_id).pairingAcceptance(requestId);
+        const accepted = await this.env.E2EE_SYNC_ROOMS.getByName(offer.room_id).pairingAcceptance(requestId);
         if (accepted) {
           request.grant = accepted.grant;
           this.sql.exec('UPDATE pair_requests SET grant = ?, accepted_device = ? WHERE request_id = ?', accepted.grant, accepted.deviceId, requestId);
@@ -747,7 +747,7 @@ export class E2eePairingRegistry extends DurableObject {
     if (!candidate || !offer || offer.owner_device_id !== candidate.owner_device_id) return { error: 'code_expired', status: 404 };
     if (request.selected_offer && (request.selected_offer !== offerId || request.finish_request !== finishLoginRequest || request.client_data !== clientData)) return { error: 'pairing_conflict', status: 409 };
     this.sql.exec('UPDATE pair_requests SET selected_offer = ?, finish_request = ?, client_data = ? WHERE request_id = ?', offerId, finishLoginRequest, clientData, requestId);
-    await this.env.SYNC_ROOMS.getByName(offer.room_id).publishToDevice(candidate.owner_device_id, { type: 'pair-finish', requestId, offerId, finishLoginRequest, clientData });
+    await this.env.E2EE_SYNC_ROOMS.getByName(offer.room_id).publishToDevice(candidate.owner_device_id, { type: 'pair-finish', requestId, offerId, finishLoginRequest, clientData });
     return { ok: true, requestId };
   }
 
@@ -780,7 +780,7 @@ export class E2eePairingRegistry extends DurableObject {
       const candidate = this.candidateForOwner(roomId, deviceId, requestId, offerId);
       if (candidate.error) return candidate;
       if (!request || request.selected_offer !== offerId || !request.finish_request || !candidate.challenge) return { error: 'pairing_incomplete', status: 409 };
-      const room = this.env.SYNC_ROOMS.getByName(roomId);
+      const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
       const result = await room.admitDevice(deviceId, keyId, { ...rotation, joinedId, tokenHash: await hash(token), name, requestId, grant });
       if (result.error) return result;
       this.sql.exec('UPDATE pair_requests SET grant = ?, accepted_device = ? WHERE request_id = ?', grant, joinedId, requestId);
@@ -793,7 +793,7 @@ export class E2eePairingRegistry extends DurableObject {
 
   rotateKeys(roomId, deviceId, keyId, rotation) {
     return this.withRoom(roomId, async () => {
-      const room = this.env.SYNC_ROOMS.getByName(roomId);
+      const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
       const result = await room.rotateKeys(deviceId, keyId, rotation);
       if (result.error) return result;
       this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
@@ -1058,7 +1058,7 @@ export class E2eeSyncRoom extends DurableObject {
     this.diagnosticFileCursor = shard.file_id;
     this.diagnosticShardCursor = shard.shard_index;
     let sampledShard;
-    try { sampledShard = await this.env.FILE_SHARDS.getByName(`${shard.file_id}:${shard.shard_index}`).databaseProbe(); }
+    try { sampledShard = await this.env.E2EE_FILE_SHARDS.getByName(`${shard.file_id}:${shard.shard_index}`).databaseProbe(); }
     catch { sampledShard = { ok: false }; }
     return { ...room, sampledShard };
   }
@@ -1181,7 +1181,7 @@ export class E2eeSyncRoom extends DurableObject {
       const expected = Math.min(FILE_CHUNK_SIZE, file.size - index * FILE_CHUNK_SIZE);
       if (!Number.isSafeInteger(index) || index >= count || bytes.byteLength !== expected) return { error: 'invalid_chunk', status: 400 };
       const shardIndex = Math.floor(index * FILE_CHUNK_SIZE / FILE_SHARD_SIZE);
-      const shard = this.env.FILE_SHARDS.getByName(`${uploadId}:${shardIndex}`);
+      const shard = this.env.E2EE_FILE_SHARDS.getByName(`${uploadId}:${shardIndex}`);
       const tracked = this.sql.exec('SELECT bytes FROM file_shards WHERE file_id = ? AND shard_index = ?', uploadId, shardIndex).toArray()[0];
       const previous = this.sql.exec('SELECT size, received FROM file_upload_chunks WHERE file_id = ? AND chunk_index = ?', uploadId, index).toArray()[0];
       this.uploadProgress(file);
@@ -1220,7 +1220,7 @@ export class E2eeSyncRoom extends DurableObject {
       this.uploadProgress(file);
       if (file.received_bytes !== file.size) return { error: 'upload_incomplete', status: 409 };
       for (const shard of this.sql.exec('SELECT shard_index FROM file_shards WHERE file_id = ?', uploadId).toArray()) {
-        const bytes = await this.env.FILE_SHARDS.getByName(`${uploadId}:${shard.shard_index}`).storageBytes();
+        const bytes = await this.env.E2EE_FILE_SHARDS.getByName(`${uploadId}:${shard.shard_index}`).storageBytes();
         this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', bytes, uploadId, shard.shard_index);
       }
       const attachment = { name: file.name, type: file.type, size: file.size };
@@ -1251,7 +1251,7 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.initialized) return;
     const shards = this.sql.exec("SELECT s.file_id, s.shard_index FROM file_shards s JOIN files f ON f.file_id = s.file_id WHERE f.status = 'deleting' ORDER BY f.created_at, s.shard_index LIMIT 4").toArray();
     for (const shard of shards) {
-      await this.env.FILE_SHARDS.getByName(`${shard.file_id}:${shard.shard_index}`).erase();
+      await this.env.E2EE_FILE_SHARDS.getByName(`${shard.file_id}:${shard.shard_index}`).erase();
       this.sql.exec('DELETE FROM file_shards WHERE file_id = ? AND shard_index = ?', shard.file_id, shard.shard_index);
     }
     const finished = this.sql.exec("SELECT file_id FROM files WHERE status = 'deleting' AND NOT EXISTS (SELECT 1 FROM file_shards WHERE file_shards.file_id = files.file_id)").toArray();
@@ -1333,7 +1333,7 @@ export class E2eeSyncRoom extends DurableObject {
   pairingSnapshot(roomId, receive) {
     // Send ready before a newer pairing broadcast can overtake its registry read.
     const work = this.pairingQueue.then(async () => {
-      const pairing = await this.env.PAIRING_REGISTRY.getByName('registry').currentInvite(roomId);
+      const pairing = await this.env.E2EE_PAIRING_REGISTRY.getByName('registry').currentInvite(roomId);
       return receive(pairing?.expiresAt > Date.now() ? pairing : null);
     });
     this.pairingQueue = work.catch(() => {});
@@ -1419,7 +1419,7 @@ export class E2eeSyncRoom extends DurableObject {
               await shardReader?.cancel();
               shardReader?.releaseLock();
               const shardOffset = offset % FILE_SHARD_SIZE;
-              const stream = await this.env.FILE_SHARDS.getByName(`${file.file_id}:${nextShard}`).readStream(shardOffset, Math.min(FILE_SHARD_SIZE - shardOffset, end - offset + 1));
+              const stream = await this.env.E2EE_FILE_SHARDS.getByName(`${file.file_id}:${nextShard}`).readStream(shardOffset, Math.min(FILE_SHARD_SIZE - shardOffset, end - offset + 1));
               shardReader = stream.getReader();
               shardIndex = nextShard;
             }
@@ -1504,7 +1504,7 @@ export class E2eeSyncRoom extends DurableObject {
       return true;
     });
     await this.scheduleAlarm();
-    if (authenticated) this.ctx.waitUntil(this.env.PAIRING_REGISTRY.getByName('registry').refreshRoom(attachment.roomId));
+    if (authenticated) this.ctx.waitUntil(this.env.E2EE_PAIRING_REGISTRY.getByName('registry').refreshRoom(attachment.roomId));
   }
 
   async scheduleAlarm() {
@@ -1535,7 +1535,7 @@ export class E2eeSyncRoom extends DurableObject {
     await this.cleanupFiles();
     await this.scheduleAlarm();
     const roomId = this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'roomId').toArray()[0]?.value;
-    if ((deleted || hadPending) && roomId) this.ctx.waitUntil(this.env.PAIRING_REGISTRY.getByName('registry').refreshRoom(roomId));
+    if ((deleted || hadPending) && roomId) this.ctx.waitUntil(this.env.E2EE_PAIRING_REGISTRY.getByName('registry').refreshRoom(roomId));
   }
 
   async webSocketClose(socket) {
