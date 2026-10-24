@@ -1,17 +1,8 @@
-.sync-storage-window {
-    top: 72px;
-    left: max(100px, calc(50% - 260px));
-    right: auto;
-    width: min(520px, calc(100% - 120px));
-    height: min(580px, calc(100% - 116px));
-    min-width: 280px;
-    min-height: 240px;
-    font: 12px/1.5 var(--font-system);
-}
-
-.sync-storage-window.is-maximized {
-    width: auto;
-    height: auto;
+.sync-storage-view {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
 }
 
 .sync-storage-body {

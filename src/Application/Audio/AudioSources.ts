@@ -1,6 +1,7 @@
 import AudioManager from './AudioManager';
 import * as THREE from 'three';
 import UIEventBus from '../UI/EventBus';
+import { getMuteState } from './MuteState';
 import { Vector3 } from 'three';
 
 export class AudioSource {
@@ -81,11 +82,15 @@ export class AmbienceAudio extends AudioSource {
             this.shouldStart = true;
             this.start();
         });
+        UIEventBus.on('muteToggle', (muted: boolean) => {
+            if (!muted) this.start();
+        });
     }
 
     start() {
         if (
             this.started ||
+            getMuteState() ||
             !this.shouldStart ||
             !this.manager.loadedAudio.office ||
             !this.manager.loadedAudio.startup

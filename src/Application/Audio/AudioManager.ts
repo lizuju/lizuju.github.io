@@ -21,6 +21,7 @@ export default class Audio {
     constructor() {
         this.application = new Application();
         this.listener = new THREE.AudioListener();
+        this.context = this.listener.context;
         this.application.camera.instance.add(this.listener);
         this.loadedAudio = this.application.resources.items.audio;
         this.scene = this.application.scene;
@@ -36,19 +37,31 @@ export default class Audio {
         });
 
         UIEventBus.on('loadingScreenDone', () => {
-            setTimeout(() => {
-                const AudioContext =
-                    // @ts-ignore
-                    window.AudioContext || window.webkitAudioContext;
-                this.context = new AudioContext();
-                this.context.resume();
-            }, 100);
+            if (!getMuteState()) this.context.resume().catch(() => undefined);
         });
 
         UIEventBus.on('muteToggle', (mute: boolean) => {
             this.listener.setMasterVolume(mute ? 0 : 1);
+            if (mute) {
+                this.application.camera.instance.remove(this.listener);
+                for (const [key, audio] of Object.entries(this.audioPool)) {
+                    if (audio.loop) continue;
+                    if (audio.isPlaying) audio.stop();
+                    delete this.audioPool[key];
+                    const positionalObject = this.scene.getObjectByName(key);
+                    if (positionalObject) this.scene.remove(positionalObject);
+                }
+                this.context.suspend().catch(() => undefined);
+            } else {
+                this.application.camera.instance.add(this.listener);
+                this.context.resume().catch(() => undefined);
+            }
         });
         this.listener.setMasterVolume(getMuteState() ? 0 : 1);
+        if (getMuteState()) {
+            this.application.camera.instance.remove(this.listener);
+            this.context.suspend().catch(() => undefined);
+        }
     }
 
     playAudio(
@@ -66,8 +79,8 @@ export default class Audio {
             pitch?: number;
         } = {}
     ) {
-        // Resume context if it's suspended
-        if (this.context) this.context.resume();
+        if (getMuteState()) return '';
+        this.context.resume().catch(() => undefined);
 
         // Get the audio source
         sourceName = this.getRandomVariant(sourceName);
@@ -190,6 +203,7 @@ export default class Audio {
     }
 
     update() {
+        if (getMuteState()) return;
         for (const key in this.audioSources) {
             const _key = key as keyof typeof this.audioSources;
             this.audioSources[_key].update();
@@ -200,6 +214,7 @@ export default class Audio {
         for (const audio of Object.values(this.audioPool)) {
             if (audio.isPlaying) audio.stop();
         }
-        this.context?.close();
+        this.application.camera.instance.remove(this.listener);
+        this.context.suspend().catch(() => undefined);
     }
 }

@@ -27,7 +27,6 @@ import './apps/satellite.js';
 import './apps/recycle-bin.js';
 import './apps/sync-space.js';
 import './apps/sync-preview.js';
-import './apps/sync-storage.js';
 import './apps/control-panel.js';
 
 // Boots the retro desktop. Shared helpers live in js/desktop/, each window in js/apps/.
@@ -52,7 +51,6 @@ import './apps/control-panel.js';
         desktopApi.apps.recycleBin(manager);
         const syncPreview = desktopApi.apps.syncPreview(manager);
         desktopApi.apps.syncSpace(manager, syncPreview);
-        desktopApi.apps.syncStorage(manager);
         desktopApi.apps.controlPanel(manager);
         desktopApi.setupRobotPet(manager);
 

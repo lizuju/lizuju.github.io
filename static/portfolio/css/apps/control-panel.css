@@ -29,9 +29,9 @@
     align-items: center;
     gap: 14px;
     padding: 12px;
-    border: 1px solid transparent;
+    border: 1px solid #b0b0c0;
     color: #111;
-    background: transparent;
+    background: #f3f3f8;
     text-align: left;
     font: inherit;
     cursor: pointer;

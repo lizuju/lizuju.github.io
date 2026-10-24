@@ -318,32 +318,26 @@
                     <button type="button" data-control-panel-action="close" data-i18n-aria="controlPanelClose" aria-label="关闭控制面板"><span aria-hidden="true">×</span></button>
                 </div>
             </div>
-            <div class="control-panel-body">
+            <div class="address-toolbar">
+                <button class="folder-up-button" type="button" data-control-panel-back hidden><span aria-hidden="true">↑</span><span data-i18n="folderUp">上一级</span></button>
+                <div class="address-field"><span data-control-panel-location>控制面板</span></div>
+            </div>
+            <div class="control-panel-body" data-control-panel-root>
                 <button class="control-panel-item" type="button" data-open-sync-storage>
                     <span class="control-panel-item-icon" aria-hidden="true">↔</span>
                     <span><strong data-i18n="syncStorage">联络站存储</strong><small data-i18n="controlPanelStorageHint">查看联络站存储与维护状态</small></span>
                 </button>
             </div>
-            <button class="window-resize-handle" type="button" data-control-panel-resize data-i18n-aria="controlPanelResize" aria-label="调整控制面板窗口大小"></button>
-        </section>
-
-        <section class="app-window sync-storage-window is-closed" data-sync-storage-window aria-labelledby="sync-storage-title">
-            <div class="window-titlebar" data-sync-storage-drag>
-                <div class="window-title"><span class="window-app-icon" aria-hidden="true">↔</span><span id="sync-storage-title" data-i18n="syncStorage">联络站存储</span></div>
-                <div class="window-controls">
-                    <button type="button" data-sync-storage-action="minimize" data-i18n-aria="syncStorageMinimize" aria-label="最小化联络站存储"><span aria-hidden="true">_</span></button>
-                    <button type="button" data-sync-storage-action="maximize" data-i18n-aria="syncStorageMaximize" aria-label="最大化联络站存储"><span aria-hidden="true">□</span></button>
-                    <button type="button" data-sync-storage-action="close" data-i18n-aria="syncStorageClose" aria-label="关闭联络站存储"><span aria-hidden="true">×</span></button>
+            <div class="sync-storage-view" data-sync-storage-view hidden>
+                <div class="sync-storage-body">
+                    <button class="sync-button" type="button" data-sync-storage-refresh data-i18n="syncStorageRefresh">刷新</button>
+                    <p data-i18n="syncStorageHint">所有同步空间共用存储，历史最长保留 5 天。</p>
+                    <dl class="sync-storage-metrics" data-sync-storage-metrics hidden></dl>
+                    <p data-i18n="syncStorageProjectHint">统计仅包含本项目。</p>
                 </div>
+                <p class="sync-notice" role="status" aria-live="polite" data-sync-storage-notice data-i18n="syncStorageReady">打开此页面查看联络站存储。</p>
             </div>
-            <div class="sync-storage-body">
-                <button class="sync-button" type="button" data-sync-storage-refresh data-i18n="syncStorageRefresh">刷新</button>
-                <p data-i18n="syncStorageHint">所有同步空间共用存储，历史最长保留 5 天。</p>
-                <dl class="sync-storage-metrics" data-sync-storage-metrics hidden></dl>
-                <p data-i18n="syncStorageProjectHint">统计仅包含本项目。</p>
-            </div>
-            <p class="sync-notice" role="status" aria-live="polite" data-sync-storage-notice data-i18n="syncStorageReady">打开窗口查看联络站存储。</p>
-            <button class="window-resize-handle" type="button" data-sync-storage-resize data-i18n-aria="syncStorageResize" aria-label="调整联络站存储窗口大小"></button>
+            <button class="window-resize-handle" type="button" data-control-panel-resize data-i18n-aria="controlPanelResize" aria-label="调整控制面板窗口大小"></button>
         </section>
 
         <section class="app-window is-active" data-app-window aria-label="Gavin portfolio window">
@@ -1616,9 +1610,9 @@
         <div class="start-menu" data-start-menu hidden>
             <div class="start-menu-rail">GAVIN OS</div>
             <div class="start-menu-items">
-                <button type="button" data-open-sync-space aria-controls="sync-space-window">
-                    <span class="start-icon start-icon--sync" aria-hidden="true">↔</span>
-                    <span data-i18n="desktopSyncSpace">联络站</span>
+                <button type="button" data-open-control-panel>
+                    <span class="start-icon start-icon--sync" aria-hidden="true">⚙</span>
+                    <span data-i18n="controlPanel">控制面板</span>
                 </button>
                 <button type="button" data-pet-toggle aria-controls="desktop-pet" aria-expanded="false">
                     <span class="start-icon start-icon--robot" aria-hidden="true">
@@ -1634,10 +1628,6 @@
                     <span data-i18n="petShow">唤醒机器人</span>
                 </button>
                 <div class="start-menu-separator"></div>
-                <button type="button" data-open-control-panel>
-                    <span class="start-icon start-icon--sync" aria-hidden="true">⚙</span>
-                    <span data-i18n="controlPanel">控制面板</span>
-                </button>
                 <button type="button" data-shutdown>
                     <span class="start-icon start-icon--shutdown" aria-hidden="true"></span>
                     <span data-i18n="startShutdown">关闭计算机...</span>
@@ -1656,9 +1646,6 @@
             </button>
             <button class="task-window-button" type="button" data-control-panel-task hidden>
                 <span class="window-app-icon" aria-hidden="true">⚙</span><span data-i18n="controlPanel">控制面板</span>
-            </button>
-            <button class="task-window-button" type="button" data-sync-storage-task hidden>
-                <span class="window-app-icon" aria-hidden="true">↔</span><span data-i18n="syncStorage">联络站存储</span>
             </button>
             <button class="task-window-button gomoku-task-button" type="button" data-gomoku-task hidden>
                 <span class="window-app-icon window-app-icon--gomoku" aria-hidden="true">五</span>
