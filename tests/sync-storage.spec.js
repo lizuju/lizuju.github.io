@@ -296,3 +296,39 @@ test('refreshes storage every fifteen minutes only while its detail page is visi
     });
     await expect.poll(() => requests).toBe(6);
 });
+
+test('pauses storage collection when leaving the immersive monitor', async ({ page }) => {
+    let requests = 0;
+    await page.clock.install();
+    await page.route('**/quota-test-shell', route => route.fulfill({ contentType: 'text/html', body: '<iframe id="computer-screen" src="/portfolio/" style="position:fixed;inset:0;width:100%;height:100%;border:0"></iframe>' }));
+    await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
+    await page.route('https://sync.test/v1/status', route => {
+        requests++;
+        return route.fulfill({ headers: { 'Access-Control-Allow-Origin': '*' }, json: {
+            ok: true, checkedAt: Date.now(), database: { registry: { ok: true } },
+            storage: { bytes: 0, highWaterBytes: 4700000000, roomCount: 0, reservedBytes: 0 },
+            maintenance: { phase: null, scannedRooms: null, lastSuccessAt: null, nextAlarmAt: null }
+        } });
+    });
+    await page.goto('/quota-test-shell');
+    const frame = page.frameLocator('#computer-screen');
+    await frame.locator('[data-start-toggle]').click();
+    await frame.locator('[data-open-control-panel]').click();
+    await frame.locator('[data-open-sync-storage]').click();
+    await page.clock.fastForward('15:00');
+    expect(requests).toBe(0);
+    const setMonitorActive = (active) => page.evaluate((active) => {
+        document.querySelector('iframe').contentWindow.postMessage({ source: 'gavin-shell', type: 'portfolio-view-state', active }, location.origin);
+    }, active);
+    await setMonitorActive(true);
+    await expect.poll(() => requests).toBe(1);
+    await expect(frame.locator('[data-sync-storage-notice]')).toContainText('检查时间');
+    await setMonitorActive(false);
+    await page.clock.fastForward('30:00');
+    expect(requests).toBe(1);
+    await setMonitorActive(true);
+    await expect.poll(() => requests).toBe(2);
+    await expect(frame.locator('[data-sync-storage-notice]')).toContainText('检查时间');
+    await page.clock.fastForward('15:00');
+    await expect.poll(() => requests).toBe(3);
+});

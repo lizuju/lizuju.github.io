@@ -12,6 +12,7 @@ export function setupSyncStorage(app) {
     let data;
     let refreshTimer;
     let lastLoadAt = 0;
+    let viewingDesktop = window.parent === window;
     let noticeKey = 'syncStorageReady';
     const t = () => desktop.t();
     const timestamp = (value) => value ? new Date(value).toLocaleString(desktop.getLanguage()) : t().syncStorageNever;
@@ -80,7 +81,7 @@ export function setupSyncStorage(app) {
         notice.dataset.state = name === 'syncStorageFailed' ? 'error' : '';
         notice.textContent = t()[name];
     };
-    const isViewing = () => !app.hidden && !panel.inert && !document.hidden
+    const isViewing = () => viewingDesktop && !app.hidden && !panel.inert && !document.hidden
         && !panel.classList.contains('is-closed') && !panel.classList.contains('is-minimized');
     const updatePolling = () => {
         clearTimeout(refreshTimer);
@@ -136,6 +137,12 @@ export function setupSyncStorage(app) {
     };
     button.addEventListener('click', load);
     window.addEventListener('portfolio-language-change', render);
+    window.addEventListener('message', (event) => {
+        if (event.origin !== window.location.origin || event.source !== window.parent
+            || event.data?.source !== 'gavin-shell' || event.data?.type !== 'portfolio-view-state') return;
+        viewingDesktop = event.data.active === true;
+        updatePolling();
+    });
     document.addEventListener('visibilitychange', updatePolling);
     new MutationObserver(updatePolling).observe(panel, { attributes: true, attributeFilter: ['class', 'inert'] });
     return {
