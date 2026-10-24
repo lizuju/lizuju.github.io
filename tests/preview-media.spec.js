@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures/sync-e2ee.cjs');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { createServer } = require('node:http');

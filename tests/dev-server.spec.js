@@ -52,9 +52,11 @@ test('serves development pages and reloads them when static assets or the shell 
             const response = await page.request.get(`${address}${route}`);
             expect(response.status()).toBe(200);
             const html = await response.text();
-            expect(html).toContain('/__webpack_hmr');
-            expect(html).toContain('reload-all');
+            expect(html).toContain('src="/dev-reload.js"');
         }
+        const reload = await page.request.get(`${address}/dev-reload.js`);
+        expect(await reload.text()).toContain('/__webpack_hmr');
+        expect(await reload.text()).toContain('reload-all');
         const invalidHost = await page.request.get(`${address}/`, {
             headers: { Host: 'invalid.example' }
         });

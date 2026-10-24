@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures/sync-e2ee.cjs');
 
 test('keeps the scene return link clear of window controls at short and narrow sizes', async ({ page }) => {
     for (const viewport of [{ width: 980, height: 320 }, { width: 1366, height: 768 }, { width: 320, height: 568 }]) {
@@ -40,7 +40,7 @@ test('loads public storage inside the control panel and aborts on back or close'
         }
         await route.fulfill({ headers, json: {
             ok: true, checkedAt: Date.now(), database: { registry: { ok: true } },
-            storage: { bytes, highWaterBytes: 4700000000, roomCount: 3, reservedBytes: 800000000 },
+            storage: { bytes, highWaterBytes: 4800000000, roomCount: 3, reservedBytes: 800000000 },
             maintenance: { phase: null, scannedRooms: null, lastSuccessAt: Date.now() - 1000, nextAlarmAt: null }
         } });
     });
@@ -57,24 +57,26 @@ test('loads public storage inside the control panel and aborts on back or close'
     await expect(root).toBeHidden();
     await expect(storage).toBeVisible();
     await expect(back).toBeVisible();
+    await expect(storage.locator('[data-i18n="syncStorageHint"]')).toHaveText('所有同步空间共用存储，历史最长保留 7 天。');
     await expect(panel.locator('[data-control-panel-location]')).toContainText('联络站存储');
     await expect(page.locator('[data-sync-storage-window], [data-sync-storage-task], [data-sync-storage-action]')).toHaveCount(0);
     await expect(storage.locator('input')).toHaveCount(0);
-    await expect(metrics).toContainText('1.200 GB / 4.700 GB');
+    await expect(metrics).toContainText('1.200 GB / 4.800 GB');
     bytes = 1500000000;
     await storage.locator('[data-sync-storage-refresh]').click();
-    await expect(metrics).toContainText('1.500 GB / 4.700 GB');
+    await expect(metrics).toContainText('1.500 GB / 4.800 GB');
     expect(seen).toHaveLength(2);
     expect(seen.every(request => !request.auth && !request.url.includes('token'))).toBe(true);
     await page.locator('[data-taskbar-lang]').click();
     await expect(storage).toBeVisible();
+    await expect(storage.locator('[data-i18n="syncStorageHint"]')).toHaveText('Storage is shared by all spaces. History is kept for up to 7 days.');
     await expect(metrics).toContainText('Project storage');
     await expect(panel.locator('[data-control-panel-location]')).toContainText('Sync storage');
     await panel.locator('[data-control-panel-action="minimize"]').click();
     await expect(panel).toHaveClass(/is-minimized/);
     await page.locator('[data-control-panel-task]').click();
     await expect(storage).toBeVisible();
-    await expect(metrics).toContainText('1.500 GB / 4.700 GB');
+    await expect(metrics).toContainText('1.500 GB / 4.800 GB');
     expect(seen).toHaveLength(2);
     for (const action of ['back', 'close']) {
         hold = true;
@@ -97,7 +99,7 @@ test('loads public storage inside the control panel and aborts on back or close'
         release();
         hold = false;
         await item.click();
-        await expect(metrics).toContainText('1.500 GB / 4.700 GB');
+        await expect(metrics).toContainText('1.500 GB / 4.800 GB');
     }
     expect(seen).toHaveLength(6);
 });
@@ -160,7 +162,7 @@ test('keeps the storage page scrollable in short and narrow windows', async ({ p
     await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
     await page.route('https://sync.test/v1/status', route => route.fulfill({ headers: { 'Access-Control-Allow-Origin': '*' }, json: {
         ok: true, checkedAt: Date.now(), database: { registry: { ok: true } },
-        storage: { bytes: 1200000000, highWaterBytes: 4700000000, roomCount: 3, reservedBytes: 0 },
+        storage: { bytes: 1200000000, highWaterBytes: 4800000000, roomCount: 3, reservedBytes: 0 },
         maintenance: { phase: null, scannedRooms: null, lastSuccessAt: Date.now(), nextAlarmAt: null }
     } }));
     for (const viewport of [{ width: 980, height: 320 }, { width: 320, height: 568 }]) {
@@ -171,7 +173,7 @@ test('keeps the storage page scrollable in short and narrow windows', async ({ p
         const panel = page.locator('[data-control-panel-window]');
         await panel.locator('[data-open-sync-storage]').click();
         const storage = panel.locator('[data-sync-storage-view]');
-        await expect(storage.locator('[data-sync-storage-metrics]')).toContainText('4.700 GB');
+        await expect(storage.locator('[data-sync-storage-metrics]')).toContainText('4.800 GB');
         await storage.locator('[data-sync-storage-metrics] dd').last().scrollIntoViewIfNeeded();
         const position = await storage.locator('[data-sync-storage-metrics] dd').last().boundingBox();
         expect(position.y).toBeGreaterThanOrEqual(0);
@@ -198,7 +200,7 @@ test('keeps failed checks visible across language changes and distinguishes samp
     await page.route('https://sync.test/v1/status', route => route.fulfill({ status: fail ? 503 : 200, headers: { 'Access-Control-Allow-Origin': '*' }, json: fail ? { error: 'unavailable' } : {
         ok: false, checkedAt: collectedAt,
         database: { registry: { ok: true }, sampledRoom: { ok: true }, sampledShard: { ok: false } },
-        storage: { bytes: 1200000000, highWaterBytes: 4700000000, roomCount: 3, reservedBytes: 0 },
+        storage: { bytes: 1200000000, highWaterBytes: 4800000000, roomCount: 3, reservedBytes: 0 },
         maintenance: { status: 'overdue', phase: null, scannedRooms: null, lastSuccessAt: collectedAt - 48 * 3600000, lastFailureAt: null, nextAlarmAt: null },
         dailyUsage: { status: quotaStatus, available: quotaStatus !== 'not_configured', day: '2026-10-24', checkedAt: quotaStatus === 'not_configured' ? null : collectedAt,
             resetsAt: Date.UTC(2026, 9, 25), metrics: quotaStatus === 'not_configured' ? null : dailyMetrics, estimated: true }
@@ -242,7 +244,7 @@ test('refreshes storage every fifteen minutes only while its detail page is visi
         requests++;
         return route.fulfill({ headers: { 'Access-Control-Allow-Origin': '*' }, json: {
             ok: true, checkedAt: Date.now(), database: { registry: { ok: true } },
-            storage: { bytes: 1200000000, highWaterBytes: 4700000000, roomCount: 3, reservedBytes: 0 },
+            storage: { bytes: 1200000000, highWaterBytes: 4800000000, roomCount: 3, reservedBytes: 0 },
             maintenance: { phase: null, scannedRooms: null, lastSuccessAt: Date.now(), nextAlarmAt: null }
         } });
     });
@@ -306,7 +308,7 @@ test('pauses storage collection when leaving the immersive monitor', async ({ pa
         requests++;
         return route.fulfill({ headers: { 'Access-Control-Allow-Origin': '*' }, json: {
             ok: true, checkedAt: Date.now(), database: { registry: { ok: true } },
-            storage: { bytes: 0, highWaterBytes: 4700000000, roomCount: 0, reservedBytes: 0 },
+            storage: { bytes: 0, highWaterBytes: 4800000000, roomCount: 0, reservedBytes: 0 },
             maintenance: { phase: null, scannedRooms: null, lastSuccessAt: null, nextAlarmAt: null }
         } });
     });

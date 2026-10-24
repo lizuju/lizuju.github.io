@@ -1,4 +1,26 @@
 const { createCipheriv, generateKeyPairSync, randomBytes } = require('node:crypto');
+const { test: base, expect } = require('@playwright/test');
+const { apiBase: productionApiBase } = require('../../static/portfolio/sync-config.json');
+
+async function allowSyncOrigin(page, origin) {
+    if (page.context().browser().browserType().name() === 'chromium') {
+        await page.context().grantPermissions(['local-network-access']);
+    }
+    await page.route('**/portfolio/', async route => {
+        const response = await route.fetch();
+        const html = (await response.text())
+            .replaceAll(productionApiBase, origin)
+            .replaceAll(productionApiBase.replace(/^http/, 'ws'), origin.replace(/^http/, 'ws'));
+        await route.fulfill({ response, body: html });
+    });
+}
+
+const test = base.extend({
+    page: async ({ page }, use) => {
+        await allowSyncOrigin(page, 'https://sync.test');
+        await use(page);
+    },
+});
 
 const roomId = 'c5745baa-931f-4c83-9545-360fa055b57c';
 const deviceId = '5fb30917-af43-4394-8034-0c326c774b78';
@@ -73,7 +95,10 @@ const startSite = async (apiBase, beforeServe = () => {}) => {
             }
             const file = path.resolve(docs, `.${decodeURIComponent(pathname)}`, pathname.endsWith('/') ? 'index.html' : '');
             if (!file.startsWith(docs + path.sep)) throw new Error('not_found');
-            const content = await readFile(file);
+            let content = await readFile(file);
+            if (file.endsWith('.html')) content = Buffer.from(content.toString()
+                .replaceAll(productionApiBase, apiBase)
+                .replaceAll(productionApiBase.replace(/^http/, 'ws'), apiBase.replace(/^http/, 'ws')));
             const types = { '.html': 'text/html', '.js': 'application/javascript', '.mjs': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm', '.webp': 'image/webp', '.png': 'image/png', '.svg': 'image/svg+xml' };
             response.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' }); response.end(content);
         } catch { response.writeHead(404); response.end(); }
@@ -81,4 +106,4 @@ const startSite = async (apiBase, beforeServe = () => {}) => {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     return { origin: `http://127.0.0.1:${server.address().port}`, close: async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
 };
-module.exports = { roomId, deviceId, otherId, token, keyId, session, encrypt, message, profile, file, authorize, startSite };
+module.exports = { test, expect, allowSyncOrigin, roomId, deviceId, otherId, token, keyId, session, encrypt, message, profile, file, authorize, startSite };

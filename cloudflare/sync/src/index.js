@@ -2,8 +2,8 @@ import { DurableObject } from 'cloudflare:workers';
 import { collectDailyUsage, unavailableDailyUsage } from './daily-usage.js';
 
 const INVITE_LIFETIME = 10 * 60 * 1000;
-const MESSAGE_LIFETIME = 5 * 24 * 60 * 60 * 1000;
-const STORAGE_HIGH_WATER = 4_700_000_000;
+const MESSAGE_LIFETIME = 7 * 24 * 60 * 60 * 1000;
+const STORAGE_HIGH_WATER = 4_800_000_000;
 const STORAGE_CLEANUP_BYTES = 3_000_000_000;
 const MESSAGE_WRITE_HEADROOM = 128 * 1024;
 const FILE_PLAINTEXT_LIMIT = 2 * 1024 * 1024 * 1024;
@@ -13,7 +13,8 @@ const FILE_SHARD_SIZE = 64 * 1024 * 1024;
 const BLOB_CHUNK_SIZE = 1024 * 1024;
 const UPLOAD_LIFETIME = 24 * 60 * 60 * 1000;
 const DOWNLOAD_LIFETIME = 24 * 60 * 60 * 1000;
-const ROOM_IDLE_LIFETIME = 30 * 24 * 60 * 60 * 1000;
+const DEVICE_IDLE_LIFETIME = 7 * 24 * 60 * 60 * 1000;
+const ROOM_IDLE_LIFETIME = 7 * 24 * 60 * 60 * 1000;
 const ACTIVITY_WRITE_INTERVAL = 60 * 60 * 1000;
 const PAIR_CANDIDATE_LIMIT = 5;
 const PAIR_REQUEST_LIMIT = 100;
@@ -820,8 +821,16 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.sql.exec('PRAGMA table_info(devices)').toArray().some(column => column.name === 'name')) {
       this.sql.exec("ALTER TABLE devices ADD COLUMN name TEXT NOT NULL DEFAULT ''");
     }
+    const migrateDeviceActivity = !this.sql.exec('PRAGMA table_info(devices)').toArray().some(column => column.name === 'last_active_at');
+    if (migrateDeviceActivity) {
+      this.sql.exec('ALTER TABLE devices ADD COLUMN last_active_at INTEGER NOT NULL DEFAULT 0');
+      // Existing credentials get a full seven-day grace period when this migration runs.
+      this.sql.exec('UPDATE devices SET last_active_at = ?', Date.now());
+    }
+    this.sql.exec('CREATE INDEX IF NOT EXISTS devices_activity ON devices(last_active_at)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
     this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'lastActiveAt', String(Date.now()));
+    if (migrateDeviceActivity) this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now()), 'lastActiveAt');
     this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'historyGeneration', crypto.randomUUID());
     this.lastActivity = Number(this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt').one().value);
     this.sql.exec('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL, device_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, attachment TEXT, UNIQUE(device_id, client_id))');
@@ -854,8 +863,10 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.initialized) return { error: 'not_found', status: 404 };
     const token = credential();
     const deviceId = crypto.randomUUID();
-    this.sql.exec('INSERT INTO devices (token_hash, device_id, created_at) VALUES (?, ?, ?)', await hash(token), deviceId, Date.now());
+    const now = Date.now();
+    this.sql.exec('INSERT INTO devices (token_hash, device_id, created_at, last_active_at) VALUES (?, ?, ?, ?)', await hash(token), deviceId, now, now);
     this.touchActivity();
+    await this.scheduleAlarm();
     this.broadcast({ type: 'devices' });
     return { token, deviceId };
   }
@@ -952,7 +963,8 @@ export class E2eeSyncRoom extends DurableObject {
       if (denied.error) return denied;
       this.ctx.storage.transactionSync(() => {
         this.applyRotation(keyId, rotation);
-        this.sql.exec('INSERT INTO devices (token_hash, device_id, created_at, name) VALUES (?, ?, ?, ?)', admission.tokenHash, admission.joinedId, Date.now(), admission.name);
+        const now = Date.now();
+        this.sql.exec('INSERT INTO devices (token_hash, device_id, created_at, name, last_active_at) VALUES (?, ?, ?, ?, ?)', admission.tokenHash, admission.joinedId, now, admission.name, now);
         this.sql.exec('INSERT INTO pair_acceptances (request_id, device_id, token_hash, rotation_id, key_id, grant, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)', admission.requestId, admission.joinedId, admission.tokenHash, admission.rotationId, admission.newKeyId, admission.grant, Date.now() + INVITE_LIFETIME);
       });
       await this.finishRotation(null);
@@ -964,8 +976,30 @@ export class E2eeSyncRoom extends DurableObject {
     const tokenHash = await hash(token);
     if (!this.initialized) return null;
     const deviceId = this.sql.exec('SELECT device_id FROM devices WHERE token_hash = ?', tokenHash).toArray()[0]?.device_id || null;
-    if (deviceId) this.touchActivity();
-    return deviceId;
+    return deviceId && this.touchDevice(deviceId) ? deviceId : null;
+  }
+
+  refreshConnectedDevices() {
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = socket.deserializeAttachment();
+      if (!attachment?.deviceId || attachment.closing) continue;
+      const lastActiveAt = this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime() || attachment.connectedAt;
+      if (lastActiveAt) this.sql.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ? AND last_active_at < ?', lastActiveAt, attachment.deviceId, lastActiveAt);
+    }
+  }
+
+  touchDevice(deviceId) {
+    this.refreshConnectedDevices();
+    const device = this.sql.exec('SELECT last_active_at FROM devices WHERE device_id = ?', deviceId).toArray()[0];
+    if (!device) return false;
+    const now = Date.now();
+    if (device.last_active_at + DEVICE_IDLE_LIFETIME <= now) {
+      this.removeDevice(deviceId);
+      return false;
+    }
+    this.sql.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ?', now, deviceId);
+    this.touchActivity();
+    return true;
   }
 
   touchActivity() {
@@ -1074,11 +1108,14 @@ export class E2eeSyncRoom extends DurableObject {
 
   pruneExpired() {
     if (!this.initialized) return 0;
+    this.refreshConnectedDevices();
+    const expiredDevices = this.sql.exec('SELECT device_id FROM devices WHERE last_active_at <= ?', Date.now() - DEVICE_IDLE_LIFETIME).toArray();
+    for (const { device_id: deviceId } of expiredDevices) this.removeDevice(deviceId);
     const deleted = this.sql.exec('DELETE FROM messages WHERE created_at <= ? RETURNING id', Date.now() - MESSAGE_LIFETIME).toArray();
     if (deleted.length) this.historyChanged();
     this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading' AND updated_at <= ?", Date.now() - UPLOAD_LIFETIME);
     this.sql.exec('DELETE FROM download_tickets WHERE expires_at <= ?', Date.now());
-    return deleted.length;
+    return deleted.length + expiredDevices.length;
   }
 
   async maintain(roomId) {
@@ -1308,6 +1345,7 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.sql.exec('DELETE FROM devices WHERE device_id = ? RETURNING device_id', deviceId).toArray().length) {
       return { error: 'device_not_found', status: 404 };
     }
+    this.sql.exec('DELETE FROM download_tickets WHERE device_id = ?', deviceId);
     this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE device_id = ? AND status = 'uploading'", deviceId);
     for (const socket of this.ctx.getWebSockets()) {
       if (socket.deserializeAttachment()?.deviceId !== deviceId) continue;
@@ -1363,7 +1401,7 @@ export class E2eeSyncRoom extends DurableObject {
         deviceId = token ? await this.authorize(token) : null;
         file = this.sql.exec("SELECT * FROM files WHERE message_id = ? AND status = 'complete'", download[1]).toArray()[0];
       }
-      if (!deviceId || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return json({ error: 'unauthorized' }, 401);
+      if (!deviceId || (ticketMatch && !this.touchDevice(deviceId))) return json({ error: 'unauthorized' }, 401);
       if (!file || !this.sql.exec('SELECT 1 FROM messages WHERE id = ?', file.message_id).toArray().length || file.created_at + MESSAGE_LIFETIME <= Date.now()) return json({ error: 'not_found' }, 404);
       this.touchActivity();
       const headers = {
@@ -1499,7 +1537,7 @@ export class E2eeSyncRoom extends DurableObject {
       }
       this.pruneExpired();
       this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'roomId', attachment.roomId);
-      socket.serializeAttachment({ deviceId });
+      socket.serializeAttachment({ deviceId, connectedAt: Date.now() });
       socket.send(JSON.stringify({ type: 'ready', deviceId, ...this.keyState(), encryptionVersion: 1, ...this.messagePage({ after: attachment.after ?? null, generation: attachment.generation }), pairing }));
       return true;
     });
@@ -1514,6 +1552,8 @@ export class E2eeSyncRoom extends DurableObject {
       .filter(Boolean);
     const oldest = this.sql.exec('SELECT min(created_at) AS oldest_at FROM messages').one().oldest_at;
     if (oldest !== null) deadlines.push(oldest + MESSAGE_LIFETIME);
+    const oldestDevice = this.sql.exec('SELECT min(last_active_at) AS oldest_at FROM devices').one().oldest_at;
+    if (oldestDevice !== null) deadlines.push(oldestDevice + DEVICE_IDLE_LIFETIME);
     const uploading = this.sql.exec("SELECT min(updated_at) AS oldest_at FROM files WHERE status = 'uploading'").one().oldest_at;
     if (uploading !== null) deadlines.push(uploading + UPLOAD_LIFETIME);
     if (this.sql.exec("SELECT 1 FROM files WHERE status = 'deleting' LIMIT 1").toArray().length) deadlines.push(Date.now() + 1000);
@@ -1539,14 +1579,14 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   async webSocketClose(socket) {
-    if (this.initialized && socket.deserializeAttachment()?.deviceId && !socket.deserializeAttachment()?.closing) this.touchActivity();
+    if (this.initialized && socket.deserializeAttachment()?.deviceId && !socket.deserializeAttachment()?.closing) this.touchDevice(socket.deserializeAttachment().deviceId);
     socket.serializeAttachment({ closing: true });
     socket.close(1000, 'Connection closed');
     await this.scheduleAlarm();
   }
 
   async webSocketError(socket) {
-    if (this.initialized && socket.deserializeAttachment()?.deviceId && !socket.deserializeAttachment()?.closing) this.touchActivity();
+    if (this.initialized && socket.deserializeAttachment()?.deviceId && !socket.deserializeAttachment()?.closing) this.touchDevice(socket.deserializeAttachment().deviceId);
     socket.serializeAttachment({ closing: true });
     socket.close(1011, 'Connection error');
     await this.scheduleAlarm();

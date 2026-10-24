@@ -3,9 +3,9 @@ const commonConfiguration = require('./webpack.common.js')
 const webpack = require('webpack')
 const path = require('path')
 
-const reloadScript = `<script>new EventSource('/__webpack_hmr').onmessage = (event) => {
+const reloadScript = `new EventSource('/__webpack_hmr').onmessage = (event) => {
     if (event.data.startsWith('{') && JSON.parse(event.data).action === 'reload-all') location.reload();
-};</script>`
+};`
 
 module.exports = merge(
     commonConfiguration,
@@ -25,10 +25,11 @@ module.exports = merge(
                         name: 'ReloadPages',
                         stage: webpack.Compilation.PROCESS_ASSETS_STAGE_SUMMARIZE
                     }, () => {
+                        compilation.emitAsset('dev-reload.js', new webpack.sources.RawSource(reloadScript));
                         for (const name of ['index.html', 'portfolio/index.html']) {
                             const html = compilation.getAsset(name).source.source().toString();
                             compilation.updateAsset(name, new webpack.sources.RawSource(
-                                html.replace('</body>', `${reloadScript}</body>`)
+                                html.replace('</body>', '<script src="/dev-reload.js"></script></body>')
                             ));
                         }
                     });

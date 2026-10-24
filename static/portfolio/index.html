@@ -3,6 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="__CONTENT_SECURITY_POLICY__">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>李祖钜 Gavin | AI Agent、机器人与计算机视觉作品集</title>
     <meta name="description" content="李祖钜 Gavin Lizuju 的个人主页，展示 ROS 2 自主导航、Stemm 家庭陪护机器人、AI Agent、RoboMaster 算法、计算机视觉、TAAC 2026 推荐算法、研究论文与竞赛荣誉。">
@@ -231,7 +232,7 @@
                             data-i18n-placeholder="syncInputPlaceholder" aria-describedby="sync-compose-hint" data-sync-input></textarea>
                         <p class="visually-hidden" id="sync-compose-hint" data-i18n="syncComposeHint">Enter 发送 · Shift+Enter 换行</p>
                         <div class="sync-compose-footer">
-                            <p class="sync-hint" data-i18n="syncHistoryLimit">消息和附件最多保留 5 天、最近 500 条；存储接近上限时会提前清理较早内容。清空会同步影响所有设备。</p>
+                            <p class="sync-hint" data-i18n="syncHistoryLimit">消息和附件最多保留 7 天、最近 500 条；存储接近上限时会提前清理较早内容。清空会同步影响所有设备。</p>
                             <button class="sync-button" type="submit" data-sync-send data-i18n="syncSend">发送</button>
                         </div>
                     </form>
@@ -313,7 +314,7 @@
 
         <section class="app-window control-panel-window is-closed" data-control-panel-window aria-labelledby="control-panel-title">
             <div class="window-titlebar" data-control-panel-drag>
-                <div class="window-title"><span class="window-app-icon" aria-hidden="true">⚙</span><span id="control-panel-title" data-i18n="controlPanel">控制面板</span></div>
+                <div class="window-title"><img src="assets/control-panel.svg" width="18" height="18" alt="" aria-hidden="true"><span id="control-panel-title" data-i18n="controlPanel">控制面板</span></div>
                 <div class="window-controls">
                     <button type="button" data-control-panel-action="minimize" data-i18n-aria="controlPanelMinimize" aria-label="最小化控制面板"><span aria-hidden="true">_</span></button>
                     <button type="button" data-control-panel-action="maximize" data-i18n-aria="controlPanelMaximize" aria-label="最大化控制面板"><span aria-hidden="true">□</span></button>
@@ -334,7 +335,7 @@
                 <div class="sync-storage-body">
                     <button class="sync-button" type="button" data-sync-storage-refresh data-i18n="syncStorageRefresh">刷新</button>
                     <div data-sync-storage-details hidden>
-                        <p data-i18n="syncStorageHint">所有同步空间共用存储，历史最长保留 5 天。</p>
+                        <p data-i18n="syncStorageHint">所有同步空间共用存储，历史最长保留 7 天。</p>
                         <dl class="sync-storage-metrics" data-sync-storage-metrics hidden></dl>
                         <p data-i18n="syncStorageSampleHint">健康检查轮换抽样，不代表每个空间和附件均已检查。</p>
                         <p data-i18n="syncStorageProjectHint">统计仅包含本项目。</p>
@@ -1621,7 +1622,7 @@
             <div class="start-menu-rail">GAVIN OS</div>
             <div class="start-menu-items">
                 <button type="button" data-open-control-panel>
-                    <span class="start-icon start-icon--sync" aria-hidden="true">⚙</span>
+                    <img src="assets/control-panel.svg" width="24" height="24" alt="" aria-hidden="true">
                     <span data-i18n="controlPanel">控制面板</span>
                 </button>
                 <button type="button" data-pet-toggle aria-controls="desktop-pet" aria-expanded="false">
@@ -1655,7 +1656,7 @@
                 <span data-i18n="taskWindow">李祖钜 Gavin - 个人主页</span>
             </button>
             <button class="task-window-button" type="button" data-control-panel-task hidden>
-                <span class="window-app-icon" aria-hidden="true">⚙</span><span data-i18n="controlPanel">控制面板</span>
+                <img src="assets/control-panel.svg" width="18" height="18" alt="" aria-hidden="true"><span data-i18n="controlPanel">控制面板</span>
             </button>
             <button class="task-window-button gomoku-task-button" type="button" data-gomoku-task hidden>
                 <span class="window-app-icon window-app-icon--gomoku" aria-hidden="true">五</span>

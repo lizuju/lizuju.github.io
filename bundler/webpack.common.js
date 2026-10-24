@@ -10,6 +10,23 @@ const rootDirectory = path.resolve(__dirname, '..');
 const buildMetadata = createBuildMetadata(rootDirectory);
 const profileSchemaPath = path.resolve(rootDirectory, 'src/profile-schema.json');
 const readProfileSchema = () => JSON.stringify(JSON.parse(fs.readFileSync(profileSchemaPath, 'utf8')));
+const syncOrigin = new URL(require('../static/portfolio/sync-config.json').apiBase).origin;
+const socketOrigin = syncOrigin.replace(/^http/, 'ws');
+const contentSecurityPolicy = [
+    "default-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
+    "script-src-attr 'none'",
+    "style-src 'self' 'unsafe-inline'",
+    `img-src 'self' data: blob: ${syncOrigin}`,
+    `media-src 'self' blob: ${syncOrigin}`,
+    "font-src 'self' data:",
+    `connect-src 'self' ${syncOrigin} ${socketOrigin} https://formsubmit.co https://celestrak.org`,
+    "worker-src 'self' blob:",
+    `frame-src 'self' ${syncOrigin}`,
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+].join('; ');
 
 module.exports = {
     entry: {
@@ -50,6 +67,7 @@ module.exports = {
                         return content
                             .toString()
                             .replaceAll('__ASSET_VERSION__', buildMetadata.assetVersion)
+                            .replace('__CONTENT_SECURITY_POLICY__', contentSecurityPolicy)
                             .replace('__PROFILE_SCHEMA__', readProfileSchema);
                     }
                     if (absolutePath.endsWith('sitemap.xml')) {
@@ -66,6 +84,7 @@ module.exports = {
             templateContent: () => fs
                 .readFileSync(path.resolve(__dirname, '../src/index.html'), 'utf8')
                 .replaceAll('__ASSET_VERSION__', buildMetadata.assetVersion)
+                .replace('__CONTENT_SECURITY_POLICY__', contentSecurityPolicy)
                 .replace('__PROFILE_SCHEMA__', readProfileSchema),
             minify: {
                 collapseWhitespace: true,

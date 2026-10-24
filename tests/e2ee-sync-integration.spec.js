@@ -57,7 +57,13 @@ test.beforeAll(async () => {
             }
             const file = path.resolve(root, 'docs', `.${decodeURIComponent(url.pathname)}`, url.pathname.endsWith('/') ? 'index.html' : '');
             if (!file.startsWith(path.join(root, 'docs') + path.sep)) { response.writeHead(404); response.end(); return; }
-            const content = await readFile(file);
+            let content = await readFile(file);
+            if (path.extname(file) === '.html') {
+                const { apiBase } = require('../static/portfolio/sync-config.json');
+                content = Buffer.from(content.toString()
+                    .replaceAll(apiBase, apiOrigin)
+                    .replaceAll(apiBase.replace(/^http/, 'ws'), apiOrigin.replace(/^http/, 'ws')));
+            }
             const types = { '.html': 'text/html', '.js': 'application/javascript', '.mjs': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp' };
             response.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
             response.end(content);
@@ -106,6 +112,7 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
     messageBodies.length = 0;
     const pairedCodes = new Set();
     const contexts = await Promise.all(Array.from({ length: 3 }, () => browser.newContext({ acceptDownloads: true, viewport: { width: 1366, height: 900 } })));
+    if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
     contexts.forEach(context => context.setDefaultTimeout(15000));
     const pages = await Promise.all(contexts.map(context => context.newPage()));
     const [first, second] = pages;

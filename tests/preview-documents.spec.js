@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures/sync-e2ee.cjs');
 const XLSX = require('xlsx');
 const { createServer } = require('node:http');
 const { deviceId, keyId, authorize, message, profile, file, startSite } = require('./fixtures/sync-e2ee.cjs');

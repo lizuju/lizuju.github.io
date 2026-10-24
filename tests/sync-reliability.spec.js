@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures/sync-e2ee.cjs');
 
 const { roomId, deviceId, keyId, authorize, message } = require('./fixtures/sync-e2ee.cjs');
 const headers = {
