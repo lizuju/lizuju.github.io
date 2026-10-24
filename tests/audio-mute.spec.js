@@ -226,7 +226,7 @@ test('keeps native media playback and volume independent of both background mute
     await expect(sceneAudio).toBeVisible({ timeout: 15000 });
     await expect(sceneAudio).toBeEnabled();
     const desktop = page.frameLocator('#computer-screen');
-    const mediaUrl = `data:audio/wav;base64,${wav.toString('base64')}`;
+    const mediaUrl = '/audio/atmosphere/office.mp3';
     await desktop.locator('body').evaluate(async (body, url) => {
         const audio = document.createElement('audio');
         audio.dataset.testIndependentAudio = '';

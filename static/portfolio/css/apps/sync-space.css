@@ -218,6 +218,19 @@
     gap: 5px;
     margin: 0;
     color: #555;
+    flex-shrink: 0;
+}
+
+.sync-room-status {
+    display: flex;
+    min-width: 0;
+    max-width: 100%;
+    align-items: center;
+    gap: 16px;
+}
+
+.sync-room-status .sync-hint {
+    margin: 0;
 }
 
 .sync-connection::before {
