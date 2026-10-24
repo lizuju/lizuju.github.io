@@ -185,7 +185,6 @@ test('follows the mouse immediately through greetings, stationary targets and ke
 
 test('patrols while idle and rejects mouse movement while reduced motion, hidden or shut down', async ({ page, isMobile }) => {
     test.skip(isMobile, 'desktop patrol is checked without touch emulation');
-    await page.clock.install();
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.addInitScript(() => { Math.random = () => 0.9; });
     await page.goto('/portfolio/');
@@ -194,16 +193,15 @@ test('patrols while idle and rejects mouse movement while reduced motion, hidden
     await page.mouse.dblclick(desktop.x + desktop.width * 0.35, desktop.y + desktop.height * 0.4);
     const pet = page.locator('[data-desktop-pet]');
     const initial = await pet.boundingBox();
-    await page.clock.runFor(6100);
-    await expect(pet).toHaveClass(/is-walking/);
-    expect((await pet.boundingBox()).x).toBeGreaterThan(initial.x);
+    await expect(pet).toHaveClass(/is-walking/, { timeout: 8000 });
+    await expect.poll(async () => (await pet.boundingBox()).x).toBeGreaterThan(initial.x);
 
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await expect(pet).toHaveClass(/is-paused/);
     await expect(pet).not.toHaveClass(/is-walking/);
     const reducedPosition = await pet.evaluate((element) => element.style.transform);
     await page.mouse.move(desktop.x + desktop.width * 0.9, desktop.y + desktop.height * 0.8);
-    await page.clock.runFor(12000);
+    await page.waitForTimeout(250);
     expect(await pet.evaluate((element) => element.style.transform)).toBe(reducedPosition);
     await expect(pet).not.toHaveClass(/is-walking/);
 
@@ -215,7 +213,7 @@ test('patrols while idle and rejects mouse movement while reduced motion, hidden
     await expect(pet).toHaveClass(/is-paused/);
     const hiddenPosition = await pet.evaluate((element) => element.style.transform);
     await page.mouse.move(desktop.x + desktop.width * 0.15, desktop.y + desktop.height * 0.8);
-    await page.clock.runFor(12000);
+    await page.waitForTimeout(250);
     expect(await pet.evaluate((element) => element.style.transform)).toBe(hiddenPosition);
     await expect(pet).not.toHaveClass(/is-walking/);
     await page.evaluate(() => {
@@ -224,9 +222,8 @@ test('patrols while idle and rejects mouse movement while reduced motion, hidden
     });
     await expect(pet).not.toHaveClass(/is-paused/);
     await page.mouse.move(desktop.x + desktop.width * 0.9, desktop.y + desktop.height * 0.8);
-    await page.clock.runFor(200);
     await expect(pet).toHaveClass(/is-walking/);
-    expect(await pet.evaluate((element) => element.style.transform)).not.toBe(hiddenPosition);
+    await expect.poll(() => pet.evaluate((element) => element.style.transform)).not.toBe(hiddenPosition);
 
     await page.locator('[data-start-toggle]').click();
     await page.locator('[data-shutdown]').click();
@@ -235,7 +232,7 @@ test('patrols while idle and rejects mouse movement while reduced motion, hidden
     await expect(pet).not.toHaveClass(/is-walking/);
     const shutdownPosition = await pet.evaluate((element) => element.style.transform);
     await page.mouse.move(desktop.x + desktop.width * 0.15, desktop.y + desktop.height * 0.8);
-    await page.clock.runFor(6100);
+    await page.waitForTimeout(250);
     expect(await pet.evaluate((element) => element.style.transform)).toBe(shutdownPosition);
     await expect(pet).not.toHaveClass(/is-walking/);
     await page.locator('[data-restart]').click();

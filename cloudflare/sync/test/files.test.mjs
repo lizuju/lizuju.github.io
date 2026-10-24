@@ -19,9 +19,10 @@ after(async () => {
   await runtime?.dispose();
 });
 
-async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } = {}) {
+async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, observedLogs = [] } = {}) {
   const instance = new Miniflare({
     unsafeInspectDurableObjects: true,
+    handleStructuredLogs: entry => { observedLogs.push(entry.message); },
     workers: [{
       config: {
         name: 'sync-files-test',
@@ -34,7 +35,9 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
               type: 'esm',
               contents: `import worker, { SyncRoom as ProductionSyncRoom, PairingRegistry as ProductionRegistry, FileShard as ProductionFileShard } from './index.js';
                 export class FileShard extends ProductionFileShard {
+                  testFailRead() { this.failRead = true; }
                   readStream(offset, length) {
+                    if (this.failRead) throw new Error('private-rpc-sentinel-ticket-and-secret');
                     this.readRequests ||= [];
                     this.readRequests.push({ offset, length });
                     return super.readStream(offset, length);
@@ -420,7 +423,7 @@ test('chunk size checks, retries and concurrent completion preserve one file and
   const pong = socketEvent(connected.socket);
   connected.socket.send('ping');
   assert.equal((await pong).data, 'pong');
-  assert.deepEqual(frames.filter(frame => frame !== 'pong').map(frame => JSON.parse(frame)), [
+  assert.deepEqual(frames.filter(frame => frame !== 'pong').map(frame => { const { history, ...event } = JSON.parse(frame); assert.equal(history.latestId, completed[0].body.id); return event; }), [
     { type: 'message', message: completed[0].body }
   ]);
   const state = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
@@ -964,4 +967,37 @@ test('capacity pruning cancels an older upload before removing newer messages', 
   await room.pruneOldest();
   assert.deepEqual(await storage.exec('SELECT text FROM messages'), [{ text: sent.body.text }]);
   assert.deepEqual(await storage.exec('SELECT file_id FROM files WHERE file_id = ?', started.body.uploadId), []);
+});
+
+test('persisted upload progress migrates lazily and remains exact across retries and restart', async () => {
+  const request = client(), space = await createSpace(request), clientId = randomUUID();
+  const bytes = Buffer.alloc(chunkSize + 17, 83);
+  const started = await initiate(request, space, { clientId, size: bytes.length }), uploadId = started.body.uploadId;
+  assert.equal((await putChunk(request, space, uploadId, 0, bytes.subarray(0, chunkSize))).status, 200);
+  const storage = await roomStorage(space);
+  assert.deepEqual(await storage.exec('SELECT received_bytes, received_chunks FROM files WHERE file_id = ?', uploadId), [{ received_bytes: chunkSize, received_chunks: 1 }]);
+  await storage.exec('UPDATE files SET received_bytes = NULL, received_chunks = NULL WHERE file_id = ?', uploadId);
+  const resumed = await initiate(request, space, { clientId, size: bytes.length }); assert.equal(resumed.body.receivedBytes, chunkSize);
+  assert.deepEqual(await storage.exec('SELECT received_bytes, received_chunks FROM files WHERE file_id = ?', uploadId), [{ received_bytes: chunkSize, received_chunks: 1 }]);
+  for (const result of await Promise.all([putChunk(request, space, uploadId, 0, bytes.subarray(0, chunkSize)), putChunk(request, space, uploadId, 0, bytes.subarray(0, chunkSize))])) { assert.equal(result.status, 200); assert.equal(result.body.receivedBytes, chunkSize); }
+  await runtime.unsafeEvictDurableObject('sync-files-test', 'SyncRoom', { name: space.roomId });
+  const last = await putChunk(request, space, uploadId, 1, bytes.subarray(chunkSize)); assert.equal(last.status, 200); assert.equal(last.body.receivedBytes, bytes.length);
+  assert.deepEqual(await storage.exec('SELECT received_bytes, received_chunks FROM files WHERE file_id = ?', uploadId), [{ received_bytes: bytes.length, received_chunks: 2 }]);
+  assert.equal((await complete(request, space, uploadId)).status, 201);
+});
+
+test('a shard RPC download failure exposes only a generic stream error', async t => {
+  const observedLogs = [], instance = await createRuntime({ observedLogs }); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const sent = await upload(request, space, { bytes: Buffer.from('private file bytes') });
+  const storage = await roomStorage(space, instance);
+  const [{ file_id: fileId }] = await storage.exec('SELECT file_id FROM files WHERE message_id = ?', sent.body.id);
+  const namespace = await instance.getDurableObjectNamespace('FILE_SHARDS');
+  await namespace.getByName(`${fileId}:0`).testFailRead();
+  await assert.rejects(async () => {
+    const response = await instance.dispatchFetch(`https://sync.test/v1/spaces/${space.roomId}/files/${sent.body.id}`, { headers: { Origin: origin, Authorization: `Bearer ${space.token}` } });
+    assert.equal(response.status, 200);
+    await response.arrayBuffer();
+  }, error => !String(error).includes('private-rpc-sentinel-ticket-and-secret'));
+  assert.equal(observedLogs.some(message => message.includes('private-rpc-sentinel-ticket-and-secret')), false);
 });

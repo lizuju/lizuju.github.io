@@ -58,7 +58,7 @@ test('reuses one ticket for preview and download, renews it near expiry and auth
         await page.locator('[data-sync-preview-action="close"]').click();
     }
     const downloaded = browserName === 'webkit'
-        ? page.waitForRequest(request => request.url().includes('/downloads/') && !new URL(request.url()).searchParams.has('preview'))
+        ? page.waitForRequest(request => request.method() === 'GET' && request.url().includes('/downloads/') && !new URL(request.url()).searchParams.has('preview'))
         : page.waitForEvent('download');
     await page.locator('[data-sync-download-file]').click();
     await downloaded;

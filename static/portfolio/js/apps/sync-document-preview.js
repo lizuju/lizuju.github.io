@@ -1,109 +1,201 @@
 import mammoth from 'mammoth/mammoth.browser';
 import DOMPurify from 'dompurify';
-import * as XLSX from 'xlsx';
 
 export async function renderDocumentPreview({ container, url, kind, signal, translate }) {
     const response = await fetch(url, { signal });
     if (!response.ok) throw new Error('Document preview could not be loaded');
     const root = document.createElement('section');
     let disposed = false;
-    const cleanup = () => { disposed = true; root.remove(); };
+    let worker;
+    let resizeObserver;
+    let frame;
+    let refreshLanguage = () => {};
+    const pending = new Map();
+    const cleanup = () => {
+        if (disposed) return;
+        disposed = true;
+        worker?.terminate();
+        resizeObserver?.disconnect();
+        cancelAnimationFrame(frame);
+        window.removeEventListener('portfolio-language-change', onLanguageChange);
+        signal.removeEventListener('abort', cleanup);
+        for (const request of pending.values()) request.reject(new DOMException('Preview closed', 'AbortError'));
+        pending.clear();
+        root.remove();
+    };
+    const onLanguageChange = () => refreshLanguage();
+    signal.addEventListener('abort', cleanup, { once: true });
+    window.addEventListener('portfolio-language-change', onLanguageChange);
+    if (signal.aborted) { cleanup(); return cleanup; }
 
-    if (kind === 'text') {
-        const text = await response.text();
-        if (signal.aborted) return cleanup;
-        root.className = 'sync-document-text';
-        const pre = document.createElement('pre');
-        pre.textContent = text;
-        root.append(pre);
-    } else if (kind === 'word') {
-        const arrayBuffer = await response.arrayBuffer();
-        if (signal.aborted) return cleanup;
-        const result = await mammoth.convertToHtml({ arrayBuffer }, { externalFileAccess: false });
-        if (signal.aborted) return cleanup;
-        root.className = 'sync-document-word';
-        root.append(DOMPurify.sanitize(result.value, {
-            ALLOWED_TAGS: ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'strong', 'em', 'b', 'i', 'u', 's', 'br', 'hr', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'sup', 'sub', 'img', 'span'],
-            ALLOWED_ATTR: ['alt', 'src', 'colspan', 'rowspan', 'scope'],
-            ALLOWED_URI_REGEXP: /^data:image\/(?:png|jpeg|gif|webp|bmp);base64,/i,
-            RETURN_DOM_FRAGMENT: true
-        }));
-        if (!root.textContent.trim() && !root.querySelector('img')) root.textContent = translate('syncPreviewDocumentEmpty');
-    } else if (kind === 'spreadsheet') {
-        const arrayBuffer = await response.arrayBuffer();
-        if (signal.aborted) return cleanup;
-        const workbook = XLSX.read(arrayBuffer, {
-            type: 'array', sheetRows: 1000, cellFormula: false, cellHTML: false, bookVBA: false, raw: true, codepage: 65001
-        });
-        if (signal.aborted) return cleanup;
-        root.className = 'sync-document-workbook';
-        const tabs = document.createElement('nav');
-        tabs.className = 'sync-document-tabs';
-        tabs.setAttribute('aria-label', translate('syncPreviewSheets'));
-        const limit = document.createElement('p');
-        limit.className = 'sync-document-limit';
-        limit.textContent = translate('syncPreviewSheetLimit', { rows: 1000, columns: 50 });
-        const sheetContainer = document.createElement('div');
-        sheetContainer.className = 'sync-document-sheet';
-        sheetContainer.tabIndex = 0;
-        const showSheet = (name) => {
-            if (disposed || signal.aborted) return;
-            for (const button of tabs.children) button.setAttribute('aria-pressed', String(button.textContent === name));
-            sheetContainer.setAttribute('aria-label', translate('syncPreviewSheet', { name }));
-            sheetContainer.replaceChildren();
-            const sheet = workbook.Sheets[name];
-            const fullRange = sheet['!fullref'] || sheet['!ref'];
-            limit.hidden = true;
-            if (!fullRange) {
-                sheetContainer.textContent = translate('syncPreviewSheetEmpty');
-                return;
+    try {
+        if (kind === 'text') {
+            const text = await response.text();
+            if (signal.aborted) return cleanup;
+            root.className = 'sync-document-text';
+            const pre = document.createElement('pre');
+            pre.textContent = text;
+            root.append(pre);
+        } else if (kind === 'word') {
+            const arrayBuffer = await response.arrayBuffer();
+            if (signal.aborted) return cleanup;
+            const result = await mammoth.convertToHtml({ arrayBuffer }, { externalFileAccess: false });
+            if (signal.aborted) return cleanup;
+            root.className = 'sync-document-word';
+            root.append(DOMPurify.sanitize(result.value, {
+                ALLOWED_TAGS: ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'strong', 'em', 'b', 'i', 'u', 's', 'br', 'hr', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'sup', 'sub', 'img', 'span'],
+                ALLOWED_ATTR: ['alt', 'src', 'colspan', 'rowspan', 'scope'],
+                ALLOWED_URI_REGEXP: /^data:image\/(?:png|jpeg|gif|webp|bmp);base64,/i,
+                RETURN_DOM_FRAGMENT: true
+            }));
+            if (!root.textContent.trim() && !root.querySelector('img')) {
+                refreshLanguage = () => { root.textContent = translate('syncPreviewDocumentEmpty'); };
             }
-            const range = XLSX.utils.decode_range(fullRange);
-            limit.hidden = range.e.r < 1000 && range.e.c < 50;
-            const table = document.createElement('table');
-            table.className = 'sync-document-table';
-            const head = document.createElement('thead');
-            const headings = document.createElement('tr');
-            headings.append(document.createElement('th'));
-            for (let column = 0; column <= Math.min(range.e.c, 49); column++) {
-                const th = document.createElement('th');
-                th.scope = 'col';
-                th.textContent = XLSX.utils.encode_col(column);
-                headings.append(th);
-            }
-            head.append(headings);
-            const body = document.createElement('tbody');
-            for (let row = 0; row <= Math.min(range.e.r, 999); row++) {
-                const tr = document.createElement('tr');
-                const heading = document.createElement('th');
-                heading.scope = 'row';
-                heading.textContent = String(row + 1);
-                tr.append(heading);
-                for (let column = 0; column <= Math.min(range.e.c, 49); column++) {
-                    const td = document.createElement('td');
-                    const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
-                    td.textContent = cell ? XLSX.utils.format_cell(cell) : '';
-                    tr.append(td);
+        } else if (kind === 'spreadsheet') {
+            const buffer = await response.arrayBuffer();
+            if (signal.aborted) return cleanup;
+            worker = new Worker(new URL('./sync-spreadsheet-worker.js', import.meta.url), { type: 'module', name: 'spreadsheet-preview' });
+            let nextId = 0;
+            const request = (data, transfer = []) => new Promise((resolve, reject) => {
+                const id = ++nextId;
+                pending.set(id, { resolve, reject });
+                worker.postMessage({ ...data, id }, transfer);
+            });
+            worker.onmessage = ({ data }) => {
+                const request = pending.get(data.id);
+                if (!request) return;
+                pending.delete(data.id);
+                if (data.error) request.reject(new Error(data.error));
+                else request.resolve(data.result);
+            };
+            worker.onerror = (event) => {
+                for (const request of pending.values()) request.reject(new Error(event.message));
+                pending.clear();
+            };
+            const sheets = await request({ type: 'load', buffer }, [buffer]);
+            if (signal.aborted) return cleanup;
+            root.className = 'sync-document-workbook';
+            const tabs = document.createElement('nav');
+            tabs.className = 'sync-document-tabs';
+            const limit = document.createElement('p');
+            limit.className = 'sync-document-limit';
+            const sheetContainer = document.createElement('div');
+            sheetContainer.className = 'sync-document-sheet';
+            sheetContainer.tabIndex = 0;
+            let activeSheet;
+            let sheetRequest = 0;
+            let renderRows = () => {};
+            const rowHeight = 32;
+            refreshLanguage = () => {
+                tabs.setAttribute('aria-label', translate('syncPreviewSheets'));
+                limit.textContent = translate('syncPreviewSheetLimit', { rows: 1000, columns: 50 });
+                sheetContainer.setAttribute('aria-label', activeSheet
+                    ? translate('syncPreviewSheet', { name: activeSheet.name })
+                    : translate('syncPreviewSheets'));
+                if (!activeSheet?.rows) sheetContainer.textContent = translate('syncPreviewSheetEmpty');
+            };
+            const showSheet = async (sheet) => {
+                if (disposed || signal.aborted) return;
+                const generation = ++sheetRequest;
+                const data = await request({ type: 'sheet', sheet });
+                if (disposed || signal.aborted || generation !== sheetRequest) return;
+                activeSheet = sheet;
+                for (const [index, button] of Array.from(tabs.children).entries()) {
+                    button.setAttribute('aria-pressed', String(sheets[index] === sheet));
                 }
-                body.append(tr);
+                limit.hidden = !sheet.limited;
+                sheetContainer.replaceChildren();
+                sheetContainer.scrollTop = 0;
+                sheetContainer.scrollLeft = 0;
+                renderRows = () => {};
+                if (sheet.rows) {
+                    const table = document.createElement('table');
+                    table.className = 'sync-document-table';
+                    table.setAttribute('aria-rowcount', String(sheet.rows + 1));
+                    const head = document.createElement('thead');
+                    const headings = document.createElement('tr');
+                    headings.append(document.createElement('th'));
+                    for (const column of data.columns) {
+                        const th = document.createElement('th');
+                        th.scope = 'col';
+                        th.textContent = column;
+                        headings.append(th);
+                    }
+                    head.append(headings);
+                    const body = document.createElement('tbody');
+                    let renderedStart = -1;
+                    let renderedEnd = -1;
+                    renderRows = () => {
+                        const start = Math.max(0, Math.floor(sheetContainer.scrollTop / rowHeight) - 4);
+                        const end = Math.min(sheet.rows, start + Math.ceil((sheetContainer.clientHeight || 400) / rowHeight) + 9);
+                        if (start === renderedStart && end === renderedEnd) return;
+                        renderedStart = start;
+                        renderedEnd = end;
+                        const fragment = document.createDocumentFragment();
+                        const spacer = (height) => {
+                            const tr = document.createElement('tr');
+                            tr.className = 'sync-document-spacer';
+                            tr.setAttribute('aria-hidden', 'true');
+                            const td = document.createElement('td');
+                            td.colSpan = sheet.columns + 1;
+                            td.style.height = `${height}px`;
+                            tr.append(td);
+                            return tr;
+                        };
+                        if (start) fragment.append(spacer(start * rowHeight));
+                        for (let row = start; row < end; row++) {
+                            const tr = document.createElement('tr');
+                            tr.setAttribute('aria-rowindex', String(row + 2));
+                            const heading = document.createElement('th');
+                            heading.scope = 'row';
+                            heading.textContent = String(row + 1);
+                            tr.append(heading);
+                            for (const value of data.rows[row]) {
+                                const td = document.createElement('td');
+                                td.textContent = value;
+                                td.title = value;
+                                tr.append(td);
+                            }
+                            fragment.append(tr);
+                        }
+                        if (end < sheet.rows) fragment.append(spacer((sheet.rows - end) * rowHeight));
+                        body.replaceChildren(fragment);
+                    };
+                    table.append(head, body);
+                    sheetContainer.append(table);
+                    renderRows();
+                }
+                refreshLanguage();
+            };
+            for (const sheet of sheets) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.textContent = sheet.name;
+                button.addEventListener('click', () => {
+                    showSheet(sheet).catch(() => {
+                        if (!disposed) sheetContainer.textContent = translate('syncPreviewFailed');
+                    });
+                }, { signal });
+                tabs.append(button);
             }
-            table.append(head, body);
-            sheetContainer.append(table);
-            sheetContainer.scrollTop = 0;
-            sheetContainer.scrollLeft = 0;
-        };
-        for (const name of workbook.SheetNames) {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.textContent = name;
-            button.addEventListener('click', () => showSheet(name), { signal });
-            tabs.append(button);
+            sheetContainer.addEventListener('scroll', () => {
+                cancelAnimationFrame(frame);
+                frame = requestAnimationFrame(() => renderRows());
+            }, { signal, passive: true });
+            resizeObserver = new ResizeObserver(() => renderRows());
+            resizeObserver.observe(sheetContainer);
+            root.append(tabs, limit, sheetContainer);
+            if (sheets.length) await showSheet(sheets[0]);
+            else limit.hidden = true;
         }
-        root.append(tabs, limit, sheetContainer);
-        if (workbook.SheetNames.length) showSheet(workbook.SheetNames[0]);
-        else sheetContainer.textContent = translate('syncPreviewSheetEmpty');
-    }
 
-    if (!signal.aborted) container.replaceChildren(root);
-    return cleanup;
+        if (!signal.aborted) {
+            refreshLanguage();
+            container.replaceChildren(root);
+        }
+        return cleanup;
+    } catch (error) {
+        cleanup();
+        throw error;
+    }
 }

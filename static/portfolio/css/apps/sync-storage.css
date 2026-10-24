@@ -1,0 +1,44 @@
+.sync-storage-window {
+    top: 72px;
+    left: max(100px, calc(50% - 260px));
+    right: auto;
+    width: min(520px, calc(100% - 120px));
+    height: min(580px, calc(100% - 116px));
+    min-width: 280px;
+    min-height: 240px;
+    font: 12px/1.5 var(--font-system);
+}
+
+.sync-storage-window.is-maximized {
+    width: auto;
+    height: auto;
+}
+
+.sync-storage-body {
+    flex: 1;
+    min-height: 0;
+    padding: 16px;
+    overflow: auto;
+    background: #f3f3ef;
+}
+
+.sync-storage-body p {
+    color: #555;
+}
+
+.sync-storage-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin: 16px 0;
+}
+
+.sync-storage-metrics dt,
+.sync-storage-metrics dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.sync-storage-metrics dd {
+    font-weight: 700;
+}

@@ -1,0 +1,63 @@
+.control-panel-window {
+    top: 56px;
+    right: auto;
+    bottom: auto;
+    left: 120px;
+    width: min(440px, calc(100% - 150px));
+    height: min(340px, calc(100% - 116px));
+    min-width: 280px;
+    min-height: 220px;
+    font: 12px/1.5 var(--font-system);
+}
+
+.control-panel-window.is-maximized {
+    width: auto;
+    height: auto;
+}
+
+.control-panel-body {
+    flex: 1;
+    min-height: 0;
+    padding: 20px;
+    overflow: auto;
+    background: #fff;
+}
+
+.control-panel-item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 14px;
+    padding: 12px;
+    border: 1px solid transparent;
+    color: #111;
+    background: transparent;
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+}
+
+.control-panel-item:hover,
+.control-panel-item:focus-visible {
+    border-color: #000080;
+    outline: 1px dotted #000080;
+    outline-offset: -4px;
+    background: #e8e8f5;
+}
+
+.control-panel-item-icon {
+    flex: 0 0 36px;
+    color: #000080;
+    font-size: 32px;
+    text-align: center;
+}
+
+.control-panel-item strong,
+.control-panel-item small {
+    display: block;
+}
+
+.control-panel-item small {
+    margin-top: 4px;
+    color: #555;
+}

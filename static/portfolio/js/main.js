@@ -9,6 +9,8 @@ import '../css/apps/gomoku.css';
 import '../css/apps/recycle-bin.css';
 import '../css/apps/sync-space.css';
 import '../css/apps/sync-preview.css';
+import '../css/apps/sync-storage.css';
+import '../css/apps/control-panel.css';
 import '../css/portfolio.css';
 import '../css/taskbar.css';
 import '../css/desktop-responsive.css';
@@ -25,6 +27,8 @@ import './apps/satellite.js';
 import './apps/recycle-bin.js';
 import './apps/sync-space.js';
 import './apps/sync-preview.js';
+import './apps/sync-storage.js';
+import './apps/control-panel.js';
 
 // Boots the retro desktop. Shared helpers live in js/desktop/, each window in js/apps/.
 // To add an app: create js/apps/<name>.js that registers GavinDesktop.apps.<name>, call
@@ -48,6 +52,8 @@ import './apps/sync-preview.js';
         desktopApi.apps.recycleBin(manager);
         const syncPreview = desktopApi.apps.syncPreview(manager);
         desktopApi.apps.syncSpace(manager, syncPreview);
+        desktopApi.apps.syncStorage(manager);
+        desktopApi.apps.controlPanel(manager);
         desktopApi.setupRobotPet(manager);
 
         const gameWindow = document.querySelector('[data-gomoku-window]');

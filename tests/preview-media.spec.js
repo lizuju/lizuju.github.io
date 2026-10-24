@@ -161,3 +161,20 @@ test('limits device names to eight Unicode characters and keeps the saved name a
     await expect(name).toHaveValue('苹果🤖Mac设备');
     await expect(row.locator('strong')).toHaveText('苹果🤖Mac设备');
 });
+
+test('opening the same failed attachment retries without closing its preview window', async ({ page }) => {
+    let attempts = 0;
+    await page.route('https://sync.test/**/downloads/**', route => {
+        if (route.request().method() === 'HEAD') return route.fulfill({ status: 200, headers: { 'Access-Control-Allow-Origin': '*' } });
+        attempts++;
+        return route.fulfill(attempts === 1
+            ? { status: 503, body: 'Temporarily unavailable', headers: { 'Access-Control-Allow-Origin': '*' } }
+            : { body: png, contentType: 'image/png', headers: { 'Access-Control-Allow-Origin': '*' } });
+    });
+    await page.locator('[data-sync-preview-file]').nth(1).click();
+    await expect(page.locator('[data-sync-preview-status]')).toHaveText('文件无法预览，你仍可下载原文件。');
+    await page.locator('[data-sync-preview-action="minimize"]').click();
+    await page.locator('[data-sync-preview-file]').nth(1).click();
+    await expect(page.locator('[data-sync-preview-body] img')).toHaveJSProperty('naturalWidth', 1);
+    expect(attempts).toBe(2);
+});

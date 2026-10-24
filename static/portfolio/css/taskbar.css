@@ -138,6 +138,26 @@
     font: 12px/1 var(--font-system);
 }
 
+.desktop-taskbar .direct-return-button {
+    position: static;
+    max-width: min(120px, 21vw);
+    flex: 0 0 auto;
+    padding: 5px;
+    overflow: hidden;
+    border: 2px outset #fff;
+    color: #111;
+    background: #c0c0c0;
+    font: 11px/1 var(--font-system);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    backdrop-filter: none;
+}
+
+.desktop-taskbar .direct-return-button:focus-visible {
+    outline: 1px dotted #000;
+    outline-offset: -4px;
+}
+
 .shutdown-screen {
     position: absolute;
     inset: 0;

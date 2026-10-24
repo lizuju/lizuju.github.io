@@ -48,6 +48,7 @@ import { PreviewZoom } from './preview-zoom.js';
         });
         const fail = (state) => {
             if (current !== state || state.controller.signal.aborted) return;
+            state.failed = true;
             setStatus('syncPreviewFailed');
         };
         const renderPage = async (state, item) => {
@@ -139,7 +140,7 @@ import { PreviewZoom } from './preview-zoom.js';
             setStatus('syncPreviewPdfPages', { count: state.pdf.numPages });
         };
         const open = async (file) => {
-            if (current?.id === file.id) { entry.show(); return; }
+            if (current?.id === file.id && !current.failed) { entry.show(); return; }
             dispose();
             const state = { ...file, controller: new AbortController() };
             current = state;

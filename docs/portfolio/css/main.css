@@ -2801,6 +2801,11 @@ summary:focus-visible {
     overscroll-behavior: contain;
 }
 
+.sync-history-more {
+    display: block;
+    margin: 0 auto 12px;
+}
+
 .sync-empty {
     margin: 28px 12px;
     color: #666;
@@ -3354,25 +3359,156 @@ summary:focus-visible {
 
 .sync-document-sheet {
     max-width: 100%;
+    height: min(55vh, 500px);
     overflow: auto;
 }
 
 .sync-document-table {
     width: max-content;
     min-width: 100%;
-    white-space: pre-wrap;
+    border-collapse: separate;
+    border-spacing: 0;
+    white-space: nowrap;
+}
+
+.sync-document-table td,
+.sync-document-table th {
+    box-sizing: border-box;
+    height: 32px;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .sync-document-table td {
-    max-width: 320px;
-    min-width: 60px;
+    max-width: 180px;
+    min-width: 100px;
 }
 
 .sync-document-table th {
     background: #eee;
 }
 
+.sync-document-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.sync-document-spacer td {
+    padding: 0;
+    border: 0;
+}
+
 .sync-document-limit {
+    color: #555;
+}
+
+.sync-storage-window {
+    top: 72px;
+    left: max(100px, calc(50% - 260px));
+    right: auto;
+    width: min(520px, calc(100% - 120px));
+    height: min(580px, calc(100% - 116px));
+    min-width: 280px;
+    min-height: 240px;
+    font: 12px/1.5 var(--font-system);
+}
+
+.sync-storage-window.is-maximized {
+    width: auto;
+    height: auto;
+}
+
+.sync-storage-body {
+    flex: 1;
+    min-height: 0;
+    padding: 16px;
+    overflow: auto;
+    background: #f3f3ef;
+}
+
+.sync-storage-body p {
+    color: #555;
+}
+
+.sync-storage-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin: 16px 0;
+}
+
+.sync-storage-metrics dt,
+.sync-storage-metrics dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.sync-storage-metrics dd {
+    font-weight: 700;
+}
+
+.control-panel-window {
+    top: 56px;
+    right: auto;
+    bottom: auto;
+    left: 120px;
+    width: min(440px, calc(100% - 150px));
+    height: min(340px, calc(100% - 116px));
+    min-width: 280px;
+    min-height: 220px;
+    font: 12px/1.5 var(--font-system);
+}
+
+.control-panel-window.is-maximized {
+    width: auto;
+    height: auto;
+}
+
+.control-panel-body {
+    flex: 1;
+    min-height: 0;
+    padding: 20px;
+    overflow: auto;
+    background: #fff;
+}
+
+.control-panel-item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 14px;
+    padding: 12px;
+    border: 1px solid transparent;
+    color: #111;
+    background: transparent;
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+}
+
+.control-panel-item:hover,
+.control-panel-item:focus-visible {
+    border-color: #000080;
+    outline: 1px dotted #000080;
+    outline-offset: -4px;
+    background: #e8e8f5;
+}
+
+.control-panel-item-icon {
+    flex: 0 0 36px;
+    color: #000080;
+    font-size: 32px;
+    text-align: center;
+}
+
+.control-panel-item strong,
+.control-panel-item small {
+    display: block;
+}
+
+.control-panel-item small {
+    margin-top: 4px;
     color: #555;
 }
 
@@ -4457,6 +4593,26 @@ main {
     font: 12px/1 var(--font-system);
 }
 
+.desktop-taskbar .direct-return-button {
+    position: static;
+    max-width: min(120px, 21vw);
+    flex: 0 0 auto;
+    padding: 5px;
+    overflow: hidden;
+    border: 2px outset #fff;
+    color: #111;
+    background: #c0c0c0;
+    font: 11px/1 var(--font-system);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    backdrop-filter: none;
+}
+
+.desktop-taskbar .direct-return-button:focus-visible {
+    outline: 1px dotted #000;
+    outline-offset: -4px;
+}
+
 .shutdown-screen {
     position: absolute;
     inset: 0;
@@ -4817,10 +4973,6 @@ body.direct-portfolio .app-window:not(.is-maximized) {
         height: min(660px, calc(100% - 124px));
     }
 
-    body.direct-portfolio:has(.app-window.is-maximized) .scene-link {
-        top: 4px;
-        right: 96px;
-    }
 }
 
 @media (max-width: 1040px) {

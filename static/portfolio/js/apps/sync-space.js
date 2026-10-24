@@ -22,6 +22,9 @@
         let deviceId = null;
         let devices = [];
         let history = [];
+        let historyState = null;
+        let loadingOlder = false;
+        let historyRequest = 0;
         let socket = null;
         let retryTimer = null;
         let pingTimer = null;
@@ -43,6 +46,7 @@
         let sessionVersion = 0;
         let deviceRequest = 0;
         let searchScrollTop = null;
+        let searchAnchor = null;
         let fileDragDepth = 0;
         let previewRequest = 0;
         const downloadTickets = new Map();
@@ -84,8 +88,11 @@
             find('file-input').disabled = busy || sending || !online;
             find('remove-file').disabled = busy || sending;
             find('cancel-upload').hidden = !sending || !pendingUpload;
-            find('cancel-upload').disabled = busy || !pendingUpload?.uploadId || pendingUpload.stage === 'syncCompletingUpload' || uploadController?.signal.aborted;
+            find('cancel-upload').disabled = busy || !uploadController || pendingUpload?.completing || uploadController.signal.aborted;
             find('copy-code').disabled = secondsLeft(pairExpiresAt) === 0;
+            find('history-more').hidden = !historyState || !history.length || history[0].id <= historyState.oldestId;
+            find('history-more').disabled = !online || loadingOlder;
+            setText(find('history-more'), loadingOlder ? 'syncLoadingOlder' : 'syncLoadOlder');
             devicesDialog.querySelectorAll('[data-sync-device-save], [data-sync-device-remove]').forEach((button) => {
                 button.disabled = busy || sending || !online;
             });
@@ -147,7 +154,14 @@
                 signal: options.signal || AbortSignal.timeout(15000)
             });
             const result = await response.json();
-            if (!response.ok) throw Object.assign(new Error(result.error), { code: result.error, retryAfter: Number(response.headers.get('Retry-After')) });
+            if (!response.ok) {
+                const retryAfter = response.headers.get('Retry-After');
+                const seconds = Number(retryAfter);
+                throw Object.assign(new Error(result.error), {
+                    code: result.error,
+                    retryAfter: Number.isFinite(seconds) ? seconds : Math.max(0, (Date.parse(retryAfter) - Date.now()) / 1000)
+                });
+            }
             return result;
         };
         const roomPath = (suffix = '') => `/v1/spaces/${credentials.roomId}${suffix}`;
@@ -171,6 +185,7 @@
             if (sending && pendingUpload) {
                 const percent = pendingUpload.file.size ? Math.floor((pendingUpload.receivedBytes || 0) / pendingUpload.file.size * 100) : 100;
                 let text = translate(pendingUpload.stage || 'syncUploadProgress', { filename: pendingUpload.file.name, percent });
+                if (pendingUpload.stage === 'syncUploadWaiting') text = translate('syncUploadWaiting', { seconds: Math.max(1, Math.ceil((pendingUpload.retryAt - Date.now()) / 1000)) });
                 if (pendingUpload.stage === 'syncUploadProgress') {
                     text += ` · ${pendingUpload.bytesPerSecond > 0 ? translate('syncUploadRate', {
                         speed: formatSize(pendingUpload.bytesPerSecond),
@@ -216,24 +231,33 @@
             }
             return entry.promise;
         };
+        const attachmentUrl = async (message, session) => {
+            const base = await loadConfig();
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const result = await attachmentTicket(message, session);
+                const url = `${base}/v1/spaces/${session.roomId}/downloads/${encodeURIComponent(result.ticket)}`;
+                const response = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(15000) });
+                if (response.ok) return url;
+                if ([401, 404].includes(response.status)) {
+                    downloadTickets.delete(message.id);
+                    if (!attempt) continue;
+                }
+                throw Object.assign(new Error('download_unavailable'), { code: response.status === 404 ? 'attachment_expired' : 'download_unavailable' });
+            }
+        };
         const downloadAttachment = async (message, button) => {
             const session = credentials;
             button.disabled = true;
             button.dataset.loading = 'true';
             button.textContent = translate('syncDownloading');
             try {
-                const result = await attachmentTicket(message, session);
+                const url = await attachmentUrl(message, session);
                 if (credentials !== session || !messageNodes.has(message.id)) return;
-                const base = await loadConfig();
                 const frame = document.createElement('iframe');
                 frame.hidden = true;
                 frame.setAttribute('sandbox', 'allow-downloads');
-                frame.src = `${base}/v1/spaces/${session.roomId}/downloads/${encodeURIComponent(result.ticket)}`;
-                // Attachment responses start a native download; an HTML/JSON document means it failed.
-                frame.addEventListener('load', () => {
-                    if (credentials === session && messageNodes.has(message.id)) setNotice('syncDownloadFailed', true);
-                    frame.remove();
-                }, { once: true });
+                frame.src = url;
+                frame.addEventListener('load', () => frame.remove(), { once: true });
                 document.body.append(frame);
                 setTimeout(() => frame.remove(), 10 * 60 * 1000);
             } catch (error) {
@@ -255,12 +279,12 @@
             }
             button.disabled = true;
             try {
-                const result = await attachmentTicket(message, session);
-                const base = await loadConfig();
-                if (request !== previewRequest || credentials !== session || !active || !app.classList.contains('is-active') || !messageNodes.has(message.id)) return;
+                const url = await attachmentUrl(message, session);
+                if (request !== previewRequest || credentials !== session || !active || !messageNodes.has(message.id)) return;
+                if (!app.classList.contains('is-active')) { setNotice('syncPreviewReady'); return; }
                 attachmentPreview.open({
                     id: message.id, name: message.attachment.name, kind,
-                    url: `${base}/v1/spaces/${session.roomId}/downloads/${encodeURIComponent(result.ticket)}?preview=1`
+                    url: `${url}?preview=1`
                 });
             } catch (error) {
                 if (credentials === session && active && messageNodes.has(message.id)) showAttachmentError(error);
@@ -296,8 +320,8 @@
             find('empty').hidden = history.length !== 0 || !!query;
             find('no-results').hidden = !query || count !== 0;
         };
-        const render = (scroll = false) => {
-            const follow = scroll || (atBottom() && isReading());
+        const render = (scroll = false, preserve = false) => {
+            const follow = !preserve && (scroll || (atBottom() && isReading()));
             const ids = new Set(history.map((message) => message.id));
             for (const [id, item] of messageNodes) {
                 if (!ids.has(id)) { disposeAttachment(id); item.remove(); messageNodes.delete(id); unread.delete(id); }
@@ -401,18 +425,39 @@
             updateSelectedFile();
             setNotice('syncSent');
         };
-        const receiveHistory = (incoming, initial = false) => {
+        const receiveHistory = (incoming, initial = false, mode = 'replace', metadata = null) => {
             reconcileUpload(incoming);
             const known = new Set(history.map((message) => message.id));
-            if (!initial && !(isReading() && atBottom())) {
+            if (!initial && mode !== 'prepend' && !(isReading() && atBottom())) {
                 incoming.forEach((message) => { if (!known.has(message.id) && message.deviceId !== deviceId) unread.add(message.id); });
             }
-            history = incoming;
-            render(initial);
+            const scrollTop = feed.scrollTop;
+            const previousHeight = feed.scrollHeight;
+            if (mode === 'replace') {
+                historyRequest++;
+                loadingOlder = false;
+                history = incoming;
+            } else history = [...history, ...incoming.filter((message) => !known.has(message.id))].sort((a, b) => a.id - b.id);
+            if (metadata) historyState = metadata;
+            render(initial, mode === 'prepend');
+            if (mode === 'prepend') {
+                const addedHeight = feed.scrollHeight - previousHeight;
+                if (searchScrollTop !== null) searchScrollTop += addedHeight;
+                feed.scrollTop = scrollTop + addedHeight;
+            }
         };
-        const addMessage = (message) => {
+        const addMessage = (message, metadata = null) => {
             reconcileUpload([message]);
-            if (history.some((item) => item.id === message.id)) return;
+            const known = history.some((item) => item.id === message.id);
+            if (metadata) {
+                if (historyState && metadata.generation !== historyState.generation) {
+                    historyRequest++;
+                    loadingOlder = false;
+                }
+                historyState = metadata;
+                history = history.filter((item) => item.id >= metadata.oldestId);
+            }
+            if (known) { render(); return; }
             if (message.deviceId !== deviceId && !(isReading() && atBottom())) unread.add(message.id);
             history = [...history, message].sort((a, b) => a.id - b.id).slice(-500);
             render();
@@ -445,6 +490,10 @@
                 return;
             }
             const url = new URL(base + roomPath('/socket'));
+            if (historyState && history.length) {
+                url.searchParams.set('after', history[history.length - 1].id);
+                url.searchParams.set('generation', historyState.generation);
+            }
             url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
             const connection = new WebSocket(url, ['sync', `auth.${session.token}`]);
             let awaitingPong = false;
@@ -465,7 +514,7 @@
                     retryDelay = 1000;
                     setConnection(true);
                     showPairing(data.pairing);
-                    receiveHistory(data.messages, initial);
+                    receiveHistory(data.messages, initial, data.historyMode, data.history);
                     if (notice.dataset.i18n === 'syncUnavailable') setNotice('syncJoined');
                     loadDevices();
                     clearInterval(pingTimer);
@@ -476,17 +525,16 @@
                             connection.send('ping');
                         }
                     }, 30000);
-                } else if (data.type === 'message') addMessage(data.message);
+                } else if (data.type === 'message') addMessage(data.message, data.history);
                 else if (data.type === 'pairing') showPairing(data.pairing);
-                else if (data.type === 'history') receiveHistory(data.messages);
+                else if (data.type === 'history') receiveHistory(data.messages, false, data.historyMode, data.history);
                 else if (data.type === 'devices') loadDevices();
                 else if (data.type === 'cleared') {
                     uploadController?.abort(Object.assign(new Error('history_cleared'), { code: 'history_cleared' }));
                     pendingUpload = null;
                     saveDraft();
-                    history = [];
                     unread.clear();
-                    render();
+                    receiveHistory([], false, 'replace', data.history);
                     setNotice('syncCleared');
                 }
             });
@@ -553,9 +601,13 @@
             pendingUpload = null;
             find('file-input').value = '';
             history = [];
+            historyState = null;
+            historyRequest++;
+            loadingOlder = false;
             input.value = '';
             find('search').value = '';
             searchScrollTop = null;
+            searchAnchor = null;
             fileDragDepth = 0;
             app.classList.remove('is-dragging-files');
             busy = false;
@@ -762,13 +814,42 @@
         };
         const uploadAttachment = async (upload, session, controller) => {
             const path = `/v1/spaces/${session.roomId}/files/uploads`;
+            upload.completing = false;
+            const request = async (url, options, timeout) => {
+                for (let attempt = 0; ; attempt++) {
+                    controller.signal.throwIfAborted();
+                    try {
+                        return await api(url, {
+                            ...options, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(timeout)])
+                        }, session);
+                    } catch (error) {
+                        if (controller.signal.aborted || credentials !== session || attempt === 2 || (error.code && !['storage_cleaning', 'rate_limited'].includes(error.code))) throw error;
+                        const stage = upload.stage;
+                        upload.retryAt = Date.now() + Math.max(error.retryAfter || 0, 2 ** attempt) * 1000;
+                        upload.stage = 'syncUploadWaiting';
+                        updateSelectedFile();
+                        const countdown = setInterval(updateSelectedFile, 1000);
+                        try {
+                            await new Promise((resolve, reject) => {
+                                const finish = () => { controller.signal.removeEventListener('abort', abort); resolve(); };
+                                const timer = setTimeout(finish, upload.retryAt - Date.now());
+                                const abort = () => { clearTimeout(timer); reject(controller.signal.reason); };
+                                controller.signal.addEventListener('abort', abort, { once: true });
+                            });
+                        } finally {
+                            clearInterval(countdown);
+                            upload.stage = stage;
+                            updateSelectedFile();
+                        }
+                    }
+                }
+            };
             upload.stage = 'syncPreparingUpload';
             updateSelectedFile();
-            const result = await api(path, {
+            const result = await request(path, {
                 method: 'POST',
-                body: JSON.stringify({ clientId: upload.clientId, name: upload.file.name, type: upload.file.type || 'application/octet-stream', size: upload.file.size, text: upload.text }),
-                signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)])
-            }, session);
+                body: JSON.stringify({ clientId: upload.clientId, name: upload.file.name, type: upload.file.type || 'application/octet-stream', size: upload.file.size, text: upload.text })
+            }, 30000);
             if (credentials !== session || controller.signal.aborted || pendingUpload !== upload) return;
             if (result.message) return result.message;
             upload.uploadId = result.uploadId;
@@ -782,29 +863,19 @@
             while (upload.receivedBytes < upload.file.size) {
                 const offset = upload.receivedBytes;
                 const chunk = upload.file.slice(offset, Math.min(offset + result.chunkSize, upload.file.size));
-                let received;
-                for (let attempt = 0; attempt < 3; attempt++) {
-                    try {
-                        received = await api(`${path}/${upload.uploadId}/chunks/${Math.floor(offset / result.chunkSize)}`, {
-                            method: 'PUT', body: chunk, headers: { 'Content-Type': 'application/octet-stream' },
-                            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(300000)])
-                        }, session);
-                        break;
-                    } catch (error) {
-                        if (controller.signal.aborted || credentials !== session || attempt === 2 || (error.code && !['storage_cleaning', 'rate_limited'].includes(error.code))) throw error;
-                    }
-                }
+                const received = await request(`${path}/${upload.uploadId}/chunks/${Math.floor(offset / result.chunkSize)}`, {
+                    method: 'PUT', body: chunk, headers: { 'Content-Type': 'application/octet-stream' }
+                }, 300000);
                 if (credentials !== session || controller.signal.aborted || pendingUpload !== upload) return;
                 upload.receivedBytes = received.receivedBytes;
                 const elapsed = (performance.now() - upload.startedAt) / 1000;
                 upload.bytesPerSecond = elapsed > 0 ? (upload.receivedBytes - upload.baselineBytes) / elapsed : 0;
                 updateSelectedFile();
             }
+            upload.completing = true;
             upload.stage = 'syncCompletingUpload';
             updateSelectedFile();
-            return api(`${path}/${upload.uploadId}/complete`, {
-                method: 'POST', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)])
-            }, session);
+            return request(`${path}/${upload.uploadId}/complete`, { method: 'POST' }, 30000);
         };
         find('attach').addEventListener('click', () => find('file-input').click());
         const selectFile = (file) => {
@@ -871,14 +942,14 @@
             updateSelectedFile();
         });
         find('cancel-upload').addEventListener('click', async () => {
-            if (busy || !sending || !pendingUpload?.uploadId || !uploadController) return;
+            if (busy || !sending || !pendingUpload || !uploadController) return;
             const session = credentials;
             const uploadId = pendingUpload.uploadId;
             busy = true;
             uploadController.abort(Object.assign(new Error('upload_cancelled'), { code: 'upload_cancelled' }));
             updateSelectedFile();
             try {
-                await api(`/v1/spaces/${session.roomId}/files/uploads/${uploadId}`, { method: 'DELETE' }, session);
+                if (uploadId) await api(`/v1/spaces/${session.roomId}/files/uploads/${uploadId}`, { method: 'DELETE' }, session);
                 if (credentials === session) {
                     pendingUpload = null;
                     selectedFile = null;
@@ -952,21 +1023,47 @@
             else updateCountdowns();
         });
         find('search').addEventListener('input', () => {
-            if (find('search').value.trim() && searchScrollTop === null) searchScrollTop = feed.scrollTop;
+            if (find('search').value.trim() && searchScrollTop === null) {
+                searchScrollTop = feed.scrollTop;
+                const top = feed.getBoundingClientRect().top;
+                const anchor = [...messageNodes].find(([, node]) => node.getBoundingClientRect().bottom > top);
+                searchAnchor = anchor ? { id: anchor[0], offset: anchor[1].getBoundingClientRect().top - top } : null;
+            }
             applySearch();
             if (find('search').value.trim()) feed.scrollTop = 0;
             else {
                 feed.scrollTop = searchScrollTop ?? feed.scrollTop;
+                const anchor = messageNodes.get(searchAnchor?.id);
+                if (anchor) feed.scrollTop += anchor.getBoundingClientRect().top - feed.getBoundingClientRect().top - searchAnchor.offset;
                 searchScrollTop = null;
+                searchAnchor = null;
                 markRead();
             }
         });
         find('latest').addEventListener('click', () => {
             find('search').value = '';
             searchScrollTop = null;
+            searchAnchor = null;
             applySearch();
             feed.scrollTop = feed.scrollHeight;
             markRead();
+        });
+        find('history-more').addEventListener('click', async () => {
+            if (!online || loadingOlder || !history.length || !historyState) return;
+            const session = credentials;
+            const request = ++historyRequest;
+            loadingOlder = true;
+            updateControls();
+            try {
+                const query = new URLSearchParams({ before: history[0].id, generation: historyState.generation, limit: 50 });
+                const result = await api(roomPath(`/messages?${query}`));
+                if (credentials !== session || request !== historyRequest) return;
+                receiveHistory(result.messages, false, result.historyMode, result.history);
+            } catch (error) {
+                if (credentials === session && request === historyRequest) showError(error);
+            } finally {
+                if (credentials === session && request === historyRequest) { loadingOlder = false; updateControls(); }
+            }
         });
         feed.addEventListener('scroll', markRead);
         new MutationObserver(markRead).observe(app, { attributes: true, attributeFilter: ['class'] });

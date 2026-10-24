@@ -9,10 +9,6 @@ body.direct-portfolio .app-window:not(.is-maximized) {
         height: min(660px, calc(100% - 124px));
     }
 
-    body.direct-portfolio:has(.app-window.is-maximized) .scene-link {
-        top: 4px;
-        right: 96px;
-    }
 }
 
 @media (max-width: 1040px) {

@@ -319,6 +319,11 @@
     overscroll-behavior: contain;
 }
 
+.sync-history-more {
+    display: block;
+    margin: 0 auto 12px;
+}
+
 .sync-empty {
     margin: 28px 12px;
     color: #666;

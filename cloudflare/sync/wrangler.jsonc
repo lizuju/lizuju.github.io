@@ -23,6 +23,8 @@
     { "tag": "v2", "new_sqlite_classes": ["FileShard"] }
   ],
   "observability": {
-    "enabled": false
+    "enabled": true,
+    "head_sampling_rate": 0.1,
+    "logs": { "invocation_logs": false }
   }
 }

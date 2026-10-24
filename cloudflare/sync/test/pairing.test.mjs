@@ -65,6 +65,34 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                   }
                 }
                 export class SyncRoom extends ProductionSyncRoom {
+                  testHoldUploadBegin() {
+                    this.uploadBeginStarted = new Promise(resolve => { this.startUploadBegin = resolve; });
+                    this.uploadBeginRelease = new Promise(resolve => { this.releaseUploadBegin = resolve; });
+                  }
+                  testWaitUploadBegin() { return this.uploadBeginStarted; }
+                  testReleaseUploadBegin() { this.releaseUploadBegin(); }
+                  async beginUpload(deviceId, file) {
+                    if (this.uploadBeginRelease) {
+                      this.startUploadBegin();
+                      await this.uploadBeginRelease;
+                      this.uploadBeginRelease = null;
+                    }
+                    return super.beginUpload(deviceId, file);
+                  }
+                  testHoldMaintenance() {
+                    this.maintenanceStarted = new Promise(resolve => { this.startMaintenance = resolve; });
+                    this.maintenanceRelease = new Promise(resolve => { this.releaseMaintenance = resolve; });
+                  }
+                  testWaitMaintenance() { return this.maintenanceStarted; }
+                  testReleaseMaintenance() { this.releaseMaintenance(); }
+                  async maintain(roomId) {
+                    if (this.maintenanceRelease) {
+                      this.startMaintenance();
+                      await this.maintenanceRelease;
+                      this.maintenanceRelease = null;
+                    }
+                    return super.maintain(roomId);
+                  }
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   testSchema() { return this.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name' ORDER BY name").toArray(); }
@@ -969,15 +997,21 @@ test('WebSocket authentication restores history, broadcasts messages and synchro
   const next = await request(`/v1/spaces/${space.roomId}/messages`, {
     method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'live message' }
   });
-  assert.deepEqual(JSON.parse((await firstMessage).data), { type: 'message', message: next.body });
-  assert.deepEqual(JSON.parse((await secondMessage).data), { type: 'message', message: next.body });
+  const firstFrame = JSON.parse((await firstMessage).data);
+  assert.deepEqual(firstFrame.message, next.body);
+  assert.equal(firstFrame.history.latestId, next.body.id);
+  const secondFrame = JSON.parse((await secondMessage).data);
+  assert.deepEqual(secondFrame, firstFrame);
 
   const firstCleared = socketEvent(first.socket);
   const secondCleared = socketEvent(second.socket);
   const cleared = await request(`/v1/spaces/${space.roomId}/messages`, { method: 'DELETE', token: space.token });
   assert.equal(cleared.status, 200);
-  assert.deepEqual(JSON.parse((await firstCleared).data), { type: 'cleared' });
-  assert.deepEqual(JSON.parse((await secondCleared).data), { type: 'cleared' });
+  const clearedFrame = JSON.parse((await firstCleared).data);
+  assert.equal(clearedFrame.type, 'cleared');
+  assert.equal(clearedFrame.history.latestId, null);
+  assert.notEqual(clearedFrame.history.generation, first.frame.history.generation);
+  assert.deepEqual(JSON.parse((await secondCleared).data), clearedFrame);
   const reconnected = await authenticateSocket(space);
   assert.deepEqual(reconnected.frame.messages, []);
 });
@@ -1155,9 +1189,19 @@ test('history retains the latest 500 messages and clearing releases the stored m
     assert.equal(sent.status, 201);
   }
   const state = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
-  assert.equal(state.body.messages.length, 500);
-  assert.equal(state.body.messages[0].text, 'message 1');
-  assert.equal(state.body.messages[499].text, 'message 500');
+  assert.equal(state.body.messages.length, 50);
+  assert.equal(state.body.messages[0].text, 'message 451');
+  assert.equal(state.body.messages[49].text, 'message 500');
+  assert.equal(state.body.history.hasMore, true);
+  const all = [...state.body.messages];
+  while (all[0].id > state.body.history.oldestId) {
+    const older = await request(`/v1/spaces/${space.roomId}/messages?before=${all[0].id}&generation=${state.body.history.generation}`, { token: space.token });
+    assert.equal(older.body.historyMode, 'prepend');
+    assert.ok(older.body.messages.length <= 50);
+    all.unshift(...older.body.messages);
+  }
+  assert.equal(all.length, 500);
+  assert.equal(all[0].text, 'message 1');
   await request(`/v1/spaces/${space.roomId}/messages`, { method: 'DELETE', token: space.token });
   const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
   assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 0 }]);
@@ -1504,3 +1548,101 @@ test('daily maintenance repairs unattended expiry and resumes interrupted cleanu
   assert.deepEqual(await registryStorage.exec('SELECT 1 FROM cleanup'), []);
 });
 
+
+test('a slow room maintenance does not hold another room behind a registry-wide lock', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance);
+  const slow = await createSpace(request), fast = await createSpace(request);
+  const held = (await instance.getDurableObjectNamespace('SYNC_ROOMS')).getByName(slow.roomId);
+  await held.testHoldMaintenance();
+  const waiting = request(`/v1/spaces/${slow.roomId}`, { token: slow.token });
+  await held.testWaitMaintenance();
+  let response;
+  try {
+    response = await Promise.race([
+      request(`/v1/spaces/${fast.roomId}/messages`, { method: 'POST', token: fast.token, json: { clientId: randomUUID(), text: 'independent room' } }),
+      new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('unrelated room was blocked')), 2000); timer.unref(); })
+    ]);
+  } finally { await held.testReleaseMaintenance(); await waiting; }
+  assert.equal(response.status, 201);
+});
+
+test('history cursors return deltas and reset safely after clear, expiry and pruning', async () => {
+  const request = client(), space = await createSpace(request);
+  const post = async text => (await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text } })).body;
+  const first = await post('first');
+  const initial = (await request(`/v1/spaces/${space.roomId}`, { token: space.token })).body;
+  const second = await post('second');
+  let delta = await request(`/v1/spaces/${space.roomId}/messages?after=${first.id}&generation=${initial.history.generation}`, { token: space.token });
+  assert.equal(delta.body.historyMode, 'append'); assert.deepEqual(delta.body.messages, [second]);
+  const response = await runtime.dispatchFetch(`https://sync.test/v1/spaces/${space.roomId}/socket?after=${first.id}&generation=${initial.history.generation}`, { headers: { Origin: origin, Upgrade: 'websocket', 'Sec-WebSocket-Protocol': `sync, auth.${space.token}` } });
+  assert.equal(response.status, 101);
+  const socket = response.webSocket; socket.accept(); sockets.add(socket);
+  const ready = socketEvent(socket); socket.send(JSON.stringify({ type: 'auth', token: space.token }));
+  const frame = JSON.parse((await ready).data);
+  assert.equal(frame.historyMode, 'append'); assert.deepEqual(frame.messages, [second]);
+  socket.close(); sockets.delete(socket);
+  await request(`/v1/spaces/${space.roomId}/messages`, { method: 'DELETE', token: space.token });
+  const third = await post('after clear');
+  delta = await request(`/v1/spaces/${space.roomId}/messages?after=${second.id}&generation=${initial.history.generation}`, { token: space.token });
+  assert.equal(delta.body.historyMode, 'replace'); assert.deepEqual(delta.body.messages, [third]);
+  const afterClear = delta.body.history, fourth = await post('survivor');
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - fiveDays - 1, third.id);
+  delta = await request(`/v1/spaces/${space.roomId}/messages?before=${fourth.id}&generation=${afterClear.generation}`, { token: space.token });
+  assert.equal(delta.body.historyMode, 'replace'); assert.deepEqual(delta.body.messages, [fourth]);
+  assert.notEqual(delta.body.history.generation, afterClear.generation);
+  const beforePrune = delta.body.history;
+  await (await runtime.getDurableObjectNamespace('SYNC_ROOMS')).getByName(space.roomId).pruneOldest();
+  delta = await request(`/v1/spaces/${space.roomId}/messages?after=${fourth.id}&generation=${beforePrune.generation}`, { token: space.token });
+  assert.equal(delta.body.historyMode, 'replace'); assert.deepEqual(delta.body.messages, []);
+  assert.notEqual(delta.body.history.generation, beforePrune.generation);
+  for (const query of ['before=-1', 'after=not-a-number', 'limit=51', 'before=1&after=2']) assert.equal((await request(`/v1/spaces/${space.roomId}/messages?${query}`, { token: space.token })).status, 400);
+});
+
+test('public storage status is read only, aggregate only and distinguishes project storage from account usage', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'private content must not appear' } });
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const before = await storage.exec('SELECT * FROM room_usage'), response = await request('/v1/status');
+  assert.equal(response.status, 200); assert.equal(response.body.ok, true);
+  assert.equal(response.body.database.registry.ok, true); assert.equal(response.body.database.sampledRoom.ok, true);
+  assert.equal(response.body.storage.roomCount, 1); assert.equal(response.body.storage.scope, 'this-project');
+  assert.equal(response.body.storage.accountUsageAvailable, false);
+  assert.equal(response.body.storage.highWaterBytes, 4_700_000_000); assert.equal(response.body.storage.cleanupBytes, 3_000_000_000);
+  assert.ok(response.body.storage.bytes > 0);
+  for (const privateValue of ['private content', space.roomId, space.deviceId, space.token]) assert.equal(JSON.stringify(response.body).includes(privateValue), false);
+  const publicStrings = Object.values(response.body).flatMap(function strings(value) {
+    return typeof value === 'string' ? [value] : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
+  });
+  assert.equal(publicStrings.includes(space.code), false);
+  assert.deepEqual(await storage.exec('SELECT * FROM room_usage'), before);
+  const registry = (await instance.getDurableObjectNamespace('PAIRING_REGISTRY')).getByName('registry');
+  await registry.maintainRooms(); await registry.testDropAlarm();
+  const running = await request('/v1/status');
+  assert.equal(running.body.maintenance.running, true); assert.ok(running.body.maintenance.startedAt > 0);
+  await registry.testRunAlarm();
+  const finished = await request('/v1/status');
+  assert.equal(finished.body.maintenance.running, false); assert.ok(finished.body.maintenance.lastSuccessAt >= running.body.maintenance.startedAt);
+});
+
+test('in-flight upload reservations protect global capacity while another room remains responsive', async t => {
+  const instance = await createRuntime({ virtualBaseBytes: 1_000_000_000 }); t.after(() => instance.dispose());
+  const request = client(instance), first = await createSpace(request), second = await createSpace(request);
+  const namespace = await instance.getDurableObjectNamespace('SYNC_ROOMS'), held = namespace.getByName(first.roomId);
+  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await held.testHoldUploadBegin();
+  const begin = space => request(`/v1/spaces/${space.roomId}/files/uploads`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), name: 'large.bin', size: 2 * 1024 ** 3, type: 'application/octet-stream' } });
+  const pending = begin(first);
+  await held.testWaitUploadBegin();
+  try {
+    const reservations = await registryStorage.exec('SELECT room_id, bytes FROM reservations');
+    assert.equal(reservations.length, 1); assert.equal(reservations[0].room_id, first.roomId); assert.ok(reservations[0].bytes > 2 * 1024 ** 3);
+    const blocked = await begin(second);
+    assert.equal(blocked.status, 507); assert.equal(blocked.body.error, 'storage_full');
+    assert.deepEqual(await registryStorage.exec('SELECT room_id, bytes FROM reservations'), reservations);
+  } finally { await held.testReleaseUploadBegin(); }
+  assert.equal((await pending).status, 201);
+  assert.deepEqual(await registryStorage.exec('SELECT 1 FROM reservations'), []);
+});

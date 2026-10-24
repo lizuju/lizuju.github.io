@@ -150,9 +150,8 @@ test('renders the complete bilingual portfolio without school name or overflow',
     await expect(page.locator('[data-direct-return]')).toBeVisible();
     await expect(page.locator('[data-direct-return]')).toHaveAttribute('href', '../');
     await expect(page.locator('[data-direct-return]')).toHaveClass(/scene-link/);
-    await expect(page.locator('[data-direct-return]')).toHaveText('返回沉浸式场景 / Back to immersive scene');
-    await expect(page.locator('.desktop-taskbar [data-direct-return]')).toHaveCount(0);
-    expect((await page.locator('[data-direct-return]').boundingBox()).y).toBeLessThan(100);
+    await expect(page.locator('[data-direct-return]')).toHaveText('返回场景');
+    await expect(page.locator('.desktop-taskbar [data-direct-return]')).toHaveCount(1);
     await expect(page.locator('[data-window-drag]')).toContainText('李祖钜 Gavin - 个人主页');
     await expect(page.locator('.desktop-taskbar')).toBeVisible();
     await expect(page.locator('[data-app-window]')).toBeVisible();

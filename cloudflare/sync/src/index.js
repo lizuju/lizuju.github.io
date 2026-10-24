@@ -122,7 +122,16 @@ export default {
 
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
 
-    let response = await this.route(request, env);
+    const startedAt = Date.now();
+    const path = new URL(request.url).pathname;
+    const route = path.includes('/files/') || path.includes('/downloads/') ? 'files' : path.endsWith('/messages') ? 'messages' : path === '/v1/status' ? 'status' : path.includes('pair') || path === '/v1/spaces' ? 'pairing' : 'other';
+    let response;
+    try { response = await this.route(request, env); }
+    catch {
+      console.error(JSON.stringify({ event: 'sync_request_error', route, status: 500, durationMs: Date.now() - startedAt }));
+      return json({ error: 'internal_error' }, 500, corsHeaders);
+    }
+    if (response.status >= 500) console.warn(JSON.stringify({ event: 'sync_request_error', route, status: response.status, durationMs: Date.now() - startedAt }));
     if (response.status === 101) return response;
     response = new Response(response.body, response);
     for (const [key, value] of Object.entries(corsHeaders)) response.headers.set(key, value);
@@ -136,6 +145,7 @@ export default {
     }
 
     const registry = env.PAIRING_REGISTRY.getByName('registry');
+    if (request.method === 'GET' && url.pathname === '/v1/status') return json(await registry.diagnostics());
     if (request.method === 'POST' && url.pathname === '/v1/spaces') {
       const ipHash = await hash(request.headers.get('CF-Connecting-IP') || 'local');
       const limit = await registry.takeLimit(`create:${ipHash}`, 5, 60 * 60 * 1000);
@@ -242,6 +252,13 @@ export default {
       await room.publishPairing(roomId);
       return resultResponse(invite);
     }
+    if (request.method === 'GET' && match[2] === '/messages') {
+      const before = url.searchParams.get('before');
+      const after = url.searchParams.get('after');
+      const limit = url.searchParams.get('limit') || '50';
+      if ((before && after) || !/^[1-9][0-9]*$/.test(limit) || Number(limit) > 50 || [before, after].some(value => value !== null && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))))) return json({ error: 'invalid_cursor' }, 400);
+      return resultResponse(await room.messagePage({ before: before === null ? null : Number(before), after: after === null ? null : Number(after), limit: Number(limit), generation: url.searchParams.get('generation') }));
+    }
     if (request.method === 'POST' && match[2] === '/messages') {
       const body = await readJson(request, 65536);
       if (body.error) return resultResponse(body);
@@ -279,6 +296,9 @@ export class PairingRegistry extends DurableObject {
       this.sql.exec('ALTER TABLE room_usage ADD COLUMN deleting_files INTEGER');
     }
     this.sql.exec('CREATE TABLE IF NOT EXISTS cleanup (id INTEGER PRIMARY KEY CHECK(id = 1), phase TEXT NOT NULL, cursor TEXT NOT NULL, target_bytes INTEGER)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS reservations (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS registry_metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL)');
+    this.roomQueues = new Map();
   }
 
   rememberUsage(roomId, usage) {
@@ -293,7 +313,7 @@ export class PairingRegistry extends DurableObject {
   }
 
   storageBytes() {
-    return this.sql.databaseSize + this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM room_usage').one().bytes;
+    return this.sql.databaseSize + this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM room_usage').one().bytes + this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM reservations').one().bytes;
   }
 
   async resumeCleanup() {
@@ -302,15 +322,32 @@ export class PairingRegistry extends DurableObject {
     }
   }
 
+  withRoom(roomId, work) {
+    const previous = this.roomQueues.get(roomId) || Promise.resolve();
+    const pending = previous.then(work);
+    const settled = pending.then(() => {}, () => {});
+    this.roomQueues.set(roomId, settled);
+    settled.then(() => { if (this.roomQueues.get(roomId) === settled) this.roomQueues.delete(roomId); });
+    return pending;
+  }
+
+  startCleanup() {
+    const started = this.sql.exec("INSERT OR IGNORE INTO cleanup (id, phase, cursor) VALUES (1, 'refresh', '') RETURNING id").toArray().length;
+    if (started) this.sql.exec('INSERT INTO registry_metadata (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', 'maintenanceStartedAt', Date.now());
+  }
+
+  finishCleanup() {
+    this.sql.exec('DELETE FROM cleanup');
+    this.sql.exec('INSERT INTO registry_metadata (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', 'lastMaintenanceSuccessAt', Date.now());
+  }
+
   async maintainRooms() {
-    return this.ctx.blockConcurrencyWhile(async () => {
-      this.sql.exec("INSERT OR IGNORE INTO cleanup (id, phase, cursor) VALUES (1, 'refresh', '')");
-      await this.resumeCleanup();
-    });
+    this.startCleanup();
+    await this.resumeCleanup();
   }
 
   async refreshRoom(roomId) {
-    return this.ctx.blockConcurrencyWhile(async () => { await this.refreshUsage(roomId); });
+    await this.withRoom(roomId, () => this.refreshUsage(roomId));
   }
 
   async refreshUsage(roomId) {
@@ -320,16 +357,39 @@ export class PairingRegistry extends DurableObject {
     if (usage.oldestAt === null && !this.currentInvite(roomId) && await room.reclaimIfEmpty()) {
       this.sql.exec('DELETE FROM invites WHERE room_id = ?', roomId);
       this.sql.exec('DELETE FROM room_usage WHERE room_id = ?', roomId);
+      this.sql.exec('DELETE FROM reservations WHERE room_id = ?', roomId);
       return null;
     }
-    this.rememberUsage(roomId, usage);
+    this.ctx.storage.transactionSync(() => {
+      this.rememberUsage(roomId, usage);
+      this.sql.exec('DELETE FROM reservations WHERE room_id = ?', roomId);
+    });
     return usage;
   }
 
+  reserveCapacity(roomId, bytes) {
+    if (this.storageBytes() + bytes >= STORAGE_HIGH_WATER) {
+      if (!this.sql.exec('SELECT 1 FROM room_usage WHERE oldest_at IS NOT NULL LIMIT 1').toArray().length) return { error: 'storage_full', status: 507 };
+      this.startCleanup();
+      if (bytes > MESSAGE_WRITE_HEADROOM) this.sql.exec("UPDATE cleanup SET target_bytes = max(coalesce(target_bytes, 0), ?) WHERE id = 1 AND phase = 'refresh'", bytes);
+      return { error: 'storage_cleaning', status: 503, retryAfter: 1 };
+    }
+    this.sql.exec('INSERT INTO reservations (room_id, bytes) VALUES (?, ?)', roomId, bytes);
+    return null;
+  }
+
+  async commitUsage(roomId, room) {
+    const usage = await room.storageUsage();
+    this.ctx.storage.transactionSync(() => {
+      this.rememberUsage(roomId, usage);
+      this.sql.exec('DELETE FROM reservations WHERE room_id = ?', roomId);
+    });
+  }
+
   async joinSpace(code) {
-    return this.ctx.blockConcurrencyWhile(async () => {
-      const invite = this.findInvite(code);
-      if (invite.error) return invite;
+    const invite = this.findInvite(code);
+    if (invite.error) return invite;
+    return this.withRoom(invite.roomId, async () => {
       if (!this.hasRoom(invite.roomId)) return { error: 'code_expired', status: 404 };
       const device = await this.env.SYNC_ROOMS.getByName(invite.roomId).addDevice();
       if (device.error) return device;
@@ -339,121 +399,114 @@ export class PairingRegistry extends DurableObject {
   }
 
   async createSpace() {
-    return this.ctx.blockConcurrencyWhile(async () => {
-      if (this.storageBytes() + MESSAGE_WRITE_HEADROOM >= STORAGE_HIGH_WATER) {
-        if (!this.sql.exec('SELECT 1 FROM room_usage WHERE oldest_at IS NOT NULL LIMIT 1').toArray().length) {
-          return { error: 'storage_full', status: 507 };
-        }
-        this.sql.exec("INSERT OR IGNORE INTO cleanup (id, phase, cursor) VALUES (1, 'refresh', '')");
-        await this.resumeCleanup();
-        return { error: 'storage_cleaning', status: 503, retryAfter: 1 };
-      }
-      const roomId = crypto.randomUUID();
-      this.rememberUsage(roomId, { bytes: MESSAGE_WRITE_HEADROOM, oldestAt: null, deletingFiles: 0 });
+    const roomId = crypto.randomUUID();
+    return this.withRoom(roomId, async () => {
+      const denied = this.reserveCapacity(roomId, MESSAGE_WRITE_HEADROOM);
+      if (denied) { await this.resumeCleanup(); return denied; }
+      this.rememberUsage(roomId, { bytes: 0, oldestAt: null, deletingFiles: 0 });
       const room = this.env.SYNC_ROOMS.getByName(roomId);
       const device = await room.initialize();
-      this.rememberUsage(roomId, await room.maintain(roomId));
-      const invite = this.createInvite(roomId);
+      await room.maintain(roomId);
+      await this.commitUsage(roomId, room);
+      const invite = this.allocateInvite(roomId);
       if (invite.error) return invite;
       return { roomId, ...device, ...invite, pairing: invite };
     });
   }
 
   async storeMessage(roomId, deviceId, clientId, text) {
-    return this.ctx.blockConcurrencyWhile(async () => {
+    return this.withRoom(roomId, async () => {
       if (!this.hasRoom(roomId)) return { error: 'not_found', status: 404 };
       const room = this.env.SYNC_ROOMS.getByName(roomId);
-      this.rememberUsage(roomId, await room.maintain(roomId));
+      if (!await this.refreshUsage(roomId)) return { error: 'not_found', status: 404 };
       const existing = await room.findMessage(deviceId, clientId);
       if (existing) return existing;
-      if (this.storageBytes() + MESSAGE_WRITE_HEADROOM >= STORAGE_HIGH_WATER) {
-        if (!this.sql.exec('SELECT 1 FROM room_usage WHERE oldest_at IS NOT NULL LIMIT 1').toArray().length) {
-          return { error: 'storage_full', status: 507 };
-        }
-        this.sql.exec("INSERT OR IGNORE INTO cleanup (id, phase, cursor) VALUES (1, 'refresh', '')");
-        await this.resumeCleanup();
-        return { error: 'storage_cleaning', status: 503, retryAfter: 1 };
-      }
-      const result = await room.addMessage(deviceId, clientId, text);
-      this.rememberUsage(roomId, await room.storageUsage());
-      return result;
+      const denied = this.reserveCapacity(roomId, MESSAGE_WRITE_HEADROOM);
+      if (denied) { await this.resumeCleanup(); return denied; }
+      try { return await room.addMessage(deviceId, clientId, text); }
+      finally { await this.commitUsage(roomId, room); }
     });
   }
 
   async prepareUpload(roomId, deviceId, file) {
-    return this.ctx.blockConcurrencyWhile(async () => {
+    return this.withRoom(roomId, async () => {
       if (!this.hasRoom(roomId)) return { error: 'not_found', status: 404 };
       const room = this.env.SYNC_ROOMS.getByName(roomId);
-      const usage = await room.maintain(roomId);
-      this.rememberUsage(roomId, usage);
-      const existing = await room.findMessage(deviceId, file.clientId);
+      if (!await this.refreshUsage(roomId)) return { error: 'not_found', status: 404 };
+      const existing = await room.findMessage(deviceId, file.clientId) || await room.uploadInfo(deviceId, file.clientId);
       if (existing) return existing;
-      const upload = await room.uploadInfo(deviceId, file.clientId);
-      if (upload) return upload;
-      const reserve = fileReserve(file.size);
-      if (this.storageBytes() + reserve >= STORAGE_HIGH_WATER) {
-        if (!this.sql.exec('SELECT 1 FROM room_usage WHERE oldest_at IS NOT NULL LIMIT 1').toArray().length) return { error: 'storage_full', status: 507 };
-        this.sql.exec("INSERT OR IGNORE INTO cleanup (id, phase, cursor) VALUES (1, 'refresh', '')");
-        // A refresh remembers the pending reservation until actual usage is checked.
-        this.sql.exec("UPDATE cleanup SET target_bytes = max(coalesce(target_bytes, 0), ?) WHERE id = 1 AND phase = 'refresh'", reserve);
-        await this.resumeCleanup();
-        return { error: 'storage_cleaning', status: 503, retryAfter: 1 };
-      }
-      this.rememberUsage(roomId, { ...usage, bytes: usage.bytes + reserve });
-      const result = await room.beginUpload(deviceId, file);
-      this.rememberUsage(roomId, await room.storageUsage());
-      return result;
+      const denied = this.reserveCapacity(roomId, fileReserve(file.size));
+      if (denied) { await this.resumeCleanup(); return denied; }
+      try { return await room.beginUpload(deviceId, file); }
+      finally { await this.commitUsage(roomId, room); }
     });
   }
 
+  async diagnostics() {
+    const checkedAt = Date.now();
+    const probe = this.sql.exec('SELECT 1 AS ok').one().ok === 1;
+    const metadata = Object.fromEntries(this.sql.exec('SELECT key, value FROM registry_metadata').toArray().map(row => [row.key, row.value]));
+    const cleanup = this.sql.exec('SELECT phase, cursor, target_bytes AS targetBytes FROM cleanup WHERE id = 1').toArray()[0];
+    const roomCount = this.sql.exec('SELECT count(*) AS count FROM room_usage').one().count;
+    const roomBytes = this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM room_usage').one().bytes;
+    const reservedBytes = this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM reservations').one().bytes;
+    const sample = this.sql.exec('SELECT room_id FROM room_usage ORDER BY room_id LIMIT 1').toArray()[0];
+    let roomDatabase = null;
+    if (sample) {
+      try { roomDatabase = await this.env.SYNC_ROOMS.getByName(sample.room_id).databaseProbe(); }
+      catch { roomDatabase = { ok: false }; }
+    }
+    return {
+      ok: probe && roomDatabase?.ok !== false, checkedAt,
+      database: { registry: { ok: probe, bytes: this.sql.databaseSize }, sampledRoom: roomDatabase },
+      storage: { scope: 'this-project', bytes: this.sql.databaseSize + roomBytes + reservedBytes, roomBytes, reservedBytes, roomCount, highWaterBytes: STORAGE_HIGH_WATER, cleanupBytes: STORAGE_CLEANUP_BYTES, accountUsageAvailable: false },
+      maintenance: { running: Boolean(cleanup), phase: cleanup?.phase || null, scannedRooms: cleanup?.phase === 'refresh' ? this.sql.exec('SELECT count(*) AS count FROM room_usage WHERE room_id <= ?', cleanup.cursor).one().count : null, targetBytes: cleanup?.targetBytes ?? null, startedAt: metadata.maintenanceStartedAt || null, lastSuccessAt: metadata.lastMaintenanceSuccessAt || null, lastFailureAt: metadata.lastMaintenanceFailureAt || null, lastFailureCode: metadata.lastMaintenanceFailureAt ? 'maintenance_failed' : null, nextAlarmAt: await this.ctx.storage.getAlarm() }
+    };
+  }
+
   async alarm() {
-    await this.ctx.blockConcurrencyWhile(async () => {
-      let state = this.sql.exec('SELECT phase, cursor, target_bytes FROM cleanup WHERE id = 1').toArray()[0];
-      if (!state) return;
-      if (state.phase === 'refresh') {
-        const rooms = this.sql.exec('SELECT room_id FROM room_usage WHERE room_id > ? ORDER BY room_id LIMIT 10', state.cursor).toArray();
-        for (const { room_id: roomId } of rooms) {
-          await this.refreshUsage(roomId);
-        }
-        if (rooms.length === 10) {
-          this.sql.exec('UPDATE cleanup SET cursor = ? WHERE id = 1', rooms[9].room_id);
-          await this.ctx.storage.setAlarm(Date.now() + 1000);
-          return;
-        }
-        const total = this.storageBytes();
-        if (total + Math.max(MESSAGE_WRITE_HEADROOM, state.target_bytes || 0) < STORAGE_HIGH_WATER) {
-          this.sql.exec('DELETE FROM cleanup');
-          return;
-        }
-        state = { phase: 'prune', target_bytes: Math.max(0, total - STORAGE_CLEANUP_BYTES) };
-        this.sql.exec("UPDATE cleanup SET phase = 'prune', target_bytes = ? WHERE id = 1", state.target_bytes);
+    try { await this.runMaintenance(); }
+    catch {
+      this.sql.exec('INSERT INTO registry_metadata (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', 'lastMaintenanceFailureAt', Date.now());
+      console.error(JSON.stringify({ event: 'sync_maintenance_error', code: 'maintenance_failed' }));
+      throw new Error('maintenance_failed');
+    }
+  }
+
+  async runMaintenance() {
+    let state = this.sql.exec('SELECT phase, cursor, target_bytes FROM cleanup WHERE id = 1').toArray()[0];
+    if (!state) return;
+    if (state.phase === 'refresh') {
+      const rooms = this.sql.exec('SELECT room_id FROM room_usage WHERE room_id > ? ORDER BY room_id LIMIT 10', state.cursor).toArray();
+      await Promise.all(rooms.map(({ room_id: roomId }) => this.refreshRoom(roomId)));
+      if (rooms.length === 10) {
+        this.sql.exec('UPDATE cleanup SET cursor = ? WHERE id = 1', rooms[9].room_id);
         await this.ctx.storage.setAlarm(Date.now() + 1000);
         return;
       }
-      for (let batch = 0; batch < 10 && this.storageBytes() > state.target_bytes; batch += 1) {
-        // Older room snapshots must be refreshed before deciding which history to prune.
-        const pending = this.sql.exec('SELECT room_id FROM room_usage WHERE deleting_files IS NULL OR deleting_files > 0 ORDER BY oldest_at, room_id LIMIT 1').toArray()[0];
-        if (pending) {
-          await this.refreshUsage(pending.room_id);
-          continue;
-        }
-        const oldest = this.sql.exec('SELECT room_id, oldest_at FROM room_usage WHERE oldest_at IS NOT NULL ORDER BY oldest_at, room_id LIMIT 1').toArray()[0];
-        if (!oldest) break;
-        const room = this.env.SYNC_ROOMS.getByName(oldest.room_id);
+      const total = this.storageBytes();
+      const pending = this.sql.exec('SELECT target_bytes FROM cleanup WHERE id = 1').one().target_bytes;
+      if (total + Math.max(MESSAGE_WRITE_HEADROOM, pending || 0) < STORAGE_HIGH_WATER) { this.finishCleanup(); return; }
+      state = { phase: 'prune', target_bytes: Math.max(0, total - STORAGE_CLEANUP_BYTES) };
+      this.sql.exec("UPDATE cleanup SET phase = 'prune', target_bytes = ? WHERE id = 1", state.target_bytes);
+      await this.ctx.storage.setAlarm(Date.now() + 1000);
+      return;
+    }
+    for (let batch = 0; batch < 10 && this.storageBytes() > state.target_bytes; batch += 1) {
+      const pending = this.sql.exec('SELECT room_id FROM room_usage WHERE deleting_files IS NULL OR deleting_files > 0 ORDER BY oldest_at, room_id LIMIT 1').toArray()[0];
+      if (pending) { await this.refreshRoom(pending.room_id); continue; }
+      const oldest = this.sql.exec('SELECT room_id, oldest_at FROM room_usage WHERE oldest_at IS NOT NULL ORDER BY oldest_at, room_id LIMIT 1').toArray()[0];
+      if (!oldest) break;
+      await this.withRoom(oldest.room_id, async () => {
         const usage = await this.refreshUsage(oldest.room_id);
-        if (!usage) continue;
-        if (this.storageBytes() <= state.target_bytes) break;
-        if (usage.deletingFiles) continue;
+        if (!usage || this.storageBytes() <= state.target_bytes || usage.deletingFiles) return;
         const first = this.sql.exec('SELECT room_id, oldest_at FROM room_usage WHERE oldest_at IS NOT NULL ORDER BY oldest_at, room_id LIMIT 2').toArray();
-        if (first[0]?.room_id !== oldest.room_id) continue;
-        this.rememberUsage(oldest.room_id, await room.pruneOldest(first[1]?.oldest_at ?? Number.MAX_SAFE_INTEGER));
-      }
-      if (this.storageBytes() <= state.target_bytes || !this.sql.exec('SELECT 1 FROM room_usage WHERE oldest_at IS NOT NULL LIMIT 1').toArray().length) {
-        this.sql.exec('DELETE FROM cleanup');
-      } else {
-        await this.ctx.storage.setAlarm(Date.now() + 1000);
-      }
-    });
+        if (first[0]?.room_id !== oldest.room_id) return;
+        this.rememberUsage(oldest.room_id, await this.env.SYNC_ROOMS.getByName(oldest.room_id).pruneOldest(first[1]?.oldest_at ?? Number.MAX_SAFE_INTEGER));
+      });
+    }
+    if (this.storageBytes() <= state.target_bytes || !this.sql.exec('SELECT 1 FROM room_usage WHERE oldest_at IS NOT NULL LIMIT 1').toArray().length) this.finishCleanup();
+    else await this.ctx.storage.setAlarm(Date.now() + 1000);
   }
 
   takeLimit(key, maximum, lifetime) {
@@ -471,6 +524,10 @@ export class PairingRegistry extends DurableObject {
   }
 
   createInvite(roomId) {
+    return this.withRoom(roomId, () => this.allocateInvite(roomId));
+  }
+
+  allocateInvite(roomId) {
     if (!this.hasRoom(roomId)) return { error: 'not_found', status: 404 };
     const existing = this.currentInvite(roomId);
     if (existing) return existing;
@@ -516,11 +573,15 @@ export class SyncRoom extends DurableObject {
     }
     this.sql.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
     this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'lastActiveAt', String(Date.now()));
+    this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'historyGeneration', crypto.randomUUID());
     this.lastActivity = Number(this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt').one().value);
     this.sql.exec('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL, device_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, attachment TEXT, UNIQUE(device_id, client_id))');
     if (!this.sql.exec('PRAGMA table_info(messages)').toArray().some(column => column.name === 'attachment')) this.sql.exec('ALTER TABLE messages ADD COLUMN attachment TEXT');
     this.sql.exec('CREATE INDEX IF NOT EXISTS messages_expiry ON messages(created_at)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS files (file_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, client_id TEXT NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, message_id INTEGER, reserved_bytes INTEGER NOT NULL, UNIQUE(device_id, client_id))');
+    const fileColumns = this.sql.exec('PRAGMA table_info(files)').toArray();
+    if (!fileColumns.some(column => column.name === 'received_bytes')) this.sql.exec('ALTER TABLE files ADD COLUMN received_bytes INTEGER');
+    if (!fileColumns.some(column => column.name === 'received_chunks')) this.sql.exec('ALTER TABLE files ADD COLUMN received_chunks INTEGER');
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_shards (file_id TEXT NOT NULL, shard_index INTEGER NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(file_id, shard_index))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_upload_chunks (file_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, size INTEGER NOT NULL, received INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(file_id, chunk_index))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS download_tickets (ticket TEXT PRIMARY KEY, file_id TEXT NOT NULL, device_id TEXT NOT NULL, expires_at INTEGER NOT NULL)');
@@ -585,13 +646,50 @@ export class SyncRoom extends DurableObject {
     if (!this.initialized) return null;
     return {
       createdAt: Number(this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'createdAt').one().value),
-      messages: this.messages()
+      ...this.messagePage()
     };
   }
 
   messages() {
     if (!this.initialized) return [];
     return this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages ORDER BY id').toArray().map(publicMessage);
+  }
+
+  historySnapshot(firstId) {
+    const bounds = this.sql.exec('SELECT min(id) AS oldestId, max(id) AS latestId FROM messages').one();
+    return {
+      generation: this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'historyGeneration').one().value,
+      ...bounds,
+      hasMore: firstId !== undefined && bounds.oldestId !== null && bounds.oldestId < firstId
+    };
+  }
+
+  messagePage({ before = null, after = null, limit = 50, generation = null } = {}) {
+    if (!this.initialized) return { error: 'not_found', status: 404 };
+    this.pruneExpired();
+    const bounds = this.historySnapshot();
+    let historyMode = 'replace';
+    let rows;
+    if (before !== null && (!generation || generation === bounds.generation)) {
+      rows = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages WHERE id < ? ORDER BY id DESC LIMIT ?', before, limit).toArray().reverse();
+      historyMode = 'prepend';
+    } else if (after !== null && generation === bounds.generation && (after === bounds.latestId || (bounds.oldestId !== null && after >= bounds.oldestId && after <= bounds.latestId))) {
+      rows = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages WHERE id > ? ORDER BY id', after).toArray();
+      historyMode = 'append';
+    } else {
+      rows = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages ORDER BY id DESC LIMIT ?', limit).toArray().reverse();
+    }
+    return { messages: rows.map(publicMessage), history: this.historySnapshot(rows[0]?.id ?? before ?? after ?? undefined), historyMode };
+  }
+
+  historyChanged(type = 'history') {
+    this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
+    const rows = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages ORDER BY id DESC LIMIT 50').toArray().reverse();
+    this.broadcast({ type, messages: rows.map(publicMessage), history: this.historySnapshot(rows[0]?.id), historyMode: 'replace' });
+  }
+
+  databaseProbe() {
+    return { ok: this.sql.exec('SELECT 1 AS ok').one().ok === 1, initialized: this.initialized, bytes: this.sql.databaseSize };
   }
 
   storageUsage() {
@@ -606,7 +704,7 @@ export class SyncRoom extends DurableObject {
   pruneExpired() {
     if (!this.initialized) return 0;
     const deleted = this.sql.exec('DELETE FROM messages WHERE created_at <= ? RETURNING id', Date.now() - MESSAGE_LIFETIME).toArray();
-    if (deleted.length) this.broadcast({ type: 'history', messages: this.messages() });
+    if (deleted.length) this.historyChanged();
     this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading' AND updated_at <= ?", Date.now() - UPLOAD_LIFETIME);
     this.sql.exec('DELETE FROM download_tickets WHERE expires_at <= ?', Date.now());
     return deleted.length;
@@ -655,7 +753,7 @@ export class SyncRoom extends DurableObject {
       if (ids.length) this.sql.exec(`DELETE FROM messages WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids);
       const upload = selected.find(item => item.uploadId !== null);
       if (upload) this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE file_id = ?", upload.uploadId);
-      if (ids.length) this.broadcast({ type: 'history', messages: this.messages() });
+      if (ids.length) this.historyChanged();
       await this.cleanupFiles();
       await this.scheduleAlarm();
       return this.storageUsage();
@@ -673,17 +771,26 @@ export class SyncRoom extends DurableObject {
 
   uploadInfo(deviceId, clientId) {
     if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
-    const file = this.sql.exec('SELECT file_id, status FROM files WHERE device_id = ? AND client_id = ?', deviceId, clientId).toArray()[0];
+    const file = this.sql.exec('SELECT file_id, status, received_bytes, received_chunks FROM files WHERE device_id = ? AND client_id = ?', deviceId, clientId).toArray()[0];
     if (!file) return null;
     if (file.status !== 'uploading') return { error: 'upload_unavailable', status: 409 };
-    return { uploadId: file.file_id, chunkSize: FILE_CHUNK_SIZE, receivedBytes: this.sql.exec('SELECT coalesce(sum(size), 0) AS bytes FROM file_upload_chunks WHERE file_id = ? AND received = 1', file.file_id).one().bytes };
+    this.uploadProgress(file);
+    return { uploadId: file.file_id, chunkSize: FILE_CHUNK_SIZE, receivedBytes: file.received_bytes };
+  }
+
+  uploadProgress(file) {
+    if (file.received_bytes !== null && file.received_chunks !== null) return;
+    const progress = this.sql.exec('SELECT coalesce(sum(size), 0) AS bytes, count(*) AS count FROM file_upload_chunks WHERE file_id = ? AND received = 1', file.file_id).one();
+    this.sql.exec('UPDATE files SET received_bytes = ?, received_chunks = ? WHERE file_id = ?', progress.bytes, progress.count, file.file_id);
+    file.received_bytes = progress.bytes;
+    file.received_chunks = progress.count;
   }
 
   async beginUpload(deviceId, file) {
     const existing = this.findMessage(deviceId, file.clientId) || this.uploadInfo(deviceId, file.clientId);
     if (existing) return existing;
     const uploadId = crypto.randomUUID();
-    this.sql.exec('INSERT INTO files (file_id, device_id, client_id, name, type, size, text, status, created_at, updated_at, reserved_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', uploadId, deviceId, file.clientId, file.name, file.type, file.size, file.text, 'uploading', Date.now(), Date.now(), fileReserve(file.size));
+    this.sql.exec('INSERT INTO files (file_id, device_id, client_id, name, type, size, text, status, created_at, updated_at, reserved_bytes, received_bytes, received_chunks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)', uploadId, deviceId, file.clientId, file.name, file.type, file.size, file.text, 'uploading', Date.now(), Date.now(), fileReserve(file.size));
     await this.scheduleAlarm();
     return { uploadId, chunkSize: FILE_CHUNK_SIZE, receivedBytes: 0, created: true };
   }
@@ -699,8 +806,9 @@ export class SyncRoom extends DurableObject {
       const shardIndex = Math.floor(index * FILE_CHUNK_SIZE / FILE_SHARD_SIZE);
       const shard = this.env.FILE_SHARDS.getByName(`${uploadId}:${shardIndex}`);
       const tracked = this.sql.exec('SELECT bytes FROM file_shards WHERE file_id = ? AND shard_index = ?', uploadId, shardIndex).toArray()[0];
-      const previous = this.sql.exec('SELECT size FROM file_upload_chunks WHERE file_id = ? AND chunk_index = ?', uploadId, index).toArray()[0];
-      const received = this.sql.exec('SELECT count(*) AS count FROM file_upload_chunks WHERE file_id = ? AND received = 1', uploadId).one().count;
+      const previous = this.sql.exec('SELECT size, received FROM file_upload_chunks WHERE file_id = ? AND chunk_index = ?', uploadId, index).toArray()[0];
+      this.uploadProgress(file);
+      const received = file.received_chunks;
       if (!previous && index !== received) return { error: 'invalid_chunk', status: 400 };
       const allocation = bytes.byteLength + 65536;
       if (!previous) {
@@ -714,12 +822,12 @@ export class SyncRoom extends DurableObject {
       if (result.error) return result;
       this.ctx.storage.transactionSync(() => {
         this.sql.exec('UPDATE file_upload_chunks SET received = 1 WHERE file_id = ? AND chunk_index = ?', uploadId, index);
-        this.sql.exec('UPDATE files SET updated_at = ? WHERE file_id = ?', Date.now(), uploadId);
+        this.sql.exec('UPDATE files SET updated_at = ?, received_bytes = received_bytes + ?, received_chunks = received_chunks + ? WHERE file_id = ?', Date.now(), previous?.received ? 0 : bytes.byteLength, previous?.received ? 0 : 1, uploadId);
         const accounted = (tracked?.bytes || 0) + (previous ? 0 : allocation);
         this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', Math.max(result.bytes, accounted), uploadId, shardIndex);
       });
       await this.scheduleAlarm();
-      return { receivedBytes: this.sql.exec('SELECT coalesce(sum(size), 0) AS bytes FROM file_upload_chunks WHERE file_id = ? AND received = 1', uploadId).one().bytes };
+      return { receivedBytes: file.received_bytes + (previous?.received ? 0 : bytes.byteLength) };
     });
   }
 
@@ -730,7 +838,8 @@ export class SyncRoom extends DurableObject {
       if (!file || file.status === 'deleting' || (file.status === 'uploading' && file.updated_at + UPLOAD_LIFETIME <= Date.now())) return { error: 'not_found', status: 404 };
       const existing = this.findMessage(deviceId, file.client_id);
       if (existing) return existing;
-      if (this.sql.exec('SELECT coalesce(sum(size), 0) AS bytes FROM file_upload_chunks WHERE file_id = ? AND received = 1', uploadId).one().bytes !== file.size) return { error: 'upload_incomplete', status: 409 };
+      this.uploadProgress(file);
+      if (file.received_bytes !== file.size) return { error: 'upload_incomplete', status: 409 };
       for (const shard of this.sql.exec('SELECT shard_index FROM file_shards WHERE file_id = ?', uploadId).toArray()) {
         const bytes = await this.env.FILE_SHARDS.getByName(`${uploadId}:${shard.shard_index}`).storageBytes();
         this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', bytes, uploadId, shard.shard_index);
@@ -739,10 +848,10 @@ export class SyncRoom extends DurableObject {
       const message = this.ctx.storage.transactionSync(() => {
         const created = this.sql.exec('INSERT INTO messages (client_id, device_id, text, created_at, attachment) VALUES (?, ?, ?, ?, ?) RETURNING id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment', file.client_id, deviceId, file.text, Date.now(), JSON.stringify(attachment)).one();
         this.sql.exec("UPDATE files SET status = 'complete', message_id = ?, created_at = ?, reserved_bytes = 0 WHERE file_id = ?", created.id, created.createdAt, uploadId);
-        this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500)');
+        if (this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500) RETURNING id').toArray().length) this.historyChanged();
         return publicMessage(created);
       });
-      this.broadcast({ type: 'message', message });
+      this.broadcast({ type: 'message', message, history: this.historySnapshot() });
       await this.cleanupFiles();
       await this.scheduleAlarm();
       return { message, created: true };
@@ -794,8 +903,8 @@ export class SyncRoom extends DurableObject {
       'INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?) RETURNING id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt',
       clientId, deviceId, text, Date.now()
     ).one();
-    this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500)');
-    this.broadcast({ type: 'message', message });
+    if (this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500) RETURNING id').toArray().length) this.historyChanged();
+    this.broadcast({ type: 'message', message, history: this.historySnapshot() });
     await this.scheduleAlarm();
     return { message, created: true };
   }
@@ -806,7 +915,7 @@ export class SyncRoom extends DurableObject {
     }
     this.sql.exec('DELETE FROM messages');
     this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading'");
-    this.broadcast({ type: 'cleared' });
+    this.historyChanged('cleared');
     await this.scheduleAlarm();
     return { ok: true };
   }
@@ -934,11 +1043,11 @@ export class SyncRoom extends DurableObject {
             if (done || !value?.byteLength) throw new Error('not_found');
             offset += value.byteLength;
             controller.enqueue(value);
-          } catch (error) {
-            await shardReader?.cancel(error).catch(() => {});
+          } catch {
+            await shardReader?.cancel().catch(() => {});
             shardReader?.releaseLock();
             shardReader = null;
-            controller.error(error);
+            controller.error(new Error('download_unavailable'));
           }
         },
         async cancel(reason) {
@@ -952,7 +1061,7 @@ export class SyncRoom extends DurableObject {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return json({ error: 'websocket_required' }, 426);
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ authDeadline: Date.now() + 10000, roomId: new URL(request.url).pathname.split('/')[3], expectedDeviceId: request.headers.get('X-Sync-Device') || null });
+    server.serializeAttachment({ authDeadline: Date.now() + 10000, roomId: new URL(request.url).pathname.split('/')[3], expectedDeviceId: request.headers.get('X-Sync-Device') || null, after: /^\d+$/.test(url.searchParams.get('after') || '') && Number.isSafeInteger(Number(url.searchParams.get('after'))) ? Number(url.searchParams.get('after')) : null, generation: url.searchParams.get('generation') });
     await this.scheduleAlarm();
     const protocols = (request.headers.get('Sec-WebSocket-Protocol') || '').split(',').map(value => value.trim());
     return new Response(null, { status: 101, webSocket: client, headers: protocols.includes('sync') ? { 'Sec-WebSocket-Protocol': 'sync' } : {} });
@@ -1007,7 +1116,7 @@ export class SyncRoom extends DurableObject {
       this.pruneExpired();
       this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'roomId', attachment.roomId);
       socket.serializeAttachment({ deviceId });
-      socket.send(JSON.stringify({ type: 'ready', deviceId, messages: this.messages(), pairing }));
+      socket.send(JSON.stringify({ type: 'ready', deviceId, ...this.messagePage({ after: attachment.after ?? null, generation: attachment.generation }), pairing }));
       return true;
     });
     await this.scheduleAlarm();
