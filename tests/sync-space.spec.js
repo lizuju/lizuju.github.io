@@ -3,6 +3,31 @@ const { createServer } = require('node:http');
 
 const { roomId, deviceId, token, keyId, authorize, message, profile, file, startSite } = require('./fixtures/sync-e2ee.cjs');
 
+test('shows the remaining pairing cooldown and enables joining when it expires', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the sync application is a desktop window');
+    await page.clock.install();
+    await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
+    await page.route('https://sync.test/**', route => route.fulfill({
+        headers: { 'Access-Control-Allow-Origin': '*' },
+        json: { offers: Array.from({ length: 5 }, () => ({ offerId: require('node:crypto').randomUUID() })) }
+    }));
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+    await page.evaluate(() => localStorage.setItem('gavin-sync-pair-attempts:join', JSON.stringify({
+        ids: Array.from({ length: 20 }, () => crypto.randomUUID()), expiresAt: Date.now() + 60000
+    })));
+    await page.locator('[data-sync-code]').fill('1234');
+    const join = page.locator('[data-sync-join]');
+    await join.click();
+    await expect(page.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncPairLimited');
+    await expect(join).toBeDisabled();
+    await expect(join).toContainText('秒后重试');
+    await page.clock.runFor(60100);
+    await expect(join).toBeEnabled();
+    await expect(join).toHaveText('加入空间');
+});
+
 test('reuses one ticket for preview and download, renews it near expiry and authenticates reconnects outside the URL', async ({ page, isMobile, browserName }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
     await page.clock.install();

@@ -190,7 +190,7 @@ export default {
     if (request.method === 'GET' && url.pathname === '/v1/pair/offers') return json(await registry.publicOffers());
     if (request.method === 'POST' && url.pathname === '/v1/pair') {
       const ipHash = await hash(request.headers.get('CF-Connecting-IP') || 'local');
-      const limit = await registry.takeLimit(`pair:${ipHash}`, 5, INVITE_LIFETIME);
+      const limit = await registry.takeLimit(`pair:${ipHash}`, 20, INVITE_LIFETIME);
       if (limit.error) return resultResponse(limit);
       const body = await readJson(request, 32768);
       if (body.error) return resultResponse(body);
