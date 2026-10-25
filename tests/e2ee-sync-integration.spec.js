@@ -108,6 +108,136 @@ const readSession = page => page.evaluate(async () => {
     return JSON.parse(new TextDecoder().decode(opened));
 });
 
+test('pairs the standalone chat with the desktop, restores its session and transfers an encrypted file across entries', async ({ browser, isMobile }, testInfo) => {
+    test.skip(isMobile, 'cross-entry pairing is exercised with isolated desktop contexts');
+    test.setTimeout(90000);
+    const contexts = await Promise.all(Array.from({ length: 2 }, () => browser.newContext({ acceptDownloads: true, viewport: { width: 1366, height: 900 } })));
+    if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
+    const [desktop, chat] = await Promise.all(contexts.map(context => context.newPage()));
+    const fromDesktop = 'cross-entry-desktop-private-message';
+    const fromChat = 'cross-entry-chat-private-message';
+    const file = { name: 'standalone-private-note.txt', mimeType: 'text/plain', buffer: text };
+    const chatScripts = [];
+    const chatWorkerUrls = [];
+    await chat.addInitScript(() => {
+        const createUrl = URL.createObjectURL.bind(URL);
+        URL.createObjectURL = blob => {
+            if (blob.type === 'audio/wav') window.recordedVoice = blob;
+            return createUrl(blob);
+        };
+        Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: {
+            async getUserMedia() {
+                const context = new AudioContext();
+                const oscillator = context.createOscillator();
+                const destination = context.createMediaStreamDestination();
+                oscillator.connect(destination);
+                oscillator.start();
+                await context.resume();
+                window.voiceSource = context;
+                return destination.stream;
+            }
+        } });
+    });
+    chat.on('response', response => { if (/\.js(?:\?|$)/.test(response.url()) && response.ok()) chatScripts.push(response.url()); });
+    chat.on('worker', worker => chatWorkerUrls.push(worker.url()));
+    for (const page of [desktop, chat]) page.on('request', request => {
+        if (!request.url().startsWith(apiOrigin)) return;
+        const body = request.postDataBuffer();
+        if (body) wireBodies.push(Buffer.from(body));
+        if (request.method() === 'POST' && /\/messages$/.test(request.url())) messageBodies.push(JSON.parse(body.toString()));
+    });
+    try {
+        await Promise.all([openApp(desktop), chat.goto(`${siteOrigin}/portfolio/chat/`)]);
+        await expect(chat.locator('[data-sync-window]')).toBeVisible();
+        await desktop.locator('[data-sync-create]').click();
+        await awaitOnline(desktop);
+        await expect(desktop.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/, { timeout: 30000 });
+        const code = await desktop.locator('[data-sync-pair-code]').textContent();
+        await chat.locator('[data-sync-code]').fill(code);
+        await chat.locator('[data-sync-join]').click();
+        await awaitOnline(chat);
+        const joined = await readSession(chat);
+        await expect.poll(async () => (await readSession(desktop)).keyring.currentKeyId).toBe(joined.keyring.currentKeyId);
+        const owner = await readSession(desktop);
+        expect(joined.roomId).toBe(owner.roomId);
+        expect(joined.deviceId).not.toBe(owner.deviceId);
+        expect(joined.trustedDevices[owner.deviceId]).toBe(owner.identity.publicKey);
+        expect(owner.trustedDevices[joined.deviceId]).toBe(joined.identity.publicKey);
+        expect(chatScripts.some(url => /^\/sync-pake\.[^/]+\.js$/.test(new URL(url).pathname))).toBe(true);
+
+        await sendText(desktop, fromDesktop);
+        await expect(chat.locator('[data-sync-messages]')).toContainText(fromDesktop);
+        await sendText(chat, fromChat);
+        await expect(desktop.locator('[data-sync-messages]')).toContainText(fromChat);
+        await chat.reload();
+        await awaitOnline(chat);
+        expect((await readSession(chat)).deviceId).toBe(joined.deviceId);
+        await expect(chat.locator('[data-sync-messages]')).toContainText(fromDesktop);
+        await expect(chat.locator('[data-sync-messages]')).toContainText(fromChat);
+
+        const uploadPath = testInfo.outputPath(file.name);
+        await writeFile(uploadPath, file.buffer);
+        await chat.locator('[data-sync-file-input]').setInputFiles(uploadPath);
+        await chat.locator('[data-sync-send]').click();
+        const attachment = desktop.locator('.sync-message').filter({ has: desktop.locator('.sync-attachment-name', { hasText: file.name }) });
+        await expect(attachment).toBeVisible({ timeout: 30000 });
+        expect(chatWorkerUrls.some(url => /^\/upload-fingerprint\.[^/]+\.js$/.test(new URL(url).pathname))).toBe(true);
+        const downloading = desktop.waitForEvent('download');
+        await attachment.locator('[data-sync-download-file]').click();
+        const download = await downloading;
+        expect(download.suggestedFilename()).toBe(file.name);
+        expect(await readFile(await download.path())).toEqual(file.buffer);
+
+        await expect(chat.locator('[data-sync-selected-file]')).toBeHidden();
+        await chat.locator('[data-sync-voice-record]').click();
+        await expect(chat.locator('[data-sync-voice-stop]')).toBeEnabled();
+        await expect(chat.locator('[data-sync-voice-time]')).not.toHaveText('00:00 / 01:00');
+        await chat.locator('[data-sync-voice-stop]').click();
+        await expect(chat.locator('[data-sync-voice-preview]')).toBeVisible();
+        const recorded = Buffer.from(await chat.evaluate(async () => [...new Uint8Array(await window.recordedVoice.arrayBuffer())]));
+        expect(recorded.subarray(0, 4).toString()).toBe('RIFF');
+        expect(recorded.readUInt32LE(24)).toBe(16000);
+        expect(recorded.readUInt16LE(22)).toBe(1);
+        expect(recorded.length).toBeLessThanOrEqual(44 + 16000 * 2 * 60);
+        await chat.evaluate(() => window.voiceSource.close());
+        await chat.locator('[data-sync-send]').click();
+        const voice = desktop.locator('.sync-message').filter({ has: desktop.locator('[data-sync-voice-play]') });
+        await expect(voice).toBeVisible({ timeout: 30000 });
+        const voiceDownloading = desktop.waitForEvent('download');
+        await voice.locator('[data-sync-download-file]').click();
+        const voiceDownload = await voiceDownloading;
+        expect(await readFile(await voiceDownload.path())).toEqual(recorded);
+
+        expect(messageBodies).toHaveLength(2);
+        expect(messageBodies.every(body => body.text.startsWith('e2ee1.'))).toBe(true);
+        const all = Buffer.concat(wireBodies);
+        expect(all.includes(recorded.subarray(0, 44))).toBe(false);
+        expect(all.includes(Buffer.from('durationMs'))).toBe(false);
+        expect(all.includes(Buffer.from('audio/wav'))).toBe(false);
+        for (const forbidden of [fromDesktop, fromChat, file.name, text.toString(), ...Object.values(owner.keyring.keys)]) {
+            expect(all.includes(Buffer.from(forbidden)), `backend must not receive ${forbidden}`).toBe(false);
+        }
+        for (const body of wireBodies) {
+            let value;
+            try { value = JSON.parse(body); } catch { continue; }
+            const inspect = value => {
+                if (typeof value === 'string') expect(value).not.toBe(code);
+                else if (Array.isArray(value)) value.forEach(inspect);
+                else if (value && typeof value === 'object') {
+                    expect(Object.hasOwn(value, 'code')).toBe(false);
+                    Object.values(value).forEach(inspect);
+                }
+            };
+            inspect(value);
+        }
+        const stored = await (await fetch(`${apiOrigin}/v1/spaces/${owner.roomId}/messages`, {
+            headers: { Origin: siteOrigin, Authorization: `Bearer ${owner.token}` }
+        })).json();
+        expect(stored.messages).toHaveLength(4);
+        expect(stored.messages.every(message => message.text.startsWith('e2ee1.'))).toBe(true);
+    } finally { await Promise.all(contexts.map(context => context.close())); }
+});
+
 test('recovers an accepted pairing after its final grant response is lost and acknowledges the persisted session', async ({ browser, isMobile }) => {
     test.skip(isMobile, 'real pairing recovery is exercised with isolated desktop contexts');
     test.setTimeout(60000);
@@ -389,7 +519,7 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
             const message = second.locator('.sync-message').filter({ has: second.locator('.sync-attachment-name', { hasText: file.name }) });
             await expect(message).toBeVisible({ timeout: 30000 });
             if (file.inline) for (const page of [first, second]) {
-                const image = page.locator('.sync-message').filter({ has: page.locator('.sync-attachment-name', { hasText: file.name }) }).locator('.sync-message-gif img');
+                const image = page.locator('.sync-message').filter({ has: page.locator('.sync-attachment-name', { hasText: file.name }) }).locator('.sync-message-image img');
                 await expect(image).toBeVisible({ timeout: 30000 });
                 await expect.poll(() => image.evaluate(image => [image.naturalWidth, image.naturalHeight])).toEqual([1, 1]);
             }

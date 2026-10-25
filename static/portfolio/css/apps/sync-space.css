@@ -337,8 +337,17 @@
     outline-offset: -4px;
 }
 
-.sync-message-feed {
+.sync-message-area {
+    position: relative;
+    display: flex;
     min-height: 80px;
+    min-width: 0;
+    flex: 1;
+}
+
+.sync-message-feed {
+    min-height: 0;
+    min-width: 0;
     flex: 1;
     padding: 12px 10px;
     overflow: auto;
@@ -424,9 +433,13 @@
     color: #b3261e;
 }
 
-.sync-message-gif {
+.sync-message-image {
     display: block;
+    position: relative;
+    width: 260px;
     max-width: 100%;
+    max-height: 200px;
+    aspect-ratio: 4 / 3;
     margin-top: 8px;
     padding: 0;
     border: 0;
@@ -434,11 +447,21 @@
     cursor: pointer;
 }
 
-.sync-message-gif img {
+.sync-message-image img {
     display: block;
-    max-width: min(260px, 100%);
-    max-height: 200px;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
+}
+
+.sync-message-image[data-state="loading"]::after {
+    content: '…';
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: #5c6868;
+    background: #e1e9e5;
 }
 
 .sync-message-text {
@@ -469,9 +492,58 @@
     overflow-wrap: anywhere;
 }
 
+.sync-attachment-info {
+    display: grid;
+    min-width: 0;
+    gap: 5px;
+    padding: 0;
+    border: 0;
+    color: inherit;
+    background: transparent;
+    font: inherit;
+    text-align: start;
+}
+
+.sync-message.has-preview[data-state="sent"],
+button.sync-attachment-info:not(:disabled) {
+    cursor: pointer;
+}
+
+.sync-message-image:focus-visible,
+button.sync-attachment-info:focus-visible {
+    outline: 2px dotted #000080;
+    outline-offset: 3px;
+}
+
 .sync-attachment-size {
     color: #5c6868;
     font-size: 11px;
+}
+
+.sync-voice-recording,
+.sync-voice-message {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.sync-voice-recording {
+    padding: 8px;
+    border: 2px inset #fff;
+    color: #791b15;
+    background: #fff7ef;
+}
+
+[data-sync-voice-time] {
+    font-variant-numeric: tabular-nums;
+}
+
+.sync-voice-preview,
+.sync-voice-message audio {
+    width: min(300px, 100%);
+    height: 38px;
 }
 
 .sync-attachment-actions {
@@ -480,7 +552,6 @@
     gap: 5px;
 }
 
-.sync-attachment-preview,
 .sync-attachment-download {
     min-height: 26px;
     padding: 2px 7px;
@@ -492,12 +563,10 @@
     cursor: default;
 }
 
-.sync-attachment-preview:active:not(:disabled),
 .sync-attachment-download:active:not(:disabled) {
     border-style: inset;
 }
 
-.sync-attachment-preview:disabled,
 .sync-attachment-download:disabled {
     color: #777;
     text-shadow: 1px 1px #fff;
@@ -511,9 +580,13 @@
 }
 
 .sync-latest {
-    max-width: calc(100% - 16px);
-    align-self: center;
-    margin: 5px 8px;
+    position: absolute;
+    right: 22px;
+    bottom: 12px;
+    z-index: 1;
+    max-width: calc(100% - 44px);
+    margin: 0;
+    box-shadow: 2px 3px 6px #0003;
 }
 
 .sync-compose {

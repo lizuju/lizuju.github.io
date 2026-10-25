@@ -1,4 +1,5 @@
 import { PreviewZoom } from './preview-zoom.js';
+import { createImageResource } from './sync-image-resource.js';
 
 (() => {
     const desktopApi = window.GavinDesktop;
@@ -30,7 +31,8 @@ import { PreviewZoom } from './preview-zoom.js';
             previous.pdfTask?.destroy().catch(() => {});
             previous.cleanup?.();
             previous.release?.();
-            if (previous.imageUrl) URL.revokeObjectURL(previous.imageUrl);
+            previous.imageLease?.release();
+            previous.ownedImageResource?.dispose();
             body.querySelector('img')?.removeAttribute('src');
             const video = body.querySelector('video');
             if (video) { video.pause(); video.removeAttribute('src'); video.load(); }
@@ -106,7 +108,7 @@ import { PreviewZoom } from './preview-zoom.js';
             const pdfjs = await import(/* webpackChunkName: "sync-pdf" */ 'pdfjs-dist/build/pdf.mjs');
             if (current !== state) return;
             pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).href;
-            const assets = new URL('assets/pdfjs/', document.baseURI).href;
+            const assets = new URL('assets/pdfjs/', new URL(document.body.dataset.assetRoot || '.', document.baseURI)).href;
             state.pdfTask = pdfjs.getDocument({
                 url: state.url, disableAutoFetch: true, disableStream: true, rangeChunkSize: 262144,
                 cMapUrl: `${assets}cmaps/`, cMapPacked: true, standardFontDataUrl: `${assets}standard_fonts/`,
@@ -166,30 +168,11 @@ import { PreviewZoom } from './preview-zoom.js';
                     const image = document.createElement('img');
                     image.alt = file.name;
                     body.append(image);
-                    if (file.kind === 'heic') {
-                        const response = await fetch(file.url, { signal: state.controller.signal });
-                        if (!response.ok) throw new Error('Image preview request failed');
-                        const original = await response.blob();
-                        if (current !== state) return;
-                        state.imageUrl = URL.createObjectURL(original.slice(0, original.size, 'image/heic'));
-                        image.src = state.imageUrl;
-                        try {
-                            await image.decode();
-                        } catch {
-                            if (current !== state) return;
-                            const { heicTo } = await import(/* webpackChunkName: "preview-heic" */ 'heic-to/csp');
-                            if (current !== state) return;
-                            const converted = await heicTo({ blob: original, type: 'image/jpeg', quality: 0.9 });
-                            if (current !== state) return;
-                            URL.revokeObjectURL(state.imageUrl);
-                            state.imageUrl = URL.createObjectURL(converted);
-                            image.src = state.imageUrl;
-                            await image.decode();
-                        }
-                    } else {
-                        image.src = file.url;
-                        await image.decode();
-                    }
+                    const resource = file.imageResource || (state.ownedImageResource = createImageResource({ kind: file.kind, name: file.name, load: async () => ({ url: file.url }) }));
+                    state.imageLease = await resource.acquire({ signal: state.controller.signal });
+                    if (current !== state) { state.imageLease.release(); return; }
+                    image.src = state.imageLease.url;
+                    await image.decode();
                     if (current !== state) return;
                     layout();
                     setStatus('syncPreviewImageHint');
@@ -217,7 +200,12 @@ import { PreviewZoom } from './preview-zoom.js';
                     state.cleanup = await renderDocumentPreview({ container: body, url: file.url, name: file.name, kind: file.kind, signal: state.controller.signal, translate });
                     if (current === state) setStatus('syncPreviewDocumentHint');
                 }
-            } catch { fail(state); }
+            } catch {
+                state.imageLease?.release();
+                state.imageLease = null;
+                (state.imageResource || state.ownedImageResource)?.clear();
+                fail(state);
+            }
         };
         new ResizeObserver(() => {
             clearTimeout(resizeTimer);

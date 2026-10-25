@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="__CONTENT_SECURITY_POLICY__">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#000080">
+    <meta name="description" content="GAVIN OS 联络站：端到端加密的多设备消息与文件同步。">
+    <title>联络站 | GAVIN OS</title>
+    <link rel="canonical" href="https://lizuju.github.io/portfolio/chat/">
+    <link rel="icon" type="image/png" href="../assets/avatar.png">
+    <link rel="stylesheet" href="../css/chat.css?v=__ASSET_VERSION__">
+</head>
+<body class="standalone-sync" data-asset-root="../">
+    <main class="retro-desktop" data-retro-desktop>
+        __SYNC_WINDOWS__
+        <button type="button" data-start-toggle aria-expanded="false" hidden></button>
+        <div data-start-menu hidden></div>
+        <footer class="desktop-taskbar">
+            <button class="task-window-button sync-task-button" type="button" data-sync-task disabled>
+                <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
+                <span data-i18n="desktopSyncSpace">联络站</span>
+                <span class="sync-unread-badge" data-sync-unread hidden></span>
+            </button>
+            <button class="task-window-button" type="button" data-sync-preview-task hidden>
+                <span class="window-app-icon window-app-icon--image" aria-hidden="true"></span>
+                <span data-sync-preview-task-title data-i18n="syncPreviewTitle">附件预览</span>
+            </button>
+            <div class="taskbar-spacer"></div>
+            <div class="taskbar-tray">
+                <button class="taskbar-language-toggle" type="button" data-taskbar-lang
+                    aria-label="切换为英文" title="切换为英文">EN</button>
+            </div>
+        </footer>
+    </main>
+    <script src="../js/content.js?v=__ASSET_VERSION__"></script>
+    <script src="../js/chat.js?v=__ASSET_VERSION__"></script>
+</body>
+</html>

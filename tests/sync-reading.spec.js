@@ -153,6 +153,50 @@ test('synchronizes a partial own-device read watermark without reading newer mes
     expect(chat.reads).toHaveLength(0);
 });
 
+test('floats unread navigation without moving the feed or reading position when it appears or clears', async ({ page, browserName, isMobile }) => {
+    const chat = await openChat(page, Array.from({ length: 40 }, (_, i) => message(i + 1, `History ${i + 1}`, otherId)),
+        [{ deviceId, messageId: 40 }]);
+    const feed = page.locator('[data-sync-feed]');
+    const latest = page.locator('[data-sync-latest]');
+    await page.clock.runFor(100);
+    if (browserName === 'webkit' && isMobile) await feed.evaluate(element => { element.scrollTop = 0; });
+    else {
+        await feed.hover();
+        await page.mouse.wheel(0, -100000);
+    }
+    await page.clock.runFor(200);
+    await expect.poll(() => feed.evaluate(element => element.scrollTop)).toBeLessThan(3);
+    const before = await feed.boundingBox();
+    const compose = await page.locator('[data-sync-send-form]').boundingBox();
+    const anchor = await page.locator('.sync-message').first().boundingBox();
+    await chat.incoming(41);
+    await page.clock.runFor(100);
+    await expect(latest).toBeVisible();
+    expect(await feed.boundingBox()).toEqual(before);
+    expect(await page.locator('[data-sync-send-form]').boundingBox()).toEqual(compose);
+    expect((await page.locator('.sync-message').first().boundingBox()).y).toBe(anchor.y);
+    const floating = await latest.boundingBox();
+    expect(floating.x).toBeGreaterThanOrEqual(before.x);
+    expect(floating.y).toBeGreaterThanOrEqual(before.y);
+    expect(floating.x + floating.width).toBeLessThanOrEqual(before.x + before.width);
+    expect(floating.y + floating.height).toBeLessThanOrEqual(before.y + before.height);
+    await chat.incoming(42);
+    await expect(latest).toContainText('2');
+    chat.receipt(deviceId, 42);
+    await expect(latest).toBeHidden();
+    await page.clock.runFor(100);
+    expect(await feed.boundingBox()).toEqual(before);
+    expect(await page.locator('[data-sync-send-form]').boundingBox()).toEqual(compose);
+    expect((await page.locator('.sync-message').first().boundingBox()).y).toBe(anchor.y);
+    await chat.incoming(43);
+    await latest.click();
+    await page.clock.runFor(800);
+    await expect(latest).toBeHidden();
+    await expect.poll(() => atBottom(page)).toBeLessThan(3);
+    expect(await feed.boundingBox()).toEqual(before);
+    expect(await page.locator('[data-sync-send-form]').boundingBox()).toEqual(compose);
+});
+
 test('cancels pending read confirmation while an ancestor is inert and requires the full dwell again', async ({ page }) => {
     const chat = await openChat(page, []);
     await chat.incoming(1);

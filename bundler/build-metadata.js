@@ -15,6 +15,7 @@ function createBuildMetadata(rootDirectory) {
     const hash = crypto.createHash('sha256');
 
     collectFiles(staticDirectory)
+        .concat(path.join(rootDirectory, 'src/sync-windows.html'))
         .filter((file) => !file.endsWith('sitemap.xml'))
         .sort()
         .forEach((file) => {

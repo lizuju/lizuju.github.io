@@ -37,7 +37,8 @@ test.beforeEach(async ({ page, isMobile }) => {
         file('camera.HEIC', 'application/octet-stream', heic),
         file('pixel.png', 'application/octet-stream', png),
         file('capture.MP4', 'application/octet-stream', mp4),
-        file('payload.bin', 'application/octet-stream', png)
+        file('payload.bin', 'application/octet-stream', png),
+        file('notes.txt', 'text/plain', Buffer.from('Preview retry text'))
     ];
     const devices = [profile('Mac')];
     const headers = {
@@ -90,7 +91,7 @@ test.beforeEach(async ({ page, isMobile }) => {
     await page.locator('[data-window-action="minimize"]').click();
     await page.locator('.desktop-shortcut[data-open-sync-space]').click();
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
-    await expect(page.locator('[data-sync-preview-file]')).toHaveCount(3);
+    await expect(page.locator('[data-sync-preview-file]')).toHaveCount(4);
 });
 
 test.afterEach(async () => {
@@ -130,6 +131,8 @@ test('previews real HEIC locally, loads its decoder only when needed, and releas
     await expect(preview.locator('[data-preview-zoom-value]')).toHaveText('100%');
     await preview.locator('[data-sync-preview-action="close"]').click();
     await expect(preview.locator('[data-sync-preview-body]')).toBeEmpty();
+    await expect(page.locator('.sync-message-image img[alt="camera.HEIC"]')).toHaveJSProperty('naturalWidth', 64);
+    await page.locator('[data-sync-action="close"]').click();
     expect(await page.evaluate(() => window.previewImageUrls.every(({ url }) => window.revokedPreviewImageUrls.includes(url)))).toBe(true);
 });
 
@@ -137,7 +140,7 @@ test('closing during the HEIC decoder load cannot replace the next image or reta
     await page.evaluate(() => {
         const decode = HTMLImageElement.prototype.decode;
         HTMLImageElement.prototype.decode = function () {
-            if (this.alt === 'camera.HEIC' && !window.forcedHeicFailure) {
+            if (!this.alt && !window.forcedHeicFailure) {
                 window.forcedHeicFailure = true;
                 return Promise.reject(new DOMException('HEIC native decoding unavailable', 'EncodingError'));
             }
@@ -165,7 +168,9 @@ test('closing during the HEIC decoder load cannot replace the next image or reta
         releaseDecoder();
         await decoderLoaded;
         await expect(image).toHaveAttribute('alt', 'pixel.png');
-        expect(await page.evaluate(() => window.previewImageUrls.every(({ url }) => window.revokedPreviewImageUrls.includes(url)))).toBe(true);
+        await page.locator('[data-sync-preview-action="close"]').click();
+        await page.locator('[data-sync-action="close"]').click();
+        await expect.poll(() => page.evaluate(() => window.previewImageUrls.every(({ url }) => window.revokedPreviewImageUrls.includes(url)))).toBe(true);
     } finally { releaseDecoder(); }
 });
 
@@ -194,13 +199,17 @@ test('limits device names to eight Unicode characters and keeps the saved name a
 });
 
 test('opening the same failed attachment retries without closing its preview window', async ({ page }) => {
+    await page.locator('.sync-message').filter({ hasText: 'pixel.png' }).scrollIntoViewIfNeeded();
+    await expect(page.locator('.sync-message-image img[alt="pixel.png"]')).toHaveJSProperty('naturalWidth', 1);
+    const attempts = downloadAttempts;
     failDownloads = 1;
-    await page.locator('[data-sync-preview-file]').nth(1).click();
+    const attachment = page.locator('.sync-message').filter({ hasText: 'notes.txt' }).locator('[data-sync-preview-file]');
+    await attachment.click();
     await expect(page.locator('[data-sync-preview-status]')).toHaveText('文件无法预览，你仍可下载原文件。');
     await page.locator('[data-sync-preview-action="minimize"]').click();
-    await page.locator('[data-sync-preview-file]').nth(1).click();
-    await expect(page.locator('[data-sync-preview-body] img')).toHaveJSProperty('naturalWidth', 1);
-    expect(downloadAttempts).toBe(2);
+    await attachment.click();
+    await expect(page.locator('[data-sync-preview-body]')).toHaveText('Preview retry text');
+    expect(downloadAttempts).toBe(attempts + 2);
 });
 
 test('previews a PNG with a generic MIME type and keeps unsupported extensions download-only', async ({ page }) => {

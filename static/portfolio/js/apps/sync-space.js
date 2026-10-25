@@ -3,10 +3,14 @@ import { createKeyring, createDeviceIdentity, encryptPayload, decryptPayload, cr
     deleteLocalSession, createKeyRotation, acceptKeyRotation } from './sync-crypto.js';
 import { EncryptedPairing } from './sync-pairing.js';
 import { openEncryptedFile } from './sync-e2ee-files.js';
-import { createInlineGif } from './sync-inline-image.js';
+import { createInlineImage } from './sync-inline-image.js';
+import { createImageResource } from './sync-image-resource.js';
+import { VoiceRecorder } from './sync-voice-recorder.js';
+import { createVoicePlayer } from './sync-voice-player.js';
 
 (() => {
     const desktopApi = window.GavinDesktop;
+    const assetRoot = new URL(document.body.dataset.assetRoot || '.', document.baseURI);
     const CREDENTIAL_KEY = 'portfolio-sync-space-e2ee1';
     const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
     try {
@@ -28,7 +32,9 @@ import { createInlineGif } from './sync-inline-image.js';
         const confirmation = find('confirm-dialog');
         const devicesDialog = find('devices-dialog');
         const messageNodes = new Map();
-        const inlineGifs = new Map();
+        const inlineImages = new Map();
+        const imageResources = new Map();
+        const voicePlayers = new Map();
         const readReceipts = new Map();
         const outbox = new Map();
         const unread = new Set();
@@ -69,6 +75,11 @@ import { createInlineGif } from './sync-inline-image.js';
         let browserFocused = document.hasFocus();
         let leavingSession = null;
         let selectedFile = null;
+        let selectedVoice = null;
+        let voicePreviewFile = null;
+        let voicePreviewUrl = null;
+        let recordingSession = null;
+        let viewingDesktop = true;
         let pendingUpload = null;
         let uploadController = null;
         let configPromise = null;
@@ -85,7 +96,7 @@ import { createInlineGif } from './sync-inline-image.js';
         let rotationTask;
         let soundEnabled = true;
         try { soundEnabled = localStorage.getItem('portfolio-sync-notification-sound') !== 'off'; } catch { /* Use the current session preference. */ }
-        const messageSound = new Audio(new URL('assets/sync-notification.wav', document.baseURI).href);
+        const messageSound = new Audio(new URL('assets/sync-notification.wav', assetRoot).href);
         messageSound.preload = 'auto';
         messageSound.volume = 0.35;
         let soundReady = false;
@@ -94,7 +105,7 @@ import { createInlineGif } from './sync-inline-image.js';
 
         const loadConfig = () => {
             if (!configPromise) {
-                configPromise = fetch(new URL('sync-config.json', document.baseURI), { cache: 'no-store', signal: AbortSignal.timeout(15000) })
+                configPromise = fetch(new URL('sync-config.json', assetRoot), { cache: 'no-store', signal: AbortSignal.timeout(15000) })
                     .then(async (response) => {
                         const value = response.ok ? await response.json() : null;
                         if (!value?.apiBase) throw new Error('unavailable');
@@ -114,7 +125,7 @@ import { createInlineGif } from './sync-inline-image.js';
             find('sound').setAttribute('aria-pressed', String(soundEnabled));
             find('sound').setAttribute('aria-label', label);
             find('sound').title = label;
-            find('sound-icon').src = `../textures/UI/volume_${soundEnabled ? 'on' : 'off'}.svg`;
+            find('sound-icon').src = new URL(`../textures/UI/volume_${soundEnabled ? 'on' : 'off'}.svg`, assetRoot).href;
         };
         const unlockSound = () => {
             if (!soundEnabled || soundReady || soundUnlocking) return;
@@ -196,6 +207,60 @@ import { createInlineGif } from './sync-inline-image.js';
         };
         const setNotice = (key, error = false) => setText(notice, key, error ? 'error' : '');
         const secondsLeft = (until) => Math.max(0, Math.ceil((until - Date.now()) / 1000));
+        const voiceTime = (duration) => `${String(Math.floor(duration / 60000)).padStart(2, '0')}:${String(Math.floor(duration / 1000) % 60).padStart(2, '0')}`;
+        const recording = () => ['starting', 'recording', 'stopping'].includes(recorder.state);
+        const voiceVisible = () => active && viewingDesktop && !document.hidden && !app.closest('[inert]')
+            && app.classList.contains('is-active') && !app.classList.contains('is-closed')
+            && !app.classList.contains('is-minimized') && !confirmation.open && !devicesDialog.open;
+        const releaseVoicePreview = () => {
+            const preview = find('voice-preview');
+            preview.pause();
+            preview.removeAttribute('src');
+            preview.load();
+            if (voicePreviewUrl) URL.revokeObjectURL(voicePreviewUrl);
+            voicePreviewUrl = null;
+            voicePreviewFile = null;
+            preview.hidden = true;
+        };
+        const pauseVoiceMedia = () => {
+            voicePlayers.forEach(player => player.pause());
+            find('voice-preview').pause();
+        };
+        const cancelRecording = () => {
+            recordingSession = null;
+            const cancelled = recorder.cancel();
+            updateControls();
+            cancelled.then(updateControls);
+        };
+        const recorder = new VoiceRecorder({
+            onTime: (duration) => {
+                find('voice-time').textContent = `${voiceTime(duration)} / 01:00`;
+            },
+            onStop: ({ file, durationMs }) => {
+                const session = recordingSession;
+                recordingSession = null;
+                if (credentials !== session || !voiceVisible()) { updateControls(); return; }
+                if (durationMs < 250) { setNotice('syncVoiceTooShort', true); updateControls(); return; }
+                selectedVoice = { kind: 'voice', durationMs };
+                selectedFile = file;
+                saveDraft();
+                updateSelectedFile();
+                setNotice('syncVoiceReady');
+            },
+            onError: (error) => {
+                recordingSession = null;
+                const key = error.name === 'NotAllowedError' || error.name === 'SecurityError' ? 'syncVoiceDenied'
+                    : error.name === 'NotFoundError' ? 'syncVoiceNoMicrophone'
+                    : error.name === 'NotSupportedError' ? 'syncVoiceUnavailable' : 'syncVoiceFailed';
+                setNotice(key, true);
+                updateControls();
+            }
+        });
+        const updateVoiceVisibility = () => {
+            if (voiceVisible()) return;
+            if (recording()) cancelRecording();
+            pauseVoiceMedia();
+        };
         const updateControls = () => {
             find('create').disabled = busy || sending || secondsLeft(cooldowns.create) > 0;
             find('join').disabled = busy || sending || secondsLeft(cooldowns.join) > 0;
@@ -204,9 +269,13 @@ import { createInlineGif } from './sync-inline-image.js';
             find('devices').disabled = busy || sending || !online;
             find('clear').disabled = busy || sending || !online || !history.length;
             find('leave').disabled = busy || sending;
-            find('send').disabled = busy || sending || !online || (!selectedFile && (pendingUpload || !input.value.trim()));
-            find('attach').disabled = busy || sending || !online;
-            find('file-input').disabled = busy || sending || !online;
+            find('send').disabled = busy || sending || recording() || !online || (!selectedFile && (pendingUpload || !input.value.trim()));
+            find('attach').disabled = busy || sending || recording() || !online;
+            find('file-input').disabled = busy || sending || recording() || !online;
+            find('voice-record').disabled = busy || sending || recording() || !online || !!selectedFile || !!pendingUpload;
+            find('voice-recording').hidden = !recording();
+            find('voice-stop').disabled = recorder.state !== 'recording';
+            setText(find('voice-status'), recorder.state === 'starting' ? 'syncVoiceStarting' : 'syncVoiceRecording');
             find('remove-file').disabled = busy || sending;
             find('cancel-upload').hidden = !sending || !pendingUpload;
             find('cancel-upload').disabled = busy || !uploadController || pendingUpload?.completing || uploadController.signal.aborted;
@@ -249,6 +318,7 @@ import { createInlineGif } from './sync-inline-image.js';
         };
         const setConnection = (value) => {
             online = value;
+            if (!value && recording()) cancelRecording();
             setText(status, value ? 'syncOnline' : 'syncOffline', value ? 'online' : 'offline');
             updateControls();
         };
@@ -280,6 +350,9 @@ import { createInlineGif } from './sync-inline-image.js';
                 if (typeof payload.text !== 'string' || payload.text.length > 10000) throw new Error('invalid_message');
                 if (payload.attachment && (typeof payload.attachment.name !== 'string' || typeof payload.attachment.key !== 'string'
                     || !Number.isSafeInteger(payload.attachment.size) || payload.attachment.size < 0 || payload.attachment.size > MAX_FILE_BYTES)) throw new Error('invalid_attachment');
+                if (payload.attachment?.kind === 'voice' && (payload.attachment.type !== 'audio/wav'
+                    || !Number.isSafeInteger(payload.attachment.durationMs) || payload.attachment.durationMs < 1 || payload.attachment.durationMs > 60000
+                    || payload.attachment.size <= 44 || payload.attachment.size > 44 + 16000 * 2 * 60)) throw new Error('invalid_voice');
                 return { ...message, text: payload.text, attachment: payload.attachment || null };
             } catch {
                 setNotice('syncDecryptFailed', true);
@@ -365,6 +438,7 @@ import { createInlineGif } from './sync-inline-image.js';
                         session.keyring = next.keyring;
                         session.trustedDevices = next.trustedDevices;
                         session.revokedDevices = next.revokedDevices;
+                        if (session.revokedDevices.some(id => !revoked.has(id))) { cancelRecording(); pauseVoiceMedia(); }
                         if (pendingUpload && session.revokedDevices.some(id => !revoked.has(id))) {
                             uploadController?.abort(Object.assign(new Error('key_changed'), { code: 'key_changed' }));
                             discardUpload(true);
@@ -388,7 +462,7 @@ import { createInlineGif } from './sync-inline-image.js';
             const session = credentials;
             const revision = ++draftRevision;
             const upload = pendingUpload && {
-                clientId: pendingUpload.clientId, uploadId: pendingUpload.uploadId, text: pendingUpload.text, fingerprint: pendingUpload.fingerprint, receivedBytes: pendingUpload.receivedBytes || 0,
+                clientId: pendingUpload.clientId, uploadId: pendingUpload.uploadId, text: pendingUpload.text, voice: pendingUpload.voice, fingerprint: pendingUpload.fingerprint, receivedBytes: pendingUpload.receivedBytes || 0,
                 encryption: pendingUpload.encryption, encryptedText: pendingUpload.encryptedText, keyId: pendingUpload.keyId, revokedDevices: pendingUpload.revokedDevices,
                 file: { name: pendingUpload.file.name, type: pendingUpload.file.type, size: pendingUpload.file.size, lastModified: pendingUpload.file.lastModified }
             };
@@ -400,9 +474,20 @@ import { createInlineGif } from './sync-inline-image.js';
         const formatSize = (bytes) => bytes < 1024 ? `${bytes} B` : bytes < 1024 ** 2 ? `${(bytes / 1024).toFixed(1)} KB` : bytes < 1024 ** 3 ? `${(bytes / 1024 ** 2).toFixed(1)} MB` : `${(bytes / 1024 ** 3).toFixed(1)} GB`;
         const updateSelectedFile = () => {
             const file = selectedFile || pendingUpload?.file;
+            const voice = selectedVoice || pendingUpload?.voice;
             find('selected-file').hidden = !file;
-            find('file-name').textContent = file?.name || '';
+            find('file-name').textContent = file && voice ? `${translate('syncVoiceMessage')} · ${voiceTime(voice.durationMs)}` : file?.name || '';
             find('file-size').textContent = file ? formatSize(file.size) : '';
+            const preview = find('voice-preview');
+            if (voice && file instanceof File && !sending) {
+                if (voicePreviewFile !== file) {
+                    releaseVoicePreview();
+                    voicePreviewFile = file;
+                    voicePreviewUrl = URL.createObjectURL(file);
+                    preview.src = voicePreviewUrl;
+                }
+                preview.hidden = false;
+            } else if (voicePreviewUrl) releaseVoicePreview();
             find('upload-status').hidden = !sending || !pendingUpload;
             if (sending && pendingUpload) {
                 const wireBytes = (pendingUpload.receivedBytes || 0) + (pendingUpload.inflightBytes || 0);
@@ -423,8 +508,12 @@ import { createInlineGif } from './sync-inline-image.js';
             updateControls();
         };
         const disposeAttachment = (id) => {
-            inlineGifs.get(id)?.dispose();
-            inlineGifs.delete(id);
+            voicePlayers.get(id)?.dispose();
+            voicePlayers.delete(id);
+            inlineImages.get(id)?.dispose();
+            inlineImages.delete(id);
+            imageResources.get(id)?.dispose();
+            imageResources.delete(id);
             downloadTickets.delete(id);
             for (const [key, promise] of fileCapabilities) {
                 if (!key.startsWith(`${id}:`)) continue;
@@ -522,6 +611,7 @@ import { createInlineGif } from './sync-inline-image.js';
             }
         };
         const previewAttachment = async (message, button) => {
+            if (message.sendState || button.disabled) return;
             const session = credentials;
             const request = ++previewRequest;
             const kind = previewKind(message.attachment);
@@ -532,6 +622,11 @@ import { createInlineGif } from './sync-inline-image.js';
             }
             button.disabled = true;
             try {
+                if (imageResources.has(message.id)) {
+                    attachmentPreview.open({ id: message.id, name: message.attachment.name, kind,
+                        imageResource: imageResources.get(message.id) });
+                    return;
+                }
                 const capability = await encryptedFile(message, session, false);
                 if (request !== previewRequest || credentials !== session || !active || !messageNodes.has(message.id)) { capability.dispose(); return; }
                 if (!app.classList.contains('is-active')) { capability.dispose(); setNotice('syncPreviewReady'); return; }
@@ -544,10 +639,11 @@ import { createInlineGif } from './sync-inline-image.js';
             } finally { button.disabled = false; }
         };
         const atBottom = () => feed.scrollHeight - feed.scrollTop - feed.clientHeight < 60;
-        const updateInlineGifs = () => {
-            const visible = active && !document.hidden && !app.closest('[inert]')
+        const updateInlineImages = () => {
+            const visible = active && viewingDesktop && !document.hidden && !app.closest('[inert]')
                 && !app.classList.contains('is-closed') && !app.classList.contains('is-minimized');
-            inlineGifs.forEach(gif => visible ? gif.start() : gif.pause());
+            inlineImages.forEach((image, id) => visible && !messageNodes.get(id)?.hidden ? image.start() : image.pause());
+            if (!visible) imageResources.forEach(resource => resource.clear());
         };
         const isReading = () => active && browserFocused && document.hasFocus() && !document.hidden
             && performance.now() - lastInteraction < 60000 && app.classList.contains('is-active')
@@ -627,12 +723,14 @@ import { createInlineGif } from './sync-inline-image.js';
                     || translate(message.deviceId === deviceId ? 'syncMessageYou' : 'syncMessageDevice');
                 const match = !query || [message.text, message.attachment?.name || '', name].some((value) => value.toLocaleLowerCase().includes(query));
                 messageNodes.get(message.id).hidden = !match;
+                if (!match) voicePlayers.get(message.id)?.pause();
                 if (match) count++;
             }
             find('empty').hidden = history.length !== 0 || outbox.size !== 0 || !!query;
             find('no-results').hidden = !query || count !== 0;
             setText(find('no-results'), searchController && !searchController.signal.aborted ? 'syncSearching'
                 : historyState && history[0]?.id > historyState.oldestId ? 'syncSearchIncomplete' : 'syncNoResults');
+            updateInlineImages();
         };
         const render = (scroll = false, preserve = false) => {
             if (scroll) followLatest = true;
@@ -710,32 +808,58 @@ import { createInlineGif } from './sync-inline-image.js';
                         download.disabled = !!message.sendState;
                         download.addEventListener('click', () => downloadAttachment(message, download));
                         actions.append(download);
-                        attachment.append(name, size, actions);
+                        const info = document.createElement(previewKind(message.attachment) ? 'button' : 'div');
+                        info.className = 'sync-attachment-info';
+                        info.append(name, size);
                         if (previewKind(message.attachment)) {
-                            const preview = document.createElement('button');
-                            preview.type = 'button';
-                            preview.className = 'sync-attachment-preview';
-                            preview.dataset.syncPreviewFile = '';
-                            preview.disabled = !!message.sendState;
-                            preview.addEventListener('click', () => previewAttachment(message, preview));
-                            actions.prepend(preview);
+                            info.type = 'button';
+                            info.dataset.syncPreviewFile = '';
+                            info.disabled = !!message.sendState;
+                            info.addEventListener('click', () => previewAttachment(message, info));
+                            item.classList.add('has-preview');
+                            item.addEventListener('click', (event) => {
+                                if (event.target.closest('button, a, input, audio, video') || window.getSelection()?.toString()) return;
+                                previewAttachment(message, info);
+                            });
                         }
+                        attachment.append(info, actions);
                         item.append(attachment);
                     }
                     messageNodes.set(message.id, item);
-                    if (!message.sendState && message.attachment && (message.attachment.type === 'image/gif' || /\.gif$/i.test(message.attachment.name))
+                    if (!message.sendState && message.attachment?.kind === 'voice') {
+                        const session = credentials;
+                        const player = createVoicePlayer({
+                            durationMs: message.attachment.durationMs,
+                            translate,
+                            load: () => encryptedFile(message, session, false),
+                            canPlay: () => credentials === session && !recording() && voiceVisible() && !item.hidden && messageNodes.has(message.id),
+                            onStart: () => {
+                                find('voice-preview').pause();
+                                voicePlayers.forEach((other, id) => { if (id !== message.id) other.pause(); });
+                            },
+                            onError: () => setNotice('syncVoicePlaybackFailed', true)
+                        });
+                        item.insertBefore(player.element, item.querySelector('.sync-attachment'));
+                        voicePlayers.set(message.id, player);
+                    }
+                    if (!message.sendState && message.attachment && ['image', 'heic'].includes(previewKind(message.attachment))
                         && message.attachment.size <= 20 * 1024 * 1024) {
                         const session = credentials;
-                        const gif = createInlineGif({
+                        const resource = createImageResource({
+                            kind: previewKind(message.attachment), name: message.attachment.name,
+                            load: () => encryptedFile(message, session, false)
+                        });
+                        imageResources.set(message.id, resource);
+                        const image = createInlineImage({
                             name: message.attachment.name,
-                            viewport: feed, target: item,
-                            retryLabel: () => translate('syncMessageRetry'),
-                            load: () => encryptedFile(message, session, false),
+                            viewport: feed,
+                            retryLabel: () => translate('syncImageRetry'),
+                            resource,
                             onPreview: () => previewAttachment(message, item.querySelector('[data-sync-preview-file]')),
                             onLoad: () => { if (followLatest) scrollToLatest(); }
                         });
-                        item.insertBefore(gif.element, item.querySelector('.sync-attachment'));
-                        inlineGifs.set(message.id, gif);
+                        item.insertBefore(image.element, item.querySelector('.sync-attachment'));
+                        inlineImages.set(message.id, image);
                     }
                 }
                 item.classList.toggle('is-own', message.deviceId === deviceId);
@@ -758,7 +882,11 @@ import { createInlineGif } from './sync-inline-image.js';
                     download.disabled = !!message.sendState || !!download.dataset.loading;
                 }
                 const preview = item.querySelector('[data-sync-preview-file]');
-                if (preview) preview.textContent = translate('syncPreview');
+                if (preview) {
+                    preview.title = translate('syncPreview');
+                    preview.setAttribute('aria-label', `${translate('syncPreview')} ${message.attachment.name}`);
+                }
+                voicePlayers.get(message.id)?.updateLanguage();
                 if (messages.children[index] !== item) messages.insertBefore(item, messages.children[index] || null);
             });
             applySearch();
@@ -768,7 +896,7 @@ import { createInlineGif } from './sync-inline-image.js';
                 lastFeedScrollTop = feed.scrollTop;
                 scrollToLatest();
             }
-            updateInlineGifs();
+            updateInlineImages();
             markRead();
             updateUnread();
             updateControls();
@@ -792,6 +920,7 @@ import { createInlineGif } from './sync-inline-image.js';
             pendingUpload = null;
             if (selectedFile === upload.file) {
                 selectedFile = null;
+                selectedVoice = null;
                 find('file-input').value = '';
             }
             uploadController?.abort();
@@ -1101,6 +1230,10 @@ import { createInlineGif } from './sync-inline-image.js';
         };
         const sameSession = (a, b) => a?.roomId === b?.roomId && a?.token === b?.token && a?.revision === b?.revision;
         const reset = (forget = true) => {
+            cancelRecording();
+            releaseVoicePreview();
+            voicePlayers.forEach(player => player.dispose());
+            voicePlayers.clear();
             soundVersion++;
             soundUnlocking = false;
             messageSound.pause();
@@ -1111,8 +1244,10 @@ import { createInlineGif } from './sync-inline-image.js';
             sentReadId = 0;
             readAfterInteraction = 0;
             readReceipts.clear();
-            inlineGifs.forEach(gif => gif.dispose());
-            inlineGifs.clear();
+            inlineImages.forEach(image => image.dispose());
+            inlineImages.clear();
+            imageResources.forEach(resource => resource.dispose());
+            imageResources.clear();
             previewRequest++;
             downloadTickets.clear();
             fileCapabilities.forEach(promise => promise.then(capability => capability.dispose()).catch(() => {}));
@@ -1137,6 +1272,7 @@ import { createInlineGif } from './sync-inline-image.js';
             find('devices-list').replaceChildren();
             outbox.clear();
             selectedFile = null;
+            selectedVoice = null;
             pendingUpload = null;
             find('file-input').value = '';
             history = [];
@@ -1204,6 +1340,7 @@ import { createInlineGif } from './sync-inline-image.js';
                             const revoked = new Set(credentials.revokedDevices);
                             const keyChanged = session.keyring.currentKeyId !== credentials.keyring.currentKeyId;
                             Object.assign(credentials, session, { revision: saved.revision });
+                            if (session.revokedDevices.some(id => !revoked.has(id))) { cancelRecording(); pauseVoiceMedia(); }
                             if (pendingUpload && session.revokedDevices.some(id => !revoked.has(id))) {
                                 uploadController?.abort(Object.assign(new Error('key_changed'), { code: 'key_changed' }));
                                 discardUpload(true);
@@ -1314,10 +1451,14 @@ import { createInlineGif } from './sync-inline-image.js';
                 reconcileSession();
                 connect();
                 if (followOnRestore) { followLatest = true; scrollToLatest(); }
-                updateInlineGifs();
+                updateSelectedFile();
+                updateInlineImages();
                 markRead();
             },
             hide: (state) => {
+                cancelRecording();
+                pauseVoiceMedia();
+                releaseVoicePreview();
                 followOnRestore = !find('search').value.trim() && atBottom();
                 if (confirmation.open) confirmation.close();
                 if (devicesDialog.open) devicesDialog.close();
@@ -1331,7 +1472,7 @@ import { createInlineGif } from './sync-inline-image.js';
                     disconnect();
                     attachmentPreview.close();
                 }
-                updateInlineGifs();
+                updateInlineImages();
             }
         });
         document.querySelectorAll('[data-open-sync-space]').forEach((button) => button.addEventListener('click', entry.show));
@@ -1435,7 +1576,7 @@ import { createInlineGif } from './sync-inline-image.js';
                     const clientId = crypto.randomUUID();
                     Object.assign(outgoing, { id: `pending:${clientId}`, clientId, sendState: 'failed' });
                     outbox.set(clientId, outgoing);
-                    pendingUpload = { clientId, file: upload.file, text: upload.text, receivedBytes: 0 };
+                    pendingUpload = { clientId, file: upload.file, text: upload.text, voice: upload.voice, receivedBytes: 0 };
                 }
             }
             saveDraft();
@@ -1493,7 +1634,7 @@ import { createInlineGif } from './sync-inline-image.js';
             if (upload.fingerprint && upload.fingerprint !== fingerprint) throw Object.assign(new Error('upload_conflict'), { code: 'upload_conflict' });
             upload.fingerprint = fingerprint;
             if (!upload.encryption) {
-                upload.encryption = createFileMetadata(upload.file);
+                upload.encryption = { ...createFileMetadata(upload.file), ...upload.voice };
                 upload.revokedDevices = [...session.revokedDevices];
             }
             const wireSize = upload.file.size + Math.ceil(upload.file.size / FILE_PLAIN_CHUNK_SIZE) * 16;
@@ -1560,8 +1701,29 @@ import { createInlineGif } from './sync-inline-image.js';
             }
         };
         find('attach').addEventListener('click', () => find('file-input').click());
+        find('voice-record').addEventListener('click', async () => {
+            if (busy || sending || !online || selectedFile || pendingUpload || recording() || !voiceVisible()) return;
+            pauseVoiceMedia();
+            recordingSession = credentials;
+            find('voice-time').textContent = '00:00 / 01:00';
+            const started = recorder.start();
+            updateControls();
+            await started;
+            updateControls();
+        });
+        find('voice-stop').addEventListener('click', async () => {
+            const stopped = recorder.stop();
+            updateControls();
+            await stopped;
+            updateControls();
+        });
+        find('voice-cancel').addEventListener('click', cancelRecording);
+        find('voice-preview').addEventListener('play', () => {
+            if (!voiceVisible()) { find('voice-preview').pause(); return; }
+            voicePlayers.forEach(player => player.pause());
+        });
         const selectFile = (file) => {
-            if (busy || sending || !online) { setNotice('syncAttachUnavailable', true); return; }
+            if (busy || sending || recording() || !online) { setNotice('syncAttachUnavailable', true); return; }
             if (file.size > MAX_FILE_BYTES) {
                 find('file-input').value = '';
                 setNotice(selectedFile || pendingUpload ? 'syncFileTooLargeRetained' : 'syncFileTooLarge', true);
@@ -1577,6 +1739,7 @@ import { createInlineGif } from './sync-inline-image.js';
                     discardUpload();
                 } else pendingUpload.file = file;
             } else discardUpload();
+            selectedVoice = pendingUpload?.voice || null;
             selectedFile = file;
             saveDraft();
             updateSelectedFile();
@@ -1622,6 +1785,7 @@ import { createInlineGif } from './sync-inline-image.js';
         find('remove-file').addEventListener('click', () => {
             discardUpload();
             selectedFile = null;
+            selectedVoice = null;
             find('file-input').value = '';
             updateSelectedFile();
         });
@@ -1638,6 +1802,7 @@ import { createInlineGif } from './sync-inline-image.js';
                     outbox.delete(pendingUpload?.clientId);
                     pendingUpload = null;
                     selectedFile = null;
+                    selectedVoice = null;
                     find('file-input').value = '';
                     saveDraft();
                     render();
@@ -1701,18 +1866,18 @@ import { createInlineGif } from './sync-inline-image.js';
         };
         find('send-form').addEventListener('submit', (event) => {
             event.preventDefault();
-            if (busy || sending || !online || (!selectedFile && (pendingUpload || !input.value.trim())) || !find('send-form').reportValidity()) return;
+            if (busy || sending || recording() || !online || (!selectedFile && (pendingUpload || !input.value.trim())) || !find('send-form').reportValidity()) return;
             const file = selectedFile;
             const resuming = file && pendingUpload?.file === file;
             const text = resuming ? pendingUpload.text : input.value;
             if (file && !resuming) {
                 discardUpload();
-                pendingUpload = { clientId: crypto.randomUUID(), file, text, receivedBytes: 0 };
+                pendingUpload = { clientId: crypto.randomUUID(), file, text, voice: selectedVoice, receivedBytes: 0 };
             }
             const clientId = file ? pendingUpload.clientId : crypto.randomUUID();
             const outgoing = outbox.get(clientId) || {
                 id: `pending:${clientId}`, clientId, deviceId, text, createdAt: Date.now(),
-                attachment: file ? { name: file.name, type: file.type, size: file.size } : null,
+                attachment: file ? { name: file.name, type: file.type, size: file.size, ...pendingUpload.voice } : null,
                 sendState: 'sending'
             };
             outbox.set(clientId, outgoing);
@@ -1788,19 +1953,23 @@ import { createInlineGif } from './sync-inline-image.js';
         for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'touchmove']) {
             document.addEventListener(type, recordInteraction, { passive: true });
         }
-        const readingObserver = new MutationObserver(() => { markRead(); updateInlineGifs(); });
+        const readingObserver = new MutationObserver(() => { markRead(); updateInlineImages(); updateVoiceVisibility(); });
         readingObserver.observe(app, { attributes: true, attributeFilter: ['class', 'inert'] });
         for (let ancestor = app.parentElement; ancestor; ancestor = ancestor.parentElement) {
             readingObserver.observe(ancestor, { attributes: true, attributeFilter: ['inert'] });
         }
         find('devices').addEventListener('click', () => {
             if (busy || sending || !online) return;
+            cancelRecording();
+            pauseVoiceMedia();
             find('devices').focus({ preventScroll: true });
             devicesDialog.showModal();
             loadDevices();
         });
         const showConfirmation = (action, target) => {
             if (busy || sending || !credentials) return;
+            cancelRecording();
+            pauseVoiceMedia();
             confirmation.dataset.action = action;
             confirmation.dataset.deviceId = target || '';
             const key = action === 'remove' ? 'syncDeviceRemove' : action === 'clear' ? 'syncClear' : 'syncLeave';
@@ -1916,18 +2085,28 @@ import { createInlineGif } from './sync-inline-image.js';
             if (event.key === CREDENTIAL_KEY || event.key === null) reconcileSession();
         });
         window.addEventListener('pagehide', () => {
+            cancelRecording();
+            pauseVoiceMedia();
+            releaseVoicePreview();
             saveDraft(); disconnect(); soundVersion++; soundUnlocking = false;
-            messageSound.pause(); inlineGifs.forEach(gif => gif.pause());
+            messageSound.pause(); inlineImages.forEach(image => image.pause());
+            imageResources.forEach(resource => resource.clear());
         });
         window.addEventListener('pageshow', () => {
             try { setSoundEnabled(localStorage.getItem('portfolio-sync-notification-sound') !== 'off'); } catch { /* Keep the current session preference. */ }
-            reconcileSession().then(recoverPendingPairing); updateInlineGifs(); if (active) connect();
+            reconcileSession().then(recoverPendingPairing); updateInlineImages(); updateSelectedFile(); if (active) connect();
         });
-        window.addEventListener('blur', () => { browserFocused = false; markRead(); });
+        window.addEventListener('blur', () => {
+            browserFocused = false;
+            if (recording()) cancelRecording();
+            pauseVoiceMedia();
+            markRead();
+        });
         window.addEventListener('focus', () => { browserFocused = true; markRead(); });
         document.addEventListener('visibilitychange', () => {
+            updateVoiceVisibility();
             markRead();
-            updateInlineGifs();
+            updateInlineImages();
             if (!document.hidden) { updateCountdowns(); connect(); }
         });
         window.addEventListener('portfolio-language-change', () => {
@@ -1946,6 +2125,14 @@ import { createInlineGif } from './sync-inline-image.js';
             find('resize').title = translate('syncResize');
             find('confirm-close').setAttribute('aria-label', translate('syncDialogClose'));
             find('devices-close').setAttribute('aria-label', translate('syncDevicesDialogClose'));
+            find('voice-preview').setAttribute('aria-label', translate('syncVoiceListen'));
+        });
+        window.addEventListener('message', (event) => {
+            if (event.origin !== window.location.origin || event.source !== window.parent
+                || event.data?.source !== 'gavin-shell' || event.data?.type !== 'portfolio-view-state') return;
+            viewingDesktop = event.data.active === true;
+            updateVoiceVisibility();
+            updateInlineImages();
         });
         manager.onSession({ restore: () => {
             active = !app.classList.contains('is-closed');

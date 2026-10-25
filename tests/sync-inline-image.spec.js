@@ -2,14 +2,16 @@ const { test, expect } = require('@playwright/test');
 const { readFileSync } = require('node:fs');
 
 const source = readFileSync(require.resolve('../static/portfolio/js/apps/sync-inline-image.js'));
+const resourceSource = readFileSync(require.resolve('../static/portfolio/js/apps/sync-image-resource.js'));
 const gif = 'data:image/gif;base64,R0lGODlhAQABAIAAAP8AAAAA/yH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAQABAAACAkQBACH5BAAKAAAALAAAAAABAAEAAAICTAEAOw==';
 
 test.beforeEach(async ({ page }) => {
     await page.route('http://inline-gif.test/**', route => route.fulfill(route.request().url().endsWith('/inline.js')
         ? { contentType: 'application/javascript', body: source }
-        : { contentType: 'text/html', body: '<script type="module">import {createInlineGif} from "./inline.js"; window.createInlineGif = createInlineGif;</script>' }));
+        : route.request().url().endsWith('/resource.js') ? { contentType: 'application/javascript', body: resourceSource }
+            : { contentType: 'text/html', body: '<script type="module">import {createInlineImage} from "./inline.js"; import {createImageResource} from "./resource.js"; window.createInlineImage = createInlineImage; window.createImageResource = createImageResource;</script>' }));
     await page.goto('http://inline-gif.test/');
-    await page.waitForFunction(() => typeof window.createInlineGif === 'function');
+    await page.waitForFunction(() => typeof window.createInlineImage === 'function');
     await page.evaluate(() => {
         const viewport = document.createElement('div');
         viewport.style.cssText = 'height:180px;width:280px;overflow:auto';
@@ -19,8 +21,14 @@ test.beforeEach(async ({ page }) => {
             const target = document.createElement('div');
             target.style.minHeight = '260px';
             viewport.append(target);
-            const inline = window.createInlineGif({ retryLabel: () => 'Retry send', ...options, viewport, target });
+            const resource = window.createImageResource({ name: options.name, load: options.load });
+            const inline = window.createInlineImage({ retryLabel: () => 'Retry send', ...options, resource, viewport, target });
             target.append(inline.element);
+            inline.element.style.width = '160px';
+            const pause = inline.pause;
+            inline.pause = () => { pause(); resource.clear(); };
+            const dispose = inline.dispose;
+            inline.dispose = () => { dispose(); resource.dispose(); };
             inline.start();
             return inline;
         };
@@ -44,22 +52,21 @@ test('displays the original animated GIF, opens preview by keyboard, and release
     const button = page.getByRole('button', { name: 'hello.gif', exact: true });
     await expect(button).toBeVisible();
     await expect(button.locator('img')).toHaveJSProperty('naturalWidth', 1);
-    await expect(button.locator('img')).toHaveAttribute('src', gif);
+    await expect(button.locator('img')).toHaveAttribute('src', /^blob:/);
     await button.focus();
     await button.press('Enter');
     expect(await page.evaluate(() => [window.openCount, window.previewCount, window.loadedCount])).toEqual([1, 1, 1]);
-    const height = await button.evaluate(element => element.offsetHeight);
     const placeholder = await page.evaluate(() => {
         document.querySelector('#viewport').style.display = 'none';
         window.inlineGif.pause();
-        return parseFloat(window.inlineGif.element.style.minHeight);
+        return window.inlineGif.element.style.aspectRatio;
     });
-    expect(placeholder).toBe(height);
+    expect(placeholder).toBe('1 / 1');
     await page.evaluate(() => { document.querySelector('#viewport').style.display = ''; window.inlineGif.start(); });
     await expect.poll(() => page.evaluate(() => window.loadedCount)).toBe(2);
     await page.evaluate(() => window.inlineGif.dispose());
     await expect(button).toBeHidden();
-    await expect(page.locator('.sync-message-gif img')).not.toHaveAttribute('src');
+    await expect(page.locator('.sync-message-image img')).not.toHaveAttribute('src');
     expect(await page.evaluate(() => window.closeCount)).toBe(2);
 });
 
@@ -78,8 +85,8 @@ test('removing a pending GIF releases its eventual capability without displaying
         window.resolveGif({ url, dispose: () => window.closedCount++ });
     }, gif);
     await expect.poll(() => page.evaluate(() => window.closedCount)).toBe(1);
-    await expect(page.locator('.sync-message-gif')).toBeHidden();
-    await expect(page.locator('.sync-message-gif img')).not.toHaveAttribute('src');
+    await expect(page.locator('.sync-message-image')).toBeHidden();
+    await expect(page.locator('.sync-message-image img')).not.toHaveAttribute('src');
 });
 
 test('a failed image offers a localized retry and recovers without reopening the chat', async ({ page }) => {
@@ -102,7 +109,7 @@ test('a failed image offers a localized retry and recovers without reopening the
     expect(await page.evaluate(() => window.openCount)).toBe(2);
 });
 
-test('loads only nearby GIFs, releases offscreen images, and reloads after pausing and reopening', async ({ page }) => {
+test('loads nearby images once, retains their source while scrolling, and releases them when paused', async ({ page }) => {
     await page.evaluate(url => {
         window.openedGifs = [];
         window.closedGifs = [];
@@ -112,17 +119,21 @@ test('loads only nearby GIFs, releases offscreen images, and reloads after pausi
             onPreview: () => {}
         }));
     }, gif);
-    await expect(page.locator('.sync-message-gif img[src]')).toHaveCount(2);
+    await expect(page.locator('.sync-message-image img[src]')).toHaveCount(2);
     expect(await page.evaluate(() => [...window.openedGifs].sort())).toEqual([0, 1]);
     await page.locator('#viewport').evaluate(viewport => { viewport.scrollTop = viewport.scrollHeight; });
-    await expect.poll(() => page.evaluate(() => window.closedGifs.includes(0) && window.closedGifs.includes(1))).toBe(true);
-    await expect(page.locator('.sync-message-gif img[src]')).toHaveCount(2);
+    await expect(page.locator('.sync-message-image img[src]')).toHaveCount(3);
+    await expect(page.locator('.sync-message-image img[src]').first()).toHaveJSProperty('naturalWidth', 1);
+    await page.locator('#viewport').evaluate(viewport => { viewport.scrollTop = 0; });
+    await expect(page.locator('.sync-message-image img[src]')).toHaveCount(3);
+    expect(await page.evaluate(() => window.openedGifs.length)).toBe(3);
+    await page.locator('#viewport').evaluate(viewport => { viewport.scrollTop = viewport.scrollHeight; });
     await page.evaluate(() => window.gifs.forEach(gif => gif.pause()));
-    await expect(page.locator('.sync-message-gif img[src]')).toHaveCount(0);
+    await expect(page.locator('.sync-message-image img[src]')).toHaveCount(0);
     expect(await page.evaluate(() => window.openedGifs.length - window.closedGifs.length)).toBe(0);
     await page.evaluate(() => window.gifs.forEach(gif => gif.start()));
-    await expect(page.locator('.sync-message-gif img[src]')).toHaveCount(2);
-    expect(await page.evaluate(() => window.openedGifs.length)).toBe(6);
+    await expect(page.locator('.sync-message-image img[src]')).toHaveCount(1);
+    expect(await page.evaluate(() => window.openedGifs.length)).toBe(4);
 });
 
 test('keeps concurrent GIF loads to three and drops queued work when paused', async ({ page }) => {
@@ -141,7 +152,7 @@ test('keeps concurrent GIF loads to three and drops queued work when paused', as
         window.gifs.forEach(gif => gif.pause());
         window.releaseGifs.forEach(resolve => resolve({ url, dispose() {} }));
     }, gif);
-    await expect(page.locator('.sync-message-gif img[src]')).toHaveCount(0);
+    await expect(page.locator('.sync-message-image img[src]')).toHaveCount(0);
     expect(await page.evaluate(() => window.openCount)).toBe(3);
 });
 
@@ -167,7 +178,7 @@ test('pausing and reopening while a capability is pending cannot display the sta
     expect(await page.evaluate(() => window.imageLoads)).toBe(0);
     await page.evaluate(url => window.pendingLoads[1]({ url, dispose: () => window.closedLoads.push('new') }), gif);
     await expect(page.getByRole('button', { name: 'reopened.gif', exact: true }).locator('img')).toHaveJSProperty('naturalWidth', 1);
-    expect(await page.evaluate(() => window.imageLoads)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.imageLoads)).toBe(1);
     await page.evaluate(() => window.inlineGif.pause());
     expect(await page.evaluate(() => window.closedLoads)).toEqual(['old', 'new']);
 });

@@ -54,12 +54,16 @@ test.beforeEach(async ({ page }) => {
     const apiBase = `http://127.0.0.1:${server.address().port}`;
     site = await startSite(apiBase);
     await page.addInitScript(() => {
-        window.gifCapabilityCloses = 0;
-        const postMessage = ServiceWorker.prototype.postMessage;
-        ServiceWorker.prototype.postMessage = function (data, ...rest) {
-            if (data?.source === 'gavin-sync-e2ee' && data.type === 'close') window.gifCapabilityCloses++;
-            return postMessage.call(this, data, ...rest);
+        window.gifImageUrls = [];
+        window.gifRevokedImageUrls = [];
+        const create = URL.createObjectURL.bind(URL);
+        const revoke = URL.revokeObjectURL.bind(URL);
+        URL.createObjectURL = blob => {
+            const url = create(blob);
+            if (blob.type.startsWith('image/')) window.gifImageUrls.push(url);
+            return url;
         };
+        URL.revokeObjectURL = url => { window.gifRevokedImageUrls.push(url); revoke(url); };
     });
     await authorize(page, `${site.origin}/portfolio/`);
     await page.routeWebSocket(`${apiBase.replace('http:', 'ws:')}/**`, socket => socket.onMessage(raw => {
@@ -81,37 +85,31 @@ test.afterEach(async () => {
 });
 
 test('loads nearby encrypted GIFs with bounded concurrency, retries a failed GIF and releases them on close', async ({ page }) => {
-    const failed = page.locator('.sync-message-gif[data-state="failed"]');
+    const failed = page.locator('.sync-message-image[data-state="failed"]');
     await expect(failed).toBeVisible();
     expect([...gets.keys()].filter(id => id <= 20).length).toBeLessThan(10);
     expect(maxConcurrent).toBeLessThanOrEqual(3);
-    expect(await page.locator('.sync-message-gif img[src]').count()).toBeLessThan(10);
+    expect(await page.locator('.sync-message-image img[src]').count()).toBeLessThan(10);
     await failed.click();
     const lastGif = page.locator('.sync-message').filter({ has: page.locator('.sync-attachment-name', { hasText: 'reaction-20.gif' }) });
-    await expect(lastGif.locator('.sync-message-gif img')).toHaveJSProperty('naturalWidth', 1);
+    await expect(lastGif.locator('.sync-message-image img')).toHaveJSProperty('naturalWidth', 1);
     expect(gets.get(20)).toBe(2);
     await page.locator('[data-sync-feed]').evaluate(feed => feed.scrollBy({ top: -200, behavior: 'instant' }));
     await expect.poll(() => page.locator('[data-sync-feed]').evaluate(feed => feed.scrollHeight - feed.scrollTop - feed.clientHeight)).toBeGreaterThan(100);
-    await page.locator('[data-sync-feed]').evaluate(feed => new Promise(resolve => {
-        let previous = -1;
-        let stable = 0;
-        const check = () => {
-            if (feed.scrollTop === previous) stable++;
-            else { previous = feed.scrollTop; stable = 0; }
-            if (stable === 4) resolve();
-            else requestAnimationFrame(check);
-        };
-        check();
-    }));
-    const position = await page.locator('[data-sync-feed]').evaluate(feed => feed.scrollTop);
-    const closedBefore = await page.evaluate(() => window.gifCapabilityCloses);
-    const loadedBefore = await page.locator('.sync-message-gif img[src]').count();
+    const position = await page.locator('[data-sync-feed]').evaluate(feed => {
+        const top = feed.getBoundingClientRect().top;
+        const rows = [...feed.querySelectorAll('.sync-message')];
+        const row = rows.find(row => row.getBoundingClientRect().bottom > top);
+        return { index: rows.indexOf(row), offset: row.getBoundingClientRect().top - top };
+    });
     await page.locator('[data-sync-action="close"]').click();
-    await expect(page.locator('.sync-message-gif img[src]')).toHaveCount(0);
-    await expect.poll(() => page.evaluate(() => window.gifCapabilityCloses)).toBeGreaterThanOrEqual(closedBefore + loadedBefore);
+    await expect(page.locator('.sync-message-image img[src]')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.gifImageUrls.every(url => window.gifRevokedImageUrls.includes(url)))).toBe(true);
     await page.locator('.desktop-shortcut[data-open-sync-space]').click();
-    await expect.poll(() => page.locator('.sync-message-gif img[src]').count()).toBeGreaterThan(0);
-    await expect.poll(() => page.locator('[data-sync-feed]').evaluate(feed => feed.scrollTop)).toBe(position);
+    await expect.poll(() => page.locator('.sync-message-image img[src]').count()).toBeGreaterThan(0);
+    await expect.poll(() => page.locator('[data-sync-feed]').evaluate((feed, index) =>
+        feed.querySelectorAll('.sync-message')[index].getBoundingClientRect().top - feed.getBoundingClientRect().top,
+    position.index)).toBe(position.offset);
     expect([...gets.keys()].filter(id => id <= 20).length).toBeLessThan(15);
 });
 

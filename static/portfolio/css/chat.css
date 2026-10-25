@@ -1,0 +1,29 @@
+body.standalone-sync .sync-window {
+    top: 4px !important;
+    right: 4px !important;
+    bottom: 39px !important;
+    left: 4px !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: 0;
+    min-height: 0;
+}
+
+.standalone-sync .sync-window > .window-titlebar {
+    cursor: default;
+}
+
+.standalone-sync .sync-window > .window-titlebar > .window-controls,
+.standalone-sync .sync-window > .window-resize-handle {
+    display: none;
+}
+
+.standalone-sync .sync-task-button {
+    width: auto;
+    min-width: 76px;
+    color: var(--window-dark);
+}
+
+.standalone-sync .sync-task-button > [data-i18n] {
+    width: auto;
+}

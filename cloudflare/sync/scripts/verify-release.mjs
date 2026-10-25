@@ -21,7 +21,8 @@ export async function verifyRelease({ expectedRevision, apiBase, siteBase = 'htt
   assert.equal(health.revision, expectedRevision, 'Production Worker does not match the expected Git commit.');
   assert.ok(typeof health.versionId === 'string' && health.versionId.length, 'Cloudflare deployment version is missing.');
   if (!backendOnly) {
-    for (const path of ['portfolio/index.html', 'portfolio/sync-config.json', 'portfolio/js/main.js', 'portfolio/css/main.css', 'portfolio/sync-e2ee-worker.js']) {
+    for (const path of ['portfolio/index.html', 'portfolio/sync-config.json', 'portfolio/js/main.js', 'portfolio/css/main.css', 'portfolio/sync-e2ee-worker.js',
+      'portfolio/chat/index.html', 'portfolio/js/chat.js', 'portfolio/css/chat.css']) {
       const local = await readFile(resolve(docsDirectory, path));
       if (path.endsWith('sync-config.json')) {
         assert.equal(JSON.parse(local).apiBase.replace(/\/$/, ''), apiBase.replace(/\/$/, ''), 'The frontend build uses another API address.');
