@@ -68,6 +68,12 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                 export class PairingRegistry extends ProductionRegistry {
                   refreshRoom(roomId) { this.refreshes = (this.refreshes || 0) + 1; return super.refreshRoom(roomId); }
                   testRefreshes() { return this.refreshes || 0; }
+                  rememberUsage(...args) {
+                    const before = this.sql.exec('SELECT total_changes() AS count').one().count;
+                    super.rememberUsage(...args);
+                    this.usageWrites = (this.usageWrites || 0) + this.sql.exec('SELECT total_changes() AS count').one().count - before;
+                  }
+                  testUsageWrites() { return this.usageWrites || 0; }
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                 }
@@ -323,6 +329,34 @@ test('upload chunks retain the initial global reservation without running regist
   const beforeCancel = await registryStorage.exec('SELECT bytes FROM room_usage WHERE room_id = ?', space.roomId);
   assert.equal((await request(`/v1/spaces/${space.roomId}/files/uploads/${cancelled.body.uploadId}`, { method: 'DELETE', token: space.token })).status, 200);
   assert.ok((await registryStorage.exec('SELECT bytes FROM room_usage WHERE room_id = ?', space.roomId))[0].bytes < beforeCancel[0].bytes);
+});
+
+test('unchanged usage refreshes and read-only attachment requests avoid registry writes', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const bytes = Buffer.from('read-only attachment');
+  const sent = await upload(request, space, { bytes });
+  assert.equal(sent.status, 201);
+  const namespace = await runtime.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY');
+  const registry = namespace.getByName('registry');
+  await registry.refreshRoom(space.roomId);
+  const writes = await registry.testUsageWrites();
+  for (let index = 0; index < 3; index += 1) await registry.refreshRoom(space.roomId);
+  assert.equal(await registry.testUsageWrites(), writes);
+  const refreshes = await registry.testRefreshes();
+  const path = `/v1/spaces/${space.roomId}/files/${sent.body.id}`;
+  for (let index = 0; index < 5; index += 1) {
+    assert.equal((await request(path, { method: 'HEAD', token: space.token })).status, 200);
+    const downloaded = await request(path, { token: space.token });
+    assert.equal(downloaded.status, 200);
+    assert.deepEqual(downloaded.body, bytes);
+  }
+  assert.equal(await registry.testRefreshes(), refreshes);
+  assert.equal(await registry.testUsageWrites(), writes);
+  const storage = await roomStorage(space);
+  await storage.exec('UPDATE files SET created_at = ? WHERE message_id = ?', Date.now() - sevenDays - 1000, sent.body.id);
+  assert.equal((await request(path, { method: 'HEAD', token: space.token })).status, 404);
+  assert.equal((await request(path, { token: space.token })).status, 404);
 });
 
 test('concurrent download and preview requests reuse persisted tickets per device without extending their lifetime', async () => {
@@ -986,7 +1020,7 @@ test('capacity cleanup preserves a newer active upload when older completed file
   assert.equal((await complete(request, space, fresh.body.uploadId)).body.error, 'upload_incomplete');
 });
 
-test('capacity pruning cancels an older upload before removing newer messages', async () => {
+test('capacity pruning protects an older active upload while reclaiming completed history', async () => {
   const request = client();
   const space = await createSpace(request);
   const started = await initiate(request, space, { size: MiB });
@@ -997,9 +1031,38 @@ test('capacity pruning cancels an older upload before removing newer messages', 
   assert.match(ciphertext[0].text, /^e2ee1\./);
   const room = await roomObject(space);
   await room.pruneOldest();
-  assert.deepEqual(await storage.exec('SELECT text FROM messages'), ciphertext);
+  assert.deepEqual(await storage.exec('SELECT text FROM messages'), []);
   assert.equal(sent.body.text, 'newer history survives');
-  assert.deepEqual(await storage.exec('SELECT file_id FROM files WHERE file_id = ?', started.body.uploadId), []);
+  assert.deepEqual(await storage.exec('SELECT file_id FROM files WHERE file_id = ?', started.body.uploadId), [{ file_id: started.body.uploadId }]);
+  assert.equal((await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(MiB))).status, 200);
+  assert.equal((await complete(request, space, started.body.uploadId)).status, 201);
+});
+
+test('capacity pressure rejects a new upload instead of reclaiming live uploads and still expires abandoned uploads', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance);
+  const first = await createSpace(request), second = await createSpace(request), third = await createSpace(request);
+  const active = await initiate(request, first, { size: maximumFileSize });
+  assert.equal(active.status, 201);
+  assert.equal((await putChunk(request, first, active.body.uploadId, 0, Buffer.alloc(chunkSize))).status, 200);
+  const other = await initiate(request, second, { size: maximumFileSize });
+  assert.equal(other.status, 201);
+  const blocked = await initiate(request, third, { size: 1024 * MiB });
+  assert.equal(blocked.status, 507);
+  assert.equal(blocked.body.error, 'storage_full');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY');
+  const registry = namespace.getByName('registry');
+  await registry.maintainRooms();
+  await registry.testRunAlarm();
+  const storage = await roomStorage(first, instance);
+  assert.deepEqual(await storage.exec('SELECT status, received_bytes FROM files WHERE file_id = ?', active.body.uploadId), [{ status: 'uploading', received_bytes: chunkSize }]);
+  assert.equal((await putChunk(request, first, active.body.uploadId, 1, Buffer.alloc(chunkSize))).status, 200);
+  const abandonedStorage = await roomStorage(second, instance);
+  await abandonedStorage.exec('UPDATE files SET updated_at = ? WHERE file_id = ?', Date.now() - 24 * 60 * 60 * 1000 - 1000, other.body.uploadId);
+  await registry.refreshRoom(second.roomId);
+  assert.deepEqual(await abandonedStorage.exec('SELECT file_id FROM files'), []);
+  assert.equal((await initiate(request, third, { size: 1024 * MiB })).status, 201);
 });
 
 test('persisted upload progress migrates lazily and remains exact across retries and restart', async () => {

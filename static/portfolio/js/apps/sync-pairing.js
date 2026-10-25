@@ -13,7 +13,7 @@ const pause = (signal, delay = 500) => new Promise((resolve, reject) => {
     if (signal.aborted) abort();
 });
 
-async function useAttempts(id, requestId) {
+async function useAttempts(id, requestId, limit = 20) {
     if (!navigator.locks) throw failure('encryption_unavailable');
     return navigator.locks.request(`gavin-sync-pair:${id}`, () => {
         const key = `gavin-sync-pair-attempts:${id}`;
@@ -22,7 +22,7 @@ async function useAttempts(id, requestId) {
         // Older join counters stored a separate request:offer entry for every candidate.
         saved.ids = [...new Set(saved.ids.map(request => request.split(':')[0]))];
         if (saved.ids.includes(requestId)) return false;
-        if (saved.ids.length >= 20) throw Object.assign(failure('pairing_limited'), {
+        if (saved.ids.length >= limit) throw Object.assign(failure('pairing_limited'), {
             retryAfter: Math.max(1, Math.ceil((saved.expiresAt - Date.now()) / 1000))
         });
         saved.ids.push(requestId);
@@ -41,13 +41,14 @@ export class EncryptedPairing {
     }
 
     reset() {
+        this.offer?.controller.abort();
         this.offer = null;
         this.hosts.clear();
         this.joinController?.abort();
     }
 
     async readOffer(pairing, session = this.getSession()) {
-        if (!pairing || !session) { this.offer = null; return null; }
+        if (!pairing || !session) { this.offer?.controller.abort(); this.offer = null; this.hosts.clear(); return null; }
         const keyId = session.keyring.currentKeyId;
         if (this.offer && this.offer.keyId !== keyId) this.reset();
         if (this.offer?.offerId === pairing.offerId && this.offer.wireSecret === pairing.secret
@@ -55,9 +56,13 @@ export class EncryptedPairing {
         const keyring = { keys: { [keyId]: session.keyring.keys[keyId] } };
         const secret = await decryptPayload(keyring, session.roomId, `offer:${pairing.offerId}`, pairing.secret);
         if (session.keyring.currentKeyId !== keyId) return null;
-        if (!/^\d{4}$/.test(secret.code) || secret.ownerDeviceId !== pairing.ownerDeviceId || secret.expiresAt <= Date.now()) { this.offer = null; return null; }
-        const offer = { ...pairing, keyId, wireSecret: pairing.secret, expiresAt: Math.min(pairing.expiresAt, secret.expiresAt), secret, code: secret.code };
-        if (this.getSession() === session) this.offer = offer;
+        if (!/^\d{4}$/.test(secret.code) || secret.ownerDeviceId !== pairing.ownerDeviceId || secret.expiresAt <= Date.now()) { this.offer?.controller.abort(); this.offer = null; this.hosts.clear(); return null; }
+        const offer = { ...pairing, controller: new AbortController(), keyId, wireSecret: pairing.secret, expiresAt: Math.min(pairing.expiresAt, secret.expiresAt), secret, code: secret.code };
+        if (this.getSession() === session) {
+            this.offer?.controller.abort();
+            this.hosts.clear();
+            this.offer = offer;
+        }
         return offer;
     }
 
@@ -82,20 +87,49 @@ export class EncryptedPairing {
         if (!session || !offer || offer.keyId !== session.keyring.currentKeyId || offer.ownerDeviceId !== session.deviceId || event.offerId !== offer.offerId || offer.expiresAt <= Date.now()) return;
         const path = `/v1/spaces/${session.roomId}`;
         if (event.type === 'pair-request') {
-            if (this.hosts.has(event.requestId)) return;
-            try {
-                if (!await useAttempts(`host:${offer.offerId}`, event.requestId)) return;
-            } catch (error) {
-                if (error.code === 'pairing_limited') this.onExpired();
-                throw error;
+            let host = this.hosts.get(event.requestId);
+            if (!host) {
+                try {
+                    if (!await useAttempts(`host:${offer.offerId}:${event.sourceId}`, event.requestId)) return;
+                } catch (error) {
+                    if (error.code === 'pairing_limited') return;
+                    throw error;
+                }
+                try {
+                    if (!await useAttempts(`host:${offer.offerId}`, event.requestId, 600)) return;
+                } catch (error) {
+                    if (error.code === 'pairing_limited') this.onExpired();
+                    throw error;
+                }
+                host = { ...await startPairingHost(offer.secret, offer.offerId, event.requestId, event.startLoginRequest), session, offerId: offer.offerId };
+                if (this.getSession() !== session || this.offer !== offer || offer.keyId !== session.keyring.currentKeyId) return;
+                this.hosts.set(event.requestId, host);
             }
-            const host = await startPairingHost(offer.secret, offer.offerId, event.requestId, event.startLoginRequest);
-            if (this.getSession() !== session || this.offer !== offer || offer.keyId !== session.keyring.currentKeyId) return;
-            this.hosts.set(event.requestId, { ...host, session, offerId: offer.offerId });
-            const result = await this.api(`${path}/pair-challenge`, {
-                method: 'POST', body: JSON.stringify({ offerId: offer.offerId, requestId: event.requestId, loginResponse: host.loginResponse })
-            }, session);
-            if (!result.accepted) this.hosts.delete(event.requestId);
+            if (host.challenged) return;
+            if (host.sending) return host.sending;
+            host.sending = (async () => {
+                const active = () => this.getSession() === session && this.offer === offer && offer.keyId === session.keyring.currentKeyId
+                    && offer.expiresAt > Date.now() && this.hosts.get(event.requestId) === host;
+                const signal = AbortSignal.any([offer.controller.signal, AbortSignal.timeout(Math.max(1, offer.expiresAt - Date.now()))]);
+                for (let attempt = 0; attempt < 3 && active(); attempt++) {
+                    try {
+                        const result = await this.api(`${path}/pair-challenge`, {
+                            method: 'POST', signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+                            body: JSON.stringify({ offerId: offer.offerId, requestId: event.requestId, loginResponse: host.loginResponse })
+                        }, session);
+                        if (result.accepted) host.challenged = true;
+                        else this.hosts.delete(event.requestId);
+                        return;
+                    } catch (error) {
+                        if (!active()) return;
+                        if (attempt === 2 || !(error instanceof TypeError || error.name === 'TimeoutError'
+                            || error.status === 429 || error.status >= 500 && error.status <= 599)) throw error;
+                        try { await pause(signal, Math.max(500 * 2 ** attempt, (error.retryAfter || 0) * 1000)); }
+                        catch (aborted) { if (active()) throw aborted; }
+                    }
+                }
+            })().finally(() => { host.sending = null; });
+            return host.sending;
         } else if (event.type === 'pair-finish') {
             const host = this.hosts.get(event.requestId);
             if (!host || host.session !== session) return;
@@ -182,6 +216,7 @@ export class EncryptedPairing {
                 }
                 if (tried.size < offers.length) await pause(signal);
             }
+            if (tried.size !== offers.length) throw failure('pairing_timeout');
             if (matches.size !== 1) throw failure('invalid_code');
             const [offerId, match] = [...matches][0];
             const nonce = randomToken();

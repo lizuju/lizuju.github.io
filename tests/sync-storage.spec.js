@@ -7,12 +7,24 @@ test('keeps the scene return link clear of window controls at short and narrow s
         const link = page.locator('[data-direct-return]');
         const window = page.locator('[data-app-window]');
         await expect(link).toBeVisible();
+        await expect(page.locator('[data-retro-desktop]')).toHaveCSS('top', '0px');
         for (let state = 0; state < 2; state++) {
+            await expect.poll(() => window.locator('.window-controls').evaluate(element => {
+                const controls = element.getBoundingClientRect();
+                const bounds = document.querySelector('[data-direct-return]').getBoundingClientRect();
+                return bounds.left < controls.right && bounds.right > controls.left
+                    && bounds.top < controls.bottom && bounds.bottom > controls.top;
+            })).toBe(false);
             const bounds = await link.boundingBox();
-            const controls = await window.locator('.window-controls').boundingBox();
-            expect(bounds.y).toBeGreaterThanOrEqual(controls.y + controls.height);
+            expect(bounds.x).toBeGreaterThanOrEqual(0);
             expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width);
             expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height);
+            for (const button of await window.locator('.window-controls button').all()) {
+                expect(await button.evaluate(element => {
+                    const box = element.getBoundingClientRect();
+                    return element.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+                })).toBe(true);
+            }
             await window.locator('[data-window-action="maximize"]').click();
         }
         await window.locator('[data-window-action="close"]').click();

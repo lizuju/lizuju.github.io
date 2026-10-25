@@ -1565,3 +1565,39 @@ test('in-flight upload reservations protect global capacity while another room r
   assert.equal((await pending).status, 201);
   assert.deepEqual(await registryStorage.exec('SELECT 1 FROM reservations'), []);
 });
+
+
+test('pairing sources are assigned by the relay, scoped to each offer and retained on resume', async () => {
+  const owner = client();
+  const spaces = [await createSpace(owner), await createSpace(owner)];
+  const source = client();
+  const other = client();
+  const frames = await Promise.all(spaces.map(async space => ({ offerId: space.pairing.offerId,
+    startLoginRequest: (await cryptoClient.startPairingClient('1234', space.pairing.offerId)).startLoginRequest })));
+  const begin = async (request, values = frames) => {
+    const requestId = randomUUID();
+    const result = await request.raw('/v1/pair', { method: 'POST', json: { requestId, requestToken: 'a'.repeat(64), requests: values } });
+    return { ...result, requestId };
+  };
+  for (const json of [
+    { requestId: randomUUID(), requestToken: 'a'.repeat(64), requests: frames, sourceId: 'b'.repeat(64) },
+    { requestId: randomUUID(), requestToken: 'a'.repeat(64), requests: [{ ...frames[0], sourceId: 'b'.repeat(64) }] }
+  ]) assert.equal((await source.raw('/v1/pair', { method: 'POST', json })).status, 400);
+  const first = await begin(source), second = await begin(source), independent = await begin(other);
+  assert.equal(first.status, 202);
+  assert.equal(second.status, 202);
+  assert.equal(independent.status, 202);
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const rows = await storage.exec('SELECT request_id, offer_id, source_id FROM pair_candidates');
+  const sourceFor = (request, space) => rows.find(row => row.request_id === request.requestId && row.offer_id === space.pairing.offerId).source_id;
+  const id = sourceFor(first, spaces[0]);
+  assert.match(id, /^[0-9a-f]{64}$/);
+  assert.equal(id, sourceFor(second, spaces[0]), 'one source retains the same attempt bucket');
+  assert.notEqual(id, sourceFor(independent, spaces[0]), 'another source has an independent budget');
+  assert.notEqual(id, sourceFor(first, spaces[1]), 'identifiers cannot correlate a source across rooms');
+  const pending = await owner.raw(`/v1/spaces/${spaces[0].roomId}/pair-requests`, { token: spaces[0].token });
+  assert.equal(pending.status, 200);
+  assert.equal(pending.body.requests.find(event => event.requestId === first.requestId).sourceId, id);
+  const publicOffers = await source('/v1/pair/offers');
+  assert.ok(publicOffers.body.offers.every(offer => !Object.hasOwn(offer, 'sourceId')));
+});

@@ -160,7 +160,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                 upload_unavailable: 'syncUploadFailed', not_found: 'syncUploadFailed',
                 upload_conflict: 'syncUploadConflict',
                 invalid_ciphertext: 'syncDecryptFailed', key_unavailable: 'syncKeyUnavailable', key_changed: 'syncKeyChanged', rekey_required: 'syncKeyChanged',
-                pairing_limited: 'syncPairLimited', pairing_ambiguous: 'syncPairAmbiguous', pairing_busy: 'syncPairBusy',
+                pairing_limited: 'syncPairLimited', pairing_ambiguous: 'syncPairAmbiguous', pairing_busy: 'syncPairBusy', pairing_timeout: 'syncPairTimeout',
                 encryption_unavailable: 'syncEncryptionUnavailable'
             };
             if (['rate_limited', 'pairing_limited'].includes(error.code) && action && error.retryAfter > 0) {
@@ -204,13 +204,17 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                 signal.addEventListener('abort', abort, { once: true });
                 xhr.send(options.body);
             }) : await fetch(base + path, { ...options, headers, signal });
-            const result = await response.json();
+            const result = await response.json().catch(error => {
+                if (response.ok) throw error;
+                return { error: 'unavailable' };
+            });
             if (!response.ok) {
                 if (result.error === 'key_changed' && session === credentials) await refreshKeys(session);
                 const retryAfter = response.headers.get('Retry-After');
                 const seconds = Number(retryAfter);
                 throw Object.assign(new Error(result.error), {
                     code: result.error,
+                    status: response.status,
                     retryAfter: Number.isFinite(seconds) ? seconds : Math.max(0, (Date.parse(retryAfter) - Date.now()) / 1000)
                 });
             }
@@ -906,7 +910,22 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                     if (saved) {
                         const version = sessionVersion;
                         const session = await loadLocalSession(saved);
-                        if (version !== sessionVersion) return;
+                        if (version !== sessionVersion || !sameSession(saved, savedSession())) return;
+                        if (credentials && session.roomId === credentials.roomId && session.token === credentials.token
+                            && session.deviceId === credentials.deviceId && session.vaultId === credentials.vaultId) {
+                            if (!Object.hasOwn(session.keyring.keys, credentials.keyring.currentKeyId)) return;
+                            const revoked = new Set(credentials.revokedDevices);
+                            const keyChanged = session.keyring.currentKeyId !== credentials.keyring.currentKeyId;
+                            Object.assign(credentials, session, { revision: saved.revision });
+                            if (pendingUpload && session.revokedDevices.some(id => !revoked.has(id))) {
+                                uploadController?.abort(Object.assign(new Error('key_changed'), { code: 'key_changed' }));
+                                discardUpload();
+                            }
+                            if (keyChanged) { pairing.reset(); await showPairing(null); }
+                            saveDraft();
+                            await loadDevices();
+                            return;
+                        }
                         await enter({ ...session, revision: saved.revision });
                         setNotice(pendingUpload ? 'syncUploadRestored' : 'syncJoined');
                     }

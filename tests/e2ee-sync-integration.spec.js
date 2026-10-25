@@ -117,6 +117,21 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
     const pages = await Promise.all(contexts.map(context => context.newPage()));
     const [first, second] = pages;
     let third = pages[2];
+    const challenges = [];
+    let hostingSockets = 0;
+    first.on('websocket', socket => {
+        if (socket.url().startsWith(apiOrigin.replace(/^http/, 'ws'))) hostingSockets++;
+    });
+    const challengeRoute = `${apiOrigin}/v1/spaces/*/pair-challenge`;
+    await first.route(challengeRoute, route => {
+        if (route.request().method() !== 'POST') return route.continue();
+        challenges.push(route.request().postData());
+        if (challenges.length === 1) return route.fulfill({
+            status: 502, contentType: 'text/html', headers: { 'Access-Control-Allow-Origin': siteOrigin },
+            body: '<html><body>Bad Gateway</body></html>'
+        });
+        return route.continue();
+    });
     const capture = page => page.on('request', request => {
         if (!request.url().startsWith(apiOrigin)) return;
         const body = request.postDataBuffer();
@@ -143,6 +158,10 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
             await expect.poll(async () => (await readSession(first)).keyring.currentKeyId).not.toBe(previousKeyId);
         };
         await pair(second);
+        expect(challenges).toHaveLength(2);
+        expect(challenges[1]).toBe(challenges[0]);
+        expect(hostingSockets).toBe(1);
+        await first.unroute(challengeRoute);
         await pair(third);
         await sendText(first, sentText);
         for (const page of [second, third]) await expect(page.locator('[data-sync-messages]')).toContainText(sentText);
@@ -276,7 +295,7 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
     } finally { await Promise.all(contexts.map(context => context.close())); }
 });
 
-for (const restore of ['live', 'reload']) {
+for (const restore of ['live', 'reload', 'cross-tab']) {
 test(`continues an encrypted upload after a new device pairs (${restore})`, async ({ browser, isMobile }, testInfo) => {
     test.skip(isMobile, 'upload rotation is exercised with isolated desktop browser contexts');
     test.setTimeout(180000);
@@ -284,6 +303,20 @@ test(`continues an encrypted upload after a new device pairs (${restore})`, asyn
     if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
     contexts.forEach(context => context.setDefaultTimeout(15000));
     const [first, second] = await Promise.all(contexts.map(context => context.newPage()));
+    const uploader = restore === 'cross-tab' ? await contexts[0].newPage() : first;
+    let uploadAborted = false;
+    let uploadSockets = 0;
+    uploader.on('requestfailed', request => {
+        if (/\/files\/uploads\/[^/]+\/chunks\//.test(request.url())) uploadAborted = true;
+    });
+    uploader.on('websocket', () => { uploadSockets++; });
+    if (restore === 'cross-tab') await uploader.routeWebSocket(`${apiOrigin.replace(/^http/, 'ws')}/**`, socket => {
+        const server = socket.connectToServer();
+        server.onMessage(data => {
+            if (data !== 'pong' && JSON.parse(data).type === 'key-rotation') return;
+            socket.send(data);
+        });
+    });
     const file = { name: 'pairing-during-upload.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(9 * 1024 * 1024, 0x3c) };
     file.buffer.write('preserve-encrypted-chunks-across-pairing');
     file.buffer[file.buffer.length - 1] = 0xe7;
@@ -295,7 +328,7 @@ test(`continues an encrypted upload after a new device pairs (${restore})`, asyn
     let staleChunkStatus;
     let releaseChunk;
     const released = new Promise(resolve => { releaseChunk = resolve; });
-    await first.route(`${apiOrigin}/v1/spaces/*/files/uploads`, async route => {
+    await uploader.route(`${apiOrigin}/v1/spaces/*/files/uploads`, async route => {
         if (route.request().method() !== 'POST') return route.continue();
         const request = route.request();
         const result = await route.fetch();
@@ -308,7 +341,7 @@ test(`continues an encrypted upload after a new device pairs (${restore})`, asyn
         });
         await route.fulfill({ response: result });
     });
-    await first.route(`${apiOrigin}/v1/spaces/*/files/uploads/*/chunks/*`, async route => {
+    await uploader.route(`${apiOrigin}/v1/spaces/*/files/uploads/*/chunks/*`, async route => {
         const request = route.request();
         if (request.method() !== 'PUT') return route.continue();
         const index = Number(new URL(request.url()).pathname.split('/').at(-1));
@@ -332,8 +365,9 @@ test(`continues an encrypted upload after a new device pairs (${restore})`, asyn
         await expect(first.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/, { timeout: 30000 });
         const code = await first.locator('[data-sync-pair-code]').textContent();
         const previousKeyId = (await readSession(first)).keyring.currentKeyId;
-        await first.locator('[data-sync-file-input]').setInputFiles(uploadPath);
-        await first.locator('[data-sync-send]').click();
+        if (restore === 'cross-tab') { await openApp(uploader); await awaitOnline(uploader); }
+        await uploader.locator('[data-sync-file-input]').setInputFiles(uploadPath);
+        await uploader.locator('[data-sync-send]').click();
         await expect.poll(() => heldChunk, { timeout: 30000 }).toBe(true);
         expect(uploads).toHaveLength(1);
         expect(uploads[0].receivedBytes).toBe(0);
@@ -355,11 +389,19 @@ test(`continues an encrypted upload after a new device pairs (${restore})`, asyn
             await expect(first.locator('[data-sync-selected-file]')).toBeVisible();
             await first.locator('[data-sync-file-input]').setInputFiles(uploadPath);
             await first.locator('[data-sync-send]').click();
-        } else releaseChunk();
+        } else {
+            if (restore === 'cross-tab') {
+                await expect(uploader.locator('[data-sync-upload-status]')).toBeVisible();
+                await expect(uploader.locator('[data-sync-file-name]')).toHaveText(file.name);
+                expect(uploadSockets).toBe(1);
+                expect(uploadAborted).toBe(false);
+            }
+            releaseChunk();
+        }
 
         const message = second.locator('.sync-message').filter({ has: second.locator('.sync-attachment-name', { hasText: file.name }) });
         await expect(message).toBeVisible({ timeout: 30000 });
-        if (restore === 'live') expect(staleChunkStatus).toBe(409);
+        if (restore !== 'reload') expect(staleChunkStatus).toBe(409);
         expect(uploads.length).toBeGreaterThanOrEqual(2);
         expect(new Set(uploads.map(upload => upload.uploadId)).size).toBe(1);
         expect(new Set(uploads.map(upload => upload.clientId)).size).toBe(1);
@@ -369,6 +411,7 @@ test(`continues an encrypted upload after a new device pairs (${restore})`, asyn
         expect(chunks.filter(chunk => chunk.index === 0)).toHaveLength(1);
         expect(chunks.filter(chunk => chunk.index === 1)).toHaveLength(2);
         expect(chunks.at(-1).keyId).toBe(currentKeyId);
+        if (restore === 'cross-tab') { expect(uploadSockets).toBe(1); expect(uploadAborted).toBe(false); }
 
         const downloading = second.waitForEvent('download');
         await message.locator('[data-sync-download-file]').click();

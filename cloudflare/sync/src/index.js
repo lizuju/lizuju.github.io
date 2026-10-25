@@ -200,7 +200,7 @@ export default {
           || !Array.isArray(requests) || !requests.length || requests.length > PAIR_CANDIDATE_LIMIT
           || requests.some(value => !value || Object.keys(value).some(key => !['offerId', 'startLoginRequest'].includes(key)) || !ROOM_ID.test(value.offerId) || !relayValue(value.startLoginRequest))
           || new Set(requests.map(value => value.offerId)).size !== requests.length) return json({ error: 'invalid_pairing' }, 400);
-      return resultResponse(await registry.startPairing(requestId, requestToken, requests), 202);
+      return resultResponse(await registry.startPairing(requestId, requestToken, requests, ipHash), 202);
     }
     const pairingRequest = url.pathname.match(/^\/v1\/pair\/([^/]+)$/);
     if (pairingRequest && ROOM_ID.test(pairingRequest[1])) {
@@ -292,8 +292,10 @@ export default {
     }
     const file = match[2]?.match(/^\/files\/([1-9][0-9]*)(\/download)?$/);
     if (file) {
-      await registry.refreshRoom(roomId);
-      if (request.method === 'POST' && file[2]) return resultResponse(await room.issueDownload(deviceId, file[1]));
+      if (request.method === 'POST' && file[2]) {
+        await registry.refreshRoom(roomId);
+        return resultResponse(await room.issueDownload(deviceId, file[1]));
+      }
       if (['GET', 'HEAD'].includes(request.method) && !file[2]) return room.fetch(request);
     }
     if (request.method === 'GET' && match[2] === '/devices') {
@@ -385,7 +387,10 @@ export class E2eePairingRegistry extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS offers (offer_id TEXT PRIMARY KEY, room_id TEXT NOT NULL UNIQUE, owner_device_id TEXT NOT NULL, secret TEXT NOT NULL, expires_at INTEGER NOT NULL)');
     this.sql.exec('CREATE INDEX IF NOT EXISTS offers_expiry ON offers(expires_at)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS pair_requests (request_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, selected_offer TEXT, finish_request TEXT, client_data TEXT, grant TEXT, accepted_device TEXT)');
-    this.sql.exec('CREATE TABLE IF NOT EXISTS pair_candidates (request_id TEXT NOT NULL, offer_id TEXT NOT NULL, start_request TEXT NOT NULL, challenge TEXT, owner_device_id TEXT NOT NULL, PRIMARY KEY(request_id, offer_id))');
+    this.sql.exec("CREATE TABLE IF NOT EXISTS pair_candidates (request_id TEXT NOT NULL, offer_id TEXT NOT NULL, start_request TEXT NOT NULL, challenge TEXT, owner_device_id TEXT NOT NULL, source_id TEXT NOT NULL DEFAULT 'legacy', PRIMARY KEY(request_id, offer_id))");
+    if (!this.sql.exec('PRAGMA table_info(pair_candidates)').toArray().some(column => column.name === 'source_id')) {
+      this.sql.exec("ALTER TABLE pair_candidates ADD COLUMN source_id TEXT NOT NULL DEFAULT 'legacy'");
+    }
     this.sql.exec('CREATE TABLE IF NOT EXISTS attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL)');
     this.sql.exec('CREATE INDEX IF NOT EXISTS attempts_expiry ON attempts(expires_at)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS room_usage (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL, oldest_at INTEGER, deleting_files INTEGER)');
@@ -400,7 +405,7 @@ export class E2eePairingRegistry extends DurableObject {
 
   rememberUsage(roomId, usage) {
     this.sql.exec(
-      'INSERT INTO room_usage (room_id, bytes, oldest_at, deleting_files) VALUES (?, ?, ?, ?) ON CONFLICT(room_id) DO UPDATE SET bytes = excluded.bytes, oldest_at = excluded.oldest_at, deleting_files = excluded.deleting_files',
+      'INSERT INTO room_usage (room_id, bytes, oldest_at, deleting_files) VALUES (?, ?, ?, ?) ON CONFLICT(room_id) DO UPDATE SET bytes = excluded.bytes, oldest_at = excluded.oldest_at, deleting_files = excluded.deleting_files WHERE room_usage.bytes IS NOT excluded.bytes OR room_usage.oldest_at IS NOT excluded.oldest_at OR room_usage.deleting_files IS NOT excluded.deleting_files',
       roomId, usage.bytes, usage.oldestAt, usage.deletingFiles
     );
   }
@@ -688,9 +693,10 @@ export class E2eePairingRegistry extends DurableObject {
     return { ok: true };
   }
 
-  async startPairing(requestId, requestToken, requests) {
+  async startPairing(requestId, requestToken, requests, ipHash) {
     this.prunePairings();
     const tokenHash = await hash(requestToken);
+    const sourceIds = await Promise.all(requests.map(value => hash(`${value.offerId}:${ipHash}`)));
     const existing = this.sql.exec('SELECT token_hash FROM pair_requests WHERE request_id = ?', requestId).toArray()[0];
     if (existing) {
       if (existing.token_hash !== tokenHash) return { error: 'unauthorized', status: 401 };
@@ -699,13 +705,13 @@ export class E2eePairingRegistry extends DurableObject {
       return { requestId };
     }
     if (this.sql.exec('SELECT count(*) AS count FROM pair_requests').one().count >= PAIR_REQUEST_LIMIT) return { error: 'pairing_busy', status: 503, retryAfter: 60 };
-    const offers = requests.map(value => ({ ...value, offer: this.sql.exec('SELECT * FROM offers WHERE offer_id = ? AND expires_at > ?', value.offerId, Date.now()).toArray()[0] }));
+    const offers = requests.map((value, index) => ({ ...value, sourceId: sourceIds[index], offer: this.sql.exec('SELECT * FROM offers WHERE offer_id = ? AND expires_at > ?', value.offerId, Date.now()).toArray()[0] }));
     if (offers.some(value => !value.offer)) return { error: 'code_expired', status: 404 };
     this.ctx.storage.transactionSync(() => {
       this.sql.exec('INSERT INTO pair_requests (request_id, token_hash, expires_at) VALUES (?, ?, ?)', requestId, tokenHash, Date.now() + INVITE_LIFETIME);
-      for (const value of offers) this.sql.exec('INSERT INTO pair_candidates (request_id, offer_id, start_request, owner_device_id) VALUES (?, ?, ?, ?)', requestId, value.offerId, value.startLoginRequest, value.offer.owner_device_id);
+      for (const value of offers) this.sql.exec('INSERT INTO pair_candidates (request_id, offer_id, start_request, owner_device_id, source_id) VALUES (?, ?, ?, ?, ?)', requestId, value.offerId, value.startLoginRequest, value.offer.owner_device_id, value.sourceId);
     });
-    await Promise.all(offers.map(value => this.env.E2EE_SYNC_ROOMS.getByName(value.offer.room_id).publishToDevice(value.offer.owner_device_id, { type: 'pair-request', requestId, offerId: value.offerId, startLoginRequest: value.startLoginRequest })));
+    await Promise.all(offers.map(value => this.env.E2EE_SYNC_ROOMS.getByName(value.offer.room_id).publishToDevice(value.offer.owner_device_id, { type: 'pair-request', requestId, offerId: value.offerId, startLoginRequest: value.startLoginRequest, sourceId: value.sourceId })));
     return { requestId };
   }
 
@@ -771,8 +777,8 @@ export class E2eePairingRegistry extends DurableObject {
 
   pendingPairings(roomId, deviceId) {
     this.prunePairings();
-    const rows = this.sql.exec('SELECT r.request_id, r.selected_offer, r.finish_request, r.client_data, c.offer_id, c.start_request FROM pair_candidates c JOIN pair_requests r ON r.request_id = c.request_id JOIN offers o ON o.offer_id = c.offer_id WHERE o.room_id = ? AND c.owner_device_id = ? AND r.grant IS NULL ORDER BY r.expires_at, r.request_id', roomId, deviceId).toArray();
-    return { requests: rows.map(row => row.selected_offer === row.offer_id ? { type: 'pair-finish', requestId: row.request_id, offerId: row.offer_id, finishLoginRequest: row.finish_request, clientData: row.client_data } : { type: 'pair-request', requestId: row.request_id, offerId: row.offer_id, startLoginRequest: row.start_request }) };
+    const rows = this.sql.exec('SELECT r.request_id, r.selected_offer, r.finish_request, r.client_data, c.offer_id, c.start_request, c.source_id FROM pair_candidates c JOIN pair_requests r ON r.request_id = c.request_id JOIN offers o ON o.offer_id = c.offer_id WHERE o.room_id = ? AND c.owner_device_id = ? AND r.grant IS NULL ORDER BY r.expires_at, r.request_id', roomId, deviceId).toArray();
+    return { requests: rows.map(row => row.selected_offer === row.offer_id ? { type: 'pair-finish', requestId: row.request_id, offerId: row.offer_id, finishLoginRequest: row.finish_request, clientData: row.client_data } : { type: 'pair-request', requestId: row.request_id, offerId: row.offer_id, startLoginRequest: row.start_request, sourceId: row.source_id }) };
   }
 
   acceptPairing(roomId, deviceId, requestId, offerId, joinedId, token, name, grant, keyId, rotation) {
@@ -1102,7 +1108,7 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.initialized) return { bytes: 0, oldestAt: null, deletingFiles: 0 };
     return {
       bytes: this.sql.databaseSize + this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM file_shards').one().bytes + this.sql.exec('SELECT coalesce(sum(reserved_bytes), 0) AS bytes FROM files').one().bytes,
-      oldestAt: this.sql.exec("SELECT min(created_at) AS oldest_at FROM (SELECT created_at FROM messages UNION ALL SELECT created_at FROM files WHERE status IN ('uploading', 'deleting'))").one().oldest_at,
+      oldestAt: this.sql.exec("SELECT min(created_at) AS oldest_at FROM (SELECT created_at FROM messages UNION ALL SELECT created_at FROM files WHERE status = 'deleting')").one().oldest_at,
       deletingFiles: this.sql.exec("SELECT count(*) AS count FROM files WHERE status = 'deleting'").one().count
     };
   }
@@ -1154,14 +1160,12 @@ export class E2eeSyncRoom extends DurableObject {
   async pruneOldest(before = Number.MAX_SAFE_INTEGER) {
     return this.ctx.blockConcurrencyWhile(async () => {
       if (!this.initialized) return this.storageUsage();
-      const items = this.sql.exec("SELECT id AS messageId, NULL AS uploadId, created_at AS createdAt, attachment IS NOT NULL AS attachment FROM messages WHERE created_at <= ? UNION ALL SELECT NULL, file_id, created_at, 1 FROM files WHERE status = 'uploading' AND created_at <= ? ORDER BY createdAt, messageId, uploadId LIMIT 100", before, before).toArray();
-      // Reclaim one file or upload before considering any newer history.
+      const items = this.sql.exec('SELECT id AS messageId, attachment IS NOT NULL AS attachment FROM messages WHERE created_at <= ? ORDER BY created_at, id LIMIT 100', before).toArray();
+      // Reclaim one completed file before considering any newer history.
       const attachmentIndex = items.findIndex(item => item.attachment);
       const selected = items.slice(0, attachmentIndex < 0 ? items.length : attachmentIndex + 1);
-      const ids = selected.filter(item => item.messageId !== null).map(item => item.messageId);
+      const ids = selected.map(item => item.messageId);
       if (ids.length) this.sql.exec(`DELETE FROM messages WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids);
-      const upload = selected.find(item => item.uploadId !== null);
-      if (upload) this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE file_id = ?", upload.uploadId);
       if (ids.length) this.historyChanged();
       await this.cleanupFiles();
       await this.scheduleAlarm();

@@ -351,7 +351,8 @@ test('ignores a plaintext legacy draft after enabling encrypted sessions', async
     expect(deleted).toEqual([]);
 });
 
-test('discards an old attachment key after revocation even when acknowledging its grant fails', async ({ page, isMobile }) => {
+for (const source of ['socket', 'storage']) {
+test(`discards an old attachment key after revocation through ${source}`, async ({ page, isMobile }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
     await prepare(page);
     await page.route('**/__sync-reliability-crypto.js', async route => route.fulfill({
@@ -412,8 +413,24 @@ test('discards an old attachment key after revocation even when acknowledging it
             const crypto = await import('/__sync-reliability-crypto.js');
             return crypto.createKeyRotation(session, [{ deviceId: session.deviceId, publicKey: session.identity.publicKey }]);
         }, session);
-        socket.send(JSON.stringify({ type: 'key-rotation' }));
-        await expect.poll(() => ackFailures).toBeGreaterThan(0);
+        if (source === 'socket') {
+            socket.send(JSON.stringify({ type: 'key-rotation' }));
+            await expect.poll(() => ackFailures).toBeGreaterThan(0);
+        } else {
+            const tab = await page.context().newPage();
+            try {
+                await tab.route('**/__sync-reliability-crypto.js', async route => route.fulfill({
+                    contentType: 'text/javascript', body: await readFile(require.resolve('../static/portfolio/js/apps/sync-crypto.js'), 'utf8')
+                }));
+                await tab.goto('/portfolio/');
+                await tab.evaluate(async next => {
+                    const crypto = await import('/__sync-reliability-crypto.js');
+                    const current = await crypto.loadLocalSession(JSON.parse(localStorage.getItem('portfolio-sync-space-e2ee1')));
+                    const descriptor = await crypto.saveLocalSession({ ...current, ...next });
+                    localStorage.setItem('portfolio-sync-space-e2ee1', JSON.stringify({ ...descriptor, revision: globalThis.crypto.randomUUID() }));
+                }, rotation.next);
+            } finally { await tab.close(); }
+        }
         await expect.poll(() => aborted).toBe(true);
         await expect.poll(() => page.evaluate(async ({ keyring, roomId, deviceId }) => {
             const crypto = await import('/__sync-reliability-crypto.js');
@@ -436,3 +453,4 @@ test('discards an old attachment key after revocation even when acknowledging it
         expect(attachments[1].key).not.toBe(attachments[0].key);
     } finally { release?.(); }
 });
+}

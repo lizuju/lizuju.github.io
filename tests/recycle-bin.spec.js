@@ -79,9 +79,9 @@ test('drags, resizes, maximizes and restores the recycle bin window', async ({ p
 
     await bin.locator('[data-recycle-action="maximize"]').click();
     await expect(bin).toHaveClass(/is-maximized/);
-    const viewport = page.viewportSize();
+    const desktop = await page.locator('[data-retro-desktop]').boundingBox();
     const taskbar = await page.locator('.desktop-taskbar').boundingBox();
-    expect(await bin.boundingBox()).toEqual({ x: 0, y: 0, width: viewport.width, height: taskbar.y });
+    expect(await bin.boundingBox()).toEqual({ x: desktop.x, y: desktop.y, width: desktop.width, height: taskbar.y - desktop.y });
     await bin.locator('[data-recycle-action="maximize"]').click();
     await expect(bin).not.toHaveClass(/is-maximized/);
     expect(await bin.boundingBox()).toEqual(resized);

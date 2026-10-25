@@ -11,8 +11,6 @@
         const restartButton = document.querySelector('[data-restart]');
         const clock = document.querySelector('[data-retro-clock]');
         const taskButtons = document.querySelectorAll('.task-window-button');
-        const returnLink = document.querySelector('[data-direct-return]');
-        if (returnLink && !returnLink.hidden) startButton.after(returnLink);
         const taskList = document.createElement('div');
         taskList.className = 'taskbar-tasks';
         taskButtons[0].before(taskList);

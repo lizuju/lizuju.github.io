@@ -140,6 +140,10 @@ import { PreviewZoom } from './preview-zoom.js';
             },
             hide: (state) => {
                 video.pause();
+                if (state === 'is-closed') {
+                    video.removeAttribute('src');
+                    video.load();
+                }
                 manager.hideWindow(videoPreviewWindow, videoPreviewTask, state, { hideTask: state === 'is-closed' });
             },
             focusTarget: () => video

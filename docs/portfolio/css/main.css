@@ -3539,6 +3539,10 @@ summary:focus-visible {
 
 /* Homepage window content: header, hero, projects, research, skills, awards and contact. */
 
+[data-app-window] {
+    container: portfolio / inline-size;
+}
+
 .page-shell {
     display: grid;
     width: 100%;
@@ -4270,7 +4274,7 @@ main {
     font: 11px/1.2 var(--font-system);
 }
 
-@media (max-width: 1040px) {
+@container portfolio (max-width: 1040px) {
     .page-shell {
         grid-template-columns: 180px minmax(0, 1fr);
     }
@@ -4303,7 +4307,7 @@ main {
     }
 }
 
-@media (max-width: 900px) {
+@container portfolio (max-width: 900px) {
     .window-scroll {
         scroll-padding-top: 58px;
     }
@@ -4440,7 +4444,11 @@ main {
     }
 }
 
-@media (max-width: 560px) {
+@container portfolio (max-width: 560px) {
+    .page-shell {
+        font-size: 15px;
+    }
+
     .section {
         padding: 24px 14px;
     }
@@ -4616,26 +4624,6 @@ main {
     border-top: 2px outset #fff;
     background: #c0c0c0;
     font: 12px/1 var(--font-system);
-}
-
-.desktop-taskbar .direct-return-button {
-    position: static;
-    max-width: min(120px, 21vw);
-    flex: 0 0 auto;
-    padding: 5px;
-    overflow: hidden;
-    border: 2px outset #fff;
-    color: #111;
-    background: #c0c0c0;
-    font: 11px/1 var(--font-system);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    backdrop-filter: none;
-}
-
-.desktop-taskbar .direct-return-button:focus-visible {
-    outline: 1px dotted #000;
-    outline-offset: -4px;
 }
 
 .shutdown-screen {
@@ -4989,15 +4977,10 @@ main {
 
 /* Window frame breakpoints. Loaded after the app styles so shared window sizing overrides per-app sizes. */
 
-body.direct-portfolio .app-window:not(.is-maximized) {
-    top: 72px;
-}
-
-@media (min-width: 901px) {
-    body.direct-portfolio .gomoku-window:not(.is-maximized) {
-        height: min(660px, calc(100% - 124px));
-    }
-
+body.direct-portfolio .direct-return-button {
+    top: 4px;
+    right: 112px;
+    max-width: calc(100vw - 124px);
 }
 
 @media (max-width: 1040px) {
@@ -5017,10 +5000,6 @@ body.direct-portfolio .app-window:not(.is-maximized) {
 }
 
 @media (max-width: 900px) {
-    body.direct-portfolio .app-window:not(.is-maximized) {
-        top: 88px;
-    }
-
     .desktop-shortcuts {
         top: 12px;
         left: 8px;
@@ -5136,6 +5115,10 @@ body.direct-portfolio .app-window:not(.is-maximized) {
     .retro-desktop > [data-app-window],
     .page-shell {
         display: block;
+    }
+
+    [data-app-window] {
+        container-type: normal;
     }
 
     .retro-desktop > :not([data-app-window]),

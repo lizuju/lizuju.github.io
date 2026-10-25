@@ -150,8 +150,8 @@ test('renders the complete bilingual portfolio without school name or overflow',
     await expect(page.locator('[data-direct-return]')).toBeVisible();
     await expect(page.locator('[data-direct-return]')).toHaveAttribute('href', '../');
     await expect(page.locator('[data-direct-return]')).toHaveClass(/scene-link/);
-    await expect(page.locator('[data-direct-return]')).toHaveText('返回场景');
-    await expect(page.locator('.desktop-taskbar [data-direct-return]')).toHaveCount(1);
+    await expect(page.locator('[data-direct-return]')).toHaveText('返回沉浸式场景 / Back to immersive scene');
+    await expect(page.locator('.desktop-taskbar [data-direct-return]')).toHaveCount(0);
     await expect(page.locator('[data-window-drag]')).toContainText('李祖钜 Gavin - 个人主页');
     await expect(page.locator('.desktop-taskbar')).toBeVisible();
     await expect(page.locator('[data-app-window]')).toBeVisible();
@@ -1376,11 +1376,11 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
         const titlebar = await page.locator('[data-gomoku-drag]').boundingBox();
         await page.mouse.move(titlebar.x + 250, titlebar.y + titlebar.height / 2);
         await page.mouse.down();
-        await page.mouse.move(titlebar.x + 205, titlebar.y + 35, { steps: 4 });
+        await page.mouse.move(titlebar.x + 205, titlebar.y - 20, { steps: 4 });
         await page.mouse.up();
         const windowAfterDrag = await gameWindow.boundingBox();
         expect(windowAfterDrag.x).toBeLessThan(windowBeforeDrag.x - 20);
-        expect(windowAfterDrag.y).toBeGreaterThanOrEqual(windowBeforeDrag.y + 8);
+        expect(windowAfterDrag.y).toBeLessThanOrEqual(windowBeforeDrag.y - 8);
 
         await page.locator('[data-gomoku-window-action="maximize"]').click();
         await expect(gameWindow).toHaveClass(/is-maximized/);
@@ -1409,6 +1409,7 @@ test('keeps the retro desktop fixed when returning to the top', async ({ page })
 
     const windowScroll = page.locator('[data-window-scroll]');
     const desktop = page.locator('[data-retro-desktop]');
+    const desktopBefore = await desktop.boundingBox();
     await windowScroll.evaluate((element) => {
         element.scrollTop = element.scrollHeight;
     });
@@ -1419,10 +1420,7 @@ test('keeps the retro desktop fixed when returning to the top', async ({ page })
     await expect.poll(() => windowScroll.evaluate((element) => element.scrollTop)).toBe(0);
 
     expect(await page.evaluate(() => window.scrollY)).toBe(0);
-    expect(await desktop.evaluate((element) => {
-        const rect = element.getBoundingClientRect();
-        return rect.top === 0 && rect.bottom === window.innerHeight;
-    })).toBe(true);
+    expect(await desktop.boundingBox()).toEqual(desktopBefore);
 });
 
 test('exposes crawlable SEO metadata', async ({ page, request, isMobile }) => {

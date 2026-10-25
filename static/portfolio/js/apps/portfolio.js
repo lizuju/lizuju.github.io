@@ -205,7 +205,7 @@
         const anchorSelector = '.page-shell main > section, .method-step, .project-card, .project-body > *, .project-details summary, .project-details[open] li, .skill-card';
         const anchorCandidates = [...document.querySelectorAll(anchorSelector)];
         const viewportTop = windowScroll.getBoundingClientRect().top + windowScroll.clientTop
-            + (window.innerWidth <= 900 ? document.querySelector('.site-header').offsetHeight : 0);
+            + (windowScroll.closest('[data-app-window]').clientWidth <= 900 ? document.querySelector('.site-header').offsetHeight : 0);
         const readingAnchorIndex = projectCards.length && windowScroll.scrollTop > 0
             ? anchorCandidates.findLastIndex((element) => {
                 const rect = element.getBoundingClientRect();
@@ -293,7 +293,8 @@
         if (!windowScroll || !targetElement) return false;
 
         closeMobileMenu();
-        const headerHeight = window.innerWidth <= 900 ? document.querySelector('.site-header').offsetHeight : 0;
+        const headerHeight = windowScroll.closest('[data-app-window]').clientWidth <= 900
+            ? document.querySelector('.site-header').offsetHeight : 0;
         const top = target === '#top'
             ? 0
             : windowScroll.scrollTop

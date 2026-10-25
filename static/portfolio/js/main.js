@@ -87,6 +87,52 @@ import './apps/control-panel.js';
             portfolio.entry.toggleMaximize();
         }
 
+        const directReturn = desktop.querySelector('[data-direct-return]');
+        if (directReturn && !directReturn.hidden) {
+            const windows = Array.from(desktop.querySelectorAll('.app-window'));
+            const positionReturn = () => {
+                directReturn.style.removeProperty('top');
+                directReturn.style.removeProperty('right');
+                directReturn.style.removeProperty('max-width');
+                const controls = windows
+                    .filter(manager.isWindowVisible)
+                    .map(element => element.querySelector('.window-controls').getBoundingClientRect())
+                    .filter(bounds => bounds.width > 0);
+                if (!controls.length) {
+                    const shortcuts = desktop.querySelector('.desktop-shortcuts').getBoundingClientRect();
+                    directReturn.style.right = '12px';
+                    directReturn.style.maxWidth = `${window.innerWidth - shortcuts.right - 20}px`;
+                }
+
+                for (let index = 0; index < controls.length; index++) {
+                    const bounds = directReturn.getBoundingClientRect();
+                    const overlap = controls.find(control => bounds.left < control.right
+                        && bounds.right > control.left && bounds.top < control.bottom
+                        && bounds.bottom > control.top);
+                    if (!overlap) break;
+                    if (overlap.left - bounds.width - 8 >= 8) {
+                        directReturn.style.right = `${window.innerWidth - overlap.left + 8}px`;
+                    } else {
+                        directReturn.style.top = `${overlap.bottom + 8}px`;
+                    }
+                }
+            };
+            let positionFrame;
+            const schedulePosition = () => {
+                if (positionFrame) return;
+                positionFrame = window.requestAnimationFrame(() => {
+                    positionFrame = undefined;
+                    positionReturn();
+                });
+            };
+            const observer = new MutationObserver(schedulePosition);
+            windows.forEach(element => observer.observe(element, {
+                attributes: true, attributeFilter: ['class', 'style']
+            }));
+            window.addEventListener('resize', schedulePosition);
+            positionReturn();
+        }
+
         taskbar.startClock();
     }
 

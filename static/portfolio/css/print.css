@@ -21,6 +21,10 @@
         display: block;
     }
 
+    [data-app-window] {
+        container-type: normal;
+    }
+
     .retro-desktop > :not([data-app-window]),
     .retro-desktop::after,
     [data-app-window] > :not([data-window-scroll]),
