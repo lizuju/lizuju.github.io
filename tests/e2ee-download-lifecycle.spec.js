@@ -25,6 +25,7 @@ let origin;
 let apiBase;
 let requests;
 let failSecond;
+let holdFirst;
 let holdSecond;
 let heldResponses = [];
 let shortExpiry;
@@ -38,6 +39,7 @@ test.beforeAll(async () => {
         const start = Number(range[1]);
         const end = Number(range[2]);
         requests++;
+        if (holdFirst && start === 0) { heldResponses.push(response); return; }
         if (failSecond && start > 0) { response.writeHead(503, headers); response.end(); return; }
         if (holdSecond && start > 0) { heldResponses.push(response); return; }
         const body = encrypted.subarray(start, end + 1);
@@ -64,7 +66,7 @@ test.beforeAll(async () => {
     origin = `http://127.0.0.1:${site.address().port}`;
 });
 
-test.beforeEach(() => { requests = 0; failSecond = false; holdSecond = false; shortExpiry = false; });
+test.beforeEach(() => { requests = 0; failSecond = false; holdFirst = false; holdSecond = false; shortExpiry = false; });
 test.afterEach(() => { heldResponses.forEach(response => response.destroy()); heldResponses = []; });
 test.afterAll(async () => {
     for (const server of [site, api]) {
@@ -166,6 +168,22 @@ test('cancelling a native download reports cancellation before the final chunk a
     const download = await downloading;
     await download.cancel();
     await expect.poll(() => page.evaluate(() => window.result)).toEqual({ status: 'cancelled' });
+    expect(await page.evaluate(() => window.capabilityClosed)).toBe(false);
+    await page.evaluate(() => window.capability.dispose());
+});
+
+test('aborting a download request while its first upstream chunk is pending reports cancellation', async ({ page }) => {
+    holdFirst = true;
+    await open(page);
+    await page.evaluate(() => {
+        window.downloadController = new AbortController();
+        window.pendingRead = fetch(window.capability.url, { signal: window.downloadController.signal })
+            .then(response => response.arrayBuffer()).catch(error => error.name);
+    });
+    await expect.poll(() => requests).toBe(1);
+    await page.evaluate(() => window.downloadController.abort());
+    await expect.poll(() => page.evaluate(() => window.result)).toEqual({ status: 'cancelled' });
+    expect(await page.evaluate(() => window.pendingRead)).toBe('AbortError');
     expect(await page.evaluate(() => window.capabilityClosed)).toBe(false);
     await page.evaluate(() => window.capability.dispose());
 });

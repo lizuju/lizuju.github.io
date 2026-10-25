@@ -31,15 +31,17 @@ const fixture = async (size = chunkSize + 97) => {
   for (let offset = 0; offset < size; offset += chunkSize) chunks.push(await encrypt(metadata, clear.subarray(offset, offset + chunkSize), chunks.length));
   return { metadata, clear, wire: Buffer.concat(chunks), url: apiUrl };
 };
-const worker = (descriptor, getBytes) => {
+const worker = (descriptor, getBytes, Stream = ReadableStream) => {
   descriptor = { ...descriptor, expiresAt: descriptor.download ? Date.now() + 60000 : null };
   const handlers = new Map();
   const requests = [];
+  const notifications = [];
   let alive = true;
   let resolutions = 0;
   const client = {
     id: owner, type: 'window', url: 'https://site.test/portfolio/',
     postMessage(message, ports) {
+      notifications.push(message);
       if (message.type === 'released') { alive = false; return; }
       if (message.type === 'download-state') { descriptor.expiresAt = message.expiresAt; return; }
       assert.equal(message.type, 'resolve');
@@ -50,7 +52,7 @@ const worker = (descriptor, getBytes) => {
   const scope = 'https://site.test/portfolio/';
   vm.runInNewContext(source, {
     self: { registration: { scope }, location: new URL(scope), addEventListener: (name, callback) => handlers.set(name, callback), clients: { get: async id => id === owner ? client : null } },
-    URL, crypto: webcrypto, atob, TextEncoder, Response, Headers, ReadableStream, AbortController, MessageChannel, setTimeout, clearTimeout,
+    URL, crypto: webcrypto, atob, TextEncoder, Response, Headers, ReadableStream: Stream, AbortController, MessageChannel, setTimeout, clearTimeout,
     async fetch(url, options) {
       if (String(url) === `${scope}sync-config.json`) return Response.json({ apiBase: 'https://sync.test' });
       assert.equal(String(url), apiUrl);
@@ -67,6 +69,7 @@ const worker = (descriptor, getBytes) => {
   });
   return {
     requests,
+    notifications,
     get resolutions() { return resolutions; },
     close() { alive = false; handlers.get('message')({ data: { source: 'gavin-sync-e2ee', type: 'close', token }, source: client }); },
     async open(value = descriptor) {
@@ -79,10 +82,10 @@ const worker = (descriptor, getBytes) => {
       await pending;
       return result;
     },
-    async get({ method = 'GET', range, clientId = owner } = {}) {
+    async get({ method = 'GET', range, clientId = owner, signal } = {}) {
       let response;
       const url = `${scope}__sync-e2ee__/${owner}/${token}`;
-      handlers.get('fetch')({ request: new Request(url, { method, headers: range ? { Range: range } : {} }), clientId, respondWith(value) { response = value; } });
+      handlers.get('fetch')({ request: new Request(url, { method, headers: range ? { Range: range } : {}, signal }), clientId, respondWith(value) { response = value; } });
       return response;
     }
   };
@@ -185,4 +188,53 @@ test('an empty native download releases its capability without fetching a chunk'
   assert.equal((await (await bridge.get()).arrayBuffer()).byteLength, 0);
   assert.equal((await bridge.get()).status, 404);
   assert.equal(bridge.requests.length, 0);
+});
+
+test('request cancellation while a native download chunk is pending reports cancellation', async () => {
+  const file = { ...await fixture(100), download: true };
+  let rejectChunk;
+  const bridge = worker(file, () => new Promise((_resolve, reject) => { rejectChunk = reject; }));
+  await bridge.open();
+  const controller = new AbortController();
+  const response = await bridge.get({ signal: controller.signal });
+  const reading = response.arrayBuffer();
+  while (!rejectChunk) await new Promise(resolve => setTimeout(resolve, 0));
+  controller.abort();
+  rejectChunk(new TypeError('Fetch was interrupted'));
+  await assert.rejects(reading, /encrypted_file_unavailable/);
+  assert.deepEqual(bridge.notifications.filter(message => message.status).map(message => message.status), ['cancelled']);
+  bridge.close();
+});
+
+test('an upstream network TypeError without request cancellation still reports failure', async () => {
+  const file = { ...await fixture(100), download: true };
+  const bridge = worker(file, () => { throw new TypeError('Network connection failed'); });
+  await bridge.open();
+  await assert.rejects((await bridge.get()).arrayBuffer(), /encrypted_file_unavailable/);
+  assert.deepEqual(bridge.notifications.filter(message => message.status).map(message => message.status), ['failed']);
+  bridge.close();
+});
+
+test('a downstream close racing with plaintext enqueue reports cancellation without an abort signal', async () => {
+  const file = { ...await fixture(100), download: true };
+  class ClosedConsumerStream {
+    constructor(underlying, strategy) {
+      return new ReadableStream({
+        pull(output) {
+          return underlying.pull({
+            enqueue(bytes) { output.close(); output.enqueue(bytes); },
+            close() { output.close(); },
+            error(error) { output.error(error); }
+          });
+        },
+        cancel: underlying.cancel
+      }, strategy);
+    }
+  }
+  const bridge = worker(file, (start, end) => file.wire.subarray(start, end + 1), ClosedConsumerStream);
+  await bridge.open();
+  assert.equal((await (await bridge.get()).arrayBuffer()).byteLength, 0);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(bridge.notifications.filter(message => message.status).map(message => message.status), ['cancelled']);
+  bridge.close();
 });

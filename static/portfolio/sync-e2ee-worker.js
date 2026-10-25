@@ -223,6 +223,7 @@ const serve = async (event, owner, token) => {
     const finish = async status => {
         if (settled) return;
         settled = true;
+        event.request.signal.removeEventListener('abort', abortRequest);
         entry.controllers.delete(controller);
         if (!entry.download) return;
         entry.streamCount--;
@@ -234,23 +235,35 @@ const serve = async (event, owner, token) => {
         }
         await downloadState(entry, owner, token, status === 'delivered' ? null : status);
     };
+    const abortRequest = () => { controller.abort(event.request.signal.reason); return finish('cancelled'); };
+    event.request.signal.addEventListener('abort', abortRequest, { once: true });
+    if (event.request.signal.aborted) await abortRequest();
     let index = Math.floor(start / CLEAR_CHUNK);
     const last = Math.floor((end - 1) / CLEAR_CHUNK);
     const stream = new ReadableStream({
         async pull(output) {
+            let chunk;
             try {
-                const chunk = await readChunk(entry, index, controller.signal);
+                chunk = await readChunk(entry, index, controller.signal);
                 controller.signal.throwIfAborted();
+            } catch {
+                const cancelled = event.request.signal.aborted || controller.signal.aborted;
+                controller.abort();
+                await finish(cancelled ? 'cancelled' : 'failed');
+                output.error(new Error('encrypted_file_unavailable'));
+                return;
+            }
+            const complete = index === last;
+            try {
                 output.enqueue(chunk.subarray(Math.max(0, start - index * CLEAR_CHUNK), Math.min(chunk.length, end - index * CLEAR_CHUNK)));
-                if (index++ === last) {
-                    output.close();
-                    await finish('delivered');
-                }
+                if (complete) output.close();
             } catch {
                 controller.abort();
-                await finish('failed');
-                output.error(new Error('encrypted_file_unavailable'));
+                await finish('cancelled');
+                return;
             }
+            index++;
+            if (complete) await finish('delivered');
         },
         cancel() { controller.abort(); return finish('cancelled'); }
     }, { highWaterMark: 0 });

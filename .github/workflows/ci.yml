@@ -38,8 +38,13 @@ jobs:
         run: npm test
 
   build-and-test:
+    name: build-and-test (${{ matrix.project }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium-desktop, chromium-mobile, webkit-desktop, webkit-mobile]
 
     steps:
       - name: Check out repository
@@ -69,13 +74,13 @@ jobs:
         run: npm run verify:docs
 
       - name: Run browser regression suite
-        run: npm ci --prefix cloudflare/sync && npm run test:smoke
+        run: npm ci --prefix cloudflare/sync && npm run test:smoke -- --project=${{ matrix.project }}
 
       - name: Upload Playwright diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-diagnostics
+          name: playwright-diagnostics-${{ matrix.project }}
           path: |
             playwright-report
             test-results
