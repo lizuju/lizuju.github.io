@@ -5,6 +5,7 @@ import { after, before, test } from 'node:test';
 import { Miniflare } from 'miniflare';
 
 let runtime;
+const sockets = new Set();
 let ip = 1;
 const origin = 'https://lizuju.github.io';
 const cipher = (keyId, value = 'encrypted-content') => `e2ee1.${Buffer.from(JSON.stringify({ keyId, iv: randomBytes(12).toString('base64url'), ciphertext: Buffer.from(value.padEnd(48, '.')).toString('base64url') })).toString('base64url')}`;
@@ -21,7 +22,10 @@ before(async () => {
   } }] });
   await runtime.ready;
 });
-after(async () => { await runtime.dispose(); });
+after(async () => {
+  for (const socket of sockets) if (socket.readyState === 1) socket.close();
+  await runtime.dispose();
+});
 async function request(path, { method = 'GET', token, keyId, json, headers = {}, body } = {}) {
   if (json !== undefined) { body = JSON.stringify(json); headers['Content-Type'] = 'application/json'; }
   const response = await runtime.dispatchFetch(`https://sync.test${path}`, { method, body, headers: { Origin: origin, 'CF-Connecting-IP': `198.51.100.${ip++}`, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(keyId ? {'X-Sync-Key-Id':keyId} : {}), ...headers } });
@@ -32,6 +36,17 @@ async function space() {
   const created = await request('/v1/spaces', { method:'POST',json:{keyId} });
   assert.equal(created.status,201,JSON.stringify(created.body));
   return {...created.body,keyId};
+}
+async function connect(owner) {
+  const response = await runtime.dispatchFetch(`https://sync.test/v1/spaces/${owner.roomId}/socket`, { headers: { Origin: origin, Upgrade: 'websocket', 'CF-Connecting-IP': `198.51.100.${ip++}` } });
+  assert.equal(response.status, 101);
+  const socket = response.webSocket;
+  socket.accept();
+  sockets.add(socket);
+  const ready = new Promise(resolve => socket.addEventListener('message', event => resolve(JSON.parse(event.data)), { once: true }));
+  socket.send(JSON.stringify({ type: 'auth', token: owner.token }));
+  assert.equal((await ready).type, 'ready');
+  return socket;
 }
 async function beginPair(owner) {
   let offerId = randomUUID();
@@ -68,6 +83,7 @@ test('only ciphertext is accepted, epoch headers and actual envelope keys must a
 
 test('opaque offers relay PAKE frames without codes; accept and key rotation are atomic',async()=>{
  const owner=await space(),pair=await beginPair(owner),path=`/v1/spaces/${owner.roomId}`;
+ await connect(owner);
  const listed=await request('/v1/pair/offers');assert.deepEqual(Object.keys(listed.body.offers.find(o=>o.offerId===pair.offerId)).sort(),['expiresAt','offerId']);
  assert.equal((await request(`/v1/pair/${pair.requestId}`,{token:randomBytes(32).toString('hex')})).status,401);
  const pending=await request(`${path}/pair-requests`,{token:owner.token});assert.equal(pending.body.requests[0].type,'pair-request');
@@ -152,6 +168,7 @@ test('thirty spaces can pair concurrently and released or expired slots are reus
  const registry=await runtime.unsafeGetDurableObjectStorage('sync-e2ee-test','E2eePairingRegistry',{name:'registry'});
  await registry.exec('DELETE FROM offers');
  const owners=await Promise.all(Array.from({length:31},space));
+ await Promise.all(owners.map(connect));
  for(const owner of owners.slice(0,30)) {
   const result=await request(`/v1/spaces/${owner.roomId}/pair-code`,{method:'POST',token:owner.token,keyId:owner.keyId,json:{offerId:randomUUID(),secret:cipher(owner.keyId)}});
   assert.equal(result.status,200);

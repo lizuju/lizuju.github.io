@@ -662,9 +662,11 @@ export class E2eePairingRegistry extends DurableObject {
     this.sql.exec('DELETE FROM pair_requests WHERE expires_at <= ?', now);
   }
 
-  publicOffers() {
+  async publicOffers() {
     this.prunePairings();
-    return { offers: this.sql.exec('SELECT offer_id AS offerId, expires_at AS expiresAt FROM offers ORDER BY expires_at, offer_id LIMIT ?', PAIR_CANDIDATE_LIMIT).toArray() };
+    const offers = this.sql.exec('SELECT offer_id AS offerId, room_id AS roomId, owner_device_id AS ownerDeviceId, expires_at AS expiresAt FROM offers ORDER BY expires_at, offer_id LIMIT ?', PAIR_CANDIDATE_LIMIT).toArray();
+    const online = await Promise.all(offers.map(offer => this.env.E2EE_SYNC_ROOMS.getByName(offer.roomId).deviceOnline(offer.ownerDeviceId)));
+    return { offers: offers.filter((offer, index) => online[index] && offer.expiresAt > Date.now()).map(({ offerId, expiresAt }) => ({ offerId, expiresAt })) };
   }
 
   currentInvite(roomId) {

@@ -720,6 +720,45 @@ test('offer publications are ordered and are never sent to another room or anony
   assert.equal((await authenticateSocket(space)).frame.type, 'ready');
 });
 
+test('pairing discovery excludes offline invitation owners without deleting their invitation and restores it on reconnect', async () => {
+  const request = client(), active = await createSpace(request), offline = await createSpace();
+  const host = await authenticateSocket(active);
+  await openSocket(offline.roomId);
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const retained = await storage.exec('SELECT * FROM offers ORDER BY offer_id');
+  await runtime.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: active.roomId, webSockets: 'hibernate' });
+  const exposed = await request.raw('/v1/pair/offers');
+  assert.equal(exposed.status, 200);
+  assert.deepEqual(exposed.body.offers, [{ offerId: active.pairing.offerId, expiresAt: active.pairing.expiresAt }]);
+  assert.deepEqual(await storage.exec('SELECT * FROM offers ORDER BY offer_id'), retained);
+
+  const requestId = randomUUID(), requestToken = 'b'.repeat(64);
+  const start = await cryptoClient.startPairingClient(active.code, exposed.body.offers[0].offerId);
+  const delivered = new Promise(resolve => host.socket.addEventListener('message', event => resolve(JSON.parse(event.data)), { once: true }));
+  const started = await request.raw('/v1/pair', { method: 'POST', json: { requestId, requestToken, requests: [{ offerId: active.pairing.offerId, startLoginRequest: start.startLoginRequest }] } });
+  assert.equal(started.status, 202);
+  const frame = await delivered;
+  assert.equal(frame.type, 'pair-request');
+  const secret = request.state.offers.get(active.pairing.offerId).secret;
+  const response = await cryptoClient.startPairingHost(secret, active.pairing.offerId, requestId, frame.startLoginRequest);
+  assert.equal((await request.raw(`/v1/spaces/${active.roomId}/pair-challenge`, { method: 'POST', token: active.token, headers: { 'X-Sync-Key-Id': request.state.sessions.get(active.token).keyring.currentKeyId }, json: { offerId: active.pairing.offerId, requestId, loginResponse: response.loginResponse } })).status, 200);
+  const polled = await request.raw(`/v1/pair/${requestId}`, { token: requestToken });
+  assert.equal(polled.body.responses.length, exposed.body.offers.length, 'Every exposed candidate can answer; an unrelated offline invitation cannot force a timeout');
+  await cryptoClient.finishPairingClient(start.clientState, active.pairing.offerId, requestId, polled.body.responses[0].loginResponse);
+  assert.deepEqual((await request.raw(`/v1/spaces/${offline.roomId}/pair-requests`, { token: offline.token })).body.requests, []);
+  await request.raw(`/v1/pair/${requestId}`, { method: 'DELETE', token: requestToken });
+
+  const restored = await authenticateSocket(offline);
+  const both = await request.raw('/v1/pair/offers');
+  assert.deepEqual(both.body.offers.map(offer => offer.offerId).sort(), [active.pairing.offerId, offline.pairing.offerId].sort());
+  const closed = socketEvent(restored.socket, 'close');
+  restored.socket.close();
+  await closed;
+  const afterClose = await request.raw('/v1/pair/offers');
+  assert.deepEqual(afterClose.body.offers, exposed.body.offers);
+  assert.deepEqual(await storage.exec('SELECT * FROM offers ORDER BY offer_id'), retained);
+});
+
 test('creation is rate limited per IP while another IP can still create a space', async () => {
   const request = client();
   for (let index = 0; index < 5; index += 1) await createSpace(request);
