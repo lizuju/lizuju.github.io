@@ -32,6 +32,7 @@ const fixture = async (size = chunkSize + 97) => {
   return { metadata, clear, wire: Buffer.concat(chunks), url: apiUrl };
 };
 const worker = (descriptor, getBytes) => {
+  descriptor = { ...descriptor, expiresAt: descriptor.download ? Date.now() + 60000 : null };
   const handlers = new Map();
   const requests = [];
   let alive = true;
@@ -40,6 +41,8 @@ const worker = (descriptor, getBytes) => {
     id: owner, type: 'window', url: 'https://site.test/portfolio/',
     postMessage(message, ports) {
       if (message.type === 'released') { alive = false; return; }
+      if (message.type === 'download-state') { descriptor.expiresAt = message.expiresAt; return; }
+      assert.equal(message.type, 'resolve');
       resolutions++;
       ports[0].postMessage(alive && message.token === token ? descriptor : null);
     }
@@ -162,6 +165,7 @@ test('a range at the end of a 2 GiB file fetches and decrypts only its final bou
   assert.equal(response.headers.get('Content-Length'), '13');
   assert.match(response.headers.get('Content-Disposition'), /^attachment;/);
   assert.deepEqual(bridge.requests, [[index * 8 * 1024 * 1024, index * 8 * 1024 * 1024 + encrypted.length - 1]]);
+  bridge.close();
 });
 
 test('a completed native download releases its capability and plaintext chunk cache at EOF', async () => {
