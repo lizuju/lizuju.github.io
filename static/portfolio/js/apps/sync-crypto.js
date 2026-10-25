@@ -203,6 +203,22 @@ export async function deleteLocalSession(vaultId) {
     await vaultStore('readwrite', (store) => store.delete(vaultId));
 }
 
+export async function savePairingRecovery(id, value) {
+    const previous = await vaultStore('readonly', store => store.get(id));
+    const key = previous?.key || await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    const encrypted = await seal(key, `gavin-sync-pair-recovery-v1:${id}`, value);
+    await vaultStore('readwrite', store => store.put({ id, key, encrypted }));
+}
+
+export async function loadPairingRecovery(id) {
+    const entry = await vaultStore('readonly', store => store.get(id));
+    return entry ? open(entry.key, `gavin-sync-pair-recovery-v1:${id}`, entry.encrypted) : null;
+}
+
+export async function deletePairingRecovery(id) {
+    await vaultStore('readwrite', store => store.delete(id));
+}
+
 export async function createDeviceIdentity() {
     const identity = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
     return {

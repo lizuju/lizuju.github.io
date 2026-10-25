@@ -22,6 +22,7 @@ import { PreviewZoom } from './preview-zoom.js';
             current = null;
             previous.controller.abort();
             previous.observer?.disconnect();
+            previous.mediaObserver?.disconnect();
             previous.pages?.forEach((page) => {
                 page.render?.cancel();
                 if (page.canvas) { page.canvas.width = 0; page.canvas.height = 0; }
@@ -200,6 +201,15 @@ import { PreviewZoom } from './preview-zoom.js';
                     video.src = file.url;
                     video.addEventListener('loadedmetadata', () => { if (current === state) setStatus('syncPreviewVideoHint'); });
                     video.addEventListener('error', () => fail(state));
+                    const pauseHiddenVideo = () => {
+                        if (document.hidden || app.closest('[inert], [hidden]')) video.pause();
+                    };
+                    state.mediaObserver = new MutationObserver(pauseHiddenVideo);
+                    for (let ancestor = app; ancestor; ancestor = ancestor.parentElement) {
+                        state.mediaObserver.observe(ancestor, { attributes: true, attributeFilter: ['inert', 'hidden'] });
+                    }
+                    document.addEventListener('visibilitychange', pauseHiddenVideo, { signal: state.controller.signal });
+                    video.addEventListener('playing', pauseHiddenVideo);
                     body.append(video);
                 } else {
                     const { renderDocumentPreview } = await import(/* webpackChunkName: "sync-documents" */ './sync-document-preview.js');

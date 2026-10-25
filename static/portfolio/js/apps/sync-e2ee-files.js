@@ -1,11 +1,13 @@
 const root = new URL('.', document.baseURI);
 const workerUrl = new URL('sync-e2ee-worker.js', root);
 const entries = new Map();
+const DOWNLOAD_IDLE_MS = 60000;
 let workerPromise;
 
 navigator.serviceWorker?.addEventListener('message', (event) => {
     if (event.source?.scriptURL !== workerUrl.href || event.data?.source !== 'gavin-sync-e2ee') return;
-    if (event.data.type === 'released') entries.get(event.data.token)?.release();
+    if (event.data.type === 'released') entries.get(event.data.token)?.release(event.data.status);
+    else if (event.data.type === 'download-state') entries.get(event.data.token)?.update(event.data);
     else if (event.data.type === 'resolve' && event.ports[0]) event.ports[0].postMessage(entries.get(event.data.token)?.descriptor || null);
 });
 
@@ -40,10 +42,31 @@ export async function openEncryptedFile({ url, metadata, download = false }) {
     await getWorker();
     const worker = navigator.serviceWorker.controller;
     const token = Array.from(crypto.getRandomValues(new Uint8Array(24)), byte => byte.toString(16).padStart(2, '0')).join('');
-    const descriptor = { url, metadata, download };
+    const descriptor = { url, metadata, download, expiresAt: download ? Date.now() + DOWNLOAD_IDLE_MS : null };
     let release;
-    const closed = new Promise(resolve => { release = () => { entries.delete(token); resolve(); }; });
-    entries.set(token, { descriptor, release });
+    let report;
+    let idleTimer;
+    const result = new Promise(resolve => { report = status => resolve({ status }); });
+    const closed = new Promise(resolve => {
+        release = (status = 'disposed') => {
+            clearTimeout(idleTimer);
+            entries.delete(token);
+            report(status);
+            resolve();
+        };
+    });
+    const dispose = () => {
+        release();
+        navigator.serviceWorker.controller?.postMessage({ source: 'gavin-sync-e2ee', type: 'close', token });
+    };
+    const update = ({ status, expiresAt }) => {
+        clearTimeout(idleTimer);
+        descriptor.expiresAt = expiresAt;
+        if (expiresAt) idleTimer = setTimeout(dispose, Math.max(0, expiresAt - Date.now()));
+        if (status) report(status);
+    };
+    entries.set(token, { descriptor, release, update });
+    if (download) update({ expiresAt: descriptor.expiresAt });
     try {
         const localUrl = await new Promise((resolve, reject) => {
             const channel = new MessageChannel();
@@ -58,10 +81,8 @@ export async function openEncryptedFile({ url, metadata, download = false }) {
         return {
             url: localUrl,
             closed,
-            dispose() {
-                release();
-                navigator.serviceWorker.controller?.postMessage({ source: 'gavin-sync-e2ee', type: 'close', token });
-            }
+            result,
+            dispose
         };
     } catch (error) {
         release();

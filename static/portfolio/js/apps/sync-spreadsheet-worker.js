@@ -1,20 +1,12 @@
 import * as XLSX from 'xlsx';
+import { decodeText } from './sync-text.js';
 
 let workbook;
 
 self.onmessage = ({ data }) => {
     try {
         if (data.type === 'load') {
-            let input = data.buffer;
-            if (data.delimited) {
-                const bytes = new Uint8Array(data.buffer);
-                if (bytes[0] === 0xff && bytes[1] === 0xfe) input = new TextDecoder('utf-16le').decode(bytes);
-                else if (bytes[0] === 0xfe && bytes[1] === 0xff) input = new TextDecoder('utf-16be').decode(bytes);
-                else {
-                    try { input = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
-                    catch { input = new TextDecoder('gb18030').decode(bytes); }
-                }
-            }
+            const input = data.delimited ? decodeText(data.buffer) : data.buffer;
             workbook = XLSX.read(input, {
                 type: data.delimited ? 'string' : 'array', sheetRows: 1000, cellFormula: false, cellHTML: false, bookVBA: false, raw: true
             });

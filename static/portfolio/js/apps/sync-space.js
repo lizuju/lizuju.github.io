@@ -91,7 +91,6 @@ import { createInlineGif } from './sync-inline-image.js';
         let soundReady = false;
         let soundUnlocking = false;
         let soundVersion = 0;
-        let lastSoundAt = -Infinity;
 
         const loadConfig = () => {
             if (!configPromise) {
@@ -130,18 +129,9 @@ import { createInlineGif } from './sync-inline-image.js';
                 soundReady = true;
             }).catch(() => {}).finally(() => { if (version === soundVersion) soundUnlocking = false; });
         };
-        const notifyMessage = () => {
-            if (!soundEnabled || !soundReady || performance.now() - lastSoundAt < 750) return;
-            lastSoundAt = performance.now();
-            const version = soundVersion;
-            messageSound.currentTime = 0;
-            messageSound.play().catch(error => {
-                if (version === soundVersion && error.name === 'NotAllowedError') soundReady = false;
-            });
-        };
-        find('sound').addEventListener('click', () => {
-            soundEnabled = !soundEnabled;
-            try { localStorage.setItem('portfolio-sync-notification-sound', soundEnabled ? 'on' : 'off'); } catch { /* Keep the current session preference. */ }
+        const setSoundEnabled = (enabled) => {
+            if (enabled === soundEnabled) return;
+            soundEnabled = enabled;
             if (soundEnabled) unlockSound();
             else {
                 soundVersion++;
@@ -150,6 +140,51 @@ import { createInlineGif } from './sync-inline-image.js';
                 messageSound.currentTime = 0;
             }
             updateSoundToggle();
+        };
+        const notifyMessage = (message) => {
+            if (!soundEnabled || !soundReady) return;
+            const session = credentials;
+            const version = soundVersion;
+            const key = `portfolio-sync-notification:${session.roomId}:${session.deviceId}`;
+            navigator.locks.request(key, async () => {
+                if (version !== soundVersion || credentials !== session || !soundEnabled || !soundReady || localStorage.getItem('portfolio-sync-notification-sound') === 'off') return;
+                const database = await new Promise((resolve, reject) => {
+                    const request = indexedDB.open('gavin-sync-notifications', 1);
+                    request.onupgradeneeded = () => request.result.createObjectStore('messages');
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+                try {
+                    const previous = await new Promise((resolve, reject) => {
+                        const request = database.transaction('messages').objectStore('messages').get(key);
+                        request.onsuccess = () => resolve(request.result);
+                        request.onerror = () => reject(request.error);
+                    });
+                    if (version !== soundVersion || credentials !== session || !soundEnabled || !soundReady || message.id <= (previous?.id || 0)) return;
+                    let at = previous?.at;
+                    if (!previous || Date.now() - previous.at >= 750) {
+                        messageSound.currentTime = 0;
+                        try { await messageSound.play(); }
+                        catch (error) {
+                            if (version === soundVersion && error.name === 'NotAllowedError') soundReady = false;
+                            return;
+                        }
+                        if (version !== soundVersion || credentials !== session || !soundEnabled) return;
+                        at = Date.now();
+                    }
+                    await new Promise((resolve, reject) => {
+                        const transaction = database.transaction('messages', 'readwrite');
+                        transaction.objectStore('messages').put({ id: message.id, at }, key);
+                        transaction.oncomplete = resolve;
+                        transaction.onerror = () => reject(transaction.error);
+                    });
+                } finally { database.close(); }
+            }).catch(() => {});
+        };
+        find('sound').addEventListener('click', () => {
+            const enabled = !soundEnabled;
+            try { localStorage.setItem('portfolio-sync-notification-sound', enabled ? 'on' : 'off'); } catch { /* Keep the current session preference. */ }
+            setSoundEnabled(enabled);
         });
         for (const type of ['pointerdown', 'keydown', 'touchstart']) document.addEventListener(type, event => {
             if (event.isTrusted && document.hasFocus() && !document.hidden) unlockSound();
@@ -307,7 +342,7 @@ import { createInlineGif } from './sync-inline-image.js';
             session.revision = crypto.randomUUID();
             localStorage.setItem(CREDENTIAL_KEY, JSON.stringify({ ...descriptor, revision: session.revision }));
         };
-        const pairing = new EncryptedPairing({ api, getSession: () => credentials, onAccepted: async (session) => {
+        const pairing = new EncryptedPairing({ api, getSession: () => credentials, getSavedSession: () => savedSession(), onAccepted: async (session) => {
             if (credentials !== session) return;
             await refreshKeys(session);
         }, onExpired: () => {
@@ -474,6 +509,10 @@ import { createInlineGif } from './sync-inline-image.js';
                 frame.addEventListener('load', () => frame.remove(), { once: true });
                 document.body.append(frame);
                 setTimeout(() => frame.remove(), 10 * 60 * 1000);
+                capability.closed.then(() => frame.remove());
+                capability.result.then(result => {
+                    if (result.status === 'failed' && credentials === session && messageNodes.has(message.id)) showAttachmentError(new Error('encrypted_file_unavailable'));
+                });
             } catch (error) {
                 if (credentials === session && messageNodes.has(message.id) && error.name !== 'AbortError') showAttachmentError(error);
             } finally {
@@ -505,10 +544,15 @@ import { createInlineGif } from './sync-inline-image.js';
             } finally { button.disabled = false; }
         };
         const atBottom = () => feed.scrollHeight - feed.scrollTop - feed.clientHeight < 60;
+        const updateInlineGifs = () => {
+            const visible = active && !document.hidden && !app.closest('[inert]')
+                && !app.classList.contains('is-closed') && !app.classList.contains('is-minimized');
+            inlineGifs.forEach(gif => visible ? gif.start() : gif.pause());
+        };
         const isReading = () => active && browserFocused && document.hasFocus() && !document.hidden
             && performance.now() - lastInteraction < 60000 && app.classList.contains('is-active')
             && !app.classList.contains('is-minimized') && !find('search').value.trim()
-            && !devicesDialog.open && !confirmation.open;
+            && !app.closest('[inert]') && !devicesDialog.open && !confirmation.open;
         const updateReadReceipts = () => {
             const otherReadId = Math.max(0, ...[...readReceipts].filter(([id]) => id !== deviceId
                 && credentials?.trustedDevices[id] && !credentials.revokedDevices.includes(id)).map(([, id]) => id));
@@ -524,7 +568,10 @@ import { createInlineGif } from './sync-inline-image.js';
         };
         const mergeReadReceipts = (receipts) => {
             for (const receipt of receipts) readReceipts.set(receipt.deviceId, Math.max(readReceipts.get(receipt.deviceId) || 0, receipt.messageId));
+            const ownReadId = readReceipts.get(deviceId) || 0;
+            for (const id of unread) if (id <= ownReadId) unread.delete(id);
             updateReadReceipts();
+            updateUnread();
         };
         const updateUnread = () => {
             const badge = document.querySelector('[data-sync-unread]');
@@ -681,13 +728,14 @@ import { createInlineGif } from './sync-inline-image.js';
                         const session = credentials;
                         const gif = createInlineGif({
                             name: message.attachment.name,
+                            viewport: feed, target: item,
+                            retryLabel: () => translate('syncMessageRetry'),
                             load: () => encryptedFile(message, session, false),
                             onPreview: () => previewAttachment(message, item.querySelector('[data-sync-preview-file]')),
                             onLoad: () => { if (followLatest) scrollToLatest(); }
                         });
                         item.insertBefore(gif.element, item.querySelector('.sync-attachment'));
                         inlineGifs.set(message.id, gif);
-                        gif.start();
                     }
                 }
                 item.classList.toggle('is-own', message.deviceId === deviceId);
@@ -720,6 +768,7 @@ import { createInlineGif } from './sync-inline-image.js';
                 lastFeedScrollTop = feed.scrollTop;
                 scrollToLatest();
             }
+            updateInlineGifs();
             markRead();
             updateUnread();
             updateControls();
@@ -870,18 +919,21 @@ import { createInlineGif } from './sync-inline-image.js';
             if (message.deviceId !== deviceId) {
                 unread.add(message.id);
                 readAfterInteraction = interactionRevision + 1;
-                if (notify) notifyMessage();
+                if (notify) notifyMessage(message);
             }
             history = [...history, message].sort((a, b) => a.id - b.id).slice(-500);
             render();
         };
+        let connectionTimer = null;
         const disconnect = () => {
             searchController?.abort();
             catchupController?.abort();
             catchupController = null;
             clearTimeout(retryTimer);
+            clearTimeout(connectionTimer);
             clearInterval(pingTimer);
             retryTimer = null;
+            connectionTimer = null;
             const previous = socket;
             socket = null;
             previous?.close();
@@ -918,6 +970,11 @@ import { createInlineGif } from './sync-inline-image.js';
             let authenticated = false;
             let initialized = false;
             socket = connection;
+            connectionTimer = setTimeout(() => {
+                if (socket !== connection) return;
+                disconnect();
+                retry();
+            }, 30000);
             connection.addEventListener('open', () => {
                 if (socket === connection) connection.send(JSON.stringify({ type: 'auth', token: session.token }));
             });
@@ -932,11 +989,14 @@ import { createInlineGif } from './sync-inline-image.js';
                     deviceId = data.deviceId;
                     mergeReadReceipts(data.readReceipts || []);
                     await refreshKeys(session);
+                    if (socket !== connection || credentials !== session) return;
                     if (data.rekeyRequired) await rotateKeys(null);
                     if (socket !== connection || credentials !== session) return;
-                    retryDelay = 1000;
                     await showPairing(data.pairing);
-                    receiveHistory(await Promise.all(data.messages.map(message => decodeMessage(message, session))), initial, data.historyMode, data.history);
+                    if (socket !== connection || credentials !== session) return;
+                    const incomingMessages = await Promise.all(data.messages.map(message => decodeMessage(message, session)));
+                    if (socket !== connection || credentials !== session) return;
+                    receiveHistory(incomingMessages, initial, data.historyMode, data.history);
                     catchUp(data.history);
                     if (find('search').value.trim()) {
                         clearTimeout(searchTimer);
@@ -954,6 +1014,9 @@ import { createInlineGif } from './sync-inline-image.js';
                         }
                     }, 30000);
                     initialized = true;
+                    retryDelay = 1000;
+                    clearTimeout(connectionTimer);
+                    connectionTimer = null;
                     setConnection(true);
                     markRead();
                 } else if (data.type === 'message') {
@@ -963,11 +1026,15 @@ import { createInlineGif } from './sync-inline-image.js';
                 else if (data.type === 'read') { mergeReadReceipts([data]); }
                 else if (data.type === 'pairing') await showPairing(data.pairing);
                 else if (data.type === 'pair-request' || data.type === 'pair-finish') await pairing.handle(data);
-                else if (data.type === 'key-rotation') { await refreshKeys(session); await loadDevices(); }
+                else if (data.type === 'key-rotation') {
+                    await refreshKeys(session);
+                    if (socket === connection && credentials === session) await loadDevices();
+                }
                 else if (data.type === 'rekey-required') await rotateKeys(null);
                 else if (data.type === 'history') {
                     mergeReadReceipts(data.readReceipts || []);
-                    receiveHistory(await Promise.all(data.messages.map(message => decodeMessage(message, session))), false, data.historyMode, data.history);
+                    const incomingMessages = await Promise.all(data.messages.map(message => decodeMessage(message, session)));
+                    if (socket === connection && credentials === session) receiveHistory(incomingMessages, false, data.historyMode, data.history);
                 }
                 else if (data.type === 'devices') loadDevices();
                 else if (data.type === 'cleared') {
@@ -991,6 +1058,8 @@ import { createInlineGif } from './sync-inline-image.js';
             });
             connection.addEventListener('close', async (event) => {
                 if (socket !== connection) return;
+                clearTimeout(connectionTimer);
+                connectionTimer = null;
                 clearInterval(pingTimer);
                 socket = null;
                 setConnection(false);
@@ -1245,6 +1314,7 @@ import { createInlineGif } from './sync-inline-image.js';
                 reconcileSession();
                 connect();
                 if (followOnRestore) { followLatest = true; scrollToLatest(); }
+                updateInlineGifs();
                 markRead();
             },
             hide: (state) => {
@@ -1261,6 +1331,7 @@ import { createInlineGif } from './sync-inline-image.js';
                     disconnect();
                     attachmentPreview.close();
                 }
+                updateInlineGifs();
             }
         });
         document.querySelectorAll('[data-open-sync-space]').forEach((button) => button.addEventListener('click', entry.show));
@@ -1283,8 +1354,16 @@ import { createInlineGif } from './sync-inline-image.js';
                     const name = await encryptPayload(keyring, session.roomId, `device:${session.deviceId}`, { name: '', publicKey: identity.publicKey });
                     await api(`/v1/spaces/${session.roomId}/devices/${session.deviceId}`, { method: 'PATCH', body: JSON.stringify({ name }) }, session);
                 } else session = await pairing.join(body.code);
-                if (version !== sessionVersion) return;
-                await persistSession(session);
+                if (version !== sessionVersion) {
+                    if (action === 'join') await pairing.abandonJoin(session);
+                    return;
+                }
+                try { await persistSession(session); }
+                catch (error) {
+                    if (action === 'join') await pairing.abandonJoin(session);
+                    throw error;
+                }
+                if (action === 'join') pairing.acknowledgeJoin(session);
                 await enter(session);
                 version = sessionVersion;
                 busy = true;
@@ -1297,6 +1376,33 @@ import { createInlineGif } from './sync-inline-image.js';
                 if (error.name === 'QuotaExceededError' || error.name === 'SecurityError') error.code = 'storage';
                 showError(error, action);
             } finally {
+                if (version === sessionVersion) { busy = false; updateControls(); }
+            }
+        };
+        let recoveringPairing = false;
+        const recoverPendingPairing = async () => {
+            if (recoveringPairing || busy || sending || !pairing.hasPendingJoin()) return;
+            recoveringPairing = true;
+            let version = sessionVersion;
+            busy = true;
+            updateControls();
+            try {
+                const session = await pairing.recoverJoin();
+                if (!session) return;
+                if (version !== sessionVersion || savedSession()) {
+                    await pairing.abandonJoin(session);
+                    return;
+                }
+                try { await persistSession(session); }
+                catch (error) { await pairing.abandonJoin(session); throw error; }
+                pairing.acknowledgeJoin(session);
+                await enter(session);
+                version = sessionVersion;
+                setNotice('syncJoined');
+            } catch (error) {
+                if (version === sessionVersion) showError(error, 'join');
+            } finally {
+                recoveringPairing = false;
                 if (version === sessionVersion) { busy = false; updateControls(); }
             }
         };
@@ -1567,7 +1673,8 @@ import { createInlineGif } from './sync-inline-image.js';
                     }
                     if (credentials !== session || outgoing.confirmed || !outbox.has(outgoing.clientId)) return;
                     const message = await api(roomPath('/messages'), { method: 'POST', headers: { 'X-Sync-Key-Id': outgoing.keyId }, body: JSON.stringify({ clientId: outgoing.clientId, text: outgoing.encrypted }) });
-                    if (credentials === session) addMessage(message, null, false);
+                    if (credentials !== session || outbox.get(outgoing.clientId) !== outgoing) return;
+                    addMessage(message, null, false);
                 }
                 if (credentials !== session) return;
                 if (upload?.confirmed || (upload && pendingUpload !== upload)) return;
@@ -1673,7 +1780,7 @@ import { createInlineGif } from './sync-inline-image.js';
             else markRead();
         }).observe(feed);
         const recordInteraction = (event) => {
-            if (!event.isTrusted || !browserFocused || !document.hasFocus() || document.hidden || !app.classList.contains('is-active')) return;
+            if (!event.isTrusted || !browserFocused || !document.hasFocus() || document.hidden || !app.classList.contains('is-active') || app.closest('[inert]')) return;
             lastInteraction = performance.now();
             interactionRevision++;
             markRead();
@@ -1681,7 +1788,11 @@ import { createInlineGif } from './sync-inline-image.js';
         for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'touchmove']) {
             document.addEventListener(type, recordInteraction, { passive: true });
         }
-        new MutationObserver(markRead).observe(app, { attributes: true, attributeFilter: ['class'] });
+        const readingObserver = new MutationObserver(() => { markRead(); updateInlineGifs(); });
+        readingObserver.observe(app, { attributes: true, attributeFilter: ['class', 'inert'] });
+        for (let ancestor = app.parentElement; ancestor; ancestor = ancestor.parentElement) {
+            readingObserver.observe(ancestor, { attributes: true, attributeFilter: ['inert'] });
+        }
         find('devices').addEventListener('click', () => {
             if (busy || sending || !online) return;
             find('devices').focus({ preventScroll: true });
@@ -1799,14 +1910,24 @@ import { createInlineGif } from './sync-inline-image.js';
                 if (!credentials) find('code').focus({ preventScroll: true });
             }
         });
-        window.addEventListener('online', () => { clearTimeout(retryTimer); connect(); });
-        window.addEventListener('storage', (event) => { if (event.key === CREDENTIAL_KEY || event.key === null) reconcileSession(); });
-        window.addEventListener('pagehide', () => { saveDraft(); disconnect(); messageSound.pause(); });
-        window.addEventListener('pageshow', () => { reconcileSession(); if (active) connect(); });
+        window.addEventListener('online', () => { clearTimeout(retryTimer); connect(); recoverPendingPairing(); });
+        window.addEventListener('storage', (event) => {
+            if (event.key === 'portfolio-sync-notification-sound' || event.key === null) setSoundEnabled(event.newValue !== 'off');
+            if (event.key === CREDENTIAL_KEY || event.key === null) reconcileSession();
+        });
+        window.addEventListener('pagehide', () => {
+            saveDraft(); disconnect(); soundVersion++; soundUnlocking = false;
+            messageSound.pause(); inlineGifs.forEach(gif => gif.pause());
+        });
+        window.addEventListener('pageshow', () => {
+            try { setSoundEnabled(localStorage.getItem('portfolio-sync-notification-sound') !== 'off'); } catch { /* Keep the current session preference. */ }
+            reconcileSession().then(recoverPendingPairing); updateInlineGifs(); if (active) connect();
+        });
         window.addEventListener('blur', () => { browserFocused = false; markRead(); });
         window.addEventListener('focus', () => { browserFocused = true; markRead(); });
         document.addEventListener('visibilitychange', () => {
             markRead();
+            updateInlineGifs();
             if (!document.hidden) { updateCountdowns(); connect(); }
         });
         window.addEventListener('portfolio-language-change', () => {
@@ -1831,7 +1952,7 @@ import { createInlineGif } from './sync-inline-image.js';
             reconcileSession();
             if (active) connect();
         } });
-        reconcileSession();
+        reconcileSession().then(recoverPendingPairing);
         updateSoundToggle();
         updateControls();
         return entry;

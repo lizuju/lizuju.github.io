@@ -189,8 +189,9 @@ test('allows the twentieth join with thirty candidates and limits the twenty-fir
         }));
         const offers = Array.from({ length: 30 }, () => ({ offerId: crypto.randomUUID(), expiresAt: Date.now() + 600000 }));
         let submissions = 0;
-        const pairing = new EncryptedPairing({ getSession: () => null, api: async (path) => {
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async (path, options = {}) => {
             if (path === '/v1/pair/offers') return { offers };
+            if (options.method === 'DELETE') return { ok: true, cancelled: true };
             submissions++;
             throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
         } });
@@ -243,6 +244,7 @@ test('counts each join once when five spaces are waiting for pairing', async ({ 
         const sent = [];
         const pairing = new EncryptedPairing({ getSession: () => null, api: async (path, options) => {
             if (path === '/v1/pair/offers') return { offers };
+            if (options.method === 'DELETE') return { ok: true, cancelled: true };
             sent.push(JSON.parse(options.body).requests.length);
             throw new Error('relay-unavailable');
         } });
@@ -263,8 +265,9 @@ test('allows twenty joins, returns a cooldown on the twenty-first and resumes af
         localStorage.setItem(key, JSON.stringify({ ids: Array.from({ length: 19 }, () => crypto.randomUUID()), expiresAt: Date.now() + 60000 }));
         const offers = Array.from({ length: 5 }, () => ({ offerId: crypto.randomUUID() }));
         let sent = 0;
-        const pairing = new EncryptedPairing({ getSession: () => null, api: async path => {
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async (path, options = {}) => {
             if (path === '/v1/pair/offers') return { offers };
+            if (options.method === 'DELETE') return { ok: true, cancelled: true };
             sent++;
             throw new Error('relay-unavailable');
         } });
@@ -300,8 +303,9 @@ test('corrects old per-candidate counts without clearing genuine attempts or ext
         const expiresAt = Date.now() + 60000;
         localStorage.setItem(key, JSON.stringify({ ids: offers.map(offer => `${previousRequest}:${offer.offerId}`), expiresAt }));
         let sent = 0;
-        const pairing = new EncryptedPairing({ getSession: () => null, api: async path => {
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async (path, options = {}) => {
             if (path === '/v1/pair/offers') return { offers };
+            if (options.method === 'DELETE') return { ok: true, cancelled: true };
             sent++;
             throw new Error('relay-unavailable');
         } });

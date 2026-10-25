@@ -175,8 +175,7 @@ export default {
 
     const registry = env.E2EE_PAIRING_REGISTRY.getByName('registry');
     if (request.method === 'GET' && url.pathname === '/v1/status') {
-      const [status, dailyUsage] = await Promise.all([registry.diagnostics(), registry.dailyUsage()]);
-      return json({ ...status, dailyUsage });
+      return json(await registry.publicStatus());
     }
     if (request.method === 'POST' && url.pathname === '/v1/spaces') {
       const ipHash = await hash(request.headers.get('CF-Connecting-IP') || 'local');
@@ -188,7 +187,7 @@ export default {
       return resultResponse(await registry.createSpace(body.value.keyId), 201);
     }
 
-    if (request.method === 'GET' && url.pathname === '/v1/pair/offers') return json(await registry.publicOffers());
+    if (request.method === 'GET' && url.pathname === '/v1/pair/offers') return resultResponse(await registry.publicOffers(await hash(request.headers.get('CF-Connecting-IP') || 'local')));
     if (request.method === 'POST' && url.pathname === '/v1/pair') {
       const ipHash = await hash(request.headers.get('CF-Connecting-IP') || 'local');
       const limit = await registry.takeLimit(`pair:${ipHash}`, 20, INVITE_LIFETIME);
@@ -202,10 +201,11 @@ export default {
           || new Set(requests.map(value => value.offerId)).size !== requests.length) return json({ error: 'invalid_pairing' }, 400);
       return resultResponse(await registry.startPairing(requestId, requestToken, requests, ipHash), 202);
     }
-    const pairingRequest = url.pathname.match(/^\/v1\/pair\/([^/]+)$/);
+    const pairingRequest = url.pathname.match(/^\/v1\/pair\/([^/]+)(\/ack)?$/);
     if (pairingRequest && ROOM_ID.test(pairingRequest[1])) {
       const token = request.headers.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
       if (!token) return json({ error: 'unauthorized' }, 401);
+      if (pairingRequest[2]) return request.method === 'POST' ? resultResponse(await registry.ackPairing(pairingRequest[1], token)) : json({ error: 'not_found' }, 404);
       if (request.method === 'GET') return resultResponse(await registry.readPairing(pairingRequest[1], token));
       if (request.method === 'DELETE') return resultResponse(await registry.cancelPairing(pairingRequest[1], token));
       if (request.method === 'POST') {
@@ -310,9 +310,7 @@ export default {
       return resultResponse(result);
     }
     if (request.method === 'DELETE' && match[3]) {
-      const result = await room.removeDevice(match[3], deviceId);
-      await registry.refreshRoom(roomId);
-      return resultResponse(result);
+      return resultResponse(await registry.removeDevice(roomId, match[3], deviceId));
     }
     if (request.method === 'GET' && !match[2]) {
       await registry.refreshRoom(roomId);
@@ -372,9 +370,7 @@ export default {
       return resultResponse(result);
     }
     if (request.method === 'DELETE' && match[2] === '/device') {
-      const result = await room.removeDevice(deviceId);
-      await registry.refreshRoom(roomId);
-      return resultResponse(result);
+      return resultResponse(await registry.removeDevice(roomId, deviceId));
     }
     return json({ error: 'not_found' }, 404);
   }
@@ -387,6 +383,12 @@ export class E2eePairingRegistry extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS offers (offer_id TEXT PRIMARY KEY, room_id TEXT NOT NULL UNIQUE, owner_device_id TEXT NOT NULL, secret TEXT NOT NULL, expires_at INTEGER NOT NULL)');
     this.sql.exec('CREATE INDEX IF NOT EXISTS offers_expiry ON offers(expires_at)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS pair_requests (request_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, selected_offer TEXT, finish_request TEXT, client_data TEXT, grant TEXT, accepted_device TEXT)');
+    const pairColumns = this.sql.exec('PRAGMA table_info(pair_requests)').toArray();
+    if (!pairColumns.some(column => column.name === 'room_id')) {
+      this.sql.exec('ALTER TABLE pair_requests ADD COLUMN room_id TEXT');
+      this.sql.exec('UPDATE pair_requests SET room_id = (SELECT room_id FROM offers WHERE offer_id = selected_offer) WHERE selected_offer IS NOT NULL');
+    }
+    if (!pairColumns.some(column => column.name === 'committing_until')) this.sql.exec('ALTER TABLE pair_requests ADD COLUMN committing_until INTEGER');
     this.sql.exec("CREATE TABLE IF NOT EXISTS pair_candidates (request_id TEXT NOT NULL, offer_id TEXT NOT NULL, start_request TEXT NOT NULL, challenge TEXT, owner_device_id TEXT NOT NULL, source_id TEXT NOT NULL DEFAULT 'legacy', PRIMARY KEY(request_id, offer_id))");
     if (!this.sql.exec('PRAGMA table_info(pair_candidates)').toArray().some(column => column.name === 'source_id')) {
       this.sql.exec("ALTER TABLE pair_candidates ADD COLUMN source_id TEXT NOT NULL DEFAULT 'legacy'");
@@ -401,6 +403,7 @@ export class E2eePairingRegistry extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS reservations (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS registry_metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL)');
     this.roomQueues = new Map();
+    this.pairingQueues = new Map();
   }
 
   rememberUsage(roomId, usage) {
@@ -430,6 +433,15 @@ export class E2eePairingRegistry extends DurableObject {
     const settled = pending.then(() => {}, () => {});
     this.roomQueues.set(roomId, settled);
     settled.then(() => { if (this.roomQueues.get(roomId) === settled) this.roomQueues.delete(roomId); });
+    return pending;
+  }
+
+  withPairing(requestId, work) {
+    const previous = this.pairingQueues.get(requestId) || Promise.resolve();
+    const pending = previous.then(work);
+    const settled = pending.then(() => {}, () => {});
+    this.pairingQueues.set(requestId, settled);
+    settled.then(() => { if (this.pairingQueues.get(requestId) === settled) this.pairingQueues.delete(requestId); });
     return pending;
   }
 
@@ -530,7 +542,25 @@ export class E2eePairingRegistry extends DurableObject {
     });
   }
 
-  async diagnostics() {
+  async publicStatus() {
+    const [status, dailyUsage] = await Promise.all([this.diagnostics(), this.dailyUsage()]);
+    return { ...status, dailyUsage };
+  }
+
+  diagnostics() {
+    if (this.diagnosticsCacheUntil > Date.now()) return this.diagnosticsCache;
+    if (this.diagnosticsRefresh) return this.diagnosticsRefresh;
+    this.diagnosticsRefresh = this.collectDiagnostics().then(status => {
+      if (status.ok) {
+        this.diagnosticsCache = status;
+        this.diagnosticsCacheUntil = status.checkedAt + 15000;
+      }
+      return status;
+    }).finally(() => { this.diagnosticsRefresh = null; });
+    return this.diagnosticsRefresh;
+  }
+
+  async collectDiagnostics() {
     const checkedAt = Date.now();
     const probe = this.sql.exec('SELECT 1 AS ok').one().ok === 1;
     const metadata = Object.fromEntries(this.sql.exec('SELECT key, value FROM registry_metadata').toArray().map(row => [row.key, row.value]));
@@ -658,15 +688,41 @@ export class E2eePairingRegistry extends DurableObject {
   prunePairings() {
     const now = Date.now();
     this.sql.exec('DELETE FROM offers WHERE expires_at <= ?', now);
-    this.sql.exec('DELETE FROM pair_candidates WHERE request_id IN (SELECT request_id FROM pair_requests WHERE expires_at <= ?)', now);
-    this.sql.exec('DELETE FROM pair_requests WHERE expires_at <= ?', now);
+    const active = [...this.pairingQueues.keys()];
+    const expired = `expires_at <= ? AND (committing_until IS NULL OR committing_until <= ?)${active.length ? ` AND request_id NOT IN (${active.map(() => '?').join(',')})` : ''}`;
+    this.sql.exec(`DELETE FROM pair_candidates WHERE request_id IN (SELECT request_id FROM pair_requests WHERE ${expired})`, now, now, ...active);
+    this.sql.exec(`DELETE FROM pair_requests WHERE ${expired}`, now, now, ...active);
   }
 
-  async publicOffers() {
+  async publicOffers(ipHash) {
+    const now = Date.now();
+    if (!this.discoveryWindow || this.discoveryWindow.expiresAt <= now) this.discoveryWindow = { expiresAt: now + 60000, attempts: new Map() };
+    const attempts = this.discoveryWindow.attempts.get(ipHash) || 0;
+    if (attempts >= 10 || (!attempts && this.discoveryWindow.attempts.size >= 1024)) return { error: 'rate_limited', status: 429, retryAfter: Math.max(1, Math.ceil((this.discoveryWindow.expiresAt - now) / 1000)) };
+    this.discoveryWindow.attempts.set(ipHash, attempts + 1);
     this.prunePairings();
     const offers = this.sql.exec('SELECT offer_id AS offerId, room_id AS roomId, owner_device_id AS ownerDeviceId, expires_at AS expiresAt FROM offers ORDER BY expires_at, offer_id LIMIT ?', PAIR_CANDIDATE_LIMIT).toArray();
-    const online = await Promise.all(offers.map(offer => this.env.E2EE_SYNC_ROOMS.getByName(offer.roomId).deviceOnline(offer.ownerDeviceId)));
-    return { offers: offers.filter((offer, index) => online[index] && offer.expiresAt > Date.now()).map(({ offerId, expiresAt }) => ({ offerId, expiresAt })) };
+    const snapshot = JSON.stringify(offers);
+    if (this.discoveryRefresh?.snapshot === snapshot) return this.discoveryRefresh.promise;
+    const refresh = { snapshot };
+    refresh.promise = (async () => {
+      const online = await Promise.all(offers.map(offer => this.env.E2EE_SYNC_ROOMS.getByName(offer.roomId).deviceOnline(offer.ownerDeviceId)));
+      const current = new Set(this.sql.exec('SELECT offer_id AS offerId, room_id AS roomId, owner_device_id AS ownerDeviceId, expires_at AS expiresAt FROM offers WHERE expires_at > ?', Date.now()).toArray().map(offer => JSON.stringify(offer)));
+      return { offers: offers.filter((offer, index) => online[index] && current.has(JSON.stringify(offer))).map(({ offerId, expiresAt }) => ({ offerId, expiresAt })) };
+    })().finally(() => { if (this.discoveryRefresh === refresh) this.discoveryRefresh = null; });
+    this.discoveryRefresh = refresh;
+    return refresh.promise;
+  }
+
+  removeDevice(roomId, deviceId, requesterId = deviceId) {
+    return this.withRoom(roomId, async () => {
+      const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
+      const result = await room.removeDevice(deviceId, requesterId);
+      if (result.error) return result;
+      if (this.sql.exec('DELETE FROM offers WHERE room_id = ? AND owner_device_id = ? RETURNING offer_id', roomId, deviceId).toArray().length) await room.publishPairing(roomId);
+      await this.refreshUsage(roomId);
+      return result;
+    });
   }
 
   currentInvite(roomId) {
@@ -680,8 +736,13 @@ export class E2eePairingRegistry extends DurableObject {
       const denied = await room.checkWrite(keyId, secret);
       if (denied.error) return denied;
       const existing = this.currentInvite(roomId);
-      if (existing && (existing.ownerDeviceId === deviceId || await room.deviceOnline(existing.ownerDeviceId))) return existing;
-      if (!existing && this.sql.exec('SELECT count(*) AS count FROM offers').one().count >= PAIR_CANDIDATE_LIMIT) return { error: 'pairing_busy', status: 503, retryAfter: 60 };
+      if (existing?.ownerDeviceId === deviceId) return existing;
+      if (existing && await room.deviceOnline(existing.ownerDeviceId)) {
+        const current = this.currentInvite(roomId);
+        if (current?.offerId === existing.offerId) return current;
+      }
+      this.prunePairings();
+      if (!this.currentInvite(roomId) && this.sql.exec('SELECT count(*) AS count FROM offers').one().count >= PAIR_CANDIDATE_LIMIT) return { error: 'pairing_busy', status: 503, retryAfter: 60 };
       this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
       this.sql.exec('INSERT INTO offers (offer_id, room_id, owner_device_id, secret, expires_at) VALUES (?, ?, ?, ?, ?)', offerId, roomId, deviceId, secret, Date.now() + INVITE_LIFETIME);
       return this.currentInvite(roomId);
@@ -720,45 +781,73 @@ export class E2eePairingRegistry extends DurableObject {
   async pairRequest(requestId, token) {
     this.prunePairings();
     const request = this.sql.exec('SELECT * FROM pair_requests WHERE request_id = ?', requestId).toArray()[0];
-    if (!request) return { error: 'code_expired', status: 404 };
+    if (!request || request.expires_at <= Date.now() && !(request.committing_until > Date.now())) return { error: 'code_expired', status: 404 };
     if (request.token_hash !== await hash(token)) return { error: 'unauthorized', status: 401 };
     return request;
   }
 
-  async readPairing(requestId, token) {
-    const request = await this.pairRequest(requestId, token);
-    if (request.error) return request;
-    if (!request.grant && request.selected_offer) {
-      const offer = this.sql.exec('SELECT room_id FROM offers WHERE offer_id = ?', request.selected_offer).toArray()[0];
-      if (offer) {
-        const accepted = await this.env.E2EE_SYNC_ROOMS.getByName(offer.room_id).pairingAcceptance(requestId);
-        if (accepted) {
-          request.grant = accepted.grant;
-          this.sql.exec('UPDATE pair_requests SET grant = ?, accepted_device = ? WHERE request_id = ?', accepted.grant, accepted.deviceId, requestId);
-        }
+  savePairingAcceptance(request, accepted) {
+    Object.assign(request, { grant: accepted.grant, accepted_device: accepted.deviceId, expires_at: Date.now() + INVITE_LIFETIME, committing_until: null });
+    this.sql.exec('UPDATE pair_requests SET grant = ?, accepted_device = ?, expires_at = ?, committing_until = NULL WHERE request_id = ?', request.grant, request.accepted_device, request.expires_at, request.request_id);
+  }
+
+  async recoverPairing(request, cancel = false) {
+    if (!request.grant && request.room_id) return this.withRoom(request.room_id, async () => {
+      const room = this.env.E2EE_SYNC_ROOMS.getByName(request.room_id);
+      const accepted = await (cancel ? room.cancelPairingAdmission(request.request_id) : room.pairingAcceptance(request.request_id));
+      if (accepted) {
+        this.savePairingAcceptance(request, accepted);
+        if (this.sql.exec('DELETE FROM offers WHERE offer_id = ? RETURNING offer_id', request.selected_offer).toArray().length) await room.publishPairing(request.room_id);
+        await this.commitUsage(request.room_id, room);
       }
-    }
-    return { requestId, responses: this.sql.exec('SELECT offer_id AS offerId, challenge AS loginResponse FROM pair_candidates WHERE request_id = ? AND challenge IS NOT NULL', requestId).toArray(), grant: request.grant, offerId: request.selected_offer };
+    });
   }
 
-  async cancelPairing(requestId, token) {
-    const request = await this.pairRequest(requestId, token);
-    if (request.error) return request;
-    this.sql.exec('DELETE FROM pair_candidates WHERE request_id = ?', requestId);
-    this.sql.exec('DELETE FROM pair_requests WHERE request_id = ?', requestId);
-    return { ok: true };
+  readPairing(requestId, token) {
+    return this.withPairing(requestId, async () => {
+      const request = await this.pairRequest(requestId, token);
+      if (request.error) return request;
+      await this.recoverPairing(request);
+      return { requestId, responses: this.sql.exec('SELECT offer_id AS offerId, challenge AS loginResponse FROM pair_candidates WHERE request_id = ? AND challenge IS NOT NULL', requestId).toArray(), grant: request.grant, offerId: request.selected_offer };
+    });
   }
 
-  async finishPairing(requestId, token, offerId, finishLoginRequest, clientData) {
-    const request = await this.pairRequest(requestId, token);
-    if (request.error) return request;
-    const candidate = this.sql.exec('SELECT * FROM pair_candidates WHERE request_id = ? AND offer_id = ? AND challenge IS NOT NULL', requestId, offerId).toArray()[0];
-    const offer = this.sql.exec('SELECT * FROM offers WHERE offer_id = ? AND expires_at > ?', offerId, Date.now()).toArray()[0];
-    if (!candidate || !offer || offer.owner_device_id !== candidate.owner_device_id) return { error: 'code_expired', status: 404 };
-    if (request.selected_offer && (request.selected_offer !== offerId || request.finish_request !== finishLoginRequest || request.client_data !== clientData)) return { error: 'pairing_conflict', status: 409 };
-    this.sql.exec('UPDATE pair_requests SET selected_offer = ?, finish_request = ?, client_data = ? WHERE request_id = ?', offerId, finishLoginRequest, clientData, requestId);
-    await this.env.E2EE_SYNC_ROOMS.getByName(offer.room_id).publishToDevice(candidate.owner_device_id, { type: 'pair-finish', requestId, offerId, finishLoginRequest, clientData });
-    return { ok: true, requestId };
+  cancelPairing(requestId, token) {
+    return this.withPairing(requestId, async () => {
+      const request = await this.pairRequest(requestId, token);
+      if (request.error) return request;
+      await this.recoverPairing(request, true);
+      if (request.grant) return { ok: true, cancelled: false, requestId, offerId: request.selected_offer, grant: request.grant };
+      this.sql.exec('DELETE FROM pair_candidates WHERE request_id = ?', requestId);
+      this.sql.exec('DELETE FROM pair_requests WHERE request_id = ?', requestId);
+      return { ok: true, cancelled: true };
+    });
+  }
+
+  ackPairing(requestId, token) {
+    return this.withPairing(requestId, async () => {
+      const request = await this.pairRequest(requestId, token);
+      if (request.error) return request;
+      await this.recoverPairing(request);
+      if (!request.grant) return { error: 'pairing_incomplete', status: 409 };
+      this.sql.exec('DELETE FROM pair_candidates WHERE request_id = ?', requestId);
+      this.sql.exec('DELETE FROM pair_requests WHERE request_id = ?', requestId);
+      return { ok: true };
+    });
+  }
+
+  finishPairing(requestId, token, offerId, finishLoginRequest, clientData) {
+    return this.withPairing(requestId, async () => {
+      const request = await this.pairRequest(requestId, token);
+      if (request.error) return request;
+      const candidate = this.sql.exec('SELECT * FROM pair_candidates WHERE request_id = ? AND offer_id = ? AND challenge IS NOT NULL', requestId, offerId).toArray()[0];
+      const offer = this.sql.exec('SELECT * FROM offers WHERE offer_id = ? AND expires_at > ?', offerId, Date.now()).toArray()[0];
+      if (!candidate || !offer || offer.owner_device_id !== candidate.owner_device_id) return { error: 'code_expired', status: 404 };
+      if (request.selected_offer && (request.selected_offer !== offerId || request.finish_request !== finishLoginRequest || request.client_data !== clientData)) return { error: 'pairing_conflict', status: 409 };
+      this.sql.exec('UPDATE pair_requests SET selected_offer = ?, room_id = ?, finish_request = ?, client_data = ? WHERE request_id = ?', offerId, offer.room_id, finishLoginRequest, clientData, requestId);
+      await this.env.E2EE_SYNC_ROOMS.getByName(offer.room_id).publishToDevice(candidate.owner_device_id, { type: 'pair-finish', requestId, offerId, finishLoginRequest, clientData });
+      return { ok: true, requestId };
+    });
   }
 
   candidateForOwner(roomId, deviceId, requestId, offerId) {
@@ -784,21 +873,25 @@ export class E2eePairingRegistry extends DurableObject {
   }
 
   acceptPairing(roomId, deviceId, requestId, offerId, joinedId, token, name, grant, keyId, rotation) {
-    return this.withRoom(roomId, async () => {
+    return this.withPairing(requestId, () => this.withRoom(roomId, async () => {
       const request = this.sql.exec('SELECT * FROM pair_requests WHERE request_id = ? AND expires_at > ?', requestId, Date.now()).toArray()[0];
       if (request?.grant) return request.accepted_device === joinedId && request.grant === grant ? { ok: true, requestId } : { error: 'pairing_conflict', status: 409 };
       const candidate = this.candidateForOwner(roomId, deviceId, requestId, offerId);
       if (candidate.error) return candidate;
       if (!request || request.selected_offer !== offerId || !request.finish_request || !candidate.challenge) return { error: 'pairing_incomplete', status: 409 };
       const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
-      const result = await room.admitDevice(deviceId, keyId, { ...rotation, joinedId, tokenHash: await hash(token), name, requestId, grant });
-      if (result.error) return result;
-      this.sql.exec('UPDATE pair_requests SET grant = ?, accepted_device = ? WHERE request_id = ?', grant, joinedId, requestId);
+      this.sql.exec('UPDATE pair_requests SET committing_until = ? WHERE request_id = ?', Date.now() + 2 * INVITE_LIFETIME, requestId);
+      const result = await room.admitDevice(deviceId, keyId, { ...rotation, joinedId, tokenHash: await hash(token), name, requestId, grant, expiresAt: request.expires_at });
+      if (result.error) {
+        this.sql.exec('UPDATE pair_requests SET committing_until = NULL WHERE request_id = ?', requestId);
+        return result;
+      }
+      this.savePairingAcceptance(request, { grant, deviceId: joinedId });
       this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
       await room.publishPairing(roomId);
       await this.commitUsage(roomId, room);
       return { ok: true, requestId };
-    });
+    }));
   }
 
   rotateKeys(roomId, deviceId, keyId, rotation) {
@@ -856,6 +949,7 @@ export class E2eeSyncRoom extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_shards (file_id TEXT NOT NULL, shard_index INTEGER NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(file_id, shard_index))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_upload_chunks (file_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, size INTEGER NOT NULL, received INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(file_id, chunk_index))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS pair_acceptances (request_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, token_hash TEXT NOT NULL, rotation_id TEXT NOT NULL, key_id TEXT NOT NULL, grant TEXT NOT NULL, expires_at INTEGER NOT NULL)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS pair_cancellations (request_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS key_grants (id INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL, rotation_id TEXT NOT NULL, previous_key_id TEXT NOT NULL, new_key_id TEXT NOT NULL, envelope TEXT NOT NULL, UNIQUE(device_id, rotation_id))');
     this.sql.exec('CREATE INDEX IF NOT EXISTS key_grants_device ON key_grants(device_id, id)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS download_tickets (ticket TEXT PRIMARY KEY, file_id TEXT NOT NULL, device_id TEXT NOT NULL, expires_at INTEGER NOT NULL)');
@@ -965,11 +1059,23 @@ export class E2eeSyncRoom extends DurableObject {
     return this.sql.exec('SELECT device_id AS deviceId, grant FROM pair_acceptances WHERE request_id = ? AND expires_at > ?', requestId, Date.now()).toArray()[0] || null;
   }
 
+  cancelPairingAdmission(requestId) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const accepted = this.pairingAcceptance(requestId);
+      if (accepted) return accepted;
+      this.sql.exec('DELETE FROM pair_cancellations WHERE expires_at <= ?', Date.now());
+      this.sql.exec('INSERT OR REPLACE INTO pair_cancellations (request_id, expires_at) VALUES (?, ?)', requestId, Date.now() + 2 * INVITE_LIFETIME);
+      return null;
+    });
+  }
+
   async admitDevice(deviceId, keyId, admission) {
     return this.ctx.blockConcurrencyWhile(async () => {
       this.sql.exec('DELETE FROM pair_acceptances WHERE expires_at <= ?', Date.now());
       const accepted = this.sql.exec('SELECT * FROM pair_acceptances WHERE request_id = ?', admission.requestId).toArray()[0];
       if (accepted) return accepted.device_id === admission.joinedId && accepted.token_hash === admission.tokenHash && accepted.rotation_id === admission.rotationId && accepted.key_id === admission.newKeyId && accepted.grant === admission.grant ? { ok: true, currentKeyId: accepted.key_id } : { error: 'pairing_conflict', status: 409 };
+      this.sql.exec('DELETE FROM pair_cancellations WHERE expires_at <= ?', Date.now());
+      if (admission.expiresAt <= Date.now() || this.sql.exec('SELECT 1 FROM pair_cancellations WHERE request_id = ?', admission.requestId).toArray().length) return { error: 'code_expired', status: 404 };
       const rotation = { ...admission, removedDeviceId: null };
       const denied = this.validateRotation(deviceId, keyId, rotation, admission);
       if (denied.error) return denied;
@@ -1283,9 +1389,17 @@ export class E2eeSyncRoom extends DurableObject {
       if (metadata.error) return metadata;
       this.uploadProgress(file);
       if (file.received_bytes !== file.size) return { error: 'upload_incomplete', status: 409 };
-      for (const shard of this.sql.exec('SELECT shard_index FROM file_shards WHERE file_id = ?', uploadId).toArray()) {
-        const bytes = await this.env.E2EE_FILE_SHARDS.getByName(`${uploadId}:${shard.shard_index}`).storageBytes();
-        this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', bytes, uploadId, shard.shard_index);
+      const shards = this.sql.exec('SELECT shard_index, bytes FROM file_shards WHERE file_id = ? ORDER BY shard_index', uploadId).toArray();
+      for (let index = 0; index < shards.length; index += 4) {
+        const batch = shards.slice(index, index + 4);
+        const sizes = await Promise.allSettled(batch.map(shard => this.env.E2EE_FILE_SHARDS.getByName(`${uploadId}:${shard.shard_index}`).storageBytes()));
+        const failed = sizes.find(result => result.status === 'rejected');
+        if (failed) throw failed.reason;
+        this.ctx.storage.transactionSync(() => {
+          batch.forEach((shard, position) => {
+            if (sizes[position].value !== shard.bytes) this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', sizes[position].value, uploadId, shard.shard_index);
+          });
+        });
       }
       const attachment = { name: file.name, type: file.type, size: file.size };
       const message = this.ctx.storage.transactionSync(() => {
@@ -1600,7 +1714,9 @@ export class E2eeSyncRoom extends DurableObject {
     const uploading = this.sql.exec("SELECT min(updated_at) AS oldest_at FROM files WHERE status = 'uploading'").one().oldest_at;
     if (uploading !== null) deadlines.push(uploading + UPLOAD_LIFETIME);
     if (this.sql.exec("SELECT 1 FROM files WHERE status = 'deleting' LIMIT 1").toArray().length) deadlines.push(Date.now() + 1000);
-    if (deadlines.length) await this.ctx.storage.setAlarm(Math.min(...deadlines));
+    const nextAlarm = deadlines.length ? Math.min(...deadlines) : null;
+    if (nextAlarm === await this.ctx.storage.getAlarm()) return;
+    if (nextAlarm !== null) await this.ctx.storage.setAlarm(nextAlarm);
     else await this.ctx.storage.deleteAlarm();
   }
 

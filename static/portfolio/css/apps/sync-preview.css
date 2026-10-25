@@ -142,7 +142,7 @@
 }
 
 .sync-document-table {
-    width: max-content;
+    table-layout: fixed;
     min-width: 100%;
     border-collapse: separate;
     border-spacing: 0;
@@ -157,9 +157,8 @@
     text-overflow: ellipsis;
 }
 
-.sync-document-table td {
-    max-width: 180px;
-    min-width: 100px;
+.sync-document-table thead th:first-child {
+    width: 44px;
 }
 
 .sync-document-table th {

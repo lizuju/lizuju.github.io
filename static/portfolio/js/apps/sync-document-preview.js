@@ -1,5 +1,4 @@
-import mammoth from 'mammoth/mammoth.browser';
-import DOMPurify from 'dompurify';
+import { decodeText } from './sync-text.js';
 
 export async function renderDocumentPreview({ container, url, name, kind, signal, translate }) {
     const response = await fetch(url, { signal });
@@ -30,7 +29,7 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
 
     try {
         if (kind === 'text') {
-            const text = await response.text();
+            const text = decodeText(await response.arrayBuffer());
             if (signal.aborted) return cleanup;
             root.className = 'sync-document-text';
             const pre = document.createElement('pre');
@@ -38,6 +37,11 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
             root.append(pre);
         } else if (kind === 'word') {
             const arrayBuffer = await response.arrayBuffer();
+            if (signal.aborted) return cleanup;
+            const [{ default: mammoth }, { default: DOMPurify }] = await Promise.all([
+                import(/* webpackChunkName: "sync-word" */ 'mammoth/mammoth.browser'),
+                import(/* webpackChunkName: "sync-word" */ 'dompurify')
+            ]);
             if (signal.aborted) return cleanup;
             const result = await mammoth.convertToHtml({ arrayBuffer }, { externalFileAccess: false });
             if (signal.aborted) return cleanup;
@@ -111,6 +115,7 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
                 if (sheet.rows) {
                     const table = document.createElement('table');
                     table.className = 'sync-document-table';
+                    table.style.width = `${44 + sheet.columns * 160}px`;
                     table.setAttribute('aria-rowcount', String(sheet.rows + 1));
                     const head = document.createElement('thead');
                     const headings = document.createElement('tr');

@@ -287,3 +287,103 @@ test('hashes complete file content including bytes outside the former fingerprin
     expect(result.actual).toEqual(result.expected);
     expect(result.actual[0]).not.toBe(result.actual[1]);
 });
+
+for (const scenario of ['lost-response', 'timeout', 'cancel-before-commit', 'cancel-after-commit', 'cancel-cleanup-fails', 'abandon-unpersisted', 'keep-persisted']) {
+    test(`settles a real PAKE join safely after ${scenario}`, async ({ page }) => {
+        const result = await page.evaluate(async scenario => {
+            const c = await import('/__sync-crypto-test__/module.js');
+            const { EncryptedPairing } = await import('/__sync-crypto-test__/pairing.js');
+            const offerId = crypto.randomUUID();
+            const secret = await c.createPairingSecret('1234', offerId);
+            const keyring = await c.createKeyring();
+            const roomId = crypto.randomUUID();
+            const deviceId = crypto.randomUUID();
+            let pending;
+            let host;
+            let grant;
+            let committed = false;
+            let settles = 0;
+            let removed = 0;
+            let acknowledgements = 0;
+            let removedWithNewToken = false;
+            const nativeTimeout = AbortSignal.timeout;
+            if (scenario === 'timeout') AbortSignal.timeout = delay => nativeTimeout.call(AbortSignal, delay === 30000 ? 1200 : delay);
+            const pairing = new EncryptedPairing({ getSession: () => null, api: async (path, options = {}, session) => {
+                if (path === '/v1/pair/offers') return { offers: [{ offerId, expiresAt: Date.now() + 600000 }] };
+                if (path === '/v1/pair') {
+                    pending = JSON.parse(options.body);
+                    host = await c.startPairingHost(secret, offerId, pending.requestId, pending.requests[0].startLoginRequest);
+                    return {};
+                }
+                if (path.endsWith('/ack')) { acknowledgements++; return { ok: true }; }
+                if (path.endsWith('/device')) {
+                    removed++;
+                    removedWithNewToken = session?.token === 'a'.repeat(64) && session?.deviceId === deviceId;
+                    if (scenario === 'cancel-cleanup-fails' || removed === 1) throw Object.assign(new Error('unavailable'), { status: 502 });
+                    return { ok: true };
+                }
+                if (options.method === 'DELETE') {
+                    settles++;
+                    if (settles === 1 && scenario === 'lost-response') throw Object.assign(new Error('unavailable'), { status: 502 });
+                    return committed ? { ok: true, cancelled: false, offerId, grant } : { ok: true, cancelled: true };
+                }
+                if (options.method === 'POST') {
+                    const body = JSON.parse(options.body);
+                    const key = await c.finishPairingHost(host.serverState, body.finishLoginRequest);
+                    const client = await c.decryptPairing(key, offerId, pending.requestId, body.clientData);
+                    grant = await c.encryptPairing(key, offerId, pending.requestId, {
+                        roomId, deviceId, keyring, token: 'a'.repeat(64), trustedDevices: { [deviceId]: client.publicKey }, revokedDevices: [], nonce: client.nonce
+                    });
+                    committed = scenario !== 'cancel-before-commit';
+                    if (scenario.startsWith('cancel-')) {
+                        pairing.reset();
+                        throw new DOMException('Cancelled', 'AbortError');
+                    }
+                    return {};
+                }
+                if (!grant) return { responses: [{ offerId, loginResponse: host.loginResponse }] };
+                if (scenario === 'timeout') return new Promise((resolve, reject) => {
+                    options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+                });
+                if (scenario === 'abandon-unpersisted' || scenario === 'keep-persisted') return { grant };
+                throw new TypeError('Final grant response lost');
+            } });
+            let joined;
+            let error;
+            try { joined = await pairing.join('1234'); }
+            catch (failure) { error = failure.name; }
+            finally { AbortSignal.timeout = nativeTimeout; }
+            const acksBeforePersistence = acknowledgements;
+            if (scenario === 'abandon-unpersisted') await pairing.abandonJoin(joined);
+            else if (joined) {
+                await pairing.acknowledgeJoin(joined);
+                if (scenario === 'keep-persisted') await pairing.abandonJoin(joined);
+            }
+            return { joined: joined?.roomId === roomId, error, settles, removed, removedWithNewToken, acknowledgements, acksBeforePersistence };
+        }, scenario);
+        if (scenario === 'lost-response' || scenario === 'timeout' || scenario === 'keep-persisted') {
+            expect(result.joined).toBe(true);
+            expect(result.removed).toBe(0);
+            expect(result.acksBeforePersistence).toBe(0);
+            expect(result.acknowledgements).toBe(1);
+        } else if (scenario === 'abandon-unpersisted') {
+            expect(result.joined).toBe(true);
+            expect(result.removed).toBe(2);
+            expect(result.removedWithNewToken).toBe(true);
+            expect(result.acksBeforePersistence).toBe(0);
+            expect(result.acknowledgements).toBe(1);
+        } else {
+            expect(result.joined).toBe(false);
+            expect(result.error).toBe('AbortError');
+            if (scenario === 'cancel-before-commit') {
+                expect(result.removed).toBe(0);
+                expect(result.acknowledgements).toBe(0);
+            } else {
+                expect(result.removedWithNewToken).toBe(true);
+                expect(result.removed).toBe(scenario === 'cancel-cleanup-fails' ? 3 : 2);
+                expect(result.acknowledgements).toBe(scenario === 'cancel-cleanup-fails' ? 0 : 1);
+            }
+        }
+        expect(result.settles).toBe(scenario === 'lost-response' ? 2 : ['keep-persisted', 'abandon-unpersisted'].includes(scenario) ? 0 : 1);
+    });
+}

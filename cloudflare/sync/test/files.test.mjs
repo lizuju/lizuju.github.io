@@ -42,6 +42,22 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
               type: 'esm',
               contents: `import worker, { E2eeSyncRoom as ProductionSyncRoom, E2eePairingRegistry as ProductionRegistry, E2eeFileShard as ProductionFileShard } from './index.js';
                 export class FileShard extends ProductionFileShard {
+                  testHoldSize(fail = false) {
+                    this.sizeObserved = true;
+                    this.sizeFail = fail;
+                    this.sizeGate = new Promise(resolve => { this.releaseSize = resolve; });
+                  }
+                  testReleaseSize() { this.releaseSize(); this.sizeGate = null; }
+                  async storageBytes() {
+                    if (!this.sizeObserved) return super.storageBytes();
+                    const registry = this.env.E2EE_PAIRING_REGISTRY.getByName('registry');
+                    await registry.testSizeStart();
+                    try {
+                      if (this.sizeGate) await this.sizeGate;
+                      if (this.sizeFail) { this.sizeFail = false; throw new Error('test_size_probe_failed'); }
+                      return super.storageBytes();
+                    } finally { await registry.testSizeEnd(); }
+                  }
                   databaseProbe() { this.probeCount = (this.probeCount || 0) + 1; return super.databaseProbe(); }
                   testProbeCount() { return this.probeCount || 0; }
                   testFailRead() { this.failRead = true; }
@@ -66,6 +82,23 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   }
                 };
                 export class PairingRegistry extends ProductionRegistry {
+                  testExpireDiagnosticsCache() { this.diagnosticsCacheUntil = Date.now() - 1; }
+                  testSizeStart() {
+                    this.sizeCalls = (this.sizeCalls || 0) + 1;
+                    this.sizeActive = (this.sizeActive || 0) + 1;
+                    this.sizeMaximum = Math.max(this.sizeMaximum || 0, this.sizeActive);
+                    for (const waiter of this.sizeWaiters || []) if (!waiter.finished && this.sizeCalls >= waiter.count) waiter.resolve();
+                  }
+                  testSizeEnd() {
+                    this.sizeActive--;
+                    this.sizeFinished = (this.sizeFinished || 0) + 1;
+                    for (const waiter of this.sizeWaiters || []) if (waiter.finished && this.sizeFinished >= waiter.count) waiter.resolve();
+                  }
+                  testSizeStats() { return [this.sizeCalls || 0, this.sizeActive || 0, this.sizeMaximum || 0, this.sizeFinished || 0]; }
+                  testWaitSizeCalls(count, finished = false) {
+                    if ((finished ? this.sizeFinished || 0 : this.sizeCalls || 0) >= count) return;
+                    return new Promise(resolve => { (this.sizeWaiters ||= []).push({ count, finished, resolve }); });
+                  }
                   refreshRoom(roomId) { this.refreshes = (this.refreshes || 0) + 1; return super.refreshRoom(roomId); }
                   testRefreshes() { return this.refreshes || 0; }
                   rememberUsage(...args) {
@@ -357,6 +390,80 @@ test('unchanged usage refreshes and read-only attachment requests avoid registry
   await storage.exec('UPDATE files SET created_at = ? WHERE message_id = ?', Date.now() - sevenDays - 1000, sent.body.id);
   assert.equal((await request(path, { method: 'HEAD', token: space.token })).status, 404);
   assert.equal((await request(path, { token: space.token })).status, 404);
+});
+
+test('upload finalization bounds shard probes to four and updates only changed accounting', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const started = await initiate(request, space);
+  const storage = await roomStorage(space, instance);
+  const shards = await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS');
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const objects = [];
+  // Empty virtual shards exercise finalization scheduling without duplicating the large-transfer test.
+  for (let index = 0; index < 9; index++) {
+    const shard = shards.getByName(`${started.body.uploadId}:${index}`);
+    const bytes = await shard.storageBytes();
+    await storage.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, ?, ?)', started.body.uploadId, index, bytes + ([2, 5].includes(index) ? 4096 : 0));
+    await shard.testHoldSize();
+    objects.push(shard);
+  }
+  await storage.exec('CREATE TABLE finalize_updates (shard_index INTEGER)');
+  await storage.exec('CREATE TRIGGER count_finalize_updates AFTER UPDATE OF bytes ON file_shards BEGIN INSERT INTO finalize_updates VALUES (NEW.shard_index); END');
+  const pending = complete(request, space, started.body.uploadId);
+  await registry.testWaitSizeCalls(4);
+  assert.deepEqual(await registry.testSizeStats(), [4, 4, 4, 0]);
+  await Promise.all(objects.slice(0, 4).map(shard => shard.testReleaseSize()));
+  await registry.testWaitSizeCalls(8);
+  assert.deepEqual(await registry.testSizeStats(), [8, 4, 4, 4]);
+  await Promise.all(objects.slice(4, 8).map(shard => shard.testReleaseSize()));
+  await registry.testWaitSizeCalls(9);
+  assert.deepEqual(await registry.testSizeStats(), [9, 1, 4, 8]);
+  await objects[8].testReleaseSize();
+  const completed = await pending;
+  assert.equal(completed.status, 201);
+  assert.deepEqual(await registry.testSizeStats(), [9, 0, 4, 9]);
+  assert.deepEqual(await storage.exec('SELECT shard_index FROM finalize_updates ORDER BY shard_index'), [{ shard_index: 2 }, { shard_index: 5 }]);
+  assert.equal((await complete(request, space, started.body.uploadId)).status, 200);
+  assert.deepEqual(await registry.testSizeStats(), [9, 0, 4, 9]);
+});
+
+test('a failed finalization waits for its active batch before retrying and never publishes partial files', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const started = await initiate(request, space);
+  const storage = await roomStorage(space, instance);
+  const shards = await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS');
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const objects = [];
+  for (let index = 0; index < 5; index++) {
+    const shard = shards.getByName(`${started.body.uploadId}:${index}`);
+    await storage.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, ?, ?)', started.body.uploadId, index, await shard.storageBytes() + 4096);
+    await shard.testHoldSize(index === 0);
+    objects.push(shard);
+  }
+  await storage.exec('CREATE TABLE finalize_updates (shard_index INTEGER)');
+  await storage.exec('CREATE TRIGGER count_finalize_updates AFTER UPDATE OF bytes ON file_shards BEGIN INSERT INTO finalize_updates VALUES (NEW.shard_index); END');
+  let settled = false;
+  const pending = complete(request, space, started.body.uploadId).then(result => { settled = true; return result; });
+  await registry.testWaitSizeCalls(4);
+  await objects[0].testReleaseSize();
+  await registry.testWaitSizeCalls(1, true);
+  assert.equal(settled, false);
+  assert.deepEqual(await registry.testSizeStats(), [4, 3, 4, 1]);
+  await Promise.all(objects.slice(1, 4).map(shard => shard.testReleaseSize()));
+  assert.equal((await pending).status, 500);
+  assert.deepEqual(await registry.testSizeStats(), [4, 0, 4, 4]);
+  assert.deepEqual(await storage.exec('SELECT status FROM files WHERE file_id = ?', started.body.uploadId), [{ status: 'uploading' }]);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 0 }]);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM finalize_updates'), [{ count: 0 }]);
+  await objects[4].testReleaseSize();
+  const retried = await complete(request, space, started.body.uploadId);
+  assert.equal(retried.status, 201);
+  assert.deepEqual(await registry.testSizeStats(), [9, 0, 4, 9]);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM finalize_updates'), [{ count: 5 }]);
+  assert.equal((await complete(request, space, started.body.uploadId)).status, 200);
+  assert.deepEqual(await registry.testSizeStats(), [9, 0, 4, 9]);
 });
 
 test('concurrent download and preview requests reuse persisted tickets per device without extending their lifetime', async () => {
@@ -1138,9 +1245,11 @@ test('public diagnostics rotates existing shard samples without creating missing
   await upload(request, space, { bytes: Buffer.from('two') });
   const storage = await roomStorage(space, instance);
   const files = await storage.exec('SELECT file_id FROM files ORDER BY file_id');
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   const namespace = await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS');
   const shards = files.map(file => namespace.getByName(`${file.file_id}:0`));
   for (let i = 0; i < 2; i += 1) {
+    await registry.testExpireDiagnosticsCache();
     const status = await request('/v1/status');
     assert.equal(status.body.database.sampledShard.ok, true);
     assert.equal(status.body.database.sampledShard.initialized, true);
@@ -1152,6 +1261,7 @@ test('public diagnostics rotates existing shard samples without creating missing
   assert.deepEqual(await missing.exec(schema), []);
   let missingStatus;
   for (let i = 0; i < 3; i += 1) {
+    await registry.testExpireDiagnosticsCache();
     const status = await request('/v1/status');
     if (!status.body.database.sampledShard.ok) missingStatus = status.body;
   }

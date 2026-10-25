@@ -1,4 +1,4 @@
-const { test, expect, deviceId, otherId, keyId, message, authorize } = require('./fixtures/sync-e2ee.cjs');
+const { test, expect, roomId, deviceId, otherId, keyId, message, authorize, allowSyncOrigin } = require('./fixtures/sync-e2ee.cjs');
 
 const preference = 'portfolio-sync-notification-sound';
 const headers = {
@@ -6,14 +6,19 @@ const headers = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
 };
 const bounds = latestId => ({ generation: '1', oldestId: 1, latestId, continuationId: latestId, hasNewer: false });
+const settleNotifications = page => page.evaluate(({ roomId, deviceId }) => navigator.locks.request(
+    `portfolio-sync-notification:${roomId}:${deviceId}`, () => {}
+), { roomId, deviceId });
 
-const openChat = async (page, initial = []) => {
+const openChat = async (page, initial = [], authorizeSession = true) => {
+    if (!authorizeSession) await allowSyncOrigin(page, 'https://sync.test');
     await page.addInitScript(() => {
-        window.__syncAudioStats = { starts: 0, pauses: 0, playing: false };
+        window.__syncAudioStats = { attempts: 0, starts: 0, pauses: 0, playing: false };
         window.__syncAudioBlocked = false;
         class NotificationAudio extends EventTarget {
             constructor(src) { super(); this.src = src; this.currentTime = 0; this.muted = false; }
             async play() {
+                if (!this.muted) window.__syncAudioStats.attempts++;
                 if (window.__syncAudioBlocked) throw new DOMException('Autoplay blocked', 'NotAllowedError');
                 window.__syncAudioStats.playing = true;
                 if (!this.muted) {
@@ -28,8 +33,9 @@ const openChat = async (page, initial = []) => {
         }
         window.Audio = NotificationAudio;
     });
-    await page.clock.install();
-    await authorize(page);
+    await page.clock.install({ time: new Date('2026-10-25T00:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-10-25T00:00:01Z'));
+    if (authorizeSession) await authorize(page);
     await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
     await page.route('https://sync.test/**', route => route.request().method() === 'OPTIONS'
         ? route.fulfill({ status: 204, headers })
@@ -51,6 +57,7 @@ const openChat = async (page, initial = []) => {
         if (await page.locator('[data-window-action="minimize"]').isVisible()) await page.locator('[data-window-action="minimize"]').click();
         if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
         await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+        await page.locator('[data-sync-input]').click();
     };
     await open();
     return {
@@ -59,6 +66,7 @@ const openChat = async (page, initial = []) => {
             const item = message(id, `Notification message ${id}`, sender);
             connection.send(JSON.stringify({ type: 'message', message: item, history: bounds(id) }));
             await expect(page.locator('.sync-message-text').filter({ hasText: `Notification message ${id}` })).toHaveCount(1);
+            await settleNotifications(page);
             return item;
         },
         frame: data => connection.send(JSON.stringify(data)),
@@ -160,4 +168,89 @@ test('handles a browser autoplay rejection without losing chat messages or leavi
     await page.clock.runFor(1000);
     expect((await chat.stats()).starts).toBe(1);
     await expect(page.locator('.sync-message-text')).toHaveCount(2);
+});
+
+test('synchronizes mute between open tabs and stops an already playing notification', async ({ page, context }) => {
+    const first = await openChat(page);
+    const otherPage = await context.newPage();
+    const second = await openChat(otherPage, [], false);
+    await first.send(1);
+    await expect.poll(async () => (await first.stats()).playing).toBe(true);
+    await otherPage.locator('[data-sync-sound]').click();
+    await expect(page.locator('[data-sync-sound]')).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(async () => (await first.stats()).playing).toBe(false);
+    await second.send(2);
+    expect((await second.stats()).starts).toBe(0);
+    await page.bringToFront();
+    await page.locator('[data-sync-sound]').click();
+    await expect(otherPage.locator('[data-sync-sound]')).toHaveAttribute('aria-pressed', 'true');
+    await second.open();
+    await expect(otherPage.locator('[data-sync-sound]')).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('coordinates concurrent notifications and burst throttling across tabs without keeping a closed owner', async ({ page, context }) => {
+    const first = await openChat(page);
+    const otherPage = await context.newPage();
+    const second = await openChat(otherPage, [], false);
+    const starts = async () => (await first.stats()).starts + (await second.stats()).starts;
+    await Promise.all([first.send(1), second.send(1)]);
+    await settleNotifications(page);
+    await expect.poll(starts).toBe(1);
+    await Promise.all([first.send(2), second.send(2)]);
+    await settleNotifications(page);
+    expect(await starts()).toBe(1);
+    await page.clock.runFor(1000);
+    await Promise.all([first.send(3), second.send(3)]);
+    await expect.poll(starts).toBe(2);
+    const firstStarted = (await first.stats()).starts > 0;
+    const survivor = firstStarted ? second : first;
+    const survivorPage = firstStarted ? otherPage : page;
+    const baseline = (await survivor.stats()).starts;
+    await (firstStarted ? page : otherPage).close();
+    await survivorPage.bringToFront();
+    await survivorPage.clock.runFor(1000);
+    await survivor.send(4);
+    await expect.poll(async () => (await survivor.stats()).starts).toBe(baseline + 1);
+});
+
+test('lets another tab notify after autoplay rejection and preserves deduplication after reload', async ({ page, context }) => {
+    const first = await openChat(page);
+    const otherPage = await context.newPage();
+    const second = await openChat(otherPage, [], false);
+    await page.evaluate(() => { window.__syncAudioBlocked = true; });
+    await first.send(1);
+    await expect.poll(async () => (await first.stats()).attempts).toBe(1);
+    await second.send(1);
+    await expect.poll(async () => (await second.stats()).starts).toBe(1);
+    await first.open();
+    await first.send(1);
+    await settleNotifications(page);
+    await expect(page.locator('.sync-message-text')).toHaveCount(1);
+    expect((await first.stats()).starts).toBe(0);
+    await otherPage.close();
+    await page.clock.runFor(1000);
+    await first.send(2);
+    await expect.poll(async () => (await first.stats()).starts).toBe(1);
+});
+
+test('discards a queued notification when the page leaves and resumes notifications after restoration', async ({ page, context }) => {
+    const first = await openChat(page);
+    const otherPage = await context.newPage();
+    await openChat(otherPage, [], false);
+    const key = `portfolio-sync-notification:${roomId}:${deviceId}`;
+    await otherPage.evaluate(key => {
+        window.__heldNotification = navigator.locks.request(key, () => new Promise(resolve => { window.__releaseNotification = resolve; }));
+    }, key);
+    await otherPage.waitForFunction(() => typeof window.__releaseNotification === 'function');
+    first.frame({ type: 'message', message: message(1, 'Queued notification', otherId), history: bounds(1) });
+    await expect(page.locator('.sync-message-text')).toHaveText('Queued notification');
+    await expect.poll(() => page.evaluate(async key => (await navigator.locks.query()).pending.some(lock => lock.name === key), key)).toBe(true);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+    await otherPage.evaluate(() => window.__releaseNotification());
+    await otherPage.evaluate(key => navigator.locks.request(key, () => {}), key);
+    expect((await first.stats()).starts).toBe(0);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow')));
+    await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    await first.send(2);
+    await expect.poll(async () => (await first.stats()).starts).toBe(1);
 });

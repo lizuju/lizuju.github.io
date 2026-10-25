@@ -1,10 +1,13 @@
 import {
     createPairingSecret, startPairingClient, startPairingHost, finishPairingClient, finishPairingHost,
-    encryptPairing, decryptPairing, encryptPayload, decryptPayload, createDeviceIdentity, createKeyRotation
+    encryptPairing, decryptPairing, encryptPayload, decryptPayload, createDeviceIdentity, createKeyRotation,
+    savePairingRecovery, loadPairingRecovery, deletePairingRecovery
 } from './sync-crypto.js';
 
 const failure = (code) => Object.assign(new Error(code), { code });
 const randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
+const RECOVERY_KEY = 'gavin-sync-pair-recovery';
+const CANCEL_KEY = 'gavin-sync-pair-cancelled';
 const pause = (signal, delay = 500) => new Promise((resolve, reject) => {
     const timer = setTimeout(done, delay);
     function done() { signal.removeEventListener('abort', abort); resolve(); }
@@ -12,6 +15,18 @@ const pause = (signal, delay = 500) => new Promise((resolve, reject) => {
     signal.addEventListener('abort', abort, { once: true });
     if (signal.aborted) abort();
 });
+
+async function retryCleanup(api, path, options, session, signal) {
+    for (let attempt = 0; ; attempt++) {
+        signal.throwIfAborted();
+        try { return await api(path, { ...options, signal }, session); }
+        catch (error) {
+            if (signal.aborted || attempt === 2 || !(error instanceof TypeError || error.name === 'TimeoutError'
+                || error.status === 429 || error.status >= 500 && error.status <= 599)) throw error;
+            await pause(signal, Math.max(250 * 2 ** attempt, (error.retryAfter || 0) * 1000));
+        }
+    }
+}
 
 async function useAttempts(id, requestId, limit = 20) {
     if (!navigator.locks) throw failure('encryption_unavailable');
@@ -32,9 +47,10 @@ async function useAttempts(id, requestId, limit = 20) {
 }
 
 export class EncryptedPairing {
-    constructor({ api, getSession, onExpired, onAccepted }) {
+    constructor({ api, getSession, getSavedSession = () => null, onExpired, onAccepted }) {
         this.api = api;
         this.getSession = getSession;
+        this.getSavedSession = getSavedSession;
         this.onExpired = onExpired;
         this.onAccepted = onAccepted;
         this.hosts = new Map();
@@ -44,6 +60,7 @@ export class EncryptedPairing {
         this.offer?.controller.abort();
         this.offer = null;
         this.hosts.clear();
+        if (this.joinController && sessionStorage.getItem(RECOVERY_KEY)) sessionStorage.setItem(CANCEL_KEY, sessionStorage.getItem(RECOVERY_KEY));
         this.joinController?.abort();
     }
 
@@ -175,69 +192,209 @@ export class EncryptedPairing {
         }
     }
 
+    async storeRecovery(state) {
+        await savePairingRecovery(state.id, state);
+    }
+
+    async clearRecovery(state) {
+        await deletePairingRecovery(state.id);
+        if (sessionStorage.getItem(RECOVERY_KEY) === state.id) sessionStorage.removeItem(RECOVERY_KEY);
+        if (sessionStorage.getItem(CANCEL_KEY) === state.id) sessionStorage.removeItem(CANCEL_KEY);
+    }
+
+    hasPendingJoin() {
+        return Boolean(sessionStorage.getItem(RECOVERY_KEY));
+    }
+
+    isSaved(session) {
+        const saved = this.getSavedSession();
+        return Boolean(session && saved?.roomId === session.roomId && saved?.deviceId === session.deviceId && saved?.token === session.token);
+    }
+
+    async acknowledgeJoin(session) {
+        const receipt = this.joinResult;
+        if (receipt?.session !== session) return;
+        this.joinResult = null;
+        receipt.state.session = session;
+        receipt.state.persisted = true;
+        try {
+            await this.storeRecovery(receipt.state);
+            try { await retryCleanup(this.api, `${receipt.path}/ack`, { method: 'POST', headers: receipt.headers }, null, AbortSignal.timeout(15000)); }
+            catch (error) { if (error.status !== 404) throw error; }
+            await this.clearRecovery(receipt.state);
+        } catch { /* Keep the wrapped receipt for the next page load or reconnect. */ }
+    }
+
+    async abandonJoin(session) {
+        const receipt = this.joinResult;
+        if (receipt?.session !== session) return;
+        if (this.isSaved(session)) return this.acknowledgeJoin(session);
+        this.joinResult = null;
+        sessionStorage.setItem(CANCEL_KEY, receipt.state.id);
+        try {
+            await this.removeJoinedDevice(session, receipt.path, receipt.headers, AbortSignal.timeout(15000));
+            await this.clearRecovery(receipt.state);
+        }
+        catch { /* Retry the saved cancellation after connectivity returns. */ }
+    }
+
+    async removeJoinedDevice(session, path, headers, signal) {
+        try { await retryCleanup(this.api, `/v1/spaces/${session.roomId}/device`, { method: 'DELETE' }, session, signal); }
+        catch (error) { if (error.status !== 401 && error.status !== 404) throw error; }
+        try { await retryCleanup(this.api, `${path}/ack`, { method: 'POST', headers }, null, signal); }
+        catch (error) { if (error.status !== 404) throw error; }
+    }
+
+    async openJoinGrant(state, grant) {
+        const session = await decryptPairing(state.match.sessionKey, state.offerId, state.requestId, grant);
+        if (session.nonce !== state.nonce || !session.keyring?.keys?.[session.keyring.currentKeyId] || typeof session.token !== 'string'
+            || session.trustedDevices?.[session.deviceId] !== state.identity.publicKey || !Array.isArray(session.revokedDevices)) throw failure('invalid_ciphertext');
+        delete session.nonce;
+        return { ...session, identity: state.identity, vaultId: crypto.randomUUID() };
+    }
+
+    async settleJoin(state, signal, cancelled) {
+        const path = `/v1/pair/${state.requestId}`;
+        const headers = { Authorization: `Bearer ${state.requestToken}` };
+        let result;
+        try { result = await retryCleanup(this.api, path, { method: 'DELETE', headers }, null, signal); }
+        catch (error) {
+            if (error.status !== 404) throw error;
+            if (cancelled && state.session && !this.isSaved(state.session)) {
+                try { await retryCleanup(this.api, `/v1/spaces/${state.session.roomId}/device`, { method: 'DELETE' }, state.session, signal); }
+                catch (removal) { if (removal.status !== 401 && removal.status !== 404) throw removal; }
+            }
+            await this.clearRecovery(state);
+            return null;
+        }
+        if (!result.grant) {
+            await this.clearRecovery(state);
+            return null;
+        }
+        const session = state.session || await this.openJoinGrant(state, result.grant);
+        cancelled ||= sessionStorage.getItem(CANCEL_KEY) === state.id;
+        if (cancelled && !this.isSaved(session)) {
+            await this.removeJoinedDevice(session, path, headers, signal);
+            await this.clearRecovery(state);
+            return null;
+        }
+        state.session = session;
+        await this.storeRecovery(state);
+        this.joinResult = { session, state, path, headers };
+        return session;
+    }
+
+    async recoverJoin({ cancel = false } = {}) {
+        const id = sessionStorage.getItem(RECOVERY_KEY);
+        if (!id || this.joinController) return null;
+        return navigator.locks.request(`gavin-sync-pair-recovery:${id}`, { ifAvailable: true }, async lock => {
+            if (!lock) return null;
+            const state = await loadPairingRecovery(id);
+            if (!state) { sessionStorage.removeItem(RECOVERY_KEY); return null; }
+            if (state.expiresAt <= Date.now()) { await this.clearRecovery(state); return null; }
+            if (state.persisted || this.isSaved(state.session)) {
+                this.joinResult = { session: state.session, state, path: `/v1/pair/${state.requestId}`, headers: { Authorization: `Bearer ${state.requestToken}` } };
+                await this.acknowledgeJoin(state.session);
+                return null;
+            }
+            if (cancel || this.getSavedSession()) sessionStorage.setItem(CANCEL_KEY, id);
+            if (sessionStorage.getItem(CANCEL_KEY) === id) {
+                await this.settleJoin(state, AbortSignal.timeout(15000), true);
+                return null;
+            }
+            return this.continueJoin(state);
+        });
+    }
+
     async join(code) {
         this.joinController?.abort();
+        await this.recoverJoin({ cancel: true });
+        if (sessionStorage.getItem(RECOVERY_KEY)) throw failure('pairing_timeout');
         const controller = new AbortController();
         this.joinController = controller;
         const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]);
-        const identity = await createDeviceIdentity();
-        const { offers } = await this.api('/v1/pair/offers', { signal }, null);
-        if (!Array.isArray(offers) || !offers.length || offers.length > 30 || new Set(offers.map(offer => offer.offerId)).size !== offers.length) throw failure('invalid_code');
-        const requestId = crypto.randomUUID();
-        const requestToken = randomToken();
-        await useAttempts('join', requestId);
-        const states = new Map();
-        const requests = [];
-        for (const offer of offers) {
-            signal.throwIfAborted();
-            const result = await startPairingClient(code, offer.offerId);
-            states.set(offer.offerId, result.clientState);
-            requests.push({ offerId: offer.offerId, startLoginRequest: result.startLoginRequest });
-            await pause(signal, 0);
-        }
-        const path = `/v1/pair/${requestId}`;
-        const headers = { Authorization: `Bearer ${requestToken}` };
-        await this.api('/v1/pair', { method: 'POST', signal, body: JSON.stringify({ requestId, requestToken, requests }) }, null);
-        const tried = new Set();
-        const matches = new Map();
-        const deadline = Date.now() + 12000;
         try {
-            while (Date.now() < deadline && tried.size < offers.length) {
+            const identity = await createDeviceIdentity();
+            const { offers } = await this.api('/v1/pair/offers', { signal }, null);
+            if (!Array.isArray(offers) || !offers.length || offers.length > 30 || new Set(offers.map(offer => offer.offerId)).size !== offers.length) throw failure('invalid_code');
+            const state = { id: crypto.randomUUID(), requestId: crypto.randomUUID(), requestToken: randomToken(), identity,
+                offers, states: {}, requests: [], expiresAt: Date.now() + 20 * 60 * 1000 };
+            await useAttempts('join', state.requestId);
+            for (const offer of offers) {
                 signal.throwIfAborted();
-                const result = await this.api(path, { signal, headers }, null);
-                for (const response of result.responses) {
-                    if (!states.has(response.offerId) || tried.has(response.offerId)) continue;
-                    signal.throwIfAborted();
-                    tried.add(response.offerId);
-                    try { matches.set(response.offerId, await finishPairingClient(states.get(response.offerId), response.offerId, requestId, response.loginResponse)); }
-                    catch (error) { if (error.code !== 'invalid_code') throw error; }
-                    if (matches.size > 1) throw failure('pairing_ambiguous');
-                    await pause(signal, 0);
-                }
-                if (tried.size < offers.length) await pause(signal);
+                const result = await startPairingClient(code, offer.offerId);
+                state.states[offer.offerId] = result.clientState;
+                state.requests.push({ offerId: offer.offerId, startLoginRequest: result.startLoginRequest });
+                await pause(signal, 0);
             }
-            if (tried.size !== offers.length) throw failure('pairing_timeout');
-            if (matches.size !== 1) throw failure('invalid_code');
-            const [offerId, match] = [...matches][0];
-            const nonce = randomToken();
-            const clientData = await encryptPairing(match.sessionKey, offerId, requestId, { nonce, publicKey: identity.publicKey });
-            await this.api(path, {
-                method: 'POST', signal, headers, body: JSON.stringify({ offerId, finishLoginRequest: match.finishLoginRequest, clientData })
-            }, null);
-            while (true) {
-                signal.throwIfAborted();
-                const result = await this.api(path, { signal, headers }, null);
-                if (result.grant) {
-                    const session = await decryptPairing(match.sessionKey, offerId, requestId, result.grant);
-                    if (session.nonce !== nonce || !session.keyring?.keys?.[session.keyring.currentKeyId] || typeof session.token !== 'string'
-                        || session.trustedDevices?.[session.deviceId] !== identity.publicKey || !Array.isArray(session.revokedDevices)) throw failure('invalid_ciphertext');
-                    delete session.nonce;
-                    return { ...session, identity };
-                }
-                await pause(signal);
-            }
+            sessionStorage.setItem(RECOVERY_KEY, state.id);
+            await this.storeRecovery(state);
+            return await navigator.locks.request(`gavin-sync-pair-recovery:${state.id}`, () => this.continueJoin(state, controller, signal));
         } finally {
-            this.api(path, { method: 'DELETE', headers }, null).catch(() => {});
+            if (this.joinController === controller) this.joinController = null;
+        }
+    }
+
+    async continueJoin(state, controller = new AbortController(), signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30000)])) {
+        this.joinController = controller;
+        const path = `/v1/pair/${state.requestId}`;
+        const headers = { Authorization: `Bearer ${state.requestToken}` };
+        const cancelled = () => controller.signal.aborted || sessionStorage.getItem(CANCEL_KEY) === state.id;
+        try {
+            if (cancelled()) throw new DOMException('Cancelled', 'AbortError');
+            if (!state.match) {
+                await this.api('/v1/pair', { method: 'POST', signal, body: JSON.stringify({ requestId: state.requestId, requestToken: state.requestToken, requests: state.requests }) }, null);
+                const tried = new Set();
+                const matches = new Map();
+                const deadline = Date.now() + 12000;
+                while (Date.now() < deadline && tried.size < state.offers.length) {
+                    signal.throwIfAborted();
+                    const result = await this.api(path, { signal, headers }, null);
+                    for (const response of result.responses) {
+                        if (!state.states[response.offerId] || tried.has(response.offerId)) continue;
+                        signal.throwIfAborted();
+                        tried.add(response.offerId);
+                        try { matches.set(response.offerId, await finishPairingClient(state.states[response.offerId], response.offerId, state.requestId, response.loginResponse)); }
+                        catch (error) { if (error.code !== 'invalid_code') throw error; }
+                        if (matches.size > 1) throw failure('pairing_ambiguous');
+                        await pause(signal, 0);
+                    }
+                    if (tried.size < state.offers.length) await pause(signal);
+                }
+                if (tried.size !== state.offers.length) throw failure('pairing_timeout');
+                if (matches.size !== 1) throw failure('invalid_code');
+                [state.offerId, state.match] = [...matches][0];
+                state.nonce = randomToken();
+                state.clientData = await encryptPairing(state.match.sessionKey, state.offerId, state.requestId, { nonce: state.nonce, publicKey: state.identity.publicKey });
+                delete state.states;
+                await this.storeRecovery(state);
+                await this.api(path, { method: 'POST', signal, headers, body: JSON.stringify({ offerId: state.offerId, finishLoginRequest: state.match.finishLoginRequest, clientData: state.clientData }) }, null);
+            } else if (!state.session) {
+                const result = await this.api(path, { signal, headers }, null);
+                if (result.grant) state.session = await this.openJoinGrant(state, result.grant);
+                else await this.api(path, { method: 'POST', signal, headers, body: JSON.stringify({ offerId: state.offerId, finishLoginRequest: state.match.finishLoginRequest, clientData: state.clientData }) }, null);
+            }
+            while (!state.session) {
+                signal.throwIfAborted();
+                const result = await this.api(path, { signal, headers }, null);
+                if (result.grant) state.session = await this.openJoinGrant(state, result.grant);
+                else await pause(signal);
+            }
+            await this.storeRecovery(state);
+            if (cancelled()) throw new DOMException('Cancelled', 'AbortError');
+            this.joinResult = { session: state.session, state, path, headers };
+            return state.session;
+        } catch (error) {
+            try {
+                const session = await this.settleJoin(state, AbortSignal.timeout(15000), cancelled());
+                if (session) {
+                    if (!cancelled()) return session;
+                    await this.abandonJoin(session);
+                }
+            } catch { /* The encrypted request remains recoverable while offline. */ }
+            if (cancelled()) throw new DOMException('Cancelled', 'AbortError');
+            throw error;
+        } finally {
             if (this.joinController === controller) this.joinController = null;
         }
     }

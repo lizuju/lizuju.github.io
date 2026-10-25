@@ -7,6 +7,9 @@ import { encryptedClient, cryptoClient } from './e2ee-client.mjs';
 
 const origin = 'https://lizuju.github.io';
 const sevenDays = 7 * 24 * 60 * 60 * 1000;
+const cryptoSource = (await readFile(new URL('../../../static/portfolio/js/apps/sync-crypto.js', import.meta.url), 'utf8')).replaceAll("'@serenity-kit/opaque'", JSON.stringify(import.meta.resolve('@serenity-kit/opaque')));
+const pairingSource = (await readFile(new URL('../../../static/portfolio/js/apps/sync-pairing.js', import.meta.url), 'utf8')).replace("'./sync-crypto.js'", JSON.stringify(`data:text/javascript;base64,${Buffer.from(cryptoSource).toString('base64')}`));
+const { EncryptedPairing } = await import(`data:text/javascript;base64,${Buffer.from(pairingSource).toString('base64')}`);
 let runtime;
 let nextIp = 1;
 const sockets = new Set();
@@ -34,6 +37,35 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                 export { default } from './index.js';
                 export { E2eeFileShard as FileShard } from './index.js';
                 export class PairingRegistry extends ProductionRegistry {
+                  testExpireDiagnosticsCache() { this.diagnosticsCacheUntil = Date.now() - 1; }
+                  testDiagnosticsCacheUntil() { return this.diagnosticsCacheUntil; }
+                  testFailDiagnostics() { this.failDiagnostics = true; }
+                  collectDiagnostics() {
+                    if (this.failDiagnostics) { this.failDiagnostics = false; throw new Error('test_diagnostics_failed'); }
+                    return super.collectDiagnostics();
+                  }
+                  publicStatus() {
+                    this.statusCalls = (this.statusCalls || 0) + 1;
+                    if (this.statusWaiter && this.statusCalls >= this.statusWaiter.count) this.statusWaiter.resolve();
+                    return super.publicStatus();
+                  }
+                  testWaitStatusCalls(count) {
+                    if ((this.statusCalls || 0) >= count) return;
+                    return new Promise(resolve => { this.statusWaiter = { count, resolve }; });
+                  }
+                  testExpireDiscoveryWindow() { this.discoveryWindow.expiresAt = Date.now() - 1; }
+                  testDiscoverySources() { return this.discoveryWindow?.attempts.size || 0; }
+                  testDiscoveryAttempts() { return [...(this.discoveryWindow?.attempts.values() || [])].reduce((sum, count) => sum + count, 0); }
+                  testWaitDiscoveryAttempts(count) {
+                    if (this.testDiscoveryAttempts() >= count) return;
+                    return new Promise(resolve => { this.discoveryWaiter = { count, resolve }; });
+                  }
+                  publicOffers(ipHash) {
+                    const pending = super.publicOffers(ipHash);
+                    if (this.discoveryWaiter && this.testDiscoveryAttempts() >= this.discoveryWaiter.count) this.discoveryWaiter.resolve();
+                    return pending;
+                  }
+                  testFillDiscoveryWindow() { this.discoveryWindow = { expiresAt: Date.now() + 60000, attempts: new Map(Array.from({ length: 1024 }, (_, index) => ['test:' + index, 1])) }; }
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   testDropAlarm() { return this.ctx.storage.deleteAlarm(); }
@@ -47,7 +79,46 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                   }
                 }
                 export class SyncRoom extends ProductionSyncRoom {
-                  databaseProbe() { this.probeCount = (this.probeCount || 0) + 1; return super.databaseProbe(); }
+                  constructor(ctx, env) {
+                    super(ctx, env);
+                    const setAlarm = ctx.storage.setAlarm.bind(ctx.storage);
+                    ctx.storage.setAlarm = (...args) => { this.alarmWrites = (this.alarmWrites || 0) + 1; return setAlarm(...args); };
+                  }
+                  testAlarmWrites() { return this.alarmWrites || 0; }
+                  testScheduleAlarm() { return super.scheduleAlarm(); }
+                  async alarm(...args) {
+                    this.runningAlarmAt = await this.ctx.storage.getAlarm();
+                    await super.alarm(...args);
+                    this.completedAlarmAt = await this.ctx.storage.getAlarm();
+                    this.alarmRuns = (this.alarmRuns || 0) + 1;
+                    this.alarmWaiter?.();
+                  }
+                  testWaitAlarm() { if (this.alarmRuns) return; return new Promise(resolve => { this.alarmWaiter = resolve; }); }
+                  testAlarmCycle() { return { running: this.runningAlarmAt, scheduled: this.completedAlarmAt }; }
+                  testHoldOnlineProbe() { this.onlineProbeGate = new Promise(resolve => { this.releaseOnlineProbe = resolve; }); }
+                  testReleaseOnlineProbe() { this.releaseOnlineProbe(); this.onlineProbeGate = null; }
+                  testFailOnlineProbe() { this.failOnlineProbe = true; }
+                  testOnlineProbes() { return this.onlineProbes || 0; }
+                  testWaitOnlineProbes(count) {
+                    if ((this.onlineProbes || 0) >= count) return;
+                    return new Promise(resolve => { (this.onlineProbeWaiters ||= []).push({ count, resolve }); });
+                  }
+                  async deviceOnline(deviceId) {
+                    this.onlineProbes = (this.onlineProbes || 0) + 1;
+                    for (const waiter of this.onlineProbeWaiters || []) if (this.onlineProbes >= waiter.count) waiter.resolve();
+                    if (this.onlineProbeGate) await this.onlineProbeGate;
+                    if (this.failOnlineProbe) { this.failOnlineProbe = false; throw new Error('test_online_probe_failed'); }
+                    return super.deviceOnline(deviceId);
+                  }
+                  testHoldDatabaseProbe() { this.databaseProbeGate = new Promise(resolve => { this.releaseDatabaseProbe = resolve; }); }
+                  testReleaseDatabaseProbe() { this.releaseDatabaseProbe(); this.databaseProbeGate = null; }
+                  testFailDatabaseProbe() { this.failDatabaseProbe = true; }
+                  async databaseProbe() {
+                    this.probeCount = (this.probeCount || 0) + 1;
+                    if (this.databaseProbeGate) await this.databaseProbeGate;
+                    if (this.failDatabaseProbe) { this.failDatabaseProbe = false; throw new Error('test_database_probe_failed'); }
+                    return super.databaseProbe();
+                  }
                   testProbeCount() { return this.probeCount || 0; }
                   testHoldUploadBegin() {
                     this.uploadBeginStarted = new Promise(resolve => { this.startUploadBegin = resolve; });
@@ -149,7 +220,7 @@ async function createSpace(request = client()) {
 
 async function openSocket(roomId, instance = runtime, headers = {}) {
   const response = await instance.dispatchFetch(`https://sync.test/v1/spaces/${roomId}/socket`, {
-    headers: { Origin: origin, Upgrade: 'websocket', 'CF-Connecting-IP': `203.0.113.${nextIp++}`, ...headers }
+    headers: { Origin: origin, Upgrade: 'websocket', 'CF-Connecting-IP': `192.0.2.${nextIp++}`, ...headers }
   });
   assert.equal(response.status, 101, response.status === 101 ? undefined : await response.text());
   if (headers['Sec-WebSocket-Protocol']?.startsWith('sync,')) assert.equal(response.headers.get('Sec-WebSocket-Protocol'), 'sync');
@@ -517,7 +588,7 @@ test('a room without an online inviter cannot admit a new device from a retained
   const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   await registry.refreshRoom(space.roomId);
   const joined = await client(instance)('/v1/pair', { method: 'POST', json: { code: space.code } });
-  assert.equal(joined.status, 401);
+  assert.equal(joined.status, 404);
 });
 
 test('empty rooms reclaim expired offers and stale credentials cannot recreate a database', async t => {
@@ -700,6 +771,51 @@ test('concurrent offer generation reuses one active encrypted offer without exte
   assert.ok(results.every(result => result.body.code === code && result.body.expiresAt === space.expiresAt));
 });
 
+test('offer generation rechecks expiry and the thirty-space limit after an online probe', async t => {
+  for (const fillExpiredSlot of [false, true]) await t.test(fillExpiredSlot ? 'another space takes the expired slot' : 'the same space renews its expired slot', async t => {
+    const instance = await createRuntime(); t.after(() => instance.dispose());
+    const request = client(instance), space = await createSpace(request);
+    const peer = (await client(instance)('/v1/pair', { method: 'POST', json: { code: space.code } })).body;
+    const old = (await request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token })).body;
+    await authenticateSocket(space, instance);
+    await Promise.all(Array.from({ length: 29 }, () => createSpace(client(instance))));
+    const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+    const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+    const hostSession = request.state.sessions.get(space.token), peerSession = request.state.sessions.get(peer.token);
+    const secret = await cryptoClient.decryptPayload(hostSession.keyring, space.roomId, `offer:${old.offerId}`, old.secret);
+    const expiresAt = Date.now() + 1000;
+    const encrypted = await cryptoClient.encryptPayload(hostSession.keyring, space.roomId, `offer:${old.offerId}`, { ...secret, expiresAt });
+    await storage.exec('UPDATE offers SET secret = ?, expires_at = ? WHERE room_id = ?', encrypted, expiresAt, space.roomId);
+    await room.testHoldOnlineProbe();
+    const probes = await room.testOnlineProbes();
+    const pairing = new EncryptedPairing({ getSession: () => peerSession, api: async (path, options, session) => {
+      const result = await request.raw(path, { method: options.method, body: options.body, token: session.token,
+        headers: { 'Content-Type': 'application/json', ...options.headers } });
+      if (result.status >= 400) throw Object.assign(new Error(result.body.error), { status: result.status, code: result.body.error });
+      return result.body;
+    } });
+    const pending = pairing.createOffer().then(value => ({ value }), error => ({ error }));
+    await room.testWaitOnlineProbes(probes + 1);
+    await new Promise(resolve => setTimeout(resolve, Math.max(1, expiresAt - Date.now() + 10)));
+    if (fillExpiredSlot) await createSpace(client(instance));
+    await room.testReleaseOnlineProbe();
+    const result = await pending;
+    if (fillExpiredSlot) {
+      assert.equal(result.error?.code, 'pairing_busy');
+      assert.equal(result.error?.status, 503);
+      assert.equal(pairing.offer, undefined);
+    } else {
+      assert.ifError(result.error);
+      assert.notEqual(result.value.offerId, old.offerId);
+      assert.equal(pairing.offer.ownerDeviceId, peer.deviceId);
+      assert.match(pairing.offer.code, /^\d{4}$/);
+      assert.ok(pairing.offer.expiresAt > Date.now());
+    }
+    assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM offers WHERE expires_at > ?', Date.now()), [{ count: 30 }]);
+    pairing.reset();
+  });
+});
+
 test('offer publications are ordered and are never sent to another room or anonymous sockets', async () => {
   const request = client(), space = await createSpace(request), unrelated = await createSpace();
   const owner = await authenticateSocket(space), other = await authenticateSocket(unrelated);
@@ -757,6 +873,87 @@ test('pairing discovery excludes offline invitation owners without deleting thei
   const afterClose = await request.raw('/v1/pair/offers');
   assert.deepEqual(afterClose.body.offers, exposed.body.offers);
   assert.deepEqual(await storage.exec('SELECT * FROM offers ORDER BY offer_id'), retained);
+});
+
+test('anonymous discovery coalesces concurrent probes and limits one source without per-request database writes', async () => {
+  const request = client(), space = await createSpace(request);
+  await authenticateSocket(space);
+  const room = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  const registry = (await runtime.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const attempts = await storage.exec('SELECT * FROM attempts ORDER BY key');
+  const discoveryAttempts = await registry.testDiscoveryAttempts();
+  const probes = await room.testOnlineProbes();
+  await room.testHoldOnlineProbe();
+  const requests = Array.from({ length: 6 }, () => request.raw('/v1/pair/offers'));
+  await room.testWaitOnlineProbes(probes + 1);
+  await registry.testWaitDiscoveryAttempts(discoveryAttempts + 6);
+  assert.equal(await room.testOnlineProbes(), probes + 1);
+  await room.testReleaseOnlineProbe();
+  for (const result of await Promise.all(requests)) {
+    assert.equal(result.status, 200);
+    assert.equal(result.body.offers[0].offerId, space.pairing.offerId);
+  }
+  assert.equal(await room.testOnlineProbes(), probes + 1);
+  for (let index = 0; index < 4; index++) assert.equal((await request.raw('/v1/pair/offers')).status, 200);
+  assert.equal(await room.testOnlineProbes(), probes + 5, 'Completed online results are not cached across disconnects');
+  const blocked = await request.raw('/v1/pair/offers');
+  assert.equal(blocked.status, 429);
+  assert.equal(blocked.body.error, 'rate_limited');
+  assert.ok(Number(blocked.headers.get('Retry-After')) >= 1 && Number(blocked.headers.get('Retry-After')) <= 60);
+  assert.equal(await room.testOnlineProbes(), probes + 5);
+  assert.equal((await client().raw('/v1/pair/offers')).status, 200);
+  assert.deepEqual(await storage.exec('SELECT * FROM attempts ORDER BY key'), attempts);
+  await registry.testExpireDiscoveryWindow();
+  assert.equal((await request.raw('/v1/pair/offers')).status, 200);
+  assert.equal(await registry.testDiscoverySources(), 1);
+  await registry.testFillDiscoveryWindow();
+  assert.equal((await client().raw('/v1/pair/offers')).status, 429);
+  assert.equal(await registry.testDiscoverySources(), 1024);
+  await registry.testExpireDiscoveryWindow();
+});
+
+test('discovery revalidates an invitation changed during online probes and does not reuse an obsolete snapshot', async () => {
+  const request = client(), space = await createSpace(request);
+  await authenticateSocket(space);
+  const room = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  await room.testHoldOnlineProbe();
+  const first = request.raw('/v1/pair/offers');
+  await room.testWaitOnlineProbes(1);
+  assert.equal((await request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'DELETE', token: space.token })).status, 200);
+  const replacement = await request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token });
+  const second = request.raw('/v1/pair/offers');
+  await room.testWaitOnlineProbes(2);
+  await room.testReleaseOnlineProbe();
+  assert.deepEqual((await first).body.offers, []);
+  assert.deepEqual((await second).body.offers, [{ offerId: replacement.body.offerId, expiresAt: replacement.body.expiresAt }]);
+});
+
+test('discovery excludes invitations expiring during probes and fails closed on an uncertain online result', async () => {
+  const request = client(), space = await createSpace(request);
+  await authenticateSocket(space);
+  const room = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  await room.testFailOnlineProbe();
+  const failed = await request.raw('/v1/pair/offers');
+  assert.equal(failed.status, 500);
+  assert.equal((await request.raw('/v1/pair/offers')).body.offers.length, 1, 'A failed probe must not poison subsequent discovery');
+  await room.testHoldOnlineProbe();
+  const pending = request.raw('/v1/pair/offers');
+  await room.testWaitOnlineProbes(3);
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await storage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+  await room.testReleaseOnlineProbe();
+  assert.deepEqual((await pending).body.offers, []);
+});
+
+test('leaving thirty invitation spaces releases every slot immediately for a new space', async () => {
+  const owners = await Promise.all(Array.from({ length: 30 }, () => createSpace()));
+  const request = client();
+  for (const owner of owners) assert.equal((await request(`/v1/spaces/${owner.roomId}/device`, { method: 'DELETE', token: owner.token })).status, 200);
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM offers'), [{ count: 0 }]);
+  const next = await createSpace();
+  assert.match(next.code, /^\d{4}$/);
 });
 
 test('creation is rate limited per IP while another IP can still create a space', async () => {
@@ -1249,6 +1446,42 @@ test('HTTP reads and a first WebSocket authentication never restore expired mess
   }
 });
 
+test('unchanged read-only deadlines skip alarm writes while deadline changes and real expiry still rearm cleanup', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  const initialAlarm = await room.testReadAlarm(), initialWrites = await room.testAlarmWrites();
+  for (let index = 0; index < 25; index++) assert.equal((await request(`/v1/spaces/${space.roomId}`, { token: space.token })).status, 200);
+  assert.equal(await room.testReadAlarm(), initialAlarm);
+  assert.equal(await room.testAlarmWrites(), initialWrites, 'Repeated reads must not rewrite an unchanged alarm');
+
+  const sent = await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'alarm cleanup' } });
+  const earlyDeadline = Date.now() + 60000;
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', earlyDeadline - sevenDays, sent.body.id);
+  const beforeEarly = await room.testAlarmWrites();
+  await room.testScheduleAlarm();
+  assert.equal(await room.testReadAlarm(), earlyDeadline);
+  assert.equal(await room.testAlarmWrites(), beforeEarly + 1);
+  await room.testScheduleAlarm();
+  assert.equal(await room.testAlarmWrites(), beforeEarly + 1);
+  const laterDeadline = earlyDeadline + 60000;
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', laterDeadline - sevenDays, sent.body.id);
+  await room.testScheduleAlarm();
+  assert.equal(await room.testReadAlarm(), laterDeadline);
+  assert.equal(await room.testAlarmWrites(), beforeEarly + 2);
+
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - sevenDays + 300, sent.body.id);
+  await room.testScheduleAlarm();
+  const beforeExpiry = await room.testAlarmWrites();
+  await room.testWaitAlarm();
+  const cycle = await room.testAlarmCycle();
+  assert.equal(cycle.running, null, 'A running alarm has no scheduled timestamp until explicitly rearmed');
+  assert.equal(cycle.scheduled, initialAlarm);
+  assert.equal(await room.testAlarmWrites(), beforeExpiry + 1);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 0 }]);
+});
+
 test('message expiry and pending authentication share the earliest alarm without losing retention', async () => {
   const request = client();
   const space = await createSpace(request);
@@ -1615,11 +1848,46 @@ test('public storage status is read only, aggregate only and distinguishes proje
   assert.deepEqual(await storage.exec('SELECT * FROM room_usage'), before);
   const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   await registry.maintainRooms(); await registry.testDropAlarm();
+  await registry.testExpireDiagnosticsCache();
   const running = await request('/v1/status');
   assert.equal(running.body.maintenance.running, true); assert.ok(running.body.maintenance.startedAt > 0);
   await registry.testRunAlarm();
+  await registry.testExpireDiagnosticsCache();
   const finished = await request('/v1/status');
   assert.equal(finished.body.maintenance.running, false); assert.ok(finished.body.maintenance.lastSuccessAt >= running.body.maintenance.startedAt);
+});
+
+test('public status coalesces diagnostics, caches healthy snapshots for fifteen seconds and retries failures', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const before = await storage.exec('SELECT total_changes() AS changes');
+  await room.testHoldDatabaseProbe();
+  const pending = Array.from({ length: 6 }, () => request('/v1/status'));
+  await registry.testWaitStatusCalls(6);
+  assert.equal(await room.testProbeCount(), 1);
+  await room.testReleaseDatabaseProbe();
+  const snapshots = await Promise.all(pending);
+  for (const result of snapshots) { assert.equal(result.status, 200); assert.deepEqual(result.body, snapshots[0].body); }
+  assert.equal(await registry.testDiagnosticsCacheUntil(), snapshots[0].body.checkedAt + 15000);
+  const cached = await request('/v1/status');
+  assert.equal(cached.body.checkedAt, snapshots[0].body.checkedAt);
+  assert.equal(await room.testProbeCount(), 1);
+  assert.deepEqual(await storage.exec('SELECT total_changes() AS changes'), before);
+
+  await registry.testExpireDiagnosticsCache();
+  await room.testFailDatabaseProbe();
+  const failed = await request('/v1/status');
+  assert.equal(failed.body.ok, false); assert.equal(failed.body.database.sampledRoom.ok, false);
+  assert.equal((await request('/v1/status')).body.ok, true);
+  assert.equal(await room.testProbeCount(), 3, 'A failed database probe must not leave a cached failure');
+  await registry.testExpireDiagnosticsCache();
+  await registry.testFailDiagnostics();
+  assert.equal((await request('/v1/status')).status, 500);
+  assert.equal((await request('/v1/status')).body.ok, true);
+  assert.equal(await room.testProbeCount(), 4, 'A rejected diagnostic collection must not leave an in-flight promise');
 });
 
 test('reconnect catch-up pages are bounded and continuation visits every retained message once', async t => {
@@ -1653,27 +1921,33 @@ test('status rotates room probes and distinguishes missing, stale, overdue and r
   const namespace = await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
   const rooms = [namespace.getByName(first.roomId), namespace.getByName(second.roomId)];
   const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   let response = await request('/v1/status');
   assert.equal(response.body.maintenance.status, 'never'); assert.equal(response.body.maintenance.lastSuccessAt, null);
   assert.equal(response.body.maintenance.stale, true); assert.equal(response.body.maintenance.overdue, false);
+  await registry.testExpireDiagnosticsCache();
   await request('/v1/status');
   assert.deepEqual(await Promise.all(rooms.map(room => room.testProbeCount())), [1, 1]);
   const oldSuccess = Date.now() - 27 * 60 * 60 * 1000;
   await storage.exec('INSERT INTO registry_metadata (key, value) VALUES (?, ?)', 'lastMaintenanceSuccessAt', oldSuccess);
+  await registry.testExpireDiagnosticsCache();
   response = await request('/v1/status');
   assert.equal(response.body.maintenance.status, 'overdue'); assert.equal(response.body.maintenance.stale, true);
-  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   await registry.maintainRooms(); await registry.testDropAlarm();
+  await registry.testExpireDiagnosticsCache();
   response = await request('/v1/status');
   assert.equal(response.body.maintenance.overdue, true); assert.equal(response.body.maintenance.nextAlarmAt, null);
   await registry.testRunAlarm();
+  await registry.testExpireDiagnosticsCache();
   response = await request('/v1/status');
   assert.equal(response.body.maintenance.status, 'healthy'); assert.equal(response.body.maintenance.stale, false);
   const recentFailure = Date.now() + 1000;
   await storage.exec('INSERT INTO registry_metadata (key, value) VALUES (?, ?)', 'lastMaintenanceFailureAt', recentFailure);
+  await registry.testExpireDiagnosticsCache();
   response = await request('/v1/status');
   assert.equal(response.body.maintenance.status, 'failed'); assert.equal(response.body.maintenance.lastFailureCode, 'maintenance_failed');
   await storage.exec('UPDATE registry_metadata SET value = ? WHERE key = ?', recentFailure + 1000, 'lastMaintenanceSuccessAt');
+  await registry.testExpireDiagnosticsCache();
   response = await request('/v1/status');
   assert.equal(response.body.maintenance.status, 'healthy'); assert.equal(response.body.maintenance.lastFailureCode, null);
 });

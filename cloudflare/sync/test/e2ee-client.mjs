@@ -97,7 +97,7 @@ export function encryptedClient(runtime, { origin = 'https://lizuju.github.io', 
     delete session.nonce;
     state.sessions.set(token, session);
     await update(host);
-    await raw(`/v1/pair/${requestId}`, { method: 'DELETE', token: requestToken });
+    await raw(`/v1/pair/${requestId}/ack`, { method: 'POST', token: requestToken });
     return { ...result, body: { roomId: session.roomId, deviceId, token, pairing: null } };
   };
   const decode = async (value, session) => {

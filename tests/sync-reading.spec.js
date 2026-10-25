@@ -136,6 +136,56 @@ test('does not mark new messages read behind another desktop window or while min
     await expect.poll(() => chat.reads.at(-1)).toBe(32);
 });
 
+test('synchronizes a partial own-device read watermark without reading newer messages in another tab', async ({ page }) => {
+    const chat = await openChat(page, []);
+    await page.locator('[data-sync-action="minimize"]').click();
+    await chat.incoming(1);
+    await chat.incoming(2);
+    await chat.incoming(3);
+    await expect(page.locator('[data-sync-unread]')).toHaveText('3');
+    chat.receipt(deviceId, 2);
+    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
+    chat.receipt(deviceId, 1);
+    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
+    chat.receipt(deviceId, 3);
+    await expect(page.locator('[data-sync-unread]')).toBeHidden();
+    await expect(page.locator('[data-sync-latest]')).toBeHidden();
+    expect(chat.reads).toHaveLength(0);
+});
+
+test('cancels pending read confirmation while an ancestor is inert and requires the full dwell again', async ({ page }) => {
+    const chat = await openChat(page, []);
+    await chat.incoming(1);
+    await page.mouse.move(2, 2);
+    await page.clock.runFor(300);
+    await page.locator('[data-retro-desktop]').evaluate(element => { element.inert = true; });
+    await page.clock.runFor(1000);
+    expect(chat.reads).toHaveLength(0);
+    await page.locator('[data-retro-desktop]').evaluate(element => { element.inert = false; });
+    await page.clock.runFor(300);
+    expect(chat.reads).toHaveLength(0);
+    await page.clock.runFor(400);
+    await expect.poll(() => chat.reads.at(-1)).toBe(1);
+});
+
+test('does not read new messages when the shutdown screen fully covers the chat', async ({ page }) => {
+    const chat = await openChat(page, []);
+    await page.locator('[data-start-toggle]').click();
+    await page.locator('[data-shutdown]').click();
+    await expect(page.locator('[data-shutdown-screen]')).toBeVisible();
+    await chat.incoming(1);
+    await page.mouse.move(2, 2);
+    await page.clock.runFor(1000);
+    expect(chat.reads).toHaveLength(0);
+    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
+    await page.clock.runFor(2500);
+    await page.locator('[data-restart]').click();
+    await page.locator('[data-sync-task]').click();
+    await page.mouse.move(5, 5);
+    await page.clock.runFor(800);
+    await expect.poll(() => chat.reads.at(-1)).toBe(1);
+});
+
 test('keeps an idle frontmost chat unread until mouse, keyboard, or touch activity resumes', async ({ page }) => {
     const chat = await openChat(page, [message(1, 'Initial message', otherId)]);
     await page.locator('[data-sync-input]').click();

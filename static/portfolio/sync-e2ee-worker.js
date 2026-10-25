@@ -1,6 +1,7 @@
 const PREFIX = new URL('__sync-e2ee__/', self.registration.scope).pathname;
 const CIPHER_CHUNK = 8 * 1024 * 1024;
 const CLEAR_CHUNK = CIPHER_CHUNK - 16;
+const DOWNLOAD_IDLE_MS = 60000;
 const entries = new Map();
 const pending = new Map();
 const revoked = new Set();
@@ -39,7 +40,9 @@ const prepare = async (descriptor, owner) => {
         || typeof metadata.name !== 'string' || metadata.name.length > 1024
         || typeof metadata.type !== 'string' || !/^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/.test(metadata.type)) throw new Error('invalid_file');
     const key = await crypto.subtle.importKey('raw', bytes(metadata.key, 32), 'AES-GCM', false, ['decrypt']);
-    return { owner, url: url.href, metadata, download: descriptor.download === true, key, noncePrefix: bytes(metadata.noncePrefix, 8), controllers: new Set(), pendingChunks: new Map(), cachedChunk: null };
+    const download = descriptor.download === true;
+    if (download && descriptor.expiresAt && descriptor.expiresAt <= Date.now()) throw new Error('encrypted_file_unavailable');
+    return { owner, url: url.href, metadata, download, key, noncePrefix: bytes(metadata.noncePrefix, 8), controllers: new Set(), pendingChunks: new Map(), cachedChunk: null, streamCount: 0, expiresAt: download ? descriptor.expiresAt : null, expiryTimer: null };
 };
 const trustedClient = (client) => client?.type === 'window' && new URL(client.url).origin === self.location.origin
     && new URL(client.url).pathname.startsWith(new URL(self.registration.scope).pathname);
@@ -53,13 +56,14 @@ self.addEventListener('message', (event) => {
         if (entry && entry.owner !== event.source.id) return;
         revoked.add(`${event.source.id}:${token}`);
         entry?.controllers.forEach(controller => controller.abort());
-        if (entry) entry.cachedChunk = null;
+        if (entry) { entry.cachedChunk = null; clearTimeout(entry.expiryTimer); }
         entries.delete(token);
     } else if (type === 'open') event.waitUntil((async () => {
         try {
             const entry = await prepare(descriptor, event.source.id);
             if (revoked.has(`${event.source.id}:${token}`)) throw new Error('encrypted_file_unavailable');
             entries.set(token, entry);
+            if (entry.download) expireDownload(entry, entry.owner, token, entry.expiresAt);
             const url = new URL(`${PREFIX}${encodeURIComponent(entry.owner)}/${token}`, self.location.origin);
             event.ports[0]?.postMessage({ url: url.href });
         } catch { event.ports[0]?.postMessage({ error: 'encrypted_file_unavailable' }); }
@@ -72,7 +76,11 @@ const resolve = async (owner, token) => {
     const client = await self.clients.get(owner);
     if (!trustedClient(client)) return null;
     let entry = entries.get(token);
-    if (entry) return entry.owner === owner ? entry : null;
+    if (entry) {
+        if (entry.owner !== owner) return null;
+        if (entry.expiresAt && entry.expiresAt <= Date.now()) { await releaseDownload(entry, owner, token); return null; }
+        return entry;
+    }
     if (!pending.has(capability)) pending.set(capability, (async () => {
         const descriptor = await new Promise(resolve => {
             const channel = new MessageChannel();
@@ -127,7 +135,7 @@ const readChunk = async (entry, index, signal) => {
         entry.controllers.add(controller);
         flight.promise = fetchChunk(entry, index, controller.signal).then(bytes => {
             controller.signal.throwIfAborted();
-            entry.cachedChunk = { index, bytes };
+            if (!entry.download) entry.cachedChunk = { index, bytes };
             return bytes;
         }).finally(() => {
             if (entry.pendingChunks.get(index) === flight) entry.pendingChunks.delete(index);
@@ -147,13 +155,25 @@ const readChunk = async (entry, index, signal) => {
         flight.consumers.delete(signal);
     }
 };
-const releaseDownload = async (entry, owner, token) => {
+const releaseDownload = async (entry, owner, token, status = 'disposed') => {
+    clearTimeout(entry.expiryTimer);
     revoked.add(`${owner}:${token}`);
     entry.cachedChunk = null;
     entry.controllers.forEach(controller => controller.abort());
     entries.delete(token);
     const client = await self.clients.get(owner);
-    client?.postMessage({ source: 'gavin-sync-e2ee', type: 'released', token });
+    client?.postMessage({ source: 'gavin-sync-e2ee', type: 'released', token, status });
+};
+const expireDownload = (entry, owner, token, expiresAt = Date.now() + DOWNLOAD_IDLE_MS) => {
+    clearTimeout(entry.expiryTimer);
+    entry.expiresAt = expiresAt;
+    entry.expiryTimer = setTimeout(() => {
+        if (entries.get(token) === entry && !entry.streamCount) releaseDownload(entry, owner, token);
+    }, Math.max(0, expiresAt - Date.now()));
+};
+const downloadState = async (entry, owner, token, status) => {
+    const client = await self.clients.get(owner);
+    client?.postMessage({ source: 'gavin-sync-e2ee', type: 'download-state', token, status, expiresAt: entry.expiresAt });
 };
 const serve = async (event, owner, token) => {
     const entry = await resolve(owner, token);
@@ -188,11 +208,32 @@ const serve = async (event, owner, token) => {
         headers.set('Content-Length', String(end - start));
     }
     if (event.request.method === 'HEAD' || size === 0) {
-        if (event.request.method === 'GET' && entry.download && size === 0) await releaseDownload(entry, owner, token);
+        if (event.request.method === 'GET' && entry.download && size === 0) await releaseDownload(entry, owner, token, 'delivered');
         return new Response(null, { status, headers });
     }
     const controller = new AbortController();
     entry.controllers.add(controller);
+    if (entry.download) {
+        clearTimeout(entry.expiryTimer);
+        entry.expiresAt = null;
+        entry.streamCount++;
+        await downloadState(entry, owner, token);
+    }
+    let settled = false;
+    const finish = async status => {
+        if (settled) return;
+        settled = true;
+        entry.controllers.delete(controller);
+        if (!entry.download) return;
+        entry.streamCount--;
+        if (entries.get(token) !== entry) return;
+        if (status === 'delivered' && !range) entry.delivered = true;
+        if (!entry.streamCount) {
+            if (entry.delivered) { await releaseDownload(entry, owner, token, 'delivered'); return; }
+            expireDownload(entry, owner, token);
+        }
+        await downloadState(entry, owner, token, status === 'delivered' ? null : status);
+    };
     let index = Math.floor(start / CLEAR_CHUNK);
     const last = Math.floor((end - 1) / CLEAR_CHUNK);
     const stream = new ReadableStream({
@@ -203,18 +244,15 @@ const serve = async (event, owner, token) => {
                 output.enqueue(chunk.subarray(Math.max(0, start - index * CLEAR_CHUNK), Math.min(chunk.length, end - index * CLEAR_CHUNK)));
                 if (index++ === last) {
                     output.close();
-                    entry.controllers.delete(controller);
-                    if (entry.download && !range) {
-                        await releaseDownload(entry, owner, token);
-                    }
+                    await finish('delivered');
                 }
             } catch {
                 controller.abort();
-                entry.controllers.delete(controller);
+                await finish('failed');
                 output.error(new Error('encrypted_file_unavailable'));
             }
         },
-        cancel() { controller.abort(); entry.controllers.delete(controller); }
+        cancel() { controller.abort(); return finish('cancelled'); }
     }, { highWaterMark: 0 });
     return new Response(stream, { status, headers });
 };

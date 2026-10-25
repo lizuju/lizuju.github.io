@@ -1,4 +1,4 @@
-const { test, expect, deviceId, otherId, keyId, authorize } = require('./fixtures/sync-e2ee.cjs');
+const { test, expect, deviceId, otherId, keyId, authorize, message } = require('./fixtures/sync-e2ee.cjs');
 
 const headers = {
     'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id',
@@ -36,7 +36,8 @@ const openChat = async (page, handleRequest) => {
             await page.locator('[data-sync-input]').fill(text);
             await page.locator('[data-sync-send]').click();
         },
-        echo: item => connection.send(JSON.stringify({ type: 'message', message: item, history: bounds(item.id) })),
+        echo: (item, generation = '1') => connection.send(JSON.stringify({ type: 'message', message: item, history: { ...bounds(item.id), generation } })),
+        clear: () => connection.send(JSON.stringify({ type: 'cleared', history: { ...bounds(null), generation: '2' }, readReceipts: [] })),
         read: (sender, id) => connection.send(JSON.stringify({ type: 'read', deviceId: sender, messageId: id }))
     };
 };
@@ -73,6 +74,40 @@ test('clears the composer immediately, keeps an identical new draft, and changes
         await expect(receipt(page)).toHaveAttribute('data-state', 'read');
         expect(await receipt(page).evaluate(element => getComputedStyle(element).color)).not.toBe(sentColor);
         await expect(page.locator('[data-sync-input]')).toHaveValue('Identical text');
+    } finally { release(); }
+});
+
+test('ignores a successful send response invalidated by clearing history and still accepts the next send', async ({ page }) => {
+    let release;
+    let firstRequest = false;
+    const gate = new Promise(resolve => { release = resolve; });
+    let requests = 0;
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        const body = route.request().postDataJSON();
+        const id = ++requests;
+        if (id === 1) {
+            firstRequest = true;
+            await gate;
+        }
+        await route.fulfill({ headers, json: confirmed(body, id === 1 ? 1 : 3) });
+        return true;
+    });
+    try {
+        await chat.send('Message before the clear');
+        await expect.poll(() => firstRequest).toBe(true);
+        await page.locator('[data-sync-input]').fill('Draft after the clear');
+        chat.clear();
+        await expect(page.locator('.sync-message')).toHaveCount(0);
+        chat.echo(message(2, 'New peer message after the clear', otherId), '2');
+        await expect(page.locator('.sync-message-text')).toHaveText('New peer message after the clear');
+        release();
+        await expect(page.locator('[data-sync-send]')).toBeEnabled();
+        await expect(page.locator('.sync-message-text')).toHaveText('New peer message after the clear');
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Draft after the clear');
+        await page.locator('[data-sync-send]').click();
+        await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(2);
+        await expect(page.locator('.sync-message-text')).toHaveText(['New peer message after the clear', 'Draft after the clear']);
     } finally { release(); }
 });
 
