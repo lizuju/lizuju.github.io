@@ -43,6 +43,7 @@ test('loads earlier messages without jumping, searches retained history, and rec
             if (JSON.parse(message).type !== 'auth') return;
             const reconnect = socketUrls.at(-1).searchParams.has('after');
             socket.send(JSON.stringify({ type: 'ready', deviceId, pairing: null,
+                readReceipts: [{ deviceId, messageId: 120 }],
                 historyMode: reconnect ? 'append' : 'replace', history: bounds('1', reconnect ? 121 : 120),
                 messages: reconnect ? [makeMessage(121)] : Array.from({ length: 50 }, (_, index) => makeMessage(71 + index))
             }));
@@ -50,7 +51,9 @@ test('loads earlier messages without jumping, searches retained history, and rec
     });
     await openSync(page);
     await expect(page.locator('.sync-message')).toHaveCount(50);
-    await page.locator('[data-sync-feed]').evaluate(feed => { feed.scrollTop = 0; });
+    await page.locator('[data-sync-feed]').hover();
+    await page.mouse.wheel(0, -10000);
+    await expect.poll(() => page.locator('[data-sync-feed]').evaluate(feed => feed.scrollTop)).toBe(0);
     const anchor = page.getByText('History message 71', { exact: true });
     const before = await anchor.boundingBox();
     await page.locator('[data-sync-history-more]').click();

@@ -834,6 +834,9 @@ export class E2eeSyncRoom extends DurableObject {
       // Existing credentials get a full seven-day grace period when this migration runs.
       this.sql.exec('UPDATE devices SET last_active_at = ?', Date.now());
     }
+    if (!this.sql.exec('PRAGMA table_info(devices)').toArray().some(column => column.name === 'read_message_id')) {
+      this.sql.exec('ALTER TABLE devices ADD COLUMN read_message_id INTEGER NOT NULL DEFAULT 0');
+    }
     this.sql.exec('CREATE INDEX IF NOT EXISTS devices_activity ON devices(last_active_at)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
     this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'lastActiveAt', String(Date.now()));
@@ -1054,6 +1057,18 @@ export class E2eeSyncRoom extends DurableObject {
     return this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages ORDER BY id').toArray().map(publicMessage);
   }
 
+  readReceipts() {
+    return this.sql.exec('SELECT device_id AS deviceId, read_message_id AS messageId FROM devices WHERE read_message_id > 0').toArray();
+  }
+
+  markRead(deviceId, messageId) {
+    const latestId = this.sql.exec('SELECT max(id) AS id FROM messages WHERE id <= ?', messageId).one().id;
+    if (latestId === null) return;
+    if (this.sql.exec('UPDATE devices SET read_message_id = ? WHERE device_id = ? AND read_message_id < ? RETURNING device_id', latestId, deviceId, latestId).toArray().length) {
+      this.broadcast({ type: 'read', deviceId, messageId: latestId });
+    }
+  }
+
   historySnapshot(firstId) {
     const bounds = this.sql.exec('SELECT min(id) AS oldestId, max(id) AS latestId FROM messages').one();
     return {
@@ -1081,13 +1096,13 @@ export class E2eeSyncRoom extends DurableObject {
     const history = this.historySnapshot(rows[0]?.id ?? before ?? after ?? undefined);
     history.continuationId = rows.at(-1)?.id ?? after ?? null;
     history.hasNewer = history.continuationId !== null && history.latestId > history.continuationId;
-    return { messages: rows.map(publicMessage), history, historyMode };
+    return { messages: rows.map(publicMessage), history, historyMode, readReceipts: this.readReceipts() };
   }
 
   historyChanged(type = 'history') {
     this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
     const rows = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages ORDER BY id DESC LIMIT 50').toArray().reverse();
-    this.broadcast({ type, messages: rows.map(publicMessage), history: this.historySnapshot(rows[0]?.id), historyMode: 'replace' });
+    this.broadcast({ type, messages: rows.map(publicMessage), history: this.historySnapshot(rows[0]?.id), historyMode: 'replace', readReceipts: this.readReceipts() });
   }
 
   async databaseProbe() {
@@ -1506,7 +1521,23 @@ export class E2eeSyncRoom extends DurableObject {
     }
     const attachment = socket.deserializeAttachment();
     if (attachment?.closing) return;
-    if (attachment?.deviceId || typeof payload !== 'string' || payload.length > 1024 || attachment.authDeadline <= Date.now()) {
+    if (attachment?.deviceId) {
+      let frame;
+      try { frame = typeof payload === 'string' && payload.length <= 1024 ? JSON.parse(payload) : null; } catch { frame = null; }
+      if (frame?.type !== 'read' || !Number.isSafeInteger(frame.messageId) || frame.messageId < 1) {
+        socket.serializeAttachment({ closing: true });
+        socket.close(1008, 'Invalid read receipt');
+        return;
+      }
+      if (!this.touchDevice(attachment.deviceId)) {
+        socket.serializeAttachment({ closing: true });
+        socket.close(4001, 'Invalid credential');
+        return;
+      }
+      this.markRead(attachment.deviceId, frame.messageId);
+      return;
+    }
+    if (typeof payload !== 'string' || payload.length > 1024 || attachment.authDeadline <= Date.now()) {
       socket.serializeAttachment({ closing: true });
       socket.close(1008, 'Authentication required');
       await this.scheduleAlarm();

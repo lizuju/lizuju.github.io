@@ -3,6 +3,7 @@ import { createKeyring, createDeviceIdentity, encryptPayload, decryptPayload, cr
     deleteLocalSession, createKeyRotation, acceptKeyRotation } from './sync-crypto.js';
 import { EncryptedPairing } from './sync-pairing.js';
 import { openEncryptedFile } from './sync-e2ee-files.js';
+import { createInlineGif } from './sync-inline-image.js';
 
 (() => {
     const desktopApi = window.GavinDesktop;
@@ -27,6 +28,9 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
         const confirmation = find('confirm-dialog');
         const devicesDialog = find('devices-dialog');
         const messageNodes = new Map();
+        const inlineGifs = new Map();
+        const readReceipts = new Map();
+        const outbox = new Map();
         const unread = new Set();
         const cooldowns = { create: 0, join: 0, pair: 0 };
         let credentials = null;
@@ -53,8 +57,17 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
         let sending = false;
         let active = false;
         let followOnRestore = true;
+        let followLatest = true;
+        let lastFeedScrollTop = 0;
+        let scrollFrame = null;
+        let readTimer = null;
+        let readCandidate = null;
+        let sentReadId = 0;
+        let lastInteraction = -Infinity;
+        let interactionRevision = 0;
+        let readAfterInteraction = 0;
+        let browserFocused = document.hasFocus();
         let leavingSession = null;
-        let pending = null;
         let selectedFile = null;
         let pendingUpload = null;
         let uploadController = null;
@@ -70,6 +83,15 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
         let keyRefresh;
         let draftRevision = 0;
         let rotationTask;
+        let soundEnabled = true;
+        try { soundEnabled = localStorage.getItem('portfolio-sync-notification-sound') !== 'off'; } catch { /* Use the current session preference. */ }
+        const messageSound = new Audio(new URL('assets/sync-notification.wav', document.baseURI).href);
+        messageSound.preload = 'auto';
+        messageSound.volume = 0.35;
+        let soundReady = false;
+        let soundUnlocking = false;
+        let soundVersion = 0;
+        let lastSoundAt = -Infinity;
 
         const loadConfig = () => {
             if (!configPromise) {
@@ -88,6 +110,50 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             return configPromise;
         };
         const translate = (key, values = {}) => Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, value), desktopApi.t()[key]);
+        const updateSoundToggle = () => {
+            const label = translate(soundEnabled ? 'syncSoundMute' : 'syncSoundUnmute');
+            find('sound').setAttribute('aria-pressed', String(soundEnabled));
+            find('sound').setAttribute('aria-label', label);
+            find('sound').title = label;
+            find('sound-icon').src = `../textures/UI/volume_${soundEnabled ? 'on' : 'off'}.svg`;
+        };
+        const unlockSound = () => {
+            if (!soundEnabled || soundReady || soundUnlocking) return;
+            const version = ++soundVersion;
+            soundUnlocking = true;
+            messageSound.muted = true;
+            messageSound.play().then(() => {
+                if (version !== soundVersion) return;
+                messageSound.pause();
+                messageSound.currentTime = 0;
+                messageSound.muted = false;
+                soundReady = true;
+            }).catch(() => {}).finally(() => { if (version === soundVersion) soundUnlocking = false; });
+        };
+        const notifyMessage = () => {
+            if (!soundEnabled || !soundReady || performance.now() - lastSoundAt < 750) return;
+            lastSoundAt = performance.now();
+            const version = soundVersion;
+            messageSound.currentTime = 0;
+            messageSound.play().catch(error => {
+                if (version === soundVersion && error.name === 'NotAllowedError') soundReady = false;
+            });
+        };
+        find('sound').addEventListener('click', () => {
+            soundEnabled = !soundEnabled;
+            try { localStorage.setItem('portfolio-sync-notification-sound', soundEnabled ? 'on' : 'off'); } catch { /* Keep the current session preference. */ }
+            if (soundEnabled) unlockSound();
+            else {
+                soundVersion++;
+                soundUnlocking = false;
+                messageSound.pause();
+                messageSound.currentTime = 0;
+            }
+            updateSoundToggle();
+        });
+        for (const type of ['pointerdown', 'keydown', 'touchstart']) document.addEventListener(type, event => {
+            if (event.isTrusted && document.hasFocus() && !document.hidden) unlockSound();
+        }, { passive: true });
         const setText = (element, key, state = '') => {
             element.dataset.i18n = key;
             element.dataset.state = state;
@@ -116,6 +182,10 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             devicesDialog.querySelectorAll('[data-sync-device-save], [data-sync-device-remove]').forEach((button) => {
                 button.disabled = busy || sending || !online;
             });
+            for (const message of outbox.values()) {
+                const retry = messageNodes.get(message.id)?.querySelector('[data-sync-retry-message]');
+                if (retry) retry.disabled = busy || sending || !online || (!!message.attachment && !(pendingUpload?.clientId === message.clientId && pendingUpload.file instanceof File));
+            }
         };
         const updateCountdowns = () => {
             for (const [action, key] of [['create', 'syncCreate'], ['join', 'syncJoin'], ['pair', 'syncPair']]) {
@@ -228,6 +298,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                     return { ...device, name: profile.name, publicKey: profile.publicKey };
                 }));
             }
+            if (session === credentials && result.readReceipts) mergeReadReceipts(result.readReceipts);
             return result;
         };
         const persistSession = async (session) => {
@@ -261,7 +332,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                         session.revokedDevices = next.revokedDevices;
                         if (pendingUpload && session.revokedDevices.some(id => !revoked.has(id))) {
                             uploadController?.abort(Object.assign(new Error('key_changed'), { code: 'key_changed' }));
-                            discardUpload();
+                            discardUpload(true);
                         }
                     }
                     if (result.grants.length) {
@@ -287,7 +358,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                 file: { name: pendingUpload.file.name, type: pendingUpload.file.type, size: pendingUpload.file.size, lastModified: pendingUpload.file.lastModified }
             };
             const key = draftKey();
-            return encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, { text: input.value, pending, upload })
+            return encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, { text: input.value, outbox: [...outbox.values()], upload })
                 .then(encrypted => { if (revision === draftRevision) sessionStorage.setItem(key, encrypted); })
                 .catch(() => { if (credentials === session) setNotice('syncStorageError', true); });
         };
@@ -317,6 +388,8 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             updateControls();
         };
         const disposeAttachment = (id) => {
+            inlineGifs.get(id)?.dispose();
+            inlineGifs.delete(id);
             downloadTickets.delete(id);
             for (const [key, promise] of fileCapabilities) {
                 if (!key.startsWith(`${id}:`)) continue;
@@ -432,7 +505,27 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             } finally { button.disabled = false; }
         };
         const atBottom = () => feed.scrollHeight - feed.scrollTop - feed.clientHeight < 60;
-        const isReading = () => active && !document.hidden && app.classList.contains('is-active') && !app.classList.contains('is-minimized') && !find('search').value.trim() && !devicesDialog.open && !confirmation.open;
+        const isReading = () => active && browserFocused && document.hasFocus() && !document.hidden
+            && performance.now() - lastInteraction < 60000 && app.classList.contains('is-active')
+            && !app.classList.contains('is-minimized') && !find('search').value.trim()
+            && !devicesDialog.open && !confirmation.open;
+        const updateReadReceipts = () => {
+            const otherReadId = Math.max(0, ...[...readReceipts].filter(([id]) => id !== deviceId
+                && credentials?.trustedDevices[id] && !credentials.revokedDevices.includes(id)).map(([, id]) => id));
+            for (const message of [...history, ...outbox.values()]) {
+                const receipt = messageNodes.get(message.id)?.querySelector('.sync-message-read');
+                if (!receipt) continue;
+                receipt.hidden = message.deviceId !== deviceId || !!message.sendState;
+                const read = !message.sendState && message.id <= otherReadId;
+                receipt.dataset.state = read ? 'read' : 'sent';
+                receipt.title = translate(read ? 'syncRead' : 'syncMessageSent');
+                receipt.setAttribute('aria-label', receipt.title);
+            }
+        };
+        const mergeReadReceipts = (receipts) => {
+            for (const receipt of receipts) readReceipts.set(receipt.deviceId, Math.max(readReceipts.get(receipt.deviceId) || 0, receipt.messageId));
+            updateReadReceipts();
+        };
         const updateUnread = () => {
             const badge = document.querySelector('[data-sync-unread]');
             badge.hidden = !unread.size;
@@ -443,33 +536,67 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             find('latest').dataset.i18n = '';
         };
         const markRead = () => {
-            if (isReading() && atBottom()) {
+            const latest = history.at(-1);
+            const rect = latest && messageNodes.get(latest.id)?.getBoundingClientRect();
+            const viewport = feed.getBoundingClientRect();
+            const visible = rect && Math.min(rect.bottom, viewport.bottom, innerHeight) - Math.max(rect.top, viewport.top, 0) >= Math.min(40, rect.height)
+                && Math.min(rect.right, viewport.right, innerWidth) > Math.max(rect.left, viewport.left, 0);
+            if (!isReading() || interactionRevision < readAfterInteraction || !atBottom() || !visible || latest.decryptionFailed) {
+                clearTimeout(readTimer);
+                readTimer = null;
+                readCandidate = null;
+                return;
+            }
+            if (!unread.size && latest.id <= Math.max(sentReadId, readReceipts.get(deviceId) || 0)) return;
+            if (readCandidate === latest.id && readTimer) return;
+            clearTimeout(readTimer);
+            readCandidate = latest.id;
+            readTimer = setTimeout(() => {
+                readTimer = null;
+                if (!isReading() || interactionRevision < readAfterInteraction || !atBottom() || history.at(-1)?.id !== latest.id) return;
                 unread.clear();
                 updateUnread();
-            }
+                if (online && socket?.readyState === WebSocket.OPEN && latest.id > Math.max(sentReadId, readReceipts.get(deviceId) || 0)) {
+                    sentReadId = latest.id;
+                    socket.send(JSON.stringify({ type: 'read', messageId: latest.id }));
+                }
+            }, 600);
+        };
+        const scrollToLatest = () => {
+            if (scrollFrame !== null) return;
+            scrollFrame = requestAnimationFrame(() => {
+                scrollFrame = null;
+                if (!followLatest || find('search').value.trim()) return;
+                feed.scrollTop = feed.scrollHeight;
+                lastFeedScrollTop = feed.scrollTop;
+                markRead();
+            });
         };
         const applySearch = () => {
             const query = find('search').value.trim().toLocaleLowerCase();
             let count = 0;
-            for (const message of history) {
+            for (const message of [...history, ...outbox.values()]) {
                 const name = devices.find((device) => device.deviceId === message.deviceId)?.name
                     || translate(message.deviceId === deviceId ? 'syncMessageYou' : 'syncMessageDevice');
                 const match = !query || [message.text, message.attachment?.name || '', name].some((value) => value.toLocaleLowerCase().includes(query));
                 messageNodes.get(message.id).hidden = !match;
                 if (match) count++;
             }
-            find('empty').hidden = history.length !== 0 || !!query;
+            find('empty').hidden = history.length !== 0 || outbox.size !== 0 || !!query;
             find('no-results').hidden = !query || count !== 0;
             setText(find('no-results'), searchController && !searchController.signal.aborted ? 'syncSearching'
                 : historyState && history[0]?.id > historyState.oldestId ? 'syncSearchIncomplete' : 'syncNoResults');
         };
         const render = (scroll = false, preserve = false) => {
-            const follow = !preserve && (scroll || (atBottom() && isReading()));
-            const ids = new Set(history.map((message) => message.id));
+            if (scroll) followLatest = true;
+            if (preserve) followLatest = false;
+            const follow = !preserve && followLatest && !find('search').value.trim();
+            const rendered = [...history, ...outbox.values()];
+            const ids = new Set(rendered.map((message) => message.id));
             for (const [id, item] of messageNodes) {
                 if (!ids.has(id)) { disposeAttachment(id); item.remove(); messageNodes.delete(id); unread.delete(id); }
             }
-            history.forEach((message, index) => {
+            rendered.forEach((message, index) => {
                 let item = messageNodes.get(message.id);
                 if (!item) {
                     item = document.createElement('li');
@@ -477,12 +604,26 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                     const meta = document.createElement('small');
                     meta.className = 'sync-message-meta';
                     const label = document.createElement('span');
+                    const receipt = document.createElement('span');
+                    receipt.className = 'sync-message-read';
+                    receipt.textContent = '✓';
+                    receipt.hidden = true;
                     const copy = document.createElement('button');
                     copy.type = 'button';
                     copy.className = 'sync-message-copy';
                     copy.dataset.syncCopyMessage = '';
                     copy.addEventListener('click', () => copyText(message.text));
-                    meta.append(label, copy);
+                    meta.append(label, receipt, copy);
+                    const sendStatus = document.createElement('span');
+                    sendStatus.className = 'sync-message-send-status';
+                    sendStatus.hidden = true;
+                    const retry = document.createElement('button');
+                    retry.type = 'button';
+                    retry.className = 'sync-message-copy';
+                    retry.dataset.syncRetryMessage = '';
+                    retry.hidden = true;
+                    retry.addEventListener('click', () => sendOutgoing(message));
+                    meta.append(sendStatus, retry);
                     const text = document.createElement('p');
                     text.className = 'sync-message-text';
                     let end = 0;
@@ -519,6 +660,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                         download.type = 'button';
                         download.className = 'sync-attachment-download';
                         download.dataset.syncDownloadFile = '';
+                        download.disabled = !!message.sendState;
                         download.addEventListener('click', () => downloadAttachment(message, download));
                         actions.append(download);
                         attachment.append(name, size, actions);
@@ -527,14 +669,35 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                             preview.type = 'button';
                             preview.className = 'sync-attachment-preview';
                             preview.dataset.syncPreviewFile = '';
+                            preview.disabled = !!message.sendState;
                             preview.addEventListener('click', () => previewAttachment(message, preview));
                             actions.prepend(preview);
                         }
                         item.append(attachment);
                     }
                     messageNodes.set(message.id, item);
+                    if (!message.sendState && message.attachment && (message.attachment.type === 'image/gif' || /\.gif$/i.test(message.attachment.name))
+                        && message.attachment.size <= 20 * 1024 * 1024) {
+                        const session = credentials;
+                        const gif = createInlineGif({
+                            name: message.attachment.name,
+                            load: () => encryptedFile(message, session, false),
+                            onPreview: () => previewAttachment(message, item.querySelector('[data-sync-preview-file]')),
+                            onLoad: () => { if (followLatest) scrollToLatest(); }
+                        });
+                        item.insertBefore(gif.element, item.querySelector('.sync-attachment'));
+                        inlineGifs.set(message.id, gif);
+                        gif.start();
+                    }
                 }
                 item.classList.toggle('is-own', message.deviceId === deviceId);
+                item.dataset.state = message.sendState || 'sent';
+                const sendStatus = item.querySelector('.sync-message-send-status');
+                sendStatus.hidden = !message.sendState;
+                sendStatus.textContent = translate(message.sendState === 'failed' ? 'syncMessageFailed' : 'syncSending');
+                const retry = item.querySelector('[data-sync-retry-message]');
+                retry.hidden = message.sendState !== 'failed';
+                retry.textContent = translate('syncMessageRetry');
                 const name = devices.find((device) => device.deviceId === message.deviceId)?.name
                     || translate(message.deviceId === deviceId ? 'syncMessageYou' : 'syncMessageDevice');
                 const label = `${name} · ${new Date(message.createdAt).toLocaleString(desktopApi.getLanguage())}`;
@@ -542,23 +705,42 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                 const copy = item.querySelector('[data-sync-copy-message]');
                 copy.textContent = translate('syncCopy');
                 const download = item.querySelector('[data-sync-download-file]');
-                if (download) download.textContent = translate(download.dataset.loading ? 'syncDownloading' : 'syncDownload');
+                if (download) {
+                    download.textContent = translate(download.dataset.loading ? 'syncDownloading' : 'syncDownload');
+                    download.disabled = !!message.sendState || !!download.dataset.loading;
+                }
                 const preview = item.querySelector('[data-sync-preview-file]');
                 if (preview) preview.textContent = translate('syncPreview');
                 if (messages.children[index] !== item) messages.insertBefore(item, messages.children[index] || null);
             });
             applySearch();
-            if (follow) feed.scrollTop = feed.scrollHeight;
+            updateReadReceipts();
+            if (follow) {
+                feed.scrollTop = feed.scrollHeight;
+                lastFeedScrollTop = feed.scrollTop;
+                scrollToLatest();
+            }
             markRead();
             updateUnread();
             updateControls();
         };
         const reconcileUpload = (incoming) => {
+            let confirmed = false;
+            for (const message of incoming) {
+                if (message.deviceId !== deviceId) continue;
+                const outgoing = outbox.get(message.clientId);
+                if (!outgoing) continue;
+                outgoing.confirmed = true;
+                outbox.delete(message.clientId);
+                confirmed = true;
+            }
             const upload = pendingUpload;
-            if (!upload || !incoming.some((message) => message.clientId === upload.clientId && message.deviceId === deviceId)) return;
+            if (!upload || !incoming.some((message) => message.clientId === upload.clientId && message.deviceId === deviceId)) {
+                if (confirmed) { saveDraft(); setNotice('syncSent'); }
+                return;
+            }
             upload.confirmed = true;
             pendingUpload = null;
-            if (input.value === upload.text) input.value = '';
             if (selectedFile === upload.file) {
                 selectedFile = null;
                 find('file-input').value = '';
@@ -571,8 +753,13 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
         const receiveHistory = (incoming, initial = false, mode = 'replace', metadata = null) => {
             reconcileUpload(incoming);
             const known = new Set(history.map((message) => message.id));
-            if (!initial && mode !== 'prepend' && !(isReading() && atBottom())) {
-                incoming.forEach((message) => { if (!known.has(message.id) && message.deviceId !== deviceId) unread.add(message.id); });
+            if (mode !== 'prepend') {
+                for (const message of incoming) {
+                    if (!known.has(message.id) && message.deviceId !== deviceId && message.id > (readReceipts.get(deviceId) || 0)) {
+                        unread.add(message.id);
+                        readAfterInteraction = interactionRevision + 1;
+                    }
+                }
             }
             const scrollTop = feed.scrollTop;
             const previousHeight = feed.scrollHeight;
@@ -664,7 +851,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                 }
             }
         };
-        const addMessage = (message, metadata = null, advanceCursor = true) => {
+        const addMessage = (message, metadata = null, advanceCursor = true, notify = false) => {
             reconcileUpload([message]);
             const known = history.some((item) => item.id === message.id);
             if (metadata) {
@@ -680,7 +867,11 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             }
             if (advanceCursor && !catchingUp) reconnectCursor = Math.max(reconnectCursor || 0, message.id);
             if (known) { render(); return; }
-            if (message.deviceId !== deviceId && !(isReading() && atBottom())) unread.add(message.id);
+            if (message.deviceId !== deviceId) {
+                unread.add(message.id);
+                readAfterInteraction = interactionRevision + 1;
+                if (notify) notifyMessage();
+            }
             history = [...history, message].sort((a, b) => a.id - b.id).slice(-500);
             render();
         };
@@ -721,6 +912,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             }
             url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
             const connection = new WebSocket(url, ['sync', `auth.${session.token}`]);
+            sentReadId = 0;
             let incoming = Promise.resolve();
             let awaitingPong = false;
             let authenticated = false;
@@ -738,6 +930,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                     authenticated = true;
                     const initial = deviceId === null;
                     deviceId = data.deviceId;
+                    mergeReadReceipts(data.readReceipts || []);
                     await refreshKeys(session);
                     if (data.rekeyRequired) await rotateKeys(null);
                     if (socket !== connection || credentials !== session) return;
@@ -762,18 +955,28 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                     }, 30000);
                     initialized = true;
                     setConnection(true);
-                } else if (data.type === 'message') addMessage(await decodeMessage(data.message, session), data.history);
+                    markRead();
+                } else if (data.type === 'message') {
+                    const message = await decodeMessage(data.message, session);
+                    if (socket === connection && credentials === session) addMessage(message, data.history, true, initialized);
+                }
+                else if (data.type === 'read') { mergeReadReceipts([data]); }
                 else if (data.type === 'pairing') await showPairing(data.pairing);
                 else if (data.type === 'pair-request' || data.type === 'pair-finish') await pairing.handle(data);
                 else if (data.type === 'key-rotation') { await refreshKeys(session); await loadDevices(); }
                 else if (data.type === 'rekey-required') await rotateKeys(null);
-                else if (data.type === 'history') receiveHistory(await Promise.all(data.messages.map(message => decodeMessage(message, session))), false, data.historyMode, data.history);
+                else if (data.type === 'history') {
+                    mergeReadReceipts(data.readReceipts || []);
+                    receiveHistory(await Promise.all(data.messages.map(message => decodeMessage(message, session))), false, data.historyMode, data.history);
+                }
                 else if (data.type === 'devices') loadDevices();
                 else if (data.type === 'cleared') {
                     uploadController?.abort(Object.assign(new Error('history_cleared'), { code: 'history_cleared' }));
                     pendingUpload = null;
+                    outbox.clear();
                     saveDraft();
                     unread.clear();
+                    mergeReadReceipts(data.readReceipts || []);
                     receiveHistory([], false, 'replace', data.history);
                     setNotice('syncCleared');
                 }
@@ -829,6 +1032,18 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
         };
         const sameSession = (a, b) => a?.roomId === b?.roomId && a?.token === b?.token && a?.revision === b?.revision;
         const reset = (forget = true) => {
+            soundVersion++;
+            soundUnlocking = false;
+            messageSound.pause();
+            messageSound.currentTime = 0;
+            clearTimeout(readTimer);
+            readTimer = null;
+            readCandidate = null;
+            sentReadId = 0;
+            readAfterInteraction = 0;
+            readReceipts.clear();
+            inlineGifs.forEach(gif => gif.dispose());
+            inlineGifs.clear();
             previewRequest++;
             downloadTickets.clear();
             fileCapabilities.forEach(promise => promise.then(capability => capability.dispose()).catch(() => {}));
@@ -851,7 +1066,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             devices = [];
             deviceRequest++;
             find('devices-list').replaceChildren();
-            pending = null;
+            outbox.clear();
             selectedFile = null;
             pendingUpload = null;
             find('file-input').value = '';
@@ -871,6 +1086,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             sending = false;
             leavingSession = null;
             followOnRestore = true;
+            followLatest = true;
             pairExpiresAt = 0;
             pairingRevision++;
             cooldowns.pair = 0;
@@ -894,10 +1110,12 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                 const draft = encrypted ? await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted) : null;
                 if (credentials !== session) return;
                 input.value = draft?.text || '';
-                pending = draft?.pending || null;
                 pendingUpload = draft?.upload || null;
-                if (pendingUpload && session.revokedDevices.some(id => !(pendingUpload.revokedDevices || []).includes(id))) pendingUpload = null;
-            } catch { input.value = ''; pending = null; pendingUpload = null; }
+                for (const message of draft?.outbox || []) {
+                    if (!message.attachment || pendingUpload?.clientId === message.clientId) outbox.set(message.clientId, { ...message, sendState: 'failed' });
+                }
+                if (pendingUpload && session.revokedDevices.some(id => !(pendingUpload.revokedDevices || []).includes(id))) discardUpload(true);
+            } catch { input.value = ''; outbox.clear(); pendingUpload = null; }
             showPairing(session.pairing);
             render();
             updateSelectedFile();
@@ -919,7 +1137,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                             Object.assign(credentials, session, { revision: saved.revision });
                             if (pendingUpload && session.revokedDevices.some(id => !revoked.has(id))) {
                                 uploadController?.abort(Object.assign(new Error('key_changed'), { code: 'key_changed' }));
-                                discardUpload();
+                                discardUpload(true);
                             }
                             if (keyChanged) { pairing.reset(); await showPairing(null); }
                             saveDraft();
@@ -1022,9 +1240,11 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             show: () => {
                 manager.showWindow(app, entry.task, { revealTask: true });
                 active = true;
+                lastInteraction = performance.now();
+                interactionRevision++;
                 reconcileSession();
                 connect();
-                if (followOnRestore) feed.scrollTop = feed.scrollHeight;
+                if (followOnRestore) { followLatest = true; scrollToLatest(); }
                 markRead();
             },
             hide: (state) => {
@@ -1099,10 +1319,21 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             } catch (error) { if (credentials === session) showError(error, 'pair'); }
             finally { if (credentials === session) { busy = false; updateControls(); } }
         });
-        const discardUpload = () => {
+        const discardUpload = (restart = false) => {
             const upload = pendingUpload;
             pendingUpload = null;
+            if (upload) {
+                const outgoing = outbox.get(upload.clientId);
+                outbox.delete(upload.clientId);
+                if (restart && outgoing) {
+                    const clientId = crypto.randomUUID();
+                    Object.assign(outgoing, { id: `pending:${clientId}`, clientId, sendState: 'failed' });
+                    outbox.set(clientId, outgoing);
+                    pendingUpload = { clientId, file: upload.file, text: upload.text, receivedBytes: 0 };
+                }
+            }
             saveDraft();
+            render();
             if (upload?.uploadId && credentials) {
                 api(roomPath(`/files/uploads/${upload.uploadId}`), { method: 'DELETE' }).catch(() => {});
             }
@@ -1230,13 +1461,15 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
                 setNotice(selectedFile || pendingUpload ? 'syncFileTooLargeRetained' : 'syncFileTooLarge', true);
                 return;
             }
-            if (pendingUpload && !selectedFile) {
+            if (pendingUpload) {
                 if (['name', 'size', 'type', 'lastModified'].some((key) => file[key] !== pendingUpload.file[key])) {
-                    find('file-input').value = '';
-                    setNotice('syncWrongResumeFile', true);
-                    return;
-                }
-                pendingUpload.file = file;
+                    if (!selectedFile) {
+                        find('file-input').value = '';
+                        setNotice('syncWrongResumeFile', true);
+                        return;
+                    }
+                    discardUpload();
+                } else pendingUpload.file = file;
             } else discardUpload();
             selectedFile = file;
             saveDraft();
@@ -1296,77 +1529,88 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             try {
                 if (uploadId) await api(`/v1/spaces/${session.roomId}/files/uploads/${uploadId}`, { method: 'DELETE' }, session);
                 if (credentials === session) {
+                    outbox.delete(pendingUpload?.clientId);
                     pendingUpload = null;
                     selectedFile = null;
                     find('file-input').value = '';
                     saveDraft();
+                    render();
                     setNotice('syncUploadCancelled');
                 }
             } catch (error) { if (credentials === session) showError(error); }
             finally { if (credentials === session) { busy = false; updateSelectedFile(); } }
         });
-        find('send-form').addEventListener('submit', async (event) => {
-            event.preventDefault();
-            if (busy || sending || !online || (!selectedFile && (pendingUpload || !input.value.trim())) || !find('send-form').reportValidity()) return;
-            const text = input.value;
-            const file = selectedFile;
+        const sendOutgoing = async (outgoing) => {
+            if (busy || sending || !online || !outbox.has(outgoing.clientId)) return;
             const session = credentials;
-            if (file) {
-                if (pendingUpload?.file !== file || pendingUpload.text !== text) {
-                    discardUpload();
-                    pendingUpload = { clientId: crypto.randomUUID(), file, text, receivedBytes: 0 };
-                }
-            } else if (pending?.text !== text) pending = { clientId: crypto.randomUUID(), text };
-            const upload = file ? pendingUpload : null;
-            const textDraft = file ? null : pending;
-            saveDraft();
+            const upload = outgoing.attachment ? pendingUpload : null;
+            if (outgoing.attachment && (upload?.clientId !== outgoing.clientId || !(upload.file instanceof File))) return;
+            const text = outgoing.text;
+            outgoing.sendState = 'sending';
             sending = true;
-            const controller = file ? new AbortController() : null;
+            const controller = upload ? new AbortController() : null;
             uploadController = controller;
+            saveDraft();
+            render(true);
             updateSelectedFile();
             setNotice('syncSending');
             try {
-                if (file) {
+                if (upload) {
                     const message = await uploadAttachment(upload, session, controller);
                     if (credentials === session && message && !controller.signal.aborted && pendingUpload === upload) addMessage(message, null, false);
                 } else {
-                    if (!textDraft.encrypted || textDraft.keyId !== session.keyring.currentKeyId) {
+                    if (!outgoing.encrypted || outgoing.keyId !== session.keyring.currentKeyId) {
                         const keyring = session.keyring;
-                        textDraft.encrypted = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${textDraft.clientId}`, { text });
-                        textDraft.keyId = keyring.currentKeyId;
+                        outgoing.encrypted = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${outgoing.clientId}`, { text });
+                        outgoing.keyId = keyring.currentKeyId;
                         saveDraft();
                     }
-                    const message = await api(roomPath('/messages'), { method: 'POST', headers: { 'X-Sync-Key-Id': textDraft.keyId }, body: JSON.stringify({ clientId: textDraft.clientId, text: textDraft.encrypted }) });
+                    if (credentials !== session || outgoing.confirmed || !outbox.has(outgoing.clientId)) return;
+                    const message = await api(roomPath('/messages'), { method: 'POST', headers: { 'X-Sync-Key-Id': outgoing.keyId }, body: JSON.stringify({ clientId: outgoing.clientId, text: outgoing.encrypted }) });
                     if (credentials === session) addMessage(message, null, false);
                 }
                 if (credentials !== session) return;
-                if (upload?.confirmed || (file && pendingUpload !== upload)) return;
+                if (upload?.confirmed || (upload && pendingUpload !== upload)) return;
                 controller?.signal.throwIfAborted();
-                if (input.value === text) input.value = '';
-                if (file && selectedFile === file) {
-                    selectedFile = null;
-                    pendingUpload = null;
-                    find('file-input').value = '';
-                }
-                if (!file && pending === textDraft) pending = null;
                 saveDraft();
                 setNotice('syncSent');
             } catch (error) {
                 if (credentials === session) {
-                    if (upload?.confirmed) return;
-                    if (file && pendingUpload === upload && ['not_found', 'upload_unavailable', 'upload_conflict'].includes(error.code)) {
-                        if (error.code === 'upload_conflict') discardUpload();
-                        else pendingUpload = null;
+                    if (outgoing.confirmed || upload?.confirmed || !outbox.has(outgoing.clientId)) return;
+                    if (upload && pendingUpload === upload && ['not_found', 'upload_unavailable', 'upload_conflict'].includes(error.code)) {
+                        if (error.code === 'upload_conflict') discardUpload(true);
+                        else { upload.uploadId = null; upload.receivedBytes = 0; }
                     }
+                    if (outbox.has(outgoing.clientId)) outgoing.sendState = 'failed';
                     saveDraft();
                     if (error.code === 'history_cleared') setNotice('syncCleared');
                     else if (error.code === 'upload_cancelled') return;
-                    else if (file && !error.code) setNotice('syncUploadFailed', true);
+                    else if (upload && !error.code) setNotice('syncUploadFailed', true);
                     else showError(error);
                 }
             } finally {
-                if (credentials === session && uploadController === controller) { sending = false; uploadController = null; updateSelectedFile(); }
+                if (credentials === session && uploadController === controller) { sending = false; uploadController = null; render(); updateSelectedFile(); }
             }
+        };
+        find('send-form').addEventListener('submit', (event) => {
+            event.preventDefault();
+            if (busy || sending || !online || (!selectedFile && (pendingUpload || !input.value.trim())) || !find('send-form').reportValidity()) return;
+            const file = selectedFile;
+            const resuming = file && pendingUpload?.file === file;
+            const text = resuming ? pendingUpload.text : input.value;
+            if (file && !resuming) {
+                discardUpload();
+                pendingUpload = { clientId: crypto.randomUUID(), file, text, receivedBytes: 0 };
+            }
+            const clientId = file ? pendingUpload.clientId : crypto.randomUUID();
+            const outgoing = outbox.get(clientId) || {
+                id: `pending:${clientId}`, clientId, deviceId, text, createdAt: Date.now(),
+                attachment: file ? { name: file.name, type: file.type, size: file.size } : null,
+                sendState: 'sending'
+            };
+            outbox.set(clientId, outgoing);
+            if (!resuming) input.value = '';
+            sendOutgoing(outgoing);
         });
         input.maxLength = 10000;
         input.addEventListener('input', () => { saveDraft(); updateControls(); });
@@ -1405,11 +1649,38 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             searchScrollTop = null;
             searchAnchor = null;
             applySearch();
+            followLatest = true;
             feed.scrollTop = feed.scrollHeight;
+            scrollToLatest();
             markRead();
         });
         find('history-more').addEventListener('click', () => loadOlder());
-        feed.addEventListener('scroll', markRead);
+        feed.addEventListener('scroll', () => {
+            if (!find('search').value.trim()) {
+                if (atBottom()) followLatest = true;
+                else if (feed.scrollTop < lastFeedScrollTop) followLatest = false;
+            }
+            lastFeedScrollTop = feed.scrollTop;
+            markRead();
+        });
+        feed.addEventListener('wheel', event => { if (event.deltaY < 0) followLatest = false; }, { passive: true });
+        new ResizeObserver(() => {
+            if (followLatest) scrollToLatest();
+            else markRead();
+        }).observe(messages);
+        new ResizeObserver(() => {
+            if (followLatest) scrollToLatest();
+            else markRead();
+        }).observe(feed);
+        const recordInteraction = (event) => {
+            if (!event.isTrusted || !browserFocused || !document.hasFocus() || document.hidden || !app.classList.contains('is-active')) return;
+            lastInteraction = performance.now();
+            interactionRevision++;
+            markRead();
+        };
+        for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'touchmove']) {
+            document.addEventListener(type, recordInteraction, { passive: true });
+        }
         new MutationObserver(markRead).observe(app, { attributes: true, attributeFilter: ['class'] });
         find('devices').addEventListener('click', () => {
             if (busy || sending || !online) return;
@@ -1530,13 +1801,16 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
         });
         window.addEventListener('online', () => { clearTimeout(retryTimer); connect(); });
         window.addEventListener('storage', (event) => { if (event.key === CREDENTIAL_KEY || event.key === null) reconcileSession(); });
-        window.addEventListener('pagehide', () => { saveDraft(); disconnect(); });
+        window.addEventListener('pagehide', () => { saveDraft(); disconnect(); messageSound.pause(); });
         window.addEventListener('pageshow', () => { reconcileSession(); if (active) connect(); });
+        window.addEventListener('blur', () => { browserFocused = false; markRead(); });
+        window.addEventListener('focus', () => { browserFocused = true; markRead(); });
         document.addEventListener('visibilitychange', () => {
             markRead();
             if (!document.hidden) { updateCountdowns(); connect(); }
         });
         window.addEventListener('portfolio-language-change', () => {
+            updateSoundToggle();
             render();
             renderDevices();
             updateCountdowns();
@@ -1558,6 +1832,7 @@ import { openEncryptedFile } from './sync-e2ee-files.js';
             if (active) connect();
         } });
         reconcileSession();
+        updateSoundToggle();
         updateControls();
         return entry;
     };

@@ -1,0 +1,203 @@
+const { test, expect, deviceId, otherId, keyId, authorize } = require('./fixtures/sync-e2ee.cjs');
+
+const headers = {
+    'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS'
+};
+const bounds = id => ({ generation: '1', oldestId: id ? 1 : null, latestId: id, continuationId: id, hasNewer: false });
+const confirmed = (body, id) => ({ id, deviceId, clientId: body.clientId, text: body.text, createdAt: Date.now() });
+const receipt = page => page.locator('.sync-message.is-own .sync-message-read');
+
+const openChat = async (page, handleRequest) => {
+    await authorize(page);
+    await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
+    await page.route('https://sync.test/**', async route => {
+        if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+        if (await handleRequest?.(route)) return;
+        return route.fulfill({ headers, json: { deviceId, devices: [], grants: [], hasMore: false, keyId } });
+    });
+    let connection;
+    await page.routeWebSocket('wss://sync.test/**', socket => {
+        connection = socket;
+        socket.onMessage(raw => {
+            if (raw === 'ping') return socket.send('pong');
+            if (JSON.parse(raw).type === 'auth') socket.send(JSON.stringify({
+                type: 'ready', deviceId, messages: [], historyMode: 'replace', history: bounds(null), readReceipts: [], pairing: null
+            }));
+        });
+    });
+    await page.goto('/portfolio/');
+    await page.bringToFront();
+    if (await page.locator('[data-window-action="minimize"]').isVisible()) await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+    await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    return {
+        send: async text => {
+            await page.locator('[data-sync-input]').fill(text);
+            await page.locator('[data-sync-send]').click();
+        },
+        echo: item => connection.send(JSON.stringify({ type: 'message', message: item, history: bounds(item.id) })),
+        read: (sender, id) => connection.send(JSON.stringify({ type: 'read', deviceId: sender, messageId: id }))
+    };
+};
+
+test('clears the composer immediately, keeps an identical new draft, and changes the sent check from grey to blue only for another reader', async ({ page }) => {
+    let submitted;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        submitted = route.request().postDataJSON();
+        await gate;
+        await route.fulfill({ headers, json: confirmed(submitted, 1) });
+        return true;
+    });
+    try {
+        await chat.send('Identical text');
+        await expect(page.locator('[data-sync-input]')).toHaveValue('');
+        await expect(page.locator('.sync-message[data-state="sending"]')).toHaveCount(1);
+        await expect(page.locator('.sync-message-text')).toHaveText('Identical text');
+        await expect(receipt(page)).toBeHidden();
+        await page.locator('[data-sync-input]').fill('Identical text');
+        release();
+        await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(1);
+        await expect(receipt(page)).toHaveAttribute('data-state', 'sent');
+        await expect(receipt(page)).toHaveText('✓');
+        const sentColor = await receipt(page).evaluate(element => getComputedStyle(element).color);
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Identical text');
+        chat.echo(confirmed(submitted, 1));
+        await expect(page.locator('.sync-message')).toHaveCount(1);
+        chat.read(deviceId, 1);
+        await expect(receipt(page)).toHaveAttribute('data-state', 'sent');
+        chat.read(otherId, 1);
+        await expect(receipt(page)).toHaveAttribute('data-state', 'read');
+        expect(await receipt(page).evaluate(element => getComputedStyle(element).color)).not.toBe(sentColor);
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Identical text');
+    } finally { release(); }
+});
+
+test('keeps a socket-confirmed message sent when the corresponding HTTP request subsequently fails', async ({ page }) => {
+    let submitted;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        submitted = route.request().postDataJSON();
+        await gate;
+        await route.abort('failed');
+        return true;
+    });
+    try {
+        await chat.send('Socket wins the race');
+        await expect.poll(() => !!submitted).toBe(true);
+        await expect(page.locator('[data-sync-input]')).toHaveValue('');
+        await page.locator('[data-sync-input]').fill('Next independent draft');
+        chat.echo(confirmed(submitted, 1));
+        await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(1);
+        release();
+        await expect(page.locator('[data-sync-send]')).toBeEnabled();
+        await expect(receipt(page)).toHaveAttribute('data-state', 'sent');
+        await expect(page.locator('[data-sync-retry-message]')).toBeHidden();
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Next independent draft');
+        await expect(page.locator('.sync-message')).toHaveCount(1);
+    } finally { release(); }
+});
+
+test('restores a failed bubble after reload and retries its original client id without overwriting the new draft', async ({ page }) => {
+    const submissions = [];
+    let retryRelease;
+    const retryGate = new Promise(resolve => { retryRelease = resolve; });
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        const body = route.request().postDataJSON();
+        submissions.push(body);
+        if (submissions.length === 1) await route.fulfill({ status: 503, headers, json: { error: 'unavailable' } });
+        else {
+            await retryGate;
+            await route.fulfill({ headers, json: confirmed(body, 1) });
+        }
+        return true;
+    });
+    try {
+        await chat.send('Original failed message');
+        await expect(page.locator('.sync-message[data-state="failed"]')).toHaveCount(1);
+        await expect(page.locator('[data-sync-input]')).toHaveValue('');
+        await expect(receipt(page)).toBeHidden();
+        await page.locator('[data-sync-input]').fill('Do not replace this draft');
+        await page.reload();
+        if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+        await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+        await expect(page.locator('.sync-message[data-state="failed"]')).toHaveCount(1);
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Do not replace this draft');
+        await page.locator('[data-sync-retry-message]').click();
+        await expect(page.locator('.sync-message[data-state="sending"]')).toHaveCount(1);
+        await expect.poll(() => submissions.length).toBe(2);
+        expect(submissions[1].clientId).toBe(submissions[0].clientId);
+        expect(submissions[1].text).toBe(submissions[0].text);
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Do not replace this draft');
+        retryRelease();
+        await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(1);
+        await expect(page.locator('.sync-message-text')).toHaveText('Original failed message');
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Do not replace this draft');
+    } finally { retryRelease(); }
+});
+
+test('treats two successful sends with identical text as two distinct messages', async ({ page }) => {
+    const submissions = [];
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        const body = route.request().postDataJSON();
+        submissions.push(body);
+        await route.fulfill({ headers, json: confirmed(body, submissions.length) });
+        return true;
+    });
+    await chat.send('Send this twice');
+    await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(1);
+    await chat.send('Send this twice');
+    await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(2);
+    expect(submissions[0].clientId).not.toBe(submissions[1].clientId);
+    await expect(page.locator('[data-sync-input]')).toHaveValue('');
+    await expect(page.locator('.sync-message-text')).toHaveText(['Send this twice', 'Send this twice']);
+});
+
+test('shows an uploading attachment immediately and enables preview and download after confirmation', async ({ page }) => {
+    let uploaded;
+    let completeRelease;
+    let completing = false;
+    const completeGate = new Promise(resolve => { completeRelease = resolve; });
+    let receivedBytes = 0;
+    const chat = await openChat(page, async route => {
+        const url = new URL(route.request().url());
+        if (url.pathname.endsWith('/uploads')) {
+            uploaded = route.request().postDataJSON();
+            await route.fulfill({ headers, json: { uploadId: 'pending-file', receivedBytes: 0, chunkSize: 8 * 1024 * 1024 } });
+        } else if (url.pathname.includes('/chunks/')) {
+            receivedBytes += route.request().postDataBuffer().length;
+            await route.fulfill({ headers, json: { receivedBytes } });
+        } else if (url.pathname.endsWith('/complete')) {
+            completing = true;
+            await completeGate;
+            await route.fulfill({ headers, json: confirmed(uploaded, 1) });
+        } else return false;
+        return true;
+    });
+    try {
+        await page.locator('[data-sync-file-input]').setInputFiles({ name: 'pending-note.txt', mimeType: 'text/plain', buffer: Buffer.from('Encrypted pending attachment') });
+        await chat.send('File caption');
+        await expect(page.locator('[data-sync-input]')).toHaveValue('');
+        const bubble = page.locator('.sync-message');
+        await expect(bubble).toHaveAttribute('data-state', 'sending');
+        await expect(bubble).toContainText('pending-note.txt');
+        await expect(bubble.locator('[data-sync-preview-file]')).toBeDisabled();
+        await expect(bubble.locator('[data-sync-download-file]')).toBeDisabled();
+        await expect(receipt(page)).toBeHidden();
+        await expect.poll(() => completing).toBe(true);
+        await page.locator('[data-sync-input]').fill('File caption');
+        completeRelease();
+        await expect(bubble).toHaveAttribute('data-state', 'sent');
+        await expect(bubble.locator('[data-sync-preview-file]')).toBeEnabled();
+        await expect(bubble.locator('[data-sync-download-file]')).toBeEnabled();
+        await expect(page.locator('[data-sync-input]')).toHaveValue('File caption');
+        await expect(bubble).toHaveCount(1);
+    } finally { completeRelease(); }
+});

@@ -170,6 +170,10 @@
                             <p class="sync-hint" data-i18n="syncEncrypted">消息与附件已端到端加密</p>
                         </div>
                         <div class="sync-room-actions">
+                            <button class="sync-button sync-sound-toggle" type="button" data-sync-sound
+                                aria-pressed="true" aria-label="关闭新消息提示音" title="关闭新消息提示音">
+                                <img data-sync-sound-icon src="../textures/UI/volume_on.svg" alt="">
+                            </button>
                             <button class="sync-button" type="button" data-sync-pair
                                 data-i18n="syncPair">生成配对码</button>
                             <button class="sync-button" type="button" data-sync-devices
@@ -281,6 +285,7 @@
                     </div>
                     <div class="sync-devices-body">
                         <ol class="sync-devices-list" data-sync-devices-list></ol>
+                        <p class="sync-hint" data-i18n="syncDeviceNameHint">修改设备名称后，所有成员可见</p>
                         <p class="sync-devices-status" data-sync-devices-status role="status" aria-live="polite"></p>
                     </div>
                     <div class="sync-devices-actions">

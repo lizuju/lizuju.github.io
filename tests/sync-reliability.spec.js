@@ -154,7 +154,9 @@ test('searches retained earlier messages and ignores a cancelled history respons
         });
     });
     await open(page);
-    await page.locator('[data-sync-feed]').evaluate(feed => { feed.scrollTop = 0; });
+    await page.locator('[data-sync-feed]').hover();
+    await page.mouse.wheel(0, -10000);
+    await expect.poll(() => page.locator('[data-sync-feed]').evaluate(feed => feed.scrollTop)).toBe(0);
     const anchor = page.getByText('Message 101', { exact: true });
     const before = await anchor.boundingBox();
     defer = true;
@@ -272,15 +274,21 @@ test('rejects a resumed file with matching metadata but different content', asyn
     test.skip(isMobile, 'the sync application is a desktop window');
     await prepare(page);
     const uploads = [];
+    const caption = 'Original attachment caption';
     let chunks = 0;
-    await page.route('https://sync.test/**', route => {
+    let release;
+    await page.route('https://sync.test/**', async route => {
         if (route.request().method() === 'OPTIONS') return routeDefault(route);
         const path = new URL(route.request().url()).pathname;
         if (path.endsWith('/uploads')) {
             uploads.push(route.request().postDataJSON());
             return route.fulfill({ headers, json: { uploadId: 'test-upload', receivedBytes: 0, chunkSize: 8 * 1024 * 1024 } });
         }
-        if (path.includes('/chunks/')) { chunks++; return route.fulfill({ status: 400, headers, json: { error: 'upload_expired' } }); }
+        if (path.includes('/chunks/')) {
+            chunks++;
+            if (chunks === 1) await new Promise(resolve => { release = resolve; });
+            return route.fulfill({ status: 400, headers, json: { error: 'upload_expired' } });
+        }
         return routeDefault(route);
     });
     await page.routeWebSocket('wss://sync.test/**', socket => socket.onMessage(data => {
@@ -295,14 +303,24 @@ test('rejects a resumed file with matching metadata but different content', asyn
         input.dispatchEvent(new Event('change', { bubbles: true }));
     }, contents);
     await choose('AAAA');
+    await page.locator('[data-sync-input]').fill(caption);
     await page.locator('[data-sync-send]').click();
+    await expect(page.locator('[data-sync-input]')).toHaveValue('');
+    await expect.poll(() => !!release).toBe(true);
+    await page.locator('[data-sync-input]').fill('Next draft');
+    release();
     await expect(page.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncUploadFailed');
+    await expect(page.locator('.sync-message[data-state="failed"] .sync-message-text')).toHaveText(caption);
+    await expect(page.locator('[data-sync-input]')).toHaveValue('Next draft');
     expect(uploads[0].fingerprint).toMatch(/^[0-9a-f]{64}$/);
     await page.reload();
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    await expect(page.locator('[data-sync-input]')).toHaveValue('Next draft');
     await choose('BBBB');
     await page.locator('[data-sync-send]').click();
     await expect(page.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncUploadConflict');
+    await expect(page.locator('.sync-message[data-state="failed"] .sync-message-text')).toHaveText(caption);
+    await expect(page.locator('[data-sync-input]')).toHaveValue('Next draft');
     expect(uploads).toHaveLength(1);
     expect(chunks).toBe(1);
     await expect(page.locator('[data-sync-selected-file]')).toBeVisible();
@@ -311,6 +329,8 @@ test('rejects a resumed file with matching metadata but different content', asyn
     await expect.poll(() => uploads.length).toBe(2);
     expect(uploads[1].clientId).not.toBe(uploads[0].clientId);
     expect(uploads[1].fingerprint).not.toBe(uploads[0].fingerprint);
+    await expect(page.locator('.sync-message-text')).toHaveText(caption);
+    await expect(page.locator('[data-sync-input]')).toHaveValue('Next draft');
 });
 
 test('ignores a plaintext legacy draft after enabling encrypted sessions', async ({ page, isMobile }) => {
@@ -359,6 +379,7 @@ test(`discards an old attachment key after revocation through ${source}`, async 
         contentType: 'text/javascript', body: await readFile(require.resolve('../static/portfolio/js/apps/sync-crypto.js'), 'utf8')
     }));
     const uploads = [];
+    const caption = 'Attachment caption survives key revocation';
     let rotation;
     let socket;
     let held = false;
@@ -406,9 +427,12 @@ test(`discards an old attachment key after revocation through ${source}`, async 
     await open(page);
     const file = { name: 'revoked-attachment.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(1024, 7) };
     await page.locator('[data-sync-file-input]').setInputFiles(file);
+    await page.locator('[data-sync-input]').fill(caption);
     await page.locator('[data-sync-send]').click();
     try {
+        await expect(page.locator('[data-sync-input]')).toHaveValue('');
         await expect.poll(() => held).toBe(true);
+        await page.locator('[data-sync-input]').fill('Next draft');
         rotation = await page.evaluate(async session => {
             const crypto = await import('/__sync-reliability-crypto.js');
             return crypto.createKeyRotation(session, [{ deviceId: session.deviceId, publicKey: session.identity.publicKey }]);
@@ -436,21 +460,26 @@ test(`discards an old attachment key after revocation through ${source}`, async 
             const crypto = await import('/__sync-reliability-crypto.js');
             const envelope = sessionStorage.getItem(`portfolio-sync-draft:${roomId}`);
             const draft = await crypto.decryptPayload(keyring, roomId, `draft:${deviceId}`, envelope);
-            return draft.upload ?? null;
-        }, { keyring: rotation.next.keyring, roomId, deviceId })).toBeNull();
+            const upload = draft.upload;
+            return upload && { text: upload.text, fresh: !upload.encryption && !upload.fingerprint && !upload.keyId, receivedBytes: upload.receivedBytes };
+        }, { keyring: rotation.next.keyring, roomId, deviceId })).toEqual({ text: caption, fresh: true, receivedBytes: 0 });
+        await expect(page.locator('.sync-message[data-state="failed"] .sync-message-text')).toHaveText(caption);
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Next draft');
         release();
-        await page.locator('[data-sync-file-input]').setInputFiles(file);
         await expect(page.locator('[data-sync-send]')).toBeEnabled();
         await page.locator('[data-sync-send]').click();
         await expect(page.locator('.sync-attachment-name')).toHaveText(file.name);
+        await expect(page.locator('.sync-message[data-state="sent"] .sync-message-text')).toHaveText(caption);
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Next draft');
         expect(uploads).toHaveLength(2);
         expect(uploads[1].clientId).not.toBe(uploads[0].clientId);
         const attachments = await page.evaluate(async ({ uploads, keyring, roomId, deviceId }) => {
             const crypto = await import('/__sync-reliability-crypto.js');
-            return Promise.all(uploads.map(async upload => (await crypto.decryptPayload(keyring, roomId, `message:${deviceId}:${upload.clientId}`, upload.text)).attachment));
+            return Promise.all(uploads.map(async upload => crypto.decryptPayload(keyring, roomId, `message:${deviceId}:${upload.clientId}`, upload.text)));
         }, { uploads, keyring: rotation.next.keyring, roomId, deviceId });
-        expect(attachments[1].fileId).not.toBe(attachments[0].fileId);
-        expect(attachments[1].key).not.toBe(attachments[0].key);
+        expect(attachments[1].text).toBe(caption);
+        expect(attachments[1].attachment.fileId).not.toBe(attachments[0].attachment.fileId);
+        expect(attachments[1].attachment.key).not.toBe(attachments[0].attachment.key);
     } finally { release?.(); }
 });
 }

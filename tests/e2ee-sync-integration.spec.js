@@ -20,6 +20,7 @@ const renamedText = 'message-from-renamed-private-device';
 const laterText = 'after-revocation-新密钥专用';
 const text = Buffer.from('This confidential attachment stays encrypted at rest. 私密附件。');
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1kAAAAASUVORK5CYII=', 'base64');
+const gif = Buffer.from('R0lGODlhAQABAIAAAP8AAAAA/yH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAQABAAACAkQBACH5BAAKAAAALAAAAAABAAEAAAICTAEAOw==', 'base64');
 const book = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['Private sheet', 'Value'], ['confidential-workbook-cell', 12345]]), 'Private');
 const xlsx = XLSX.write(book, { type: 'buffer', bookType: 'xlsx', compression: true });
@@ -165,6 +166,9 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
         await pair(third);
         await sendText(first, sentText);
         for (const page of [second, third]) await expect(page.locator('[data-sync-messages]')).toContainText(sentText);
+        await second.bringToFront();
+        await second.locator('[data-sync-input]').click();
+        await expect(first.locator('.sync-message').filter({ hasText: sentText }).locator('.sync-message-read')).toHaveAttribute('data-state', 'read');
         const oldSession = await readSession(second);
         const initialKeyId = oldSession.keyring.currentKeyId;
         await third.close();
@@ -186,6 +190,7 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
         for (const file of [
             { name: 'private-note-文档.txt', mimeType: 'text/plain', buffer: text, preview: 'text', marker: text.toString() },
             { name: 'private-image-图片.png', mimeType: 'image/png', buffer: png, preview: 'image' },
+            { name: 'private-reaction-表情.gif', mimeType: 'image/gif', buffer: gif, preview: 'image', inline: true },
             { name: 'private-workbook-表格.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: xlsx, preview: 'spreadsheet', marker: 'confidential-workbook-cell' },
             { name: 'private-paper-文档.pdf', mimeType: 'application/pdf', buffer: pdf, preview: 'pdf' },
             { name: 'private-video-视频.mp4', mimeType: 'video/mp4', buffer: mp4, preview: 'video' }
@@ -194,6 +199,11 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
             await first.locator('[data-sync-send]').click();
             const message = second.locator('.sync-message').filter({ has: second.locator('.sync-attachment-name', { hasText: file.name }) });
             await expect(message).toBeVisible({ timeout: 30000 });
+            if (file.inline) for (const page of [first, second]) {
+                const image = page.locator('.sync-message').filter({ has: page.locator('.sync-attachment-name', { hasText: file.name }) }).locator('.sync-message-gif img');
+                await expect(image).toBeVisible({ timeout: 30000 });
+                await expect.poll(() => image.evaluate(image => [image.naturalWidth, image.naturalHeight])).toEqual([1, 1]);
+            }
             await message.locator('[data-sync-preview-file]').click();
             const preview = second.locator('[data-sync-preview-window]');
             await expect(preview).toBeVisible();
@@ -260,10 +270,11 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
         for (const page of [first, third]) await expect(page.locator('[data-sync-messages]')).toContainText(afterRejoin, { timeout: 30000 });
         expect(wireBodies.length).toBeGreaterThan(10);
         const all = Buffer.concat(wireBodies);
-        for (const forbidden of [sentText, renamed, renamedText, laterText, afterRejoin, 'private-note-文档.txt', 'private-image-图片.png', 'private-workbook-表格.xlsx', 'private-paper-文档.pdf', 'private-video-视频.mp4', text.toString(), 'confidential-workbook-cell']) {
+        for (const forbidden of [sentText, renamed, renamedText, laterText, afterRejoin, 'private-note-文档.txt', 'private-image-图片.png', 'private-reaction-表情.gif', 'private-workbook-表格.xlsx', 'private-paper-文档.pdf', 'private-video-视频.mp4', text.toString(), 'confidential-workbook-cell']) {
             expect(all.includes(Buffer.from(forbidden)), `backend must not receive ${forbidden}`).toBe(false);
         }
         expect(all.includes(png)).toBe(false);
+        expect(all.includes(gif)).toBe(false);
         expect(all.includes(xlsx)).toBe(false);
         expect(all.includes(pdf)).toBe(false);
         expect(all.includes(mp4)).toBe(false);

@@ -375,6 +375,7 @@ test('device names migrate from the old schema without revoking existing credent
     const state = await request(`/v1/spaces/${space.roomId}`, { token: device.token });
     assert.equal(state.status, 200);
     assert.deepEqual(state.body.messages, [sent.body]);
+    assert.deepEqual(state.body.readReceipts, []);
   }
   const renamed = await request(`/v1/spaces/${space.roomId}/devices/${space.deviceId}`, {
     method: 'PATCH', token: paired.body.token, json: { name: '迁移后的 Mac' }
@@ -867,6 +868,98 @@ test('WebSocket authentication restores history, broadcasts messages and synchro
   assert.deepEqual(JSON.parse((await secondCleared).data), clearedFrame);
   const reconnected = await authenticateSocket(space);
   assert.deepEqual(reconnected.frame.messages, []);
+});
+
+test('explicit read receipts persist, broadcast to peers and advance without duplicate writes', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const peer = (await client()('/v1/pair', { method: 'POST', json: { code: space.code } })).body;
+  const messages = [];
+  for (let index = 0; index < 3; index++) {
+    const sent = await request(`/v1/spaces/${space.roomId}/messages`, {
+      method: 'POST', token: space.token, json: { clientId: randomUUID(), text: `message ${index}` }
+    });
+    assert.equal(sent.status, 201);
+    messages.push(sent.body);
+  }
+  const owner = await authenticateSocket(space);
+  const reader = await authenticateSocket(peer);
+  assert.deepEqual(owner.frame.readReceipts, []);
+  assert.deepEqual(reader.frame.readReceipts, []);
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  await storage.exec('CREATE TABLE receipt_writes (message_id INTEGER)');
+  await storage.exec('CREATE TRIGGER count_receipt_writes AFTER UPDATE OF read_message_id ON devices BEGIN INSERT INTO receipt_writes VALUES (NEW.read_message_id); END');
+
+  const firstOwner = socketEvent(owner.socket);
+  const firstReader = socketEvent(reader.socket);
+  reader.socket.send(JSON.stringify({ type: 'read', messageId: messages[1].id }));
+  const receipt = { type: 'read', deviceId: peer.deviceId, messageId: messages[1].id };
+  assert.deepEqual(JSON.parse((await firstOwner).data), receipt);
+  assert.deepEqual(JSON.parse((await firstReader).data), receipt);
+  const snapshot = await request(`/v1/spaces/${space.roomId}/messages`, { token: space.token });
+  assert.deepEqual(snapshot.body.readReceipts, [{ deviceId: peer.deviceId, messageId: messages[1].id }]);
+
+  await runtime.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId, webSockets: 'hibernate' });
+  const reconnected = await authenticateSocket(space);
+  assert.deepEqual(reconnected.frame.readReceipts, snapshot.body.readReceipts);
+  const nextOwner = socketEvent(owner.socket);
+  const nextReader = socketEvent(reader.socket);
+  reader.socket.send(JSON.stringify({ type: 'read', messageId: messages[1].id }));
+  reader.socket.send(JSON.stringify({ type: 'read', messageId: messages[0].id }));
+  reader.socket.send(JSON.stringify({ type: 'read', messageId: Number.MAX_SAFE_INTEGER }));
+  const latest = { type: 'read', deviceId: peer.deviceId, messageId: messages[2].id };
+  assert.deepEqual(JSON.parse((await nextOwner).data), latest);
+  assert.deepEqual(JSON.parse((await nextReader).data), latest);
+  assert.deepEqual(await storage.exec('SELECT message_id FROM receipt_writes'), messages.slice(1).map(message => ({ message_id: message.id })));
+
+  const removed = await request(`/v1/spaces/${space.roomId}/devices/${peer.deviceId}`, { method: 'DELETE', token: space.token });
+  assert.equal(removed.status, 200);
+  const afterRemoval = await request(`/v1/spaces/${space.roomId}/messages`, { token: space.token });
+  assert.deepEqual(afterRemoval.body.readReceipts, []);
+});
+
+test('read receipts reject unauthenticated and malformed frames at the WebSocket boundary', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  await request(`/v1/spaces/${space.roomId}/messages`, {
+    method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'private' }
+  });
+  const anonymous = await openSocket(space.roomId);
+  const anonymousClosed = socketEvent(anonymous, 'close');
+  anonymous.send(JSON.stringify({ type: 'read', messageId: 1 }));
+  assert.equal((await anonymousClosed).code, 1008);
+  for (const messageId of [0, -1, 1.5, '1', Number.MAX_SAFE_INTEGER + 1, null]) {
+    const { socket } = await authenticateSocket(space);
+    const closed = socketEvent(socket, 'close');
+    socket.send(JSON.stringify({ type: 'read', messageId }));
+    assert.equal((await closed).code, 1008);
+  }
+  const state = await request(`/v1/spaces/${space.roomId}/messages`, { token: space.token });
+  assert.deepEqual(state.body.readReceipts, []);
+});
+
+test('clearing history does not let old read receipts mark new messages as read', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const sent = await request(`/v1/spaces/${space.roomId}/messages`, {
+    method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'before clear' }
+  });
+  const reader = await authenticateSocket(space);
+  const firstRead = socketEvent(reader.socket);
+  reader.socket.send(JSON.stringify({ type: 'read', messageId: sent.body.id }));
+  await firstRead;
+  const clearedFrame = socketEvent(reader.socket);
+  await request(`/v1/spaces/${space.roomId}/messages`, { method: 'DELETE', token: space.token });
+  assert.equal(JSON.parse((await clearedFrame).data).type, 'cleared');
+  const nextFrame = socketEvent(reader.socket);
+  const next = await request(`/v1/spaces/${space.roomId}/messages`, {
+    method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'after clear' }
+  });
+  await nextFrame;
+  assert.ok(next.body.id > sent.body.id);
+  const state = await request(`/v1/spaces/${space.roomId}/messages`, { token: space.token });
+  assert.deepEqual(state.body.readReceipts, [{ deviceId: space.deviceId, messageId: sent.body.id }]);
+  assert.ok(state.body.readReceipts[0].messageId < next.body.id);
 });
 
 test('unauthenticated sockets receive no room content and invalid authentication closes them', async () => {
