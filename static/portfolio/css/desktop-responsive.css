@@ -78,6 +78,16 @@ body.direct-portfolio .direct-return-button {
 }
 
 @media (max-width: 560px) {
+    body.direct-portfolio .direct-return-button {
+        display: block;
+        padding: 4px 8px;
+        overflow: hidden;
+        font-size: 11px;
+        line-height: 15px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
     .window-titlebar {
         flex-basis: 25px;
         font-size: 11px;
