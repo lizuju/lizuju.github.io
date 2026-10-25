@@ -28,7 +28,7 @@ test('shows the remaining pairing cooldown and enables joining when it expires',
     await expect(join).toHaveText('加入空间');
 });
 
-test('reuses one ticket for preview and download, renews it near expiry and authenticates reconnects outside the URL', async ({ page, isMobile, browserName }) => {
+test('caches image previews, renews expired download tickets and authenticates reconnects outside the URL', async ({ page, isMobile, browserName }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
     await page.clock.install();
     const encrypted = file('pixel.png', 'image/png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1kAAAAASUVORK5CYII=', 'base64'));
@@ -89,6 +89,11 @@ test('reuses one ticket for preview and download, renews it near expiry and auth
     await page.clock.setSystemTime(Date.now() + 24 * 60 * 60 * 1000);
     await page.locator('[data-sync-preview-file]').click();
     await expect(page.locator('[data-sync-preview-body] img')).toBeVisible();
+    expect(tickets).toBe(1);
+    await page.locator('[data-sync-preview-action="close"]').click();
+    const renewedDownload = page.waitForEvent('download');
+    await page.locator('[data-sync-download-file]').click();
+    await renewedDownload;
     expect(tickets).toBe(2);
     } finally { await site.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
