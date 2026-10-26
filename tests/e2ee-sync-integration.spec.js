@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const { Miniflare } = require('../cloudflare/sync/node_modules/miniflare');
-const { createServer } = require('node:http');
+const { createServer, request: httpRequest } = require('node:http');
 const { readFile, writeFile } = require('node:fs/promises');
 const path = require('node:path');
 const XLSX = require('xlsx');
@@ -12,6 +12,9 @@ const wireBodies = [];
 const messageBodies = [];
 let runtime;
 let site;
+let api;
+let interceptApi;
+const upgradedSockets = new Set();
 let pdf;
 let mp4;
 const sentText = 'private-message-只在设备端解密';
@@ -28,12 +31,13 @@ const xlsx = XLSX.write(book, { type: 'buffer', bookType: 'xlsx', compression: t
 test.beforeEach(async () => {
     wireBodies.length = 0;
     messageBodies.length = 0;
+    interceptApi = null;
     [pdf, mp4] = await Promise.all([
         readFile(path.join(root, 'static/portfolio/assets/li-zuju-resume.pdf')),
         readFile(path.join(root, 'static/textures/monitor/video/base-static.mp4'))
     ]);
     runtime = new Miniflare({
-        host: '127.0.0.1', port: 8793,
+        host: '127.0.0.1', port: 8794,
         workers: [{ config: {
             name: 'sync-browser-e2ee', compatibilityDate: '2026-10-23',
             manifest: { mainModule: 'index.js', modules: {
@@ -50,6 +54,47 @@ test.beforeEach(async () => {
         } }]
     });
     await runtime.ready;
+    api = createServer(async (incoming, outgoing) => {
+        try {
+            const chunks = [];
+            for await (const chunk of incoming) chunks.push(chunk);
+            const body = Buffer.concat(chunks);
+            const controller = new AbortController();
+            outgoing.on('close', () => { if (!outgoing.writableEnded) controller.abort(); });
+            const request = new Request(new URL(incoming.url, apiOrigin), {
+                method: incoming.method, headers: incoming.headers, signal: controller.signal,
+                ...(!['GET', 'HEAD'].includes(incoming.method) ? { body } : {})
+            });
+            if (body.length) wireBodies.push(body);
+            if (incoming.method === 'POST' && /\/messages$/.test(incoming.url)) messageBodies.push(JSON.parse(body.toString()));
+            const forward = () => runtime.dispatchFetch(request.url, {
+                method: request.method, headers: incoming.headers,
+                ...(!['GET', 'HEAD'].includes(request.method) ? { body } : {})
+            });
+            const intercepted = await interceptApi?.(request, forward);
+            if (intercepted === false) { outgoing.destroy(); return; }
+            const response = intercepted || await forward();
+            outgoing.writeHead(response.status, Object.fromEntries(response.headers));
+            outgoing.end(Buffer.from(await response.arrayBuffer()));
+        } catch { outgoing.destroy(); }
+    });
+    api.on('upgrade', (request, socket, head) => {
+        const upstream = httpRequest(new URL(request.url, 'http://127.0.0.1:8794'), { headers: request.headers });
+        upstream.on('upgrade', (response, peer, upstreamHead) => {
+            for (const connection of [socket, peer]) {
+                upgradedSockets.add(connection);
+                connection.on('close', () => upgradedSockets.delete(connection));
+                connection.on('error', () => { socket.destroy(); peer.destroy(); });
+            }
+            socket.write(`HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n${Object.entries(response.headers).map(([key, value]) => `${key}: ${value}`).join('\r\n')}\r\n\r\n`);
+            if (head.length) peer.write(head);
+            if (upstreamHead.length) socket.write(upstreamHead);
+            socket.pipe(peer).pipe(socket);
+        });
+        upstream.on('error', () => socket.destroy());
+        upstream.end();
+    });
+    await new Promise(resolve => api.listen(8793, '127.0.0.1', resolve));
     site = createServer(async (request, response) => {
         try {
             const url = new URL(request.url, siteOrigin);
@@ -76,6 +121,8 @@ test.beforeEach(async () => {
 });
 test.afterEach(async () => {
     if (site) { site.closeAllConnections(); await new Promise(resolve => site.close(resolve)); }
+    upgradedSockets.forEach(socket => socket.destroy());
+    if (api) { api.closeAllConnections(); await new Promise(resolve => api.close(resolve)); }
     await runtime?.dispose();
 });
 
@@ -140,12 +187,6 @@ test('pairs the standalone chat with the desktop, restores its session and trans
     });
     chat.on('response', response => { if (/\.js(?:\?|$)/.test(response.url()) && response.ok()) chatScripts.push(response.url()); });
     chat.on('worker', worker => chatWorkerUrls.push(worker.url()));
-    for (const page of [desktop, chat]) page.on('request', request => {
-        if (!request.url().startsWith(apiOrigin)) return;
-        const body = request.postDataBuffer();
-        if (body) wireBodies.push(Buffer.from(body));
-        if (request.method() === 'POST' && /\/messages$/.test(request.url())) messageBodies.push(JSON.parse(body.toString()));
-    });
     try {
         await Promise.all([openApp(desktop), chat.goto(`${siteOrigin}/portfolio/chat/`)]);
         await expect(chat.locator('[data-sync-window]')).toBeVisible();
@@ -247,18 +288,25 @@ test('recovers an accepted pairing after its final grant response is lost and ac
     let lostResponses = 0;
     let settles = 0;
     let acknowledgements = 0;
-    await joining.route(`${apiOrigin}/v1/pair/**`, async route => {
-        const request = route.request();
-        if (request.method() === 'DELETE') settles++;
-        if (/\/ack$/.test(request.url()) && request.method() === 'POST') acknowledgements++;
-        if (request.method() === 'GET' && !lostResponses) {
-            const response = await route.fetch();
-            const result = await response.json();
-            if (result.grant) { lostResponses++; return route.abort('failed'); }
-            return route.fulfill({ response });
+    interceptApi = async (request, forward) => {
+        if (!new URL(request.url).pathname.startsWith('/v1/pair/')) return;
+        if (request.method === 'DELETE') settles++;
+        if (/\/ack$/.test(request.url) && request.method === 'POST') acknowledgements++;
+        if (request.method === 'GET' && !lostResponses) {
+            const response = await forward();
+            const result = await response.clone().json();
+            if (result.grant) {
+                lostResponses++;
+                const bytes = await response.arrayBuffer();
+                // Deliver headers before truncation so the browser cannot transparently retry this GET.
+                return new Response(bytes.slice(0, -1), {
+                    status: response.status,
+                    headers: { ...Object.fromEntries(response.headers), 'Content-Length': String(bytes.byteLength), Connection: 'close' }
+                });
+            }
+            return response;
         }
-        return route.continue();
-    });
+    };
     try {
         await Promise.all([owner, joining].map(openApp));
         await owner.locator('[data-sync-create]').click();
@@ -289,26 +337,21 @@ test('reloads during a delayed pairing grant and restores the same request and d
     let heldGrant = false;
     let releaseGrant;
     const released = new Promise(resolve => { releaseGrant = resolve; });
-    owner.on('request', request => {
-        if (request.method() === 'POST' && /\/pair-accept$/.test(request.url())) admissions.push(request.postDataJSON().deviceId);
-    });
-    await joining.route(`${apiOrigin}/v1/pair**`, async route => {
-        const request = route.request(), pathname = new URL(request.url()).pathname;
-        if (request.method() === 'POST' && pathname === '/v1/pair') started.push(request.postDataJSON().requestId);
-        if (request.method() === 'POST' && /\/ack$/.test(pathname)) acknowledged.push(pathname);
-        if (request.method() === 'GET' && /^\/v1\/pair\/[0-9a-f-]{36}$/.test(pathname)) {
+    interceptApi = async (request, forward) => {
+        const pathname = new URL(request.url).pathname;
+        if (request.method === 'POST' && /\/pair-accept$/.test(pathname)) admissions.push((await request.clone().json()).deviceId);
+        if (request.method === 'POST' && pathname === '/v1/pair') started.push((await request.clone().json()).requestId);
+        if (request.method === 'POST' && /\/ack$/.test(pathname)) acknowledged.push(pathname);
+        if (request.method === 'GET' && /^\/v1\/pair\/[0-9a-f-]{36}$/.test(pathname)) {
             grantPaths.push(pathname);
-            const response = await route.fetch(), result = await response.json();
+            const response = await forward(), result = await response.clone().json();
             if (result.grant && !heldGrant) {
                 heldGrant = true;
                 await released;
-                await route.fulfill({ response }).catch(() => {});
-                return;
             }
-            return route.fulfill({ response });
+            return response;
         }
-        return route.continue();
-    });
+    };
     try {
         await Promise.all([owner, joining].map(openApp));
         await owner.locator('[data-sync-create]').click();
@@ -359,33 +402,27 @@ test(`reloads a saved pairing with an unreceived acknowledgement (${acknowledgem
     const recoveredAckStatuses = [];
     let releaseAck;
     const released = new Promise(resolve => { releaseAck = resolve; });
-    owner.on('request', request => {
-        if (request.method() === 'POST' && /\/pair-accept$/.test(request.url())) admissions.push(request.postDataJSON().deviceId);
-    });
-    joining.on('request', request => {
-        if (request.method() === 'DELETE' && /\/device$/.test(request.url())) removedDevices.push(new URL(request.url()).pathname);
-    });
-    await joining.route(`${apiOrigin}/v1/pair**`, async route => {
-        const request = route.request(), pathname = new URL(request.url()).pathname;
-        if (request.method() === 'POST' && pathname === '/v1/pair') started.push(request.postDataJSON().requestId);
-        if (request.method() === 'POST' && /\/ack$/.test(pathname)) {
+    interceptApi = async (request, forward) => {
+        const pathname = new URL(request.url).pathname;
+        if (request.method === 'POST' && /\/pair-accept$/.test(pathname)) admissions.push((await request.clone().json()).deviceId);
+        if (request.method === 'DELETE' && /\/device$/.test(pathname)) removedDevices.push(pathname);
+        if (request.method === 'POST' && pathname === '/v1/pair') started.push((await request.clone().json()).requestId);
+        if (request.method === 'POST' && /\/ack$/.test(pathname)) {
             ackPaths.push(pathname);
             if (!heldAck) {
                 if (acknowledgementLoss === 'after-server') {
-                    const response = await route.fetch();
-                    expect(response.status()).toBe(200);
+                    const response = await forward();
+                    expect(response.status).toBe(200);
                 }
                 heldAck = true;
                 await released;
-                await route.abort('aborted').catch(() => {});
-                return;
+                return false;
             }
-            const response = await route.fetch();
-            recoveredAckStatuses.push(response.status());
-            return route.fulfill({ response });
+            const response = await forward();
+            recoveredAckStatuses.push(response.status);
+            return response;
         }
-        return route.continue();
-    });
+    };
     try {
         await Promise.all([owner, joining].map(openApp));
         await owner.locator('[data-sync-create]').click();
@@ -442,23 +479,13 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
     first.on('websocket', socket => {
         if (socket.url().startsWith(apiOrigin.replace(/^http/, 'ws'))) hostingSockets++;
     });
-    const challengeRoute = `${apiOrigin}/v1/spaces/*/pair-challenge`;
-    await first.route(challengeRoute, route => {
-        if (route.request().method() !== 'POST') return route.continue();
-        challenges.push(route.request().postData());
-        if (challenges.length === 1) return route.fulfill({
-            status: 502, contentType: 'text/html', headers: { 'Access-Control-Allow-Origin': siteOrigin },
-            body: '<html><body>Bad Gateway</body></html>'
+    interceptApi = async request => {
+        if (request.method !== 'POST' || !/\/pair-challenge$/.test(request.url)) return;
+        challenges.push(await request.clone().text());
+        if (challenges.length === 1) return new Response('<html><body>Bad Gateway</body></html>', {
+            status: 502, headers: { 'Access-Control-Allow-Origin': siteOrigin, 'Content-Type': 'text/html' }
         });
-        return route.continue();
-    });
-    const capture = page => page.on('request', request => {
-        if (!request.url().startsWith(apiOrigin)) return;
-        const body = request.postDataBuffer();
-        if (body) wireBodies.push(Buffer.from(body));
-        if (request.method() === 'POST' && /\/messages$/.test(request.url())) messageBodies.push(JSON.parse(body.toString()));
-    });
-    pages.forEach(capture);
+    };
     try {
         await Promise.all(pages.map(openApp));
         await first.locator('[data-sync-create]').click();
@@ -481,7 +508,7 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
         expect(challenges).toHaveLength(2);
         expect(challenges[1]).toBe(challenges[0]);
         expect(hostingSockets).toBe(1);
-        await first.unroute(challengeRoute);
+        interceptApi = null;
         await pair(third);
         await sendText(first, sentText);
         for (const page of [second, third]) await expect(page.locator('[data-sync-messages]')).toContainText(sentText);
@@ -489,6 +516,7 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
         await second.locator('[data-sync-input]').click();
         await expect(first.locator('.sync-message').filter({ hasText: sentText }).locator('.sync-message-read')).toHaveAttribute('data-state', 'read');
         const oldSession = await readSession(second);
+        const thirdSession = await readSession(third);
         const initialKeyId = oldSession.keyring.currentKeyId;
         await third.close();
         await first.locator('[data-sync-devices]').click();
@@ -557,15 +585,14 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
         await expect.poll(async () => (await readSession(first)).keyring.currentKeyId).not.toBe(initialKeyId);
         await sendText(first, laterText);
         third = await contexts[2].newPage();
-        capture(third);
         let interruptedKeyAcknowledgement = false;
-        await third.route('**/key-grants', route => {
-            if (route.request().method() === 'DELETE' && !interruptedKeyAcknowledgement) {
+        interceptApi = request => {
+            if (request.method === 'DELETE' && /\/key-grants$/.test(request.url)
+                && request.headers.get('Authorization') === `Bearer ${thirdSession.token}` && !interruptedKeyAcknowledgement) {
                 interruptedKeyAcknowledgement = true;
-                return route.abort('failed');
+                return false;
             }
-            return route.continue();
-        });
+        };
         await openApp(third);
         await expect.poll(async () => (await readSession(third)).keyring.currentKeyId).toBe((await readSession(first)).keyring.currentKeyId);
         await expect.poll(() => interruptedKeyAcknowledgement).toBe(true);
@@ -636,9 +663,6 @@ test(`continues an encrypted upload after a new device pairs (${restore})`, asyn
     const uploader = restore === 'cross-tab' ? await contexts[0].newPage() : first;
     let uploadAborted = false;
     let uploadSockets = 0;
-    uploader.on('requestfailed', request => {
-        if (/\/files\/uploads\/[^/]+\/chunks\//.test(request.url())) uploadAborted = true;
-    });
     uploader.on('websocket', () => { uploadSockets++; });
     if (restore === 'cross-tab') await uploader.routeWebSocket(`${apiOrigin.replace(/^http/, 'ws')}/**`, socket => {
         const server = socket.connectToServer();
@@ -658,36 +682,33 @@ test(`continues an encrypted upload after a new device pairs (${restore})`, asyn
     let staleChunkStatus;
     let releaseChunk;
     const released = new Promise(resolve => { releaseChunk = resolve; });
-    await uploader.route(`${apiOrigin}/v1/spaces/*/files/uploads`, async route => {
-        if (route.request().method() !== 'POST') return route.continue();
-        const request = route.request();
-        const result = await route.fetch();
-        const body = await result.json();
-        if (result.ok() && body.uploadId) uploads.push({
-            clientId: request.postDataJSON().clientId,
-            keyId: request.headers()['x-sync-key-id'],
-            uploadId: body.uploadId,
-            receivedBytes: body.receivedBytes
-        });
-        await route.fulfill({ response: result });
-    });
-    await uploader.route(`${apiOrigin}/v1/spaces/*/files/uploads/*/chunks/*`, async route => {
-        const request = route.request();
-        if (request.method() !== 'PUT') return route.continue();
-        const index = Number(new URL(request.url()).pathname.split('/').at(-1));
-        const chunk = { index, keyId: request.headers()['x-sync-key-id'] };
+    interceptApi = async (request, forward) => {
+        const pathname = new URL(request.url).pathname;
+        if (request.method === 'POST' && /\/files\/uploads$/.test(pathname)) {
+            const result = await forward();
+            const body = await result.clone().json();
+            if (result.ok && body.uploadId) uploads.push({
+                clientId: (await request.clone().json()).clientId,
+                keyId: request.headers.get('X-Sync-Key-Id'),
+                uploadId: body.uploadId,
+                receivedBytes: body.receivedBytes
+            });
+            return result;
+        }
+        if (request.method !== 'PUT' || !/\/files\/uploads\/[^/]+\/chunks\/\d+$/.test(pathname)) return;
+        request.signal.addEventListener('abort', () => { uploadAborted = true; }, { once: true });
+        const index = Number(pathname.split('/').at(-1));
+        const chunk = { index, keyId: request.headers.get('X-Sync-Key-Id') };
         chunks.push(chunk);
         if (index === 1 && !heldChunk) {
             heldChunk = true;
             await released;
-            if (restore === 'reload') return route.abort('aborted');
-            const response = await route.fetch();
-            staleChunkStatus = response.status();
-            await route.fulfill({ response });
-            return;
+            if (restore === 'reload') return false;
+            const response = await forward();
+            staleChunkStatus = response.status;
+            return response;
         }
-        return route.continue();
-    });
+    };
     try {
         await Promise.all([openApp(first), openApp(second)]);
         await first.locator('[data-sync-create]').click();

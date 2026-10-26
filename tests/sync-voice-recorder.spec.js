@@ -4,6 +4,8 @@ const vm = require('node:vm');
 const path = require('node:path');
 const { startSite, authorize, deviceId, keyId, profile } = require('./fixtures/sync-e2ee.cjs');
 
+test.use({ serviceWorkers: 'block' });
+
 test.beforeEach(async ({ page }) => {
     await page.route('**/__voice-recorder-test__/**', async route => {
         if (route.request().url().endsWith('/recorder.js')) return route.fulfill({

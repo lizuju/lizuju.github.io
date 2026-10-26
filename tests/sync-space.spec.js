@@ -3,6 +3,9 @@ const { createServer } = require('node:http');
 
 const { roomId, deviceId, token, keyId, authorize, message, profile, file, startSite } = require('./fixtures/sync-e2ee.cjs');
 
+test.describe('mocked pairing requests', () => {
+test.use({ serviceWorkers: 'block' });
+
 test('shows the remaining pairing cooldown and enables joining when it expires', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
     await page.clock.install();
@@ -26,6 +29,7 @@ test('shows the remaining pairing cooldown and enables joining when it expires',
     await page.clock.runFor(60100);
     await expect(join).toBeEnabled();
     await expect(join).toHaveText('加入空间');
+});
 });
 
 test('caches image previews, renews expired download tickets and authenticates reconnects outside the URL', async ({ page, isMobile, browserName }) => {

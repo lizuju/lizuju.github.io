@@ -1,6 +1,8 @@
 const { test, expect } = require('./fixtures/sync-e2ee.cjs');
 const { readFile } = require('node:fs/promises');
 
+test.use({ serviceWorkers: 'block' });
+
 const { roomId, deviceId, keyId, session, authorize, message } = require('./fixtures/sync-e2ee.cjs');
 const headers = {
     'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id',
@@ -37,6 +39,7 @@ test('reconnects after a temporary key initialization failure without reopening 
         connections++;
         socket.onMessage(data => {
             if (data === 'ping') return socket.send('pong');
+            if (JSON.parse(data).type !== 'auth') return;
             socket.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null, history: bounds(null), historyMode: 'replace' }));
         });
     });
@@ -75,6 +78,7 @@ for (const size of [1024 * 1024, 9 * 1024 * 1024]) {
         });
         await page.routeWebSocket('wss://sync.test/**', socket => socket.onMessage(data => {
             if (data === 'ping') return socket.send('pong');
+            if (JSON.parse(data).type !== 'auth') return;
             socket.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null, history: bounds(null), historyMode: 'replace' }));
         }));
         await open(page);
@@ -111,6 +115,7 @@ test('confirms a text send from HTTP before a delayed socket echo and keeps the 
         socket = connection;
         connection.onMessage(data => {
             if (data === 'ping') return connection.send('pong');
+            if (JSON.parse(data).type !== 'auth') return;
             connection.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null, history: bounds(null), historyMode: 'replace' }));
         });
     });
@@ -150,6 +155,7 @@ test('searches retained earlier messages and ignores a cancelled history respons
         connection = socket;
         socket.onMessage(data => {
             if (data === 'ping') return socket.send('pong');
+            if (JSON.parse(data).type !== 'auth') return;
             socket.send(JSON.stringify({ type: 'ready', deviceId, pairing: null, messages: Array.from({ length: 50 }, (_, i) => message(i + 101)), history: bounds(150), historyMode: 'replace' }));
         });
     });
@@ -193,6 +199,7 @@ test('catches up bounded reconnect pages without skipping a concurrent live mess
     let firstSocket;
     let firstAfter;
     const cursors = [];
+    const reads = [];
     await page.route('https://sync.test/**', route => {
         if (route.request().method() === 'OPTIONS') return routeDefault(route);
         const url = new URL(route.request().url());
@@ -214,6 +221,9 @@ test('catches up bounded reconnect pages without skipping a concurrent live mess
         else firstAfter = new URL(socket.url()).searchParams.get('after');
         socket.onMessage(data => {
             if (data === 'ping') return socket.send('pong');
+            const frame = JSON.parse(data);
+            if (frame.type === 'read') reads.push(frame.messageId);
+            if (frame.type !== 'auth') return;
             socket.send(JSON.stringify({ type: 'ready', deviceId, pairing: null,
                 messages: Array.from({ length: 50 }, (_, i) => message(i + (number === 1 ? 1 : 51))),
                 history: number === 1 ? bounds(50) : bounds(160, 100, true), historyMode: number === 1 ? 'replace' : 'append'
@@ -224,6 +234,8 @@ test('catches up bounded reconnect pages without skipping a concurrent live mess
     await open(page);
     firstSocket.close({ code: 1012, reason: 'Reconnect test' });
     await expect(page.locator('.sync-message')).toHaveCount(160);
+    await page.locator('[data-sync-input]').click();
+    await expect.poll(() => reads.at(-1)).toBe(160);
     expect(firstAfter).toBe('50');
     expect(cursors).toEqual([100, 150]);
     await expect(page.locator('.sync-message-text').last()).toHaveText('Message 160');
@@ -256,6 +268,7 @@ test('reports in-flight chunk progress and cancels the active XHR without retryi
     });
     await page.routeWebSocket('wss://sync.test/**', socket => socket.onMessage(data => {
         if (data === 'ping') return socket.send('pong');
+        if (JSON.parse(data).type !== 'auth') return;
         socket.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null, history: bounds(null), historyMode: 'replace' }));
     }));
     await open(page);
@@ -293,6 +306,7 @@ test('rejects a resumed file with matching metadata but different content', asyn
     });
     await page.routeWebSocket('wss://sync.test/**', socket => socket.onMessage(data => {
         if (data === 'ping') return socket.send('pong');
+        if (JSON.parse(data).type !== 'auth') return;
         socket.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null, history: bounds(null), historyMode: 'replace' }));
     }));
     await open(page);
@@ -356,6 +370,7 @@ test('ignores a plaintext legacy draft after enabling encrypted sessions', async
     });
     await page.routeWebSocket('wss://sync.test/**', socket => socket.onMessage(data => {
         if (data === 'ping') return socket.send('pong');
+        if (JSON.parse(data).type !== 'auth') return;
         socket.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null, history: bounds(null), historyMode: 'replace' }));
     }));
     await open(page);
@@ -421,6 +436,7 @@ test(`discards an old attachment key after revocation through ${source}`, async 
         socket = connection;
         connection.onMessage(data => {
             if (data === 'ping') return connection.send('pong');
+            if (JSON.parse(data).type !== 'auth') return;
             connection.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null, history: bounds(null), historyMode: 'replace' }));
         });
     });
