@@ -16,8 +16,8 @@ distributed under this repository's MIT license. Its SHA-256 is
 
 # Media preview fixtures
 
-`preview-video.mov` is a one-second, 64 × 48 teal frame encoded as H.264 in a
-QuickTime container. `preview-audio.mp3` and `preview-audio.m4a` are one-second,
+`preview-video.mov` is a four-second, 64 × 48 teal frame encoded as H.264 in a
+QuickTime container. `preview-audio.mp3` and `preview-audio.m4a` are four-second,
 440 Hz synthetic tones encoded as MP3 and AAC respectively, with mono audio at
 22,050 Hz. These original synthetic fixtures contain no personal media and use
 the repository's MIT license.
@@ -27,3 +27,6 @@ the corresponding `-flags:v +bitexact` or `-flags:a +bitexact`. MOV and M4A use
 `-movflags +faststart`; the video uses `libx264`, baseline profile and `yuv420p`,
 while the audio uses `libmp3lame` or `aac` at 32 kbit/s. The test runtime does not
 require FFmpeg.
+
+Four seconds leave time to seek and verify playback before the media ends,
+without enabling native looping during the preview lifecycle checks.

@@ -75,26 +75,40 @@ for (const [index, format] of formats.entries()) {
         const media = viewer.locator(format.kind);
         await expect(media).toBeVisible();
         await expect(media).toHaveJSProperty('controls', true);
-        await expect.poll(() => media.evaluate(element => element.duration)).toBeGreaterThan(0.8);
-        expect(await media.evaluate(element => element.duration)).toBeLessThan(1.5);
+        await expect.poll(() => media.evaluate(element => element.duration)).toBeGreaterThan(3.8);
+        expect(await media.evaluate(element => element.duration)).toBeLessThan(4.5);
         if (format.kind === 'video') {
             await expect(media).toHaveJSProperty('videoWidth', 64);
             await expect(media).toHaveJSProperty('videoHeight', 48);
         }
         expect(context.pages()).toHaveLength(1);
-        await media.evaluate(async element => { element.muted = true; element.loop = true; await element.play(); });
+        await media.evaluate(element => {
+            element.muted = true;
+            element.play().catch(error => { element.dataset.playError = error.name; });
+        });
+        await expect.poll(() => media.evaluate(element => element.currentTime)).toBeGreaterThan(0.1);
+        await expect(media).not.toHaveAttribute('data-play-error');
         await expect(media).toHaveJSProperty('paused', false);
         await media.evaluate(element => { element.pause(); element.currentTime = 0.5; });
         await expect(media).toHaveJSProperty('seeking', false);
         await expect.poll(() => media.evaluate(element => element.currentTime)).toBeCloseTo(0.5, 1);
-        await media.evaluate(element => element.play());
+        await media.evaluate(element => { element.play().catch(error => { element.dataset.playError = error.name; }); });
+        await expect.poll(() => media.evaluate(element => element.currentTime)).toBeGreaterThan(0.65);
+        await expect(media).not.toHaveAttribute('data-play-error');
+        await expect(media).toHaveJSProperty('paused', false);
         await viewer.locator('[data-sync-preview-action="minimize"]').click();
         await expect(viewer).toBeHidden();
         await expect(media).toHaveJSProperty('paused', true);
         await attachment.locator('.sync-attachment-name').click();
         await expect(media).toBeVisible();
         const detachedMedia = await media.elementHandle();
-        await media.evaluate(element => element.play());
+        const resumedAt = await media.evaluate(element => {
+            const time = element.currentTime;
+            element.play().catch(error => { element.dataset.playError = error.name; });
+            return time;
+        });
+        await expect.poll(() => media.evaluate(element => element.currentTime)).toBeGreaterThan(resumedAt + 0.1);
+        await expect(media).not.toHaveAttribute('data-play-error');
         await viewer.locator('[data-sync-preview-action="close"]').click();
         await expect(viewer.locator('[data-sync-preview-body]')).toBeEmpty();
         expect(await detachedMedia.evaluate(element => element.paused && !element.hasAttribute('src'))).toBe(true);
@@ -113,7 +127,7 @@ test('recognizes QuickTime, MPEG audio and M4A MIME types without a file extensi
         await row(page, `media-${index + 1}`).locator('.sync-attachment-name').click();
         const media = viewer.locator(format.kind);
         await expect(media).toBeVisible();
-        await expect.poll(() => media.evaluate(element => element.duration)).toBeGreaterThan(0.8);
+        await expect.poll(() => media.evaluate(element => element.duration)).toBeGreaterThan(3.8);
         await viewer.locator('[data-sync-preview-action="close"]').click();
     }
 });
