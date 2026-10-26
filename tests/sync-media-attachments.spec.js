@@ -82,9 +82,10 @@ for (const [index, format] of formats.entries()) {
             await expect(media).toHaveJSProperty('videoHeight', 48);
         }
         expect(context.pages()).toHaveLength(1);
+        // Native pause or seek can abort an earlier play promise after playback has already advanced.
         await media.evaluate(element => {
             element.muted = true;
-            element.play().catch(error => { element.dataset.playError = error.name; });
+            element.play().catch(error => { if (error.name !== 'AbortError') element.dataset.playError = error.name; });
         });
         await expect.poll(() => media.evaluate(element => element.currentTime)).toBeGreaterThan(0.1);
         await expect(media).not.toHaveAttribute('data-play-error');
@@ -92,7 +93,7 @@ for (const [index, format] of formats.entries()) {
         await media.evaluate(element => { element.pause(); element.currentTime = 0.5; });
         await expect(media).toHaveJSProperty('seeking', false);
         await expect.poll(() => media.evaluate(element => element.currentTime)).toBeCloseTo(0.5, 1);
-        await media.evaluate(element => { element.play().catch(error => { element.dataset.playError = error.name; }); });
+        await media.evaluate(element => { element.play().catch(error => { if (error.name !== 'AbortError') element.dataset.playError = error.name; }); });
         await expect.poll(() => media.evaluate(element => element.currentTime)).toBeGreaterThan(0.65);
         await expect(media).not.toHaveAttribute('data-play-error');
         await expect(media).toHaveJSProperty('paused', false);
@@ -104,7 +105,7 @@ for (const [index, format] of formats.entries()) {
         const detachedMedia = await media.elementHandle();
         const resumedAt = await media.evaluate(element => {
             const time = element.currentTime;
-            element.play().catch(error => { element.dataset.playError = error.name; });
+            element.play().catch(error => { if (error.name !== 'AbortError') element.dataset.playError = error.name; });
             return time;
         });
         await expect.poll(() => media.evaluate(element => element.currentTime)).toBeGreaterThan(resumedAt + 0.1);
