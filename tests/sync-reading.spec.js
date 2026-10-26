@@ -48,8 +48,8 @@ const openChat = async (page, history, receipts = [], background = false, realCl
     await expect(page.locator('.sync-message')).toHaveCount(history.length);
     return {
         reads,
-        incoming: async id => {
-            connection.send(JSON.stringify({ type: 'message', message: message(id, `Incoming ${id}`, otherId), history: bounds(id) }));
+        incoming: async (id, metadata = bounds(id)) => {
+            connection.send(JSON.stringify({ type: 'message', message: message(id, `Incoming ${id}`, otherId), history: metadata }));
             await expect(page.locator('.sync-message-text').last()).toHaveText(`Incoming ${id}`);
         },
         receipt: (sender, id) => connection.send(JSON.stringify({ type: 'read', deviceId: sender, messageId: id })),
@@ -312,4 +312,28 @@ test('preserves earlier reading, then follows the latest message through delayed
     await expect.poll(() => atBottom(page)).toBeLessThan(3);
     await chat.incoming(63);
     await expect.poll(() => atBottom(page)).toBeLessThan(3);
+});
+
+
+test('keeps loaded history and the reading anchor when a live message advances the retention boundary', async ({ page }) => {
+    const chat = await openChat(page, Array.from({ length: 500 }, (_, index) => message(index + 1, `History ${index + 1}`, otherId)),
+        [{ deviceId, messageId: 500 }]);
+    await page.clock.runFor(100);
+    const feed = page.locator('[data-sync-feed]');
+    const anchor = page.locator('.sync-message').filter({ has: page.getByText('History 250', { exact: true }) });
+    await anchor.evaluate(element => {
+        const feed = document.querySelector('[data-sync-feed]');
+        feed.scrollTop += element.getBoundingClientRect().top - feed.getBoundingClientRect().top - 20;
+    });
+    await page.clock.runFor(100);
+    const before = await anchor.boundingBox();
+    await chat.incoming(501, { ...bounds(501), generation: '2', oldestId: 2 });
+    await page.clock.runFor(100);
+    await expect(page.locator('.sync-message')).toHaveCount(500);
+    await expect(page.locator('.sync-message-text').first()).toHaveText('History 2');
+    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
+    expect(Math.abs((await anchor.boundingBox()).y - before.y)).toBeLessThan(2);
+    expect(await feed.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeGreaterThan(500);
+    await page.clock.runFor(800);
+    expect(chat.reads).toHaveLength(0);
 });

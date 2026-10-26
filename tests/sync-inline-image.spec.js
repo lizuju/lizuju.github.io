@@ -70,6 +70,31 @@ test('displays the original animated GIF, opens preview by keyboard, and release
     expect(await page.evaluate(() => window.closeCount)).toBe(2);
 });
 
+test('replaces a static PNG with its small poster and does not reload it on scrolling', async ({ page }) => {
+    await page.evaluate(async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 512;
+        const png = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        const source = URL.createObjectURL(png);
+        const create = URL.createObjectURL.bind(URL);
+        window.originalImageUrl = null;
+        URL.createObjectURL = blob => {
+            const url = create(blob);
+            if (blob.type === 'image/png' && !window.originalImageUrl) window.originalImageUrl = url;
+            return url;
+        };
+        window.pngLoads = 0;
+        window.inlinePng = window.mountGif({ name: 'static.png', load: async () => { window.pngLoads++; return { url: source }; }, onPreview() {} });
+    });
+    const image = page.getByRole('button', { name: 'static.png', exact: true }).locator('img');
+    await expect(image).toHaveJSProperty('naturalWidth', 200);
+    expect(await image.getAttribute('src')).not.toBe(await page.evaluate(() => window.originalImageUrl));
+    await page.locator('#viewport').evaluate(viewport => { viewport.scrollTop = viewport.scrollHeight; });
+    await page.locator('#viewport').evaluate(viewport => { viewport.scrollTop = 0; });
+    expect(await page.evaluate(() => window.pngLoads)).toBe(1);
+    await page.evaluate(() => window.inlinePng.dispose());
+});
+
 test('removing a pending GIF releases its eventual capability without displaying it', async ({ page }) => {
     await page.evaluate(() => {
         window.closedCount = 0;

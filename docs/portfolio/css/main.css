@@ -2926,7 +2926,8 @@ summary:focus-visible {
     font-size: 10px;
 }
 
-.sync-message-copy {
+.sync-message-copy,
+.sync-message-reply-action {
     padding: 1px 5px;
     border: 1px outset #fff;
     border-radius: 0;
@@ -2936,8 +2937,42 @@ summary:focus-visible {
     cursor: default;
 }
 
-.sync-message-copy:active {
+.sync-message-copy:active,
+.sync-message-reply-action:active {
     border-style: inset;
+}
+
+.sync-message-reply-action:focus-visible,
+.sync-reply-cancel:focus-visible {
+    outline: 1px dotted #000080;
+    outline-offset: 2px;
+}
+
+.sync-message-quote {
+    min-width: 0;
+    margin: 6px 0;
+    padding: 5px 8px;
+    border-left: 3px solid #678a83;
+    color: #3e5353;
+    background: #dce7e280;
+    font-size: 11px;
+}
+
+.sync-message-quote-author {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sync-message-quote-text {
+    display: -webkit-box;
+    margin: 0;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
 }
 
 .sync-message-read {
@@ -3144,6 +3179,50 @@ button.sync-attachment-info:focus-visible {
     flex: 0 0 auto;
     padding: 8px;
     border-top: 1px solid #aaa;
+}
+
+.sync-reply {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    padding: 5px 7px;
+    border: 2px inset #fff;
+    border-left: 3px solid #678a83;
+    color: #3e5353;
+    background: #f3f5ee;
+    font-size: 11px;
+}
+
+.sync-reply-details {
+    min-width: 0;
+    flex: 1;
+}
+
+.sync-reply-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.sync-reply-heading > span {
+    flex: 0 0 auto;
+}
+
+.sync-reply-heading > strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sync-reply-cancel {
+    min-width: 28px;
+    min-height: 28px;
+    flex: 0 0 auto;
+    padding: 0 5px;
+    font-size: 18px;
+    line-height: 1;
 }
 
 .sync-attach-controls {
@@ -3389,6 +3468,12 @@ button.sync-attachment-info:focus-visible {
 }
 
 @media (max-width: 560px) {
+    .sync-message-reply-action,
+    .sync-reply-cancel {
+        min-height: 32px;
+        min-width: 32px;
+    }
+
     .sync-task-button > [data-i18n] {
         width: 0;
     }

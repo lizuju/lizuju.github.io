@@ -77,6 +77,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
         let leavingSession = null;
         let selectedFile = null;
         let selectedVoice = null;
+        let selectedReply = null;
         let voicePreviewFile = null;
         let voicePreviewUrl = null;
         let recordingSession = null;
@@ -348,15 +349,19 @@ import { createVoicePlayer } from './sync-voice-player.js';
             try {
                 const payload = await decryptPayload(session.keyring, session.roomId, `message:${message.deviceId}:${message.clientId}`, message.text);
                 if (typeof payload.text !== 'string' || payload.text.length > 10000) throw new Error('invalid_message');
+                if (payload.reply && (!Number.isSafeInteger(payload.reply.id) || payload.reply.id < 1
+                    || typeof payload.reply.deviceId !== 'string' || !/^[0-9a-f-]{36}$/i.test(payload.reply.deviceId)
+                    || typeof payload.reply.text !== 'string' || Array.from(payload.reply.text).length > 300
+                    || typeof payload.reply.attachmentName !== 'string' || Array.from(payload.reply.attachmentName).length > 256)) throw new Error('invalid_reply');
                 if (payload.attachment && (typeof payload.attachment.name !== 'string' || typeof payload.attachment.key !== 'string'
                     || !Number.isSafeInteger(payload.attachment.size) || payload.attachment.size < 0 || payload.attachment.size > MAX_FILE_BYTES)) throw new Error('invalid_attachment');
                 if (payload.attachment?.kind === 'voice' && (payload.attachment.type !== 'audio/wav'
                     || !Number.isSafeInteger(payload.attachment.durationMs) || payload.attachment.durationMs < 1 || payload.attachment.durationMs > 60000
                     || payload.attachment.size <= 44 || payload.attachment.size > 44 + 16000 * 2 * 60)) throw new Error('invalid_voice');
-                return { ...message, text: payload.text, attachment: payload.attachment || null };
+                return { ...message, text: payload.text, attachment: payload.attachment || null, reply: payload.reply || null };
             } catch {
                 setNotice('syncDecryptFailed', true);
-                return { ...message, text: translate('syncDecryptFailed'), attachment: null, decryptionFailed: true };
+                return { ...message, text: '', attachment: null, reply: null, decryptionFailed: true };
             }
         };
         const api = async (path, options = {}, session = credentials) => {
@@ -462,12 +467,12 @@ import { createVoicePlayer } from './sync-voice-player.js';
             const session = credentials;
             const revision = ++draftRevision;
             const upload = pendingUpload && {
-                clientId: pendingUpload.clientId, uploadId: pendingUpload.uploadId, text: pendingUpload.text, voice: pendingUpload.voice, fingerprint: pendingUpload.fingerprint, receivedBytes: pendingUpload.receivedBytes || 0,
+                clientId: pendingUpload.clientId, uploadId: pendingUpload.uploadId, text: pendingUpload.text, reply: pendingUpload.reply, voice: pendingUpload.voice, fingerprint: pendingUpload.fingerprint, receivedBytes: pendingUpload.receivedBytes || 0,
                 encryption: pendingUpload.encryption, encryptedText: pendingUpload.encryptedText, keyId: pendingUpload.keyId, revokedDevices: pendingUpload.revokedDevices,
                 file: { name: pendingUpload.file.name, type: pendingUpload.file.type, size: pendingUpload.file.size, lastModified: pendingUpload.file.lastModified }
             };
             const key = draftKey();
-            return encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, { text: input.value, outbox: [...outbox.values()], upload })
+            return encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, { text: input.value, reply: selectedReply, outbox: [...outbox.values()], upload })
                 .then(encrypted => { if (revision === draftRevision) sessionStorage.setItem(key, encrypted); })
                 .catch(() => { if (credentials === session) setNotice('syncStorageError', true); });
         };
@@ -707,13 +712,24 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 markRead();
             });
         };
+        const deviceLabel = (id) => {
+            const index = devices.findIndex((device) => device.deviceId === id);
+            return devices[index]?.name || translate('syncDeviceDefault', { id: index >= 0 ? index + 1 : id.slice(0, 8) });
+        };
+        const replySummary = (reply) => [reply.text, reply.attachmentName && `${translate('syncReplyAttachment')} ${reply.attachmentName}`].filter(Boolean).join('\n');
+        const renderReply = () => {
+            find('reply').hidden = !selectedReply;
+            find('reply-author').textContent = selectedReply ? deviceLabel(selectedReply.deviceId) : '';
+            find('reply-text').textContent = selectedReply ? replySummary(selectedReply) : '';
+            find('reply-cancel').setAttribute('aria-label', translate('syncReplyCancel'));
+        };
         const applySearch = () => {
             const query = find('search').value.trim().toLocaleLowerCase();
             let count = 0;
             for (const message of [...history, ...outbox.values()]) {
-                const name = devices.find((device) => device.deviceId === message.deviceId)?.name
-                    || translate(message.deviceId === deviceId ? 'syncMessageYou' : 'syncMessageDevice');
-                const match = !query || [message.text, message.attachment?.name || '', name].some((value) => value.toLocaleLowerCase().includes(query));
+                const text = message.decryptionFailed ? translate('syncDecryptFailed') : message.text;
+                const match = !query || [text, message.attachment?.name || '', deviceLabel(message.deviceId)]
+                    .some((value) => value.toLocaleLowerCase().includes(query));
                 messageNodes.get(message.id).hidden = !match;
                 if (!match) voicePlayers.get(message.id)?.pause();
                 if (match) count++;
@@ -750,7 +766,21 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     copy.className = 'sync-message-copy';
                     copy.dataset.syncCopyMessage = '';
                     copy.addEventListener('click', () => copyText(message.text));
-                    meta.append(label, receipt, copy);
+                    const reply = document.createElement('button');
+                    reply.type = 'button';
+                    reply.className = 'sync-message-reply-action';
+                    reply.dataset.syncReplyMessage = '';
+                    reply.addEventListener('click', () => {
+                        selectedReply = {
+                            id: message.id, deviceId: message.deviceId,
+                            text: Array.from(message.text).slice(0, 300).join(''),
+                            attachmentName: Array.from(message.attachment?.name || '').slice(0, 256).join('')
+                        };
+                        renderReply();
+                        saveDraft();
+                        input.focus();
+                    });
+                    meta.append(label, receipt, reply, copy);
                     const sendStatus = document.createElement('span');
                     sendStatus.className = 'sync-message-send-status';
                     sendStatus.hidden = true;
@@ -781,7 +811,18 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     text.append(document.createTextNode(message.text.slice(end)));
                     text.hidden = !message.text;
                     copy.hidden = !message.text || message.decryptionFailed;
-                    item.append(meta, text);
+                    item.append(meta);
+                    if (message.reply) {
+                        const quote = document.createElement('blockquote');
+                        quote.className = 'sync-message-quote';
+                        const author = document.createElement('strong');
+                        author.className = 'sync-message-quote-author';
+                        const excerpt = document.createElement('span');
+                        excerpt.className = 'sync-message-quote-text';
+                        quote.append(author, excerpt);
+                        item.append(quote);
+                    }
+                    item.append(text);
                     if (message.attachment) {
                         const attachment = document.createElement('div');
                         attachment.className = 'sync-attachment';
@@ -810,7 +851,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                             info.addEventListener('click', () => previewAttachment(message, info));
                             item.classList.add('has-preview');
                             item.addEventListener('click', (event) => {
-                                if (event.target.closest('button, a, input, audio, video') || window.getSelection()?.toString()) return;
+                                if (event.target.closest('button, a, input, audio, video, .sync-message-quote') || window.getSelection()?.toString()) return;
                                 previewAttachment(message, info);
                             });
                         }
@@ -862,12 +903,22 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 const retry = item.querySelector('[data-sync-retry-message]');
                 retry.hidden = message.sendState !== 'failed';
                 retry.textContent = translate('syncMessageRetry');
-                const name = devices.find((device) => device.deviceId === message.deviceId)?.name
-                    || translate(message.deviceId === deviceId ? 'syncMessageYou' : 'syncMessageDevice');
-                const label = `${name} · ${new Date(message.createdAt).toLocaleString(desktopApi.getLanguage())}`;
+                if (message.decryptionFailed) {
+                    const text = item.querySelector('.sync-message-text');
+                    text.textContent = translate('syncDecryptFailed');
+                    text.hidden = false;
+                }
+                const label = `${deviceLabel(message.deviceId)} · ${new Date(message.createdAt).toLocaleString(desktopApi.getLanguage())}`;
                 if (item.firstChild.firstChild.textContent !== label) item.firstChild.firstChild.textContent = label;
                 const copy = item.querySelector('[data-sync-copy-message]');
                 copy.textContent = translate('syncCopy');
+                const reply = item.querySelector('[data-sync-reply-message]');
+                reply.textContent = translate('syncReply');
+                reply.hidden = !!message.sendState || !!message.decryptionFailed;
+                if (message.reply) {
+                    item.querySelector('.sync-message-quote-author').textContent = deviceLabel(message.reply.deviceId);
+                    item.querySelector('.sync-message-quote-text').textContent = replySummary(message.reply);
+                }
                 const download = item.querySelector('[data-sync-download-file]');
                 if (download) {
                     download.textContent = translate(download.dataset.loading ? 'syncDownloading' : 'syncDownload');
@@ -892,6 +943,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             markRead();
             updateUnread();
             updateControls();
+            renderReply();
         };
         const reconcileUpload = (incoming) => {
             let confirmed = false;
@@ -1024,6 +1076,11 @@ import { createVoicePlayer } from './sync-voice-player.js';
         const addMessage = (message, metadata = null, advanceCursor = true, notify = false) => {
             reconcileUpload([message]);
             const known = history.some((item) => item.id === message.id);
+            const trimming = metadata?.oldestId > history[0]?.id || !known && history.length >= 500;
+            const top = feed.getBoundingClientRect().top;
+            const anchor = trimming && !followLatest && history.find((item) => item.id >= (metadata?.oldestId || 0)
+                && !messageNodes.get(item.id)?.hidden && messageNodes.get(item.id)?.getBoundingClientRect().bottom > top);
+            const offset = anchor ? messageNodes.get(anchor.id).getBoundingClientRect().top - top : 0;
             if (metadata) {
                 if (historyState && metadata.generation !== historyState.generation) {
                     searchController?.abort();
@@ -1036,14 +1093,20 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 history = history.filter((item) => item.id >= metadata.oldestId);
             }
             if (advanceCursor && !catchingUp) reconnectCursor = Math.max(reconnectCursor || 0, message.id);
-            if (known) { render(); return; }
-            if (message.deviceId !== deviceId) {
-                unread.add(message.id);
-                readAfterInteraction = interactionRevision + 1;
-                if (notify) notifyMessage(message);
+            if (!known) {
+                if (message.deviceId !== deviceId) {
+                    unread.add(message.id);
+                    readAfterInteraction = interactionRevision + 1;
+                    if (notify) notifyMessage(message);
+                }
+                history = [...history, message].sort((a, b) => a.id - b.id).slice(-500);
             }
-            history = [...history, message].sort((a, b) => a.id - b.id).slice(-500);
             render();
+            const node = anchor && messageNodes.get(anchor.id);
+            if (node) {
+                feed.scrollTop += node.getBoundingClientRect().top - feed.getBoundingClientRect().top - offset;
+                lastFeedScrollTop = feed.scrollTop;
+            }
         };
         let connectionTimer = null;
         const disconnect = () => {
@@ -1146,7 +1209,13 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 }
                 else if (data.type === 'read') { mergeReadReceipts([data]); }
                 else if (data.type === 'pairing') await showPairing(data.pairing);
-                else if (data.type === 'pair-request' || data.type === 'pair-finish') await pairing.handle(data);
+                else if (data.type === 'pair-request' || data.type === 'pair-finish') {
+                    const offer = pairing.offer;
+                    pairing.handle(data).catch(error => {
+                        if (credentials === session && socket === connection && pairing.offer === offer
+                            && error.name !== 'AbortError' && error.code !== 'invalid_code') showError(error);
+                    });
+                }
                 else if (data.type === 'key-rotation') {
                     await refreshKeys(session);
                     if (socket === connection && credentials === session) await loadDevices();
@@ -1162,6 +1231,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     uploadController?.abort(Object.assign(new Error('history_cleared'), { code: 'history_cleared' }));
                     pendingUpload = null;
                     outbox.clear();
+                    selectedReply = null;
                     saveDraft();
                     unread.clear();
                     mergeReadReceipts(data.readReceipts || []);
@@ -1266,6 +1336,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             outbox.clear();
             selectedFile = null;
             selectedVoice = null;
+            selectedReply = null;
             pendingUpload = null;
             find('file-input').value = '';
             history = [];
@@ -1310,12 +1381,13 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 const draft = encrypted ? await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted) : null;
                 if (credentials !== session) return;
                 input.value = draft?.text || '';
+                selectedReply = draft?.reply || null;
                 pendingUpload = draft?.upload || null;
                 for (const message of draft?.outbox || []) {
                     if (!message.attachment || pendingUpload?.clientId === message.clientId) outbox.set(message.clientId, { ...message, sendState: 'failed' });
                 }
                 if (pendingUpload && session.revokedDevices.some(id => !(pendingUpload.revokedDevices || []).includes(id))) discardUpload(true);
-            } catch { input.value = ''; outbox.clear(); pendingUpload = null; }
+            } catch { input.value = ''; outbox.clear(); pendingUpload = null; selectedReply = null; }
             showPairing(session.pairing);
             render();
             updateSelectedFile();
@@ -1395,7 +1467,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     remove.dataset.syncDeviceRemove = '';
                     item.append(heading, name, save, remove);
                 }
-                item.querySelector('strong').textContent = device.name || translate('syncDeviceDefault', { id: index + 1 });
+                item.querySelector('strong').textContent = deviceLabel(device.deviceId);
                 const current = item.querySelector('.sync-device-current');
                 current.textContent = translate('syncDeviceCurrent');
                 current.hidden = device.deviceId !== deviceId;
@@ -1575,7 +1647,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     const clientId = crypto.randomUUID();
                     Object.assign(outgoing, { id: `pending:${clientId}`, clientId, sendState: 'failed' });
                     outbox.set(clientId, outgoing);
-                    pendingUpload = { clientId, file: upload.file, text: upload.text, voice: upload.voice, receivedBytes: 0 };
+                    pendingUpload = { clientId, file: upload.file, text: upload.text, reply: upload.reply, voice: upload.voice, receivedBytes: 0 };
                 }
             }
             saveDraft();
@@ -1643,7 +1715,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 try {
                     if (!upload.encryptedText || upload.keyId !== session.keyring.currentKeyId) {
                         const keyring = session.keyring;
-                        upload.encryptedText = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${upload.clientId}`, { text: upload.text, attachment: upload.encryption });
+                        upload.encryptedText = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${upload.clientId}`, { text: upload.text, attachment: upload.encryption, reply: upload.reply });
                         upload.keyId = keyring.currentKeyId;
                     }
                     saveDraft();
@@ -1831,7 +1903,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 } else {
                     if (!outgoing.encrypted || outgoing.keyId !== session.keyring.currentKeyId) {
                         const keyring = session.keyring;
-                        outgoing.encrypted = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${outgoing.clientId}`, { text });
+                        outgoing.encrypted = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${outgoing.clientId}`, { text, reply: outgoing.reply });
                         outgoing.keyId = keyring.currentKeyId;
                         saveDraft();
                     }
@@ -1869,19 +1941,26 @@ import { createVoicePlayer } from './sync-voice-player.js';
             const file = selectedFile;
             const resuming = file && pendingUpload?.file === file;
             const text = resuming ? pendingUpload.text : input.value;
+            const reply = resuming ? pendingUpload.reply : selectedReply;
             if (file && !resuming) {
                 discardUpload();
-                pendingUpload = { clientId: crypto.randomUUID(), file, text, voice: selectedVoice, receivedBytes: 0 };
+                pendingUpload = { clientId: crypto.randomUUID(), file, text, reply, voice: selectedVoice, receivedBytes: 0 };
             }
             const clientId = file ? pendingUpload.clientId : crypto.randomUUID();
             const outgoing = outbox.get(clientId) || {
-                id: `pending:${clientId}`, clientId, deviceId, text, createdAt: Date.now(),
+                id: `pending:${clientId}`, clientId, deviceId, text, reply, createdAt: Date.now(),
                 attachment: file ? { name: file.name, type: file.type, size: file.size, ...pendingUpload.voice } : null,
                 sendState: 'sending'
             };
             outbox.set(clientId, outgoing);
-            if (!resuming) input.value = '';
+            if (!resuming) { input.value = ''; selectedReply = null; }
             sendOutgoing(outgoing);
+        });
+        find('reply-cancel').addEventListener('click', () => {
+            selectedReply = null;
+            renderReply();
+            saveDraft();
+            input.focus();
         });
         input.maxLength = 10000;
         input.addEventListener('input', () => { saveDraft(); updateControls(); });

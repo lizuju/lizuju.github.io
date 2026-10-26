@@ -19,7 +19,7 @@ before(async () => {
   runtime = await createRuntime();
 });
 
-async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } = {}) {
+async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, allowedOrigins = origin, legacyUsage = null } = {}) {
   const instance = new Miniflare({
     unsafeInspectDurableObjects: true,
     workers: [{
@@ -33,10 +33,30 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
             'daily-usage.js': { type: 'esm', contents: await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8') },
             'harness.js': {
               type: 'esm',
-              contents: `import { E2eeSyncRoom as ProductionSyncRoom, E2eePairingRegistry as ProductionRegistry } from './index.js';
-                export { default } from './index.js';
+              contents: `import worker, { E2eeSyncRoom as ProductionSyncRoom, E2eePairingRegistry as ProductionRegistry } from './index.js';
+                const rpcCalls = [];
+                function observe(env) {
+                  return { ...env, ...Object.fromEntries(['E2EE_PAIRING_REGISTRY', 'E2EE_SYNC_ROOMS'].map(binding => [binding, {
+                    getByName(name) {
+                      const stub = env[binding].getByName(name);
+                      return new Proxy(stub, { get(target, method) {
+                        return (...args) => { rpcCalls.push(method); return target[method](...args); };
+                      } });
+                    }
+                  }])) };
+                }
+                export default { fetch(request, env) { return worker.fetch(request, observe(env)); } };
                 export { E2eeFileShard as FileShard } from './index.js';
                 export class PairingRegistry extends ProductionRegistry {
+                  constructor(ctx, env) {
+                    const legacy = ${JSON.stringify(legacyUsage)};
+                    if (legacy && !ctx.storage.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'room_usage'").toArray().length) {
+                      ctx.storage.sql.exec('CREATE TABLE room_usage (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL, oldest_at INTEGER, deleting_files INTEGER)');
+                      ctx.storage.sql.exec('INSERT INTO room_usage VALUES (?, ?, ?, 0)', legacy.roomId, legacy.bytes, legacy.oldestAt);
+                    }
+                    super(ctx, observe(env));
+                  }
+                  testRpcCalls() { return rpcCalls.splice(0); }
                   testExpireDiagnosticsCache() { this.diagnosticsCacheUntil = Date.now() - 1; }
                   testDiagnosticsCacheUntil() { return this.diagnosticsCacheUntil; }
                   testFailDiagnostics() { this.failDiagnostics = true; }
@@ -140,6 +160,23 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
                   }
                   testWaitMaintenance() { return this.maintenanceStarted; }
                   testReleaseMaintenance() { this.releaseMaintenance(); }
+                  testHoldMessageCommit() {
+                    this.messageCommitStarted = new Promise(resolve => { this.startMessageCommit = resolve; });
+                    this.messageCommitRelease = new Promise(resolve => { this.releaseMessageCommit = resolve; });
+                  }
+                  testWaitMessageCommit() { return this.messageCommitStarted; }
+                  testReleaseMessageCommit() { this.releaseMessageCommit(); }
+                  testFailCommittedMessageReply() { this.failCommittedMessageReply = true; }
+                  async addMessage(...args) {
+                    if (this.messageCommitRelease) {
+                      this.startMessageCommit();
+                      await this.messageCommitRelease;
+                      this.messageCommitRelease = null;
+                    }
+                    const result = await super.addMessage(...args);
+                    if (this.failCommittedMessageReply) { this.failCommittedMessageReply = false; throw new Error('test_committed_reply_lost'); }
+                    return result;
+                  }
                   async maintain(roomId) {
                     if (this.maintenanceRelease) {
                       this.startMaintenance();
@@ -177,7 +214,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0 } =
           }
         },
         env: {
-          ALLOWED_ORIGINS: { type: 'text', value: origin },
+          ALLOWED_ORIGINS: { type: 'text', value: allowedOrigins },
           E2EE_PAIRING_REGISTRY: { type: 'durable-object', worker: 'sync-test', exportName: 'PairingRegistry' },
           E2EE_SYNC_ROOMS: { type: 'durable-object', worker: 'sync-test', exportName: 'SyncRoom' },
           E2EE_FILE_SHARDS: { type: 'durable-object', worker: 'sync-test', exportName: 'FileShard' }
@@ -274,6 +311,22 @@ test('health identifies the sync service and exposes release metadata instead of
   assert.equal(health.status, 200);
   assert.deepEqual(health.body, { ok: true, service: 'portfolio-sync', apiVersion: 1, encryptionVersion: 1, revision: null, versionId: null });
   assert.equal(health.headers.get('Cache-Control'), 'no-store');
+});
+
+test('deployment CORS allows both local preview ports and keeps other origins blocked', async t => {
+  const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
+  const instance = await createRuntime({ allowedOrigins: config.vars.ALLOWED_ORIGINS });
+  t.after(() => instance.dispose());
+  for (const allowed of [origin, 'http://127.0.0.1:3090', 'http://localhost:3090', 'http://127.0.0.1:3117', 'http://localhost:3117']) {
+    const response = await instance.dispatchFetch('https://sync.test/health', { headers: { Origin: allowed } });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), allowed);
+  }
+  for (const blocked of ['http://localhost:3118', 'https://other.example']) {
+    const response = await instance.dispatchFetch('https://sync.test/health', { headers: { Origin: blocked } });
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), null);
+  }
 });
 
 async function rotateRemaining(request, space) {
@@ -1367,12 +1420,22 @@ test('late authentication is rejected and idle unauthenticated sockets are event
 test('history retains the latest 500 messages and clearing releases the stored message rows', async () => {
   const request = client();
   const space = await createSpace(request);
+  const { socket, frame: initial } = await authenticateSocket(space);
+  const frames = [];
+  socket.addEventListener('message', event => frames.push(JSON.parse(event.data)));
   for (let index = 0; index < 501; index += 1) {
+    const delivered = index === 500 ? socketEvent(socket) : null;
     const sent = await request(`/v1/spaces/${space.roomId}/messages`, {
       method: 'POST', token: space.token, json: { clientId: randomUUID(), text: `message ${index}` }
     });
     assert.equal(sent.status, 201);
+    if (delivered) await delivered;
   }
+  assert.equal(frames.filter(frame => frame.type === 'history').length, 0);
+  assert.equal(frames.filter(frame => frame.type === 'message').length, 501);
+  assert.equal(frames.at(-1).history.oldestId, 2);
+  assert.equal(frames.at(-1).history.latestId, 501);
+  assert.notEqual(frames.at(-1).history.generation, initial.history.generation);
   const state = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
   assert.equal(state.body.messages.length, 50);
   assert.equal(state.body.messages[0].text, 'message 451');
@@ -1390,6 +1453,63 @@ test('history retains the latest 500 messages and clearing releases the stored m
   await request(`/v1/spaces/${space.roomId}/messages`, { method: 'DELETE', token: space.token });
   const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
   assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 0 }]);
+  socket.close();
+});
+
+test('text sends use four Durable Object RPCs while duplicate and lost-response retries remain idempotent', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const session = request.state.sessions.get(space.token);
+  const registry = (await runtime.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const room = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const clientId = randomUUID();
+  const text = await cryptoClient.encryptPayload(session.keyring, space.roomId, `message:${space.deviceId}:${clientId}`, { text: 'one encrypted message' });
+  const send = () => request.raw(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: { clientId, text } });
+  await registry.testRpcCalls();
+  const sent = await send();
+  assert.equal(sent.status, 201);
+  assert.deepEqual(await registry.testRpcCalls(), ['hasRoom', 'storeMessage', 'prepareMessage', 'addMessage']);
+  assert.equal('usage' in sent.body, false);
+  const repeated = await send();
+  assert.equal(repeated.status, 200);
+  assert.deepEqual(repeated.body, sent.body);
+  assert.deepEqual(await registry.testRpcCalls(), ['hasRoom', 'storeMessage', 'prepareMessage']);
+  assert.deepEqual(await storage.exec('SELECT 1 FROM reservations WHERE room_id = ?', space.roomId), []);
+
+  await room.testFailCommittedMessageReply();
+  const failedId = randomUUID();
+  const failedText = await cryptoClient.encryptPayload(session.keyring, space.roomId, `message:${space.deviceId}:${failedId}`, { text: 'response was lost' });
+  const retry = () => request.raw(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: { clientId: failedId, text: failedText } });
+  assert.equal((await retry()).status, 500);
+  assert.deepEqual(await registry.testRpcCalls(), ['hasRoom', 'storeMessage', 'prepareMessage', 'addMessage', 'storageUsage']);
+  assert.deepEqual(await storage.exec('SELECT 1 FROM reservations WHERE room_id = ?', space.roomId), []);
+  const recovered = await retry();
+  assert.equal(recovered.status, 200);
+  assert.equal(recovered.body.id, sent.body.id + 1);
+  assert.deepEqual(await registry.testRpcCalls(), ['hasRoom', 'storeMessage', 'prepareMessage']);
+});
+
+test('text commit rechecks revoked devices and changed encryption keys after capacity reservation', async t => {
+  for (const change of ['device', 'key']) await t.test(change, async () => {
+    const request = client();
+    const space = await createSpace(request);
+    const room = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+    const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+    const registryStorage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+    await room.testHoldMessageCommit();
+    const pending = request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'must not commit' } });
+    await room.testWaitMessageCommit();
+    assert.equal((await registryStorage.exec('SELECT 1 FROM reservations WHERE room_id = ?', space.roomId)).length, 1);
+    if (change === 'device') await room.removeDevice(space.deviceId);
+    else await storage.exec('UPDATE metadata SET value = ? WHERE key = ?', randomUUID(), 'currentKeyId');
+    await room.testReleaseMessageCommit();
+    const rejected = await pending;
+    assert.equal(rejected.status, change === 'device' ? 401 : 409);
+    assert.equal(rejected.body.error, change === 'device' ? 'unauthorized' : 'key_changed');
+    assert.deepEqual(await storage.exec('SELECT 1 FROM messages'), []);
+    assert.deepEqual(await registryStorage.exec('SELECT 1 FROM reservations WHERE room_id = ?', space.roomId), []);
+  });
 });
 
 test('the alarm removes seven-day history without a page visit and broadcasts the surviving history', async () => {
@@ -1855,6 +1975,39 @@ test('public storage status is read only, aggregate only and distinguishes proje
   await registry.testExpireDiagnosticsCache();
   const finished = await request('/v1/status');
   assert.equal(finished.body.maintenance.running, false); assert.ok(finished.body.maintenance.lastSuccessAt >= running.body.maintenance.startedAt);
+});
+
+test('reservation migration refreshes existing room accounting without deleting live history or blocking initialization', async t => {
+  const roomId = randomUUID();
+  const instance = await createRuntime({ legacyUsage: { roomId, bytes: 4_900_000_000, oldestAt: Date.now() } });
+  t.after(() => instance.dispose());
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(roomId);
+  const keyring = await cryptoClient.createKeyring();
+  const device = await room.initialize(keyring.currentKeyId);
+  const clientId = randomUUID();
+  const text = await cryptoClient.encryptPayload(keyring, roomId, `message:${device.deviceId}:${clientId}`, { text: 'retain this encrypted history' });
+  const message = await room.addMessage(device.deviceId, clientId, text, keyring.currentKeyId);
+  assert.equal(message.created, true);
+  const upload = await room.beginUpload(device.deviceId, { clientId: randomUUID(), name: randomUUID(), type: 'application/octet-stream', size: 8 * 1024 * 1024, text, fingerprint: 'a'.repeat(64) }, keyring.currentKeyId);
+  assert.equal(upload.created, true);
+  const expected = await room.storageUsage();
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  assert.equal(await registry.hasRoom(roomId), true);
+  assert.ok(await registry.testReadAlarm() !== null);
+  await registry.testDropAlarm();
+  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  assert.ok((await registryStorage.exec('PRAGMA table_info(room_usage)')).some(column => column.name === 'reserved_bytes'));
+  await registry.testRunAlarm();
+  assert.deepEqual(await registryStorage.exec('SELECT 1 FROM cleanup'), []);
+  const [usage] = await registryStorage.exec('SELECT bytes, reserved_bytes FROM room_usage WHERE room_id = ?', roomId);
+  assert.equal(usage.bytes, expected.bytes);
+  assert.equal(usage.reserved_bytes, expected.reservedBytes);
+  assert.ok(usage.reserved_bytes > 8 * 1024 * 1024);
+  const retained = await room.messages();
+  assert.equal(retained.length, 1);
+  assert.equal(retained[0].text, text);
+  const roomStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: roomId });
+  assert.deepEqual(await roomStorage.exec('SELECT status FROM files WHERE file_id = ?', upload.uploadId), [{ status: 'uploading' }]);
 });
 
 test('public status coalesces diagnostics, caches healthy snapshots for fifteen seconds and retries failures', async t => {

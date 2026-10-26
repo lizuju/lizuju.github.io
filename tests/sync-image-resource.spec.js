@@ -79,23 +79,95 @@ test('keeps a failed load retryable and preserves its real error', async ({ page
     })).toEqual({ failure: 'offline', loads: 2, revoked: 1 });
 });
 
-test('preserves animation-capable formats and treats JPEG thumbnails as static', async ({ page }) => {
+test('uses static thumbnails for PNG and WebP while preserving their animated variants and AVIF sequences', async ({ page }) => {
     expect(await page.evaluate(async () => {
-        const formats = [
-            ['image/png', 'picture.png'], ['image/apng', 'animation.apng'], ['image/webp', 'animation.webp'],
-            ['image/avif', 'animation.avif'], ['application/octet-stream', 'reaction.GIF'], ['image/jpeg', 'picture.jpg']
-        ];
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 16;
+        const png = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        const webp = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp'));
+        const pngHeader = new Uint8Array(await png.arrayBuffer());
+        const actl = new Uint8Array(20);
+        new DataView(actl.buffer).setUint32(0, 8);
+        actl.set(new TextEncoder().encode('acTL'), 4);
+        const apng = new Blob([pngHeader.slice(0, 33), actl, pngHeader.slice(33)], { type: 'image/png' });
+        const animatedWebp = new Uint8Array(30);
+        animatedWebp.set(new TextEncoder().encode('RIFF'), 0);
+        animatedWebp.set(new TextEncoder().encode('WEBPVP8X'), 8);
+        animatedWebp[20] = 2;
+        const avif = brand => {
+            const bytes = new Uint8Array(20);
+            new DataView(bytes.buffer).setUint32(0, 20);
+            bytes.set(new TextEncoder().encode(`ftyp${brand}`), 4);
+            bytes.set(new TextEncoder().encode(brand), 16);
+            return new Blob([bytes], { type: 'image/avif' });
+        };
+        const formats = [png, apng, webp, new Blob([animatedWebp], { type: 'image/webp' }), avif('avif'), avif('avis')];
         const results = [];
-        for (const [type, name] of formats) {
-            window.fetch = async () => new Response(new Blob(['image'], { type }));
-            const resource = window.createImageResource({ name, load: async () => ({ url: '/image' }) });
+        for (const blob of formats) {
+            window.fetch = async () => new Response(blob);
+            const resource = window.createImageResource({ load: async () => ({ url: '/image' }) });
             const lease = await resource.acquire();
             results.push(lease.animated);
             lease.release();
             resource.dispose();
         }
         return results;
-    })).toEqual([true, true, true, true, true, false]);
+    })).toEqual([false, true, false, true, false, true]);
+});
+
+test('accounts for decoded pixels when retaining highly compressed idle pictures', async ({ page }) => {
+    expect(await page.evaluate(async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 2048;
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        canvas.width = canvas.height = 0;
+        window.fetch = async () => new Response(blob);
+        const resources = Array.from({ length: 3 }, () => window.createImageResource({ load: async () => ({ url: '/compressed' }) }));
+        for (const resource of resources) { const lease = await resource.acquire(); lease.release(); }
+        const result = { fileBytes: blob.size, retained: window.created.length - window.revoked.length, oldestEvicted: window.revoked[0] === window.created[0].url };
+        resources.forEach(resource => resource.dispose());
+        return result;
+    })).toEqual({ fileBytes: expect.any(Number), retained: 2, oldestEvicted: true });
+});
+
+test('allows high-resolution pictures while immediately releasing their oversized idle cache', async ({ page }) => {
+    expect(await page.evaluate(async () => {
+        const bytes = new Uint8Array(33);
+        bytes.set([137, 80, 78, 71, 13, 10, 26, 10]);
+        const view = new DataView(bytes.buffer);
+        view.setUint32(16, 8192);
+        view.setUint32(20, 8192);
+        window.fetch = async () => new Response(new Blob([bytes], { type: 'image/png' }));
+        const resource = window.createImageResource({ load: async () => ({ url: '/oversized' }) });
+        const lease = await resource.acquire();
+        const retainedWhileActive = window.created.length - window.revoked.length;
+        lease.release();
+        const retainedAfterRelease = window.created.length - window.revoked.length;
+        resource.dispose();
+        return { retainedWhileActive, retainedAfterRelease };
+    })).toEqual({ retainedWhileActive: 1, retainedAfterRelease: 0 });
+});
+
+test('handles truncated format headers without reading outside their bytes', async ({ page }) => {
+    expect(await page.evaluate(async () => {
+        const headers = [
+            [137, 80, 78, 71, 13, 10, 26, 10],
+            [71, 73, 70, 56, 57, 97],
+            [255, 216, 255, 192, 0, 1],
+            [...new Uint8Array(16)]
+        ];
+        headers[3].splice(0, 8, 0, 0, 0, 1, 102, 116, 121, 112);
+        const results = [];
+        for (const bytes of headers) {
+            window.fetch = async () => new Response(new Blob([Uint8Array.from(bytes)]));
+            const resource = window.createImageResource({ load: async () => ({ url: '/truncated' }) });
+            const lease = await resource.acquire();
+            results.push(lease.animated);
+            lease.release();
+            resource.dispose();
+        }
+        return results;
+    })).toEqual([false, false, false, false]);
 });
 
 test('bounds idle images to twelve entries and refreshes evicted images', async ({ page }) => {

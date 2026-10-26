@@ -236,6 +236,17 @@ export default {
     }
     if (['GET', 'HEAD'].includes(request.method) && match[2]?.startsWith('/downloads/')) return room.fetch(request);
     const token = request.headers.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
+    if (request.method === 'POST' && match[2] === '/messages') {
+      if (!token) return json({ error: 'unauthorized' }, 401);
+      const body = await readJson(request, 73728);
+      if (body.error) return resultResponse(body);
+      const { clientId, text } = body.value;
+      if (typeof clientId !== 'string' || !ROOM_ID.test(clientId)) return json({ error: 'invalid_client_id' }, 400);
+      if (!encrypted(text)) return json({ error: 'invalid_text' }, 400);
+      const result = await registry.storeMessage(roomId, token, clientId, text, request.headers.get('X-Sync-Key-Id'));
+      if (result.error) return resultResponse(result);
+      return json(result.message, result.created ? 201 : 200);
+    }
     const deviceId = token ? await room.authorize(token) : null;
     if (!deviceId) return json({ error: 'unauthorized' }, 401);
     const keyId = request.headers.get('X-Sync-Key-Id');
@@ -252,7 +263,7 @@ export default {
       if (!rotationFields(body.value) || !(body.value.removedDeviceId === null || ROOM_ID.test(body.value.removedDeviceId))) return json({ error: 'invalid_rotation' }, 400);
       return resultResponse(await registry.rotateKeys(roomId, deviceId, keyId, body.value));
     }
-    const guarded = (request.method === 'POST' && ['/messages', '/files/uploads', '/pair-code', '/pair-challenge'].includes(match[2]))
+    const guarded = (request.method === 'POST' && ['/files/uploads', '/pair-code', '/pair-challenge'].includes(match[2]))
       || (request.method === 'PATCH' && match[3]) || (['PUT', 'POST'].includes(request.method) && match[2]?.startsWith('/files/uploads/'));
     if (guarded) {
       const state = await room.checkWrite(keyId);
@@ -354,16 +365,6 @@ export default {
       if ((before && after) || !/^[1-9][0-9]*$/.test(limit) || Number(limit) > 50 || [before, after].some(value => value !== null && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))))) return json({ error: 'invalid_cursor' }, 400);
       return resultResponse(await room.messagePage({ before: before === null ? null : Number(before), after: after === null ? null : Number(after), limit: Number(limit), generation: url.searchParams.get('generation') }));
     }
-    if (request.method === 'POST' && match[2] === '/messages') {
-      const body = await readJson(request, 73728);
-      if (body.error) return resultResponse(body);
-      const { clientId, text } = body.value;
-      if (typeof clientId !== 'string' || !ROOM_ID.test(clientId)) return json({ error: 'invalid_client_id' }, 400);
-      if (!encrypted(text)) return json({ error: 'invalid_text' }, 400);
-      const result = await registry.storeMessage(roomId, deviceId, clientId, text, keyId);
-      if (result.error) return resultResponse(result);
-      return json(result.message, result.created ? 201 : 200);
-    }
     if (request.method === 'DELETE' && match[2] === '/messages') {
       const result = await room.clearMessages(deviceId);
       await registry.refreshRoom(roomId);
@@ -399,17 +400,23 @@ export class E2eePairingRegistry extends DurableObject {
     if (!this.sql.exec('PRAGMA table_info(room_usage)').toArray().some(column => column.name === 'deleting_files')) {
       this.sql.exec('ALTER TABLE room_usage ADD COLUMN deleting_files INTEGER');
     }
+    const migrateReservations = !this.sql.exec('PRAGMA table_info(room_usage)').toArray().some(column => column.name === 'reserved_bytes');
+    if (migrateReservations) this.sql.exec('ALTER TABLE room_usage ADD COLUMN reserved_bytes INTEGER NOT NULL DEFAULT 0');
     this.sql.exec('CREATE TABLE IF NOT EXISTS cleanup (id INTEGER PRIMARY KEY CHECK(id = 1), phase TEXT NOT NULL, cursor TEXT NOT NULL, target_bytes INTEGER)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS reservations (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS registry_metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL)');
     this.roomQueues = new Map();
     this.pairingQueues = new Map();
+    if (migrateReservations && this.sql.exec('SELECT 1 FROM room_usage LIMIT 1').toArray().length) {
+      this.startCleanup();
+      this.ctx.waitUntil(this.resumeCleanup());
+    }
   }
 
   rememberUsage(roomId, usage) {
     this.sql.exec(
-      'INSERT INTO room_usage (room_id, bytes, oldest_at, deleting_files) VALUES (?, ?, ?, ?) ON CONFLICT(room_id) DO UPDATE SET bytes = excluded.bytes, oldest_at = excluded.oldest_at, deleting_files = excluded.deleting_files WHERE room_usage.bytes IS NOT excluded.bytes OR room_usage.oldest_at IS NOT excluded.oldest_at OR room_usage.deleting_files IS NOT excluded.deleting_files',
-      roomId, usage.bytes, usage.oldestAt, usage.deletingFiles
+      'INSERT INTO room_usage (room_id, bytes, oldest_at, deleting_files, reserved_bytes) VALUES (?, ?, ?, ?, ?) ON CONFLICT(room_id) DO UPDATE SET bytes = excluded.bytes, oldest_at = excluded.oldest_at, deleting_files = excluded.deleting_files, reserved_bytes = excluded.reserved_bytes WHERE room_usage.bytes IS NOT excluded.bytes OR room_usage.oldest_at IS NOT excluded.oldest_at OR room_usage.deleting_files IS NOT excluded.deleting_files OR room_usage.reserved_bytes IS NOT excluded.reserved_bytes',
+      roomId, usage.bytes, usage.oldestAt, usage.deletingFiles, usage.reservedBytes
     );
   }
 
@@ -505,7 +512,7 @@ export class E2eePairingRegistry extends DurableObject {
     return this.withRoom(roomId, async () => {
       const denied = this.reserveCapacity(roomId, MESSAGE_WRITE_HEADROOM);
       if (denied) { await this.resumeCleanup(); return denied; }
-      this.rememberUsage(roomId, { bytes: 0, oldestAt: null, deletingFiles: 0 });
+      this.rememberUsage(roomId, { bytes: 0, reservedBytes: 0, oldestAt: null, deletingFiles: 0 });
       const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
       const device = await room.initialize(keyId);
       await room.maintain(roomId);
@@ -514,17 +521,31 @@ export class E2eePairingRegistry extends DurableObject {
     });
   }
 
-  async storeMessage(roomId, deviceId, clientId, text, keyId) {
+  async storeMessage(roomId, token, clientId, text, keyId) {
     return this.withRoom(roomId, async () => {
       if (!this.hasRoom(roomId)) return { error: 'not_found', status: 404 };
       const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
-      if (!await this.refreshUsage(roomId)) return { error: 'not_found', status: 404 };
-      const existing = await room.findMessage(deviceId, clientId);
-      if (existing) return existing;
+      const prepared = await room.prepareMessage(roomId, token, clientId, text, keyId);
+      if (prepared.error) return prepared;
+      this.ctx.storage.transactionSync(() => {
+        this.rememberUsage(roomId, prepared.usage);
+        this.sql.exec('DELETE FROM reservations WHERE room_id = ?', roomId);
+      });
+      if (prepared.existing) return prepared.existing;
       const denied = this.reserveCapacity(roomId, MESSAGE_WRITE_HEADROOM);
       if (denied) { await this.resumeCleanup(); return denied; }
-      try { return await room.addMessage(deviceId, clientId, text, keyId); }
-      finally { await this.commitUsage(roomId, room); }
+      let committed = false;
+      try {
+        const { usage, ...result } = await room.addMessage(prepared.deviceId, clientId, text, keyId);
+        if (usage) {
+          this.ctx.storage.transactionSync(() => {
+            this.rememberUsage(roomId, usage);
+            this.sql.exec('DELETE FROM reservations WHERE room_id = ?', roomId);
+          });
+          committed = true;
+        }
+        return result;
+      } finally { if (!committed) await this.commitUsage(roomId, room); }
     });
   }
 
@@ -566,8 +587,11 @@ export class E2eePairingRegistry extends DurableObject {
     const metadata = Object.fromEntries(this.sql.exec('SELECT key, value FROM registry_metadata').toArray().map(row => [row.key, row.value]));
     const cleanup = this.sql.exec('SELECT phase, cursor, target_bytes AS targetBytes FROM cleanup WHERE id = 1').toArray()[0];
     const roomCount = this.sql.exec('SELECT count(*) AS count FROM room_usage').one().count;
-    const roomBytes = this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM room_usage').one().bytes;
-    const reservedBytes = this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM reservations').one().bytes;
+    const rooms = this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes, coalesce(sum(reserved_bytes), 0) AS reservedBytes FROM room_usage').one();
+    const roomBytes = rooms.bytes;
+    const pendingReservations = this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM reservations').one().bytes;
+    const reservedBytes = rooms.reservedBytes + pendingReservations;
+    const storedBytes = this.sql.databaseSize + roomBytes - rooms.reservedBytes;
     const sample = this.sql.exec('SELECT room_id FROM room_usage WHERE room_id > ? ORDER BY room_id LIMIT 1', this.diagnosticRoomCursor || '').toArray()[0]
       || this.sql.exec('SELECT room_id FROM room_usage ORDER BY room_id LIMIT 1').toArray()[0];
     let roomDatabase = null;
@@ -591,7 +615,7 @@ export class E2eePairingRegistry extends DurableObject {
     return {
       ok: probe && roomDatabase?.ok !== false && shardDatabase?.ok !== false, checkedAt,
       database: { registry: { ok: probe, bytes: this.sql.databaseSize }, sampledRoom: roomDatabase, sampledShard: shardDatabase },
-      storage: { scope: 'this-project', bytes: this.sql.databaseSize + roomBytes + reservedBytes, roomBytes, reservedBytes, roomCount, highWaterBytes: STORAGE_HIGH_WATER, cleanupBytes: STORAGE_CLEANUP_BYTES, accountUsageAvailable: false },
+      storage: { scope: 'this-project', bytes: storedBytes + reservedBytes, storedBytes, roomBytes, reservedBytes, roomCount, highWaterBytes: STORAGE_HIGH_WATER, cleanupBytes: STORAGE_CLEANUP_BYTES, accountUsageAvailable: false },
       maintenance: { status, stale, overdue, running: Boolean(cleanup), phase: cleanup?.phase || null, scannedRooms: cleanup?.phase === 'refresh' ? this.sql.exec('SELECT count(*) AS count FROM room_usage WHERE room_id <= ?', cleanup.cursor).one().count : null, targetBytes: cleanup?.targetBytes ?? null, startedAt: metadata.maintenanceStartedAt || null, lastSuccessAt, lastFailureAt, lastFailureCode: failed ? 'maintenance_failed' : null, nextAlarmAt }
     };
   }
@@ -1228,9 +1252,11 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   storageUsage() {
-    if (!this.initialized) return { bytes: 0, oldestAt: null, deletingFiles: 0 };
+    if (!this.initialized) return { bytes: 0, reservedBytes: 0, oldestAt: null, deletingFiles: 0 };
+    const reservedBytes = this.sql.exec('SELECT coalesce(sum(reserved_bytes), 0) AS bytes FROM files').one().bytes;
     return {
-      bytes: this.sql.databaseSize + this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM file_shards').one().bytes + this.sql.exec('SELECT coalesce(sum(reserved_bytes), 0) AS bytes FROM files').one().bytes,
+      bytes: this.sql.databaseSize + this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM file_shards').one().bytes + reservedBytes,
+      reservedBytes,
       oldestAt: this.sql.exec("SELECT min(created_at) AS oldest_at FROM (SELECT created_at FROM messages UNION ALL SELECT created_at FROM files WHERE status = 'deleting')").one().oldest_at,
       deletingFiles: this.sql.exec("SELECT count(*) AS count FROM files WHERE status = 'deleting'").one().count
     };
@@ -1405,7 +1431,7 @@ export class E2eeSyncRoom extends DurableObject {
       const message = this.ctx.storage.transactionSync(() => {
         const created = this.sql.exec('INSERT INTO messages (client_id, device_id, text, created_at, attachment) VALUES (?, ?, ?, ?, ?) RETURNING id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment', file.client_id, deviceId, file.text, Date.now(), JSON.stringify(attachment)).one();
         this.sql.exec("UPDATE files SET status = 'complete', message_id = ?, created_at = ?, reserved_bytes = 0 WHERE file_id = ?", created.id, created.createdAt, uploadId);
-        if (this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500) RETURNING id').toArray().length) this.historyChanged();
+        if (this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500) RETURNING id').toArray().length) this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
         return publicMessage(created);
       });
       this.broadcast({ type: 'message', message, history: this.historySnapshot() });
@@ -1453,6 +1479,15 @@ export class E2eeSyncRoom extends DurableObject {
     return { ticket, expiresAt };
   }
 
+  async prepareMessage(roomId, token, clientId, text, keyId) {
+    const deviceId = await this.authorize(token);
+    if (!deviceId) return { error: 'unauthorized', status: 401 };
+    const denied = this.checkWrite(keyId, text);
+    if (denied.error) return denied;
+    const usage = await this.maintain(roomId);
+    return { deviceId, existing: this.findMessage(deviceId, clientId), usage };
+  }
+
   async addMessage(deviceId, clientId, text, keyId) {
     const denied = this.checkWrite(keyId, text);
     if (denied.error) return denied;
@@ -1462,10 +1497,10 @@ export class E2eeSyncRoom extends DurableObject {
       'INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?) RETURNING id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt',
       clientId, deviceId, text, Date.now()
     ).one();
-    if (this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500) RETURNING id').toArray().length) this.historyChanged();
+    if (this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500) RETURNING id').toArray().length) this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
     this.broadcast({ type: 'message', message, history: this.historySnapshot() });
     await this.scheduleAlarm();
-    return { message, created: true };
+    return { message, created: true, usage: this.storageUsage() };
   }
 
   async clearMessages(deviceId) {

@@ -208,20 +208,27 @@ test('pairs the standalone chat with the desktop, restores its session and trans
 
         await sendText(desktop, fromDesktop);
         await expect(chat.locator('[data-sync-messages]')).toContainText(fromDesktop);
+        await chat.locator('.sync-message').filter({ has: chat.locator('.sync-message-text', { hasText: fromDesktop }) }).locator('[data-sync-reply-message]').click();
         await sendText(chat, fromChat);
         await expect(desktop.locator('[data-sync-messages]')).toContainText(fromChat);
+        const answer = desktop.locator('.sync-message').filter({ has: desktop.locator('.sync-message-text', { hasText: fromChat }) });
+        await expect(answer.locator('.sync-message-quote-text')).toHaveText(fromDesktop);
+        await expect(answer.locator('.sync-message-quote-author')).toHaveText('设备 1');
         await chat.reload();
         await awaitOnline(chat);
         expect((await readSession(chat)).deviceId).toBe(joined.deviceId);
         await expect(chat.locator('[data-sync-messages]')).toContainText(fromDesktop);
         await expect(chat.locator('[data-sync-messages]')).toContainText(fromChat);
+        await expect(chat.locator('.sync-message .sync-message-quote-text')).toHaveText(fromDesktop);
 
         const uploadPath = testInfo.outputPath(file.name);
         await writeFile(uploadPath, file.buffer);
+        await chat.locator('.sync-message').filter({ has: chat.locator('.sync-message-text', { hasText: fromChat }) }).locator('[data-sync-reply-message]').click();
         await chat.locator('[data-sync-file-input]').setInputFiles(uploadPath);
         await chat.locator('[data-sync-send]').click();
         const attachment = desktop.locator('.sync-message').filter({ has: desktop.locator('.sync-attachment-name', { hasText: file.name }) });
         await expect(attachment).toBeVisible({ timeout: 30000 });
+        await expect(attachment.locator('.sync-message-quote-text')).toHaveText(fromChat);
         expect(chatWorkerUrls.some(url => /^\/upload-fingerprint\.[^/]+\.js$/.test(new URL(url).pathname))).toBe(true);
         const downloading = desktop.waitForEvent('download');
         await attachment.locator('[data-sync-download-file]').click();
@@ -230,6 +237,7 @@ test('pairs the standalone chat with the desktop, restores its session and trans
         expect(await readFile(await download.path())).toEqual(file.buffer);
 
         await expect(chat.locator('[data-sync-selected-file]')).toBeHidden();
+        await chat.locator('.sync-message').filter({ has: chat.locator('.sync-attachment-name', { hasText: file.name }) }).locator('[data-sync-reply-message]').click();
         await chat.locator('[data-sync-voice-record]').click();
         await expect(chat.locator('[data-sync-voice-stop]')).toBeEnabled();
         await expect(chat.locator('[data-sync-voice-time]')).not.toHaveText('00:00 / 01:00');
@@ -244,6 +252,7 @@ test('pairs the standalone chat with the desktop, restores its session and trans
         await chat.locator('[data-sync-send]').click();
         const voice = desktop.locator('.sync-message').filter({ has: desktop.locator('[data-sync-voice-play]') });
         await expect(voice).toBeVisible({ timeout: 30000 });
+        await expect(voice.locator('.sync-message-quote-text')).toContainText(file.name);
         const voiceDownloading = desktop.waitForEvent('download');
         await voice.locator('[data-sync-download-file]').click();
         const voiceDownload = await voiceDownloading;

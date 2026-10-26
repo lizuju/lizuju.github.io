@@ -364,6 +364,56 @@ test('upload chunks retain the initial global reservation without running regist
   assert.ok((await registryStorage.exec('SELECT bytes FROM room_usage WHERE room_id = ?', space.roomId))[0].bytes < beforeCancel[0].bytes);
 });
 
+test('storage diagnostics separate pending uploads across rooms from stored bytes without double counting capacity', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance);
+  const spaces = [await createSpace(request), await createSpace(request)];
+  const starts = [await initiate(request, spaces[0], { size: maximumFileSize }), await initiate(request, spaces[1], { size: chunkSize })];
+  assert.ok(starts.every(result => result.status === 201));
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const reserved = await Promise.all(spaces.map(async space => {
+    const storage = await roomStorage(space, instance);
+    return (await storage.exec('SELECT sum(reserved_bytes) AS bytes FROM files'))[0].bytes;
+  }));
+  const status = await request('/v1/status');
+  assert.equal(status.body.storage.reservedBytes, reserved[0] + reserved[1]);
+  assert.ok(status.body.storage.reservedBytes > maximumFileSize + chunkSize);
+  assert.ok(status.body.storage.storedBytes < MiB);
+  assert.equal(status.body.storage.bytes, status.body.storage.storedBytes + status.body.storage.reservedBytes);
+  assert.equal(status.body.storage.bytes, await registry.storageBytes());
+  for (const [index, space] of spaces.entries()) {
+    assert.equal((await request(`/v1/spaces/${space.roomId}/files/uploads/${starts[index].body.uploadId}`, { method: 'DELETE', token: space.token })).status, 200);
+  }
+  await registry.testExpireDiagnosticsCache();
+  const cancelled = await request('/v1/status');
+  assert.equal(cancelled.body.storage.reservedBytes, 0);
+  assert.equal(cancelled.body.storage.bytes, cancelled.body.storage.storedBytes);
+  assert.equal(cancelled.body.storage.bytes, await registry.storageBytes());
+});
+
+test('an attachment at the history limit broadcasts only its message and updated deletion boundary', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const connected = await authenticateSocket(space);
+  const storage = await roomStorage(space);
+  await storage.exec("WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 500) INSERT INTO messages (client_id, device_id, text, created_at) SELECT 'older-' || n, ?, 'retained history', ? FROM seq", space.deviceId, Date.now());
+  const frames = [];
+  connected.socket.addEventListener('message', event => frames.push(JSON.parse(event.data)));
+  const delivered = socketEvent(connected.socket);
+  const sent = await upload(request, space, { bytes: Buffer.from('attachment at the boundary') });
+  assert.equal(sent.status, 201);
+  await delivered;
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0].type, 'message');
+  assert.equal(frames[0].message.id, 501);
+  assert.equal(frames[0].history.oldestId, 2);
+  assert.equal(frames[0].history.latestId, 501);
+  assert.notEqual(frames[0].history.generation, connected.frame.history.generation);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 500 }]);
+  connected.socket.close();
+});
+
 test('unchanged usage refreshes and read-only attachment requests avoid registry writes', async () => {
   const request = client();
   const space = await createSpace(request);

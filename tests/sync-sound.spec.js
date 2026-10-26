@@ -256,3 +256,22 @@ test('discards a queued notification when the page leaves and resumes notificati
     await first.send(2);
     await expect.poll(async () => (await first.stats()).starts).toBe(1);
 });
+
+
+test('plays the new-message sound once when server retention trims the oldest message', async ({ page }) => {
+    const chat = await openChat(page, Array.from({ length: 500 }, (_, index) => message(index + 1, `History ${index + 1}`, otherId)));
+    await page.clock.runFor(1000);
+    const incoming = message(501, 'Live message after retention', otherId);
+    const frame = { type: 'message', message: incoming, history: { ...bounds(501), generation: '2', oldestId: 2 } };
+    chat.frame(frame);
+    await expect(page.locator('.sync-message-text').last()).toHaveText('Live message after retention');
+    await settleNotifications(page);
+    await page.clock.runFor(1000);
+    expect((await chat.stats()).starts).toBe(1);
+    await expect(page.locator('.sync-message')).toHaveCount(500);
+    await expect(page.locator('.sync-message-text').first()).toHaveText('History 2');
+    chat.frame(frame);
+    await settleNotifications(page);
+    await page.clock.runFor(1000);
+    expect((await chat.stats()).starts).toBe(1);
+});

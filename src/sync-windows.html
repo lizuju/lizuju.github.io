@@ -126,6 +126,17 @@
                             aria-labelledby="sync-upload-status" hidden></progress>
                         <button class="sync-button sync-cancel-upload" type="button" data-sync-cancel-upload
                             data-i18n="syncCancelUpload" hidden disabled>取消上传</button>
+                        <div class="sync-reply" data-sync-reply hidden>
+                            <div class="sync-reply-details">
+                                <div class="sync-reply-heading">
+                                    <span data-i18n="syncReplying">引用回复</span>
+                                    <strong data-sync-reply-author></strong>
+                                </div>
+                                <p class="sync-message-quote-text" data-sync-reply-text></p>
+                            </div>
+                            <button class="sync-button sync-reply-cancel" type="button" data-sync-reply-cancel
+                                data-i18n-aria="syncReplyCancel" aria-label="取消引用"><span aria-hidden="true">×</span></button>
+                        </div>
                         <label class="visually-hidden" for="sync-message" data-i18n="syncInputLabel">消息内容</label>
                         <textarea id="sync-message" rows="3" placeholder="写下要同步的内容…"
                             data-i18n-placeholder="syncInputPlaceholder" aria-describedby="sync-compose-hint" data-sync-input></textarea>

@@ -33,8 +33,8 @@
     <link rel="preload" as="image" type="image/webp" href="assets/portfolio-hero-960.webp"
         imagesrcset="assets/portfolio-hero-480.webp 480w, assets/portfolio-hero-960.webp 960w, assets/portfolio-hero.webp 1672w"
         imagesizes="(max-width: 560px) calc(100vw - 48px), (max-width: 900px) calc(100vw - 56px), (max-width: 1040px) 620px, calc(42.5vw - 145px)">
-    <link rel="stylesheet" href="css/main.css?v=d18bc438ced3">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=d18bc438ced3">
+    <link rel="stylesheet" href="css/main.css?v=f2efdda04456">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=f2efdda04456">
 </head>
 
 <body>
@@ -252,6 +252,17 @@
                             aria-labelledby="sync-upload-status" hidden></progress>
                         <button class="sync-button sync-cancel-upload" type="button" data-sync-cancel-upload
                             data-i18n="syncCancelUpload" hidden disabled>取消上传</button>
+                        <div class="sync-reply" data-sync-reply hidden>
+                            <div class="sync-reply-details">
+                                <div class="sync-reply-heading">
+                                    <span data-i18n="syncReplying">引用回复</span>
+                                    <strong data-sync-reply-author></strong>
+                                </div>
+                                <p class="sync-message-quote-text" data-sync-reply-text></p>
+                            </div>
+                            <button class="sync-button sync-reply-cancel" type="button" data-sync-reply-cancel
+                                data-i18n-aria="syncReplyCancel" aria-label="取消引用"><span aria-hidden="true">×</span></button>
+                        </div>
                         <label class="visually-hidden" for="sync-message" data-i18n="syncInputLabel">消息内容</label>
                         <textarea id="sync-message" rows="3" placeholder="写下要同步的内容…"
                             data-i18n-placeholder="syncInputPlaceholder" aria-describedby="sync-compose-hint" data-sync-input></textarea>
@@ -550,7 +561,7 @@
                     <div class="hero-actions">
                         <a class="primary-action" href="#experience" data-i18n="heroPrimary">查看工作经历</a>
                         <a class="secondary-action" href="#contact" data-i18n="heroSecondary">联系我</a>
-                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=d18bc438ced3"
+                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=f2efdda04456"
                             download="李祖钜简历.pdf" data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                     </div>
                 </div>
@@ -806,7 +817,7 @@
                     </div>
                     <div class="contact-item">
                         <span class="contact-label" data-i18n="contactResume">个人简历</span>
-                        <a href="assets/li-zuju-resume.pdf?v=d18bc438ced3" download="李祖钜简历.pdf"
+                        <a href="assets/li-zuju-resume.pdf?v=f2efdda04456" download="李祖钜简历.pdf"
                             data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                         <span class="contact-note" data-i18n="resumeDetails">中文版 · 5 页 · 577 KB</span>
                     </div>
@@ -1765,10 +1776,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=d18bc438ced3"></script>
-    <script src="js/gomoku-game.js?v=d18bc438ced3"></script>
-    <script src="js/content.js?v=d18bc438ced3"></script>
-    <script src="js/main.js?v=d18bc438ced3"></script>
+    <script src="js/gomoku-engine.js?v=f2efdda04456"></script>
+    <script src="js/gomoku-game.js?v=f2efdda04456"></script>
+    <script src="js/content.js?v=f2efdda04456"></script>
+    <script src="js/main.js?v=f2efdda04456"></script>
 </body>
 
 </html>

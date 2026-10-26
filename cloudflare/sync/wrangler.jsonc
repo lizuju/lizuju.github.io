@@ -9,7 +9,7 @@
     "crons": ["17 0 * * *"]
   },
   "vars": {
-    "ALLOWED_ORIGINS": "https://lizuju.github.io,http://127.0.0.1:3090,http://localhost:3090",
+    "ALLOWED_ORIGINS": "https://lizuju.github.io,http://127.0.0.1:3090,http://localhost:3090,http://127.0.0.1:3117,http://localhost:3117",
     "CF_ACCOUNT_ID": "0be0dce5142b529358029d497d38de65"
   },
   "durable_objects": {

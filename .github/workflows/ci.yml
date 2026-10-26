@@ -37,15 +37,9 @@ jobs:
       - name: Test pairing and realtime sync
         run: npm test
 
-  build-and-test:
-    name: build-and-test (${{ matrix.project }})
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        project: [chromium-desktop, chromium-mobile, webkit-desktop, webkit-mobile]
-
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -64,23 +58,68 @@ jobs:
       - name: Audit dependencies
         run: npm audit --audit-level=moderate
 
-      - name: Install browser engines
-        run: npx playwright install --with-deps chromium webkit
-
       - name: Build production site
         run: npm run build
 
       - name: Verify committed deployment output
         run: npm run verify:docs
 
+      - name: Share production site
+        uses: actions/upload-artifact@v7
+        with:
+          name: production-site
+          path: docs/
+          retention-days: 1
+          compression-level: 0
+
+  browser-tests:
+    name: browser-tests (${{ matrix.project }}, ${{ matrix.shard }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: chromium-desktop, browser: chromium, shard: '1/2', artifact: chromium-desktop-1 }
+          - { project: chromium-desktop, browser: chromium, shard: '2/2', artifact: chromium-desktop-2 }
+          - { project: webkit-desktop, browser: webkit, shard: '1/2', artifact: webkit-desktop-1 }
+          - { project: webkit-desktop, browser: webkit, shard: '2/2', artifact: webkit-desktop-2 }
+          - { project: chromium-mobile, browser: chromium, shard: '1/1', artifact: chromium-mobile }
+          - { project: webkit-mobile, browser: webkit, shard: '1/1', artifact: webkit-mobile }
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            cloudflare/sync/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci && npm ci --prefix cloudflare/sync
+
+      - name: Download production site
+        uses: actions/download-artifact@v8
+        with:
+          name: production-site
+          path: docs/
+
+      - name: Install browser engine
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
       - name: Run browser regression suite
-        run: npm ci --prefix cloudflare/sync && npm run test:smoke -- --project=${{ matrix.project }}
+        run: npm run test:smoke -- --project=${{ matrix.project }} --shard=${{ matrix.shard }}
 
       - name: Upload Playwright diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-diagnostics-${{ matrix.project }}
+          name: playwright-diagnostics-${{ matrix.artifact }}
           path: |
             playwright-report
             test-results

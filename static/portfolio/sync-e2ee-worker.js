@@ -2,6 +2,7 @@ const PREFIX = new URL('__sync-e2ee__/', self.registration.scope).pathname;
 const CIPHER_CHUNK = 8 * 1024 * 1024;
 const CLEAR_CHUNK = CIPHER_CHUNK - 16;
 const DOWNLOAD_IDLE_MS = 60000;
+const CHUNK_IDLE_MS = 30000;
 const entries = new Map();
 const pending = new Map();
 const revoked = new Set();
@@ -105,12 +106,24 @@ const fetchChunk = async (entry, index, signal) => {
     let refreshed = false;
     for (let attempt = 0; ; attempt++) {
         signal.throwIfAborted();
+        const request = new AbortController();
+        const abort = () => request.abort(signal.reason);
+        signal.addEventListener('abort', abort, { once: true });
+        let timedOut = false;
+        let idleTimer;
+        const progress = () => {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => { timedOut = true; request.abort(); }, CHUNK_IDLE_MS);
+        };
+        progress();
         try {
             const response = await fetch(entry.url, {
-                headers: { Range: `bytes=${start}-${end}` }, credentials: 'omit', cache: 'no-store', redirect: 'error', signal
+                headers: { Range: `bytes=${start}-${end}` }, credentials: 'omit', cache: 'no-store', redirect: 'error', signal: request.signal
             });
+            progress();
             if (response.status !== 206 || !response.body) {
                 await response.body?.cancel();
+                clearTimeout(idleTimer);
                 if ([401, 404].includes(response.status) && !refreshed) {
                     if (!entry.refreshPromise) entry.refreshPromise = (async () => {
                         const client = await self.clients.get(entry.owner);
@@ -156,12 +169,15 @@ const fetchChunk = async (entry, index, signal) => {
                     if (offset + value.byteLength > encrypted.length) throw new Error('invalid_file');
                     encrypted.set(value, offset);
                     offset += value.byteLength;
+                    if (value.byteLength) progress();
                 }
                 if (offset !== encrypted.length) throw Object.assign(new Error('encrypted_file_unavailable'), { retryable: true });
             } catch (error) { await reader.cancel().catch(() => {}); throw error; }
             break;
         } catch (error) {
+            clearTimeout(idleTimer);
             signal.throwIfAborted();
+            if (timedOut) error = Object.assign(new Error('encrypted_file_unavailable'), { retryable: true });
             if (attempt >= 2 || (!error.retryable && error.name !== 'TypeError')) throw error;
             await new Promise((resolve, reject) => {
                 const abort = () => { clearTimeout(timer); reject(signal.reason); };
@@ -169,6 +185,9 @@ const fetchChunk = async (entry, index, signal) => {
                 signal.addEventListener('abort', abort, { once: true });
                 if (signal.aborted) abort();
             });
+        } finally {
+            clearTimeout(idleTimer);
+            signal.removeEventListener('abort', abort);
         }
     }
     const nonce = new Uint8Array(12);

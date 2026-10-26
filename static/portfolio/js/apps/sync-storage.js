@@ -37,8 +37,10 @@ export function setupSyncStorage(app) {
             ['syncStorageProbeRoom', probe(data.database.sampledRoom)],
             ['syncStorageProbeShard', probe(data.database.sampledShard)],
             ['syncStorageStorage', `${bytes(data.storage.bytes)} / ${bytes(data.storage.highWaterBytes)}`],
-            ['syncStorageRooms', String(data.storage.roomCount)],
+            ['syncStorageStored', bytes(data.storage.storedBytes)],
             ['syncStorageReserved', bytes(data.storage.reservedBytes)],
+            ['syncStorageAvailable', bytes(Math.max(0, data.storage.highWaterBytes - data.storage.bytes))],
+            ['syncStorageRooms', String(data.storage.roomCount)],
             ['syncStorageCleanup', t()[data.maintenance.phase === 'prune' ? 'syncStoragePrune' : data.maintenance.phase === 'refresh' ? 'syncStorageChecking' : 'syncStorageIdle']],
             ['syncStorageScanned', data.maintenance.scannedRooms === null ? '—' : String(data.maintenance.scannedRooms)],
             ['syncStorageTarget', data.maintenance.phase === 'prune' ? bytes(data.maintenance.targetBytes) : '—'],
@@ -46,7 +48,7 @@ export function setupSyncStorage(app) {
             ['syncStorageLastFailure', timestamp(data.maintenance.lastFailureAt)],
             ['syncStorageNextAlarm', timestamp(data.maintenance.nextAlarmAt)]
         ];
-        if (data.maintenance.status) fields.splice(7, 0, ['syncStorageMaintenance', t()[{
+        if (data.maintenance.status) fields.splice(9, 0, ['syncStorageMaintenance', t()[{
             never: 'syncStorageMaintenanceNever', running: 'syncStorageMaintenanceRunning',
             overdue: 'syncStorageMaintenanceOverdue', failed: 'syncStorageMaintenanceFailed', healthy: 'syncStorageMaintenanceHealthy'
         }[data.maintenance.status]]]);
