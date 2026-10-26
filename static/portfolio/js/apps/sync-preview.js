@@ -34,8 +34,8 @@ import { createImageResource } from './sync-image-resource.js';
             previous.imageLease?.release();
             previous.ownedImageResource?.dispose();
             body.querySelector('img')?.removeAttribute('src');
-            const video = body.querySelector('video');
-            if (video) { video.pause(); video.removeAttribute('src'); video.load(); }
+            const media = body.querySelector('video, audio');
+            if (media) { media.pause(); media.removeAttribute('src'); media.load(); }
             body.replaceChildren();
         };
         const entry = manager.registerWindow({
@@ -45,15 +45,15 @@ import { createImageResource } from './sync-image-resource.js';
             focusTarget: () => body,
             show: () => manager.showWindow(app, entry.task, { revealTask: true }),
             hide: (state) => {
-                body.querySelector('video')?.pause();
+                body.querySelector('video, audio')?.pause();
                 if (state === 'is-closed') dispose();
                 manager.hideWindow(app, entry.task, state, { hideTask: state === 'is-closed' });
             }
         });
-        const fail = (state) => {
+        const fail = (state, key = 'syncPreviewFailed') => {
             if (current !== state || state.controller.signal.aborted) return;
             state.failed = true;
-            setStatus('syncPreviewFailed');
+            setStatus(key);
         };
         const renderPage = async (state, item) => {
             if (current !== state || !item.visible || item.canvas || item.loading || item.failed) return;
@@ -163,12 +163,18 @@ import { createImageResource } from './sync-image-resource.js';
             entry.show();
             layout();
             try {
+                if (file.load) {
+                    const capability = await file.load();
+                    if (current !== state) { capability.dispose(); return; }
+                    state.url = capability.url;
+                    state.release = capability.dispose;
+                }
                 if (file.kind === 'pdf') await loadPdf(state);
                 else if (['image', 'heic'].includes(file.kind)) {
                     const image = document.createElement('img');
                     image.alt = file.name;
                     body.append(image);
-                    const resource = file.imageResource || (state.ownedImageResource = createImageResource({ kind: file.kind, name: file.name, load: async () => ({ url: file.url }) }));
+                    const resource = file.imageResource || (state.ownedImageResource = createImageResource({ kind: file.kind, name: file.name, load: async () => ({ url: state.url }) }));
                     state.imageLease = await resource.acquire({ signal: state.controller.signal });
                     if (current !== state) { state.imageLease.release(); return; }
                     image.src = state.imageLease.url;
@@ -176,28 +182,32 @@ import { createImageResource } from './sync-image-resource.js';
                     if (current !== state) return;
                     layout();
                     setStatus('syncPreviewImageHint');
-                } else if (file.kind === 'video') {
-                    const video = document.createElement('video');
-                    video.controls = true;
-                    video.playsInline = true;
-                    video.preload = 'metadata';
-                    video.src = file.url;
-                    video.addEventListener('loadedmetadata', () => { if (current === state) setStatus('syncPreviewVideoHint'); });
-                    video.addEventListener('error', () => fail(state));
-                    const pauseHiddenVideo = () => {
-                        if (document.hidden || app.closest('[inert], [hidden]')) video.pause();
+                } else if (['video', 'audio'].includes(file.kind)) {
+                    const media = document.createElement(file.kind);
+                    media.controls = true;
+                    media.setAttribute('playsinline', '');
+                    media.setAttribute('aria-label', file.name);
+                    media.preload = 'metadata';
+                    media.src = state.url;
+                    media.addEventListener('loadedmetadata', () => {
+                        if (current === state) setStatus(file.kind === 'audio' ? 'syncPreviewAudioHint' : 'syncPreviewVideoHint');
+                    });
+                    media.addEventListener('error', () => fail(state,
+                        [3, 4].includes(media.error?.code) ? 'syncPreviewMediaUnsupported' : 'syncPreviewFailed'));
+                    const pauseHiddenMedia = () => {
+                        if (document.hidden || app.closest('[inert], [hidden]')) media.pause();
                     };
-                    state.mediaObserver = new MutationObserver(pauseHiddenVideo);
+                    state.mediaObserver = new MutationObserver(pauseHiddenMedia);
                     for (let ancestor = app; ancestor; ancestor = ancestor.parentElement) {
                         state.mediaObserver.observe(ancestor, { attributes: true, attributeFilter: ['inert', 'hidden'] });
                     }
-                    document.addEventListener('visibilitychange', pauseHiddenVideo, { signal: state.controller.signal });
-                    video.addEventListener('playing', pauseHiddenVideo);
-                    body.append(video);
+                    document.addEventListener('visibilitychange', pauseHiddenMedia, { signal: state.controller.signal });
+                    media.addEventListener('playing', pauseHiddenMedia);
+                    body.append(media);
                 } else {
                     const { renderDocumentPreview } = await import(/* webpackChunkName: "sync-documents" */ './sync-document-preview.js');
                     if (current !== state) return;
-                    state.cleanup = await renderDocumentPreview({ container: body, url: file.url, name: file.name, kind: file.kind, signal: state.controller.signal, translate });
+                    state.cleanup = await renderDocumentPreview({ container: body, url: state.url, name: file.name, kind: file.kind, signal: state.controller.signal, translate });
                     if (current === state) setStatus('syncPreviewDocumentHint');
                 }
             } catch {

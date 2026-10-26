@@ -11,7 +11,7 @@ navigator.serviceWorker?.addEventListener('message', (event) => {
     else if (event.data.type === 'resolve' && event.ports[0]) event.ports[0].postMessage(entries.get(event.data.token)?.descriptor || null);
 });
 
-const getWorker = () => {
+export const prepareEncryptedFiles = () => {
     if (!workerPromise) {
         workerPromise = (async () => {
             if (!navigator.serviceWorker) throw new Error('encrypted_file_unavailable');
@@ -39,10 +39,15 @@ const getWorker = () => {
 };
 
 export async function openEncryptedFile({ url, metadata, download = false }) {
-    await getWorker();
+    await prepareEncryptedFiles();
     const worker = navigator.serviceWorker.controller;
     const token = Array.from(crypto.getRandomValues(new Uint8Array(24)), byte => byte.toString(16).padStart(2, '0')).join('');
-    const descriptor = { url, metadata, download, expiresAt: download ? Date.now() + DOWNLOAD_IDLE_MS : null };
+    const mediaType = {
+        mov: 'video/quicktime', mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', ogv: 'video/ogg', ogg: 'video/ogg',
+        mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', oga: 'audio/ogg', opus: 'audio/ogg', flac: 'audio/flac'
+    }[metadata.name.split('.').pop().toLowerCase()];
+    const descriptor = { url, metadata: !download && metadata.type === 'application/octet-stream' && mediaType
+        ? { ...metadata, type: mediaType } : metadata, download, expiresAt: download ? Date.now() + DOWNLOAD_IDLE_MS : null };
     let release;
     let report;
     let idleTimer;

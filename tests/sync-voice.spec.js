@@ -330,7 +330,7 @@ test('keeps ordinary attachments exclusive with recording and releases reviewed 
     await microphoneReleased(page);
 });
 
-test('loads received WAVs only on activation, plays one at a time and releases media on ended and hidden', async ({ page }) => {
+test('loads voices only on activation and replays cached audio after ending or hiding without another request', async ({ page }) => {
     history = attachments.map((attachment, index) => message(index + 1, '', otherId, attachment.metadata));
     await openChat(page);
     const voices = page.locator('.sync-voice-message');
@@ -344,6 +344,21 @@ test('loads received WAVs only on activation, plays one at a time and releases m
     const firstAudio = first.locator('audio');
     await expect(firstAudio).toBeVisible();
     await expect.poll(() => firstAudio.evaluate(audio => audio.readyState)).toBeGreaterThanOrEqual(1);
+    const playerLayout = await firstAudio.evaluate(audio => {
+        const message = audio.closest('.sync-message');
+        const feed = audio.closest('[data-sync-messages]').parentElement;
+        const feedStyle = getComputedStyle(feed);
+        const messageStyle = getComputedStyle(message);
+        const available = (feed.clientWidth - parseFloat(feedStyle.paddingLeft) - parseFloat(feedStyle.paddingRight)) * 0.92
+            - parseFloat(messageStyle.paddingLeft) - parseFloat(messageStyle.paddingRight)
+            - parseFloat(messageStyle.borderLeftWidth) - parseFloat(messageStyle.borderRightWidth);
+        return { width: audio.getBoundingClientRect().width, expected: Math.min(300, available),
+            overflow: feed.scrollWidth - feed.clientWidth };
+    });
+    expect(playerLayout.width).toBeGreaterThanOrEqual(playerLayout.expected - 1);
+    expect(playerLayout.overflow).toBeLessThanOrEqual(1);
+    await firstAudio.evaluate(audio => { audio.pause(); audio.currentTime = 1; });
+    await expect(firstAudio).toHaveJSProperty('currentTime', 1);
     await firstAudio.evaluate(async audio => { audio.muted = true; await audio.play(); });
     await expect(firstAudio).toHaveJSProperty('paused', false);
     expect(tickets).toEqual([1]);
@@ -354,18 +369,24 @@ test('loads received WAVs only on activation, plays one at a time and releases m
     await expect(secondAudio).toBeVisible();
     await expect.poll(() => secondAudio.evaluate(audio => audio.readyState)).toBeGreaterThanOrEqual(1);
     await expect(firstAudio).toHaveJSProperty('paused', true);
-    await expect(firstAudio).not.toHaveAttribute('src');
-    await expect(firstAudio).toBeHidden();
+    await expect(firstAudio).toHaveAttribute('src', /^blob:/);
+    await expect(firstAudio).toBeVisible();
+    const secondUrl = await secondAudio.getAttribute('src');
+    const requests = { tickets: [...tickets], downloads: [...downloads] };
     await secondAudio.evaluate(audio => audio.dispatchEvent(new Event('ended')));
-    await expect(secondAudio).toBeHidden();
-    await expect(secondAudio).not.toHaveAttribute('src');
+    await expect(secondAudio).toHaveJSProperty('paused', true);
+    await expect(secondAudio).toHaveAttribute('src', secondUrl);
     await expect.poll(() => page.evaluate(() => window.voiceMock.closes)).toBeGreaterThanOrEqual(2);
-    await second.locator('[data-sync-voice-play]').click();
-    await expect(secondAudio).toBeVisible();
+    await secondAudio.evaluate(async audio => { audio.muted = true; audio.currentTime = 0; await audio.play(); });
+    await expect(secondAudio).toHaveJSProperty('paused', false);
     await page.locator('[data-retro-desktop]').evaluate(element => { element.inert = true; });
-    await expect(secondAudio).toBeHidden();
-    await expect(secondAudio).not.toHaveAttribute('src');
+    await expect(secondAudio).toHaveJSProperty('paused', true);
+    await expect(secondAudio).toHaveAttribute('src', secondUrl);
     await page.locator('[data-retro-desktop]').evaluate(element => { element.inert = false; });
+    await secondAudio.evaluate(async audio => { audio.currentTime = 0; await audio.play(); });
+    await expect(secondAudio).toHaveJSProperty('paused', false);
+    expect(tickets).toEqual(requests.tickets);
+    expect(downloads).toEqual(requests.downloads);
     const downloading = page.waitForEvent('download');
     await page.locator('[data-sync-download-file]').first().click();
     const download = await downloading;
@@ -373,7 +394,7 @@ test('loads received WAVs only on activation, plays one at a time and releases m
     expect(await readFile(await download.path())).toEqual(wav());
 });
 
-test('rejects invalid encrypted voice duration and lets a failed or interrupted load retry without stale playback', async ({ page }) => {
+test('rejects invalid encrypted voice duration and finishes a retried load in the background without autoplay', async ({ page }) => {
     history = [...attachments.map((attachment, index) => message(index + 1, '', otherId, attachment.metadata)),
         message(3, '', otherId, { ...attachments[0].metadata, durationMs: 60001 })];
     await openChat(page);
@@ -393,12 +414,53 @@ test('rejects invalid encrypted voice duration and lets a failed or interrupted 
     holdTicket = false;
     releaseTicket();
     await expect.poll(() => page.evaluate(() => window.voiceMock.closes)).toBeGreaterThan(closed);
-    await expect(first.locator('audio')).toBeHidden();
-    await expect(first.locator('audio')).not.toHaveAttribute('src');
+    const audio = first.locator('audio');
+    await expect(first).toHaveAttribute('data-state', 'ready');
+    await expect(audio).toHaveAttribute('src', /^blob:/);
+    await expect(audio).toHaveJSProperty('paused', true);
+    const requests = { tickets: [...tickets], downloads: [...downloads] };
     await page.locator('[data-retro-desktop]').evaluate(element => { element.inert = false; });
-    await first.locator('[data-sync-voice-play]').click();
-    await expect(first.locator('audio')).toBeVisible();
-    await expect.poll(() => first.locator('audio').evaluate(audio => audio.readyState)).toBeGreaterThanOrEqual(1);
+    await expect(audio).toBeVisible();
+    await expect.poll(() => audio.evaluate(audio => audio.readyState)).toBeGreaterThanOrEqual(1);
+    await audio.evaluate(async audio => { audio.muted = true; await audio.play(); });
+    await expect(audio).toHaveJSProperty('paused', false);
+    expect(tickets).toEqual(requests.tickets);
+    expect(downloads).toEqual(requests.downloads);
+});
+
+test('keeps only eight activated voices, releases on pagehide and clears cached audio with room history', async ({ page }) => {
+    attachments = Array.from({ length: 9 }, (_, index) => file(`voice-${index}.wav`, 'audio/wav', wav()));
+    attachments.forEach(attachment => Object.assign(attachment.metadata, { kind: 'voice', durationMs: 4000 }));
+    history = attachments.map((attachment, index) => message(index + 1, '', otherId, attachment.metadata));
+    await openChat(page);
+    const voices = page.locator('.sync-voice-message');
+    let firstUrl;
+    for (let index = 0; index < 9; index++) {
+        const voice = voices.nth(index);
+        await voice.locator('[data-sync-voice-play]').click();
+        await expect(voice).toHaveAttribute('data-state', 'ready');
+        const audio = voice.locator('audio');
+        await audio.evaluate(audio => audio.pause());
+        if (index === 0) firstUrl = await audio.getAttribute('src');
+    }
+    await expect(voices.locator('audio[src]')).toHaveCount(8);
+    await expect(voices.first().locator('[data-sync-voice-play]')).toBeVisible();
+    expect(await page.evaluate(url => window.voiceMock.revoked.includes(url), firstUrl)).toBe(true);
+    expect(tickets).toHaveLength(9);
+    expect(downloads).toHaveLength(9);
+    const cached = await voices.locator('audio[src]').evaluateAll(audios => audios.map(audio => audio.src));
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+    await expect(voices.locator('audio[src]')).toHaveCount(0);
+    expect(await page.evaluate(urls => urls.every(url => window.voiceMock.revoked.includes(url)), cached)).toBe(true);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+    await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    await voices.last().locator('[data-sync-voice-play]').click();
+    await expect(voices.last()).toHaveAttribute('data-state', 'ready');
+    await expect(voices.last().locator('audio')).toHaveAttribute('src', /^blob:/);
+    const reopened = await voices.last().locator('audio').getAttribute('src');
+    sockets.at(-1).send(JSON.stringify({ type: 'cleared', history: { generation: '2', oldestId: null, latestId: null }, readReceipts: [] }));
+    await expect(voices).toHaveCount(0);
+    expect(await page.evaluate(url => window.voiceMock.revoked.includes(url), reopened)).toBe(true);
 });
 
 test('restores a reviewed unsent voice after pagehide and pageshow without keeping its former blob URL', async ({ page }) => {

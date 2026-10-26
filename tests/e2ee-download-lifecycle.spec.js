@@ -30,20 +30,32 @@ let holdSecond;
 let heldResponses = [];
 let shortExpiry;
 let workerRevision = 0;
+let faults;
+let requestLog;
 
 test.beforeAll(async () => {
     api = createServer((request, response) => {
-        const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Content-Range, Content-Length' };
+        const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Retry-After' };
         const range = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range || '');
         if (!range) { response.writeHead(404, headers); response.end(); return; }
         const start = Number(range[1]);
         const end = Number(range[2]);
         requests++;
+        requestLog.push({ range: request.headers.range, time: Date.now() });
         if (holdFirst && start === 0) { heldResponses.push(response); return; }
         if (failSecond && start > 0) { response.writeHead(503, headers); response.end(); return; }
         if (holdSecond && start > 0) { heldResponses.push(response); return; }
-        const body = encrypted.subarray(start, end + 1);
-        response.writeHead(206, { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Range': `bytes ${start}-${end}/${encrypted.length}`, 'Content-Length': body.length });
+        const fault = faults.shift();
+        if (fault?.status) {
+            response.writeHead(fault.status, { ...headers, ...(fault.retryAfter ? { 'Retry-After': fault.retryAfter } : {}) });
+            response.end(); return;
+        }
+        let body = encrypted.subarray(start, end + 1);
+        if (fault?.tamper) { body = Buffer.from(body); body[body.length - 1] ^= 1; }
+        response.writeHead(206, { ...headers, 'Content-Type': 'application/octet-stream',
+            'Content-Range': `bytes ${start + (fault?.badRange ? 1 : 0)}-${end}/${encrypted.length}`,
+            ...(!fault?.truncate ? { 'Content-Length': body.length } : {}) });
+        if (fault?.truncate) body = body.subarray(0, Math.floor(body.length / 2));
         response.end(body);
     });
     await new Promise(resolve => api.listen(0, '127.0.0.1', resolve));
@@ -66,7 +78,7 @@ test.beforeAll(async () => {
     origin = `http://127.0.0.1:${site.address().port}`;
 });
 
-test.beforeEach(() => { requests = 0; failSecond = false; holdFirst = false; holdSecond = false; shortExpiry = false; });
+test.beforeEach(() => { requests = 0; failSecond = false; holdFirst = false; holdSecond = false; shortExpiry = false; faults = []; requestLog = []; });
 test.afterEach(() => { heldResponses.forEach(response => response.destroy()); heldResponses = []; });
 test.afterAll(async () => {
     for (const server of [site, api]) {
@@ -117,13 +129,13 @@ test('a second encrypted chunk failure reports failure, clears cache and permits
     expect(await download.failure()).toBeTruthy();
     await expect.poll(() => page.evaluate(() => window.result)).toEqual({ status: 'failed' });
     expect(await page.evaluate(() => window.capabilityClosed)).toBe(false);
-    expect(requests).toBe(2);
+    expect(requests).toBe(4);
     const first = await page.evaluate(async () => {
         const response = await fetch(window.capability.url, { headers: { Range: 'bytes=0-0' } });
         return { status: response.status, bytes: [...new Uint8Array(await response.arrayBuffer())] };
     });
     expect(first).toEqual({ status: 206, bytes: [7] });
-    expect(requests).toBe(3);
+    expect(requests).toBe(5);
     failSecond = false;
     const resumed = await page.evaluate(async start => {
         const response = await fetch(window.capability.url, { headers: { Range: `bytes=${start}-` } });
@@ -131,7 +143,7 @@ test('a second encrypted chunk failure reports failure, clears cache and permits
     }, clearChunk);
     expect(resumed.status).toBe(206);
     expect(Buffer.from(resumed.bytes)).toEqual(clear.subarray(clearChunk));
-    expect(requests).toBe(4);
+    expect(requests).toBe(6);
     expect(await page.evaluate(() => window.result)).toEqual({ status: 'failed' });
     await page.evaluate(() => window.capability.dispose());
 });
@@ -235,3 +247,78 @@ test('media preview ranges retain cache and remain usable after a cancelled read
     await page.evaluate(() => window.capability.dispose());
     expect(await page.evaluate(() => window.result)).toEqual({ status: 'disposed' });
 });
+
+test('preview metadata can read the file head, tail and head again without downloading the head twice', async ({ page }) => {
+    await open(page, false);
+    const ranges = await page.evaluate(async tail => {
+        const result = [];
+        for (const range of ['bytes=0-31', `bytes=${tail}-`, 'bytes=16-47']) {
+            const response = await fetch(window.capability.url, { headers: { Range: range } });
+            result.push([...new Uint8Array(await response.arrayBuffer())]);
+        }
+        return result;
+    }, clear.length - 32);
+    expect(ranges).toEqual(Array.from({ length: 3 }, () => Array(32).fill(7)));
+    expect(requestLog.map(request => request.range)).toEqual([
+        `bytes=0-${clearChunk + 15}`, `bytes=${clearChunk + 16}-${encrypted.length - 1}`
+    ]);
+    await page.evaluate(() => window.capability.dispose());
+});
+
+test('native downloads wait for Retry-After and recover from transient upstream errors', async ({ page }) => {
+    faults = [{ status: 429, retryAfter: '1' }, { status: 503 }];
+    await open(page);
+    const downloading = page.waitForEvent('download');
+    await page.evaluate(() => {
+        const iframe = document.createElement('iframe');
+        iframe.src = window.capability.url;
+        document.body.append(iframe);
+    });
+    const download = await downloading;
+    expect(await readFile(await download.path())).toEqual(clear);
+    expect(requests).toBe(4);
+    expect(requestLog[1].time - requestLog[0].time).toBeGreaterThanOrEqual(950);
+    expect(requestLog[2].time - requestLog[1].time).toBeGreaterThanOrEqual(950);
+    await expect.poll(() => page.evaluate(() => window.result)).toEqual({ status: 'delivered' });
+});
+
+test('a truncated second chunk retries before releasing any unauthenticated bytes', async ({ page }) => {
+    faults = [null, { truncate: true }];
+    await open(page);
+    const result = await page.evaluate(async () => {
+        const response = await fetch(window.capability.url);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        return { length: bytes.length, correct: bytes.every(value => value === 7) };
+    });
+    expect(result).toEqual({ length: clear.length, correct: true });
+    expect(requests).toBe(3);
+    expect(requestLog[1].range).toBe(requestLog[2].range);
+    await expect.poll(() => page.evaluate(() => window.result)).toEqual({ status: 'delivered' });
+});
+
+test('closing a capability cancels Retry-After without a later upstream request', async ({ page }) => {
+    faults = [{ status: 429, retryAfter: '2' }];
+    await open(page, false);
+    await page.evaluate(() => {
+        window.pendingRead = fetch(window.capability.url).then(response => response.arrayBuffer()).then(() => 'unexpected success', () => 'cancelled');
+    });
+    await expect.poll(() => requests).toBe(1);
+    await page.evaluate(() => window.capability.dispose());
+    expect(await page.evaluate(() => window.pendingRead)).toBe('cancelled');
+    await page.waitForTimeout(2100);
+    expect(requests).toBe(1);
+});
+
+for (const [name, fault] of [['revoked authorization', { status: 403 }], ['incorrect range', { badRange: true }], ['invalid authentication tag', { tamper: true }]]) {
+    test(`rejects ${name} without retrying or releasing plaintext`, async ({ page }) => {
+        faults = [fault];
+        await open(page, false);
+        expect(await page.evaluate(async () => {
+            const response = await fetch(window.capability.url);
+            try { await response.body.getReader().read(); return 'plaintext'; }
+            catch { return 'rejected'; }
+        })).toBe('rejected');
+        expect(requests).toBe(1);
+        await page.evaluate(() => window.capability.dispose());
+    });
+}

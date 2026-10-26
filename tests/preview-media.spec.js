@@ -202,14 +202,15 @@ test('opening the same failed attachment retries without closing its preview win
     await page.locator('.sync-message').filter({ hasText: 'pixel.png' }).scrollIntoViewIfNeeded();
     await expect(page.locator('.sync-message-image img[alt="pixel.png"]')).toHaveJSProperty('naturalWidth', 1);
     const attempts = downloadAttempts;
-    failDownloads = 1;
+    failDownloads = 3;
     const attachment = page.locator('.sync-message').filter({ hasText: 'notes.txt' }).locator('[data-sync-preview-file]');
     await attachment.click();
     await expect(page.locator('[data-sync-preview-status]')).toHaveText('文件无法预览，你仍可下载原文件。');
+    expect(downloadAttempts).toBe(attempts + 3);
     await page.locator('[data-sync-preview-action="minimize"]').click();
     await attachment.click();
     await expect(page.locator('[data-sync-preview-body]')).toHaveText('Preview retry text');
-    expect(downloadAttempts).toBe(attempts + 2);
+    expect(downloadAttempts).toBe(attempts + 4);
 });
 
 test('previews a PNG with a generic MIME type and keeps unsupported extensions download-only', async ({ page }) => {

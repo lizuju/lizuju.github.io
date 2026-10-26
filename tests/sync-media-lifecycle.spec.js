@@ -13,7 +13,7 @@ let failGif;
 test.beforeEach(async ({ page }) => {
     gets = new Map();
     maxConcurrent = 0;
-    failGif = true;
+    failGif = 3;
     let concurrent = 0;
     const attachments = [
         ...Array.from({ length: 20 }, (_, index) => file(`reaction-${index + 1}.gif`, 'image/gif', Buffer.concat([gif, Buffer.alloc(1024 * 1024 - gif.length)]))),
@@ -37,7 +37,7 @@ test.beforeEach(async ({ page }) => {
         const end = range ? Number(range[2]) : encrypted.length - 1;
         const body = encrypted.subarray(start, end + 1);
         const send = () => {
-            if (id === 20 && failGif && request.method === 'GET') { failGif = false; response.writeHead(503, headers); response.end(); return; }
+            if (id === 20 && failGif > 0 && request.method === 'GET') { failGif--; response.writeHead(503, headers); response.end(); return; }
             response.writeHead(range ? 206 : 200, { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length),
                 ...(range ? { 'Content-Range': `bytes ${start}-${end}/${encrypted.length}` } : {}) });
             response.end(request.method === 'HEAD' ? undefined : body);
@@ -87,13 +87,14 @@ test.afterEach(async () => {
 test('loads nearby encrypted GIFs with bounded concurrency, retries a failed GIF and releases them on close', async ({ page }) => {
     const failed = page.locator('.sync-message-image[data-state="failed"]');
     await expect(failed).toBeVisible();
+    expect(gets.get(20)).toBe(3);
     expect([...gets.keys()].filter(id => id <= 20).length).toBeLessThan(10);
     expect(maxConcurrent).toBeLessThanOrEqual(3);
     expect(await page.locator('.sync-message-image img[src]').count()).toBeLessThan(10);
     await failed.click();
     const lastGif = page.locator('.sync-message').filter({ has: page.locator('.sync-attachment-name', { hasText: 'reaction-20.gif' }) });
     await expect(lastGif.locator('.sync-message-image img')).toHaveJSProperty('naturalWidth', 1);
-    expect(gets.get(20)).toBe(2);
+    expect(gets.get(20)).toBe(4);
     await page.locator('[data-sync-feed]').evaluate(feed => feed.scrollBy({ top: -200, behavior: 'instant' }));
     await expect.poll(() => page.locator('[data-sync-feed]').evaluate(feed => feed.scrollHeight - feed.scrollTop - feed.clientHeight)).toBeGreaterThan(100);
     const position = await page.locator('[data-sync-feed]').evaluate(feed => {

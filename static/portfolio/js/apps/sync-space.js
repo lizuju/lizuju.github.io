@@ -2,7 +2,7 @@ import { createKeyring, createDeviceIdentity, encryptPayload, decryptPayload, cr
     keyedFingerprint, FILE_PLAIN_CHUNK_SIZE, FILE_CIPHER_CHUNK_SIZE, saveLocalSession, loadLocalSession,
     deleteLocalSession, createKeyRotation, acceptKeyRotation } from './sync-crypto.js';
 import { EncryptedPairing } from './sync-pairing.js';
-import { openEncryptedFile } from './sync-e2ee-files.js';
+import { openEncryptedFile, prepareEncryptedFiles } from './sync-e2ee-files.js';
 import { createInlineImage } from './sync-inline-image.js';
 import { createImageResource } from './sync-image-resource.js';
 import { VoiceRecorder } from './sync-voice-recorder.js';
@@ -56,6 +56,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
         let pingTimer = null;
         let countdownTimer = null;
         let pairExpiresAt = 0;
+        let displayedOfferId = null;
         let pairingRevision = 0;
         let retryDelay = 1000;
         let online = false;
@@ -88,7 +89,6 @@ import { createVoicePlayer } from './sync-voice-player.js';
         let searchScrollTop = null;
         let searchAnchor = null;
         let fileDragDepth = 0;
-        let previewRequest = 0;
         const downloadTickets = new Map();
         const fileCapabilities = new Map();
         let keyRefresh;
@@ -527,7 +527,8 @@ import { createVoicePlayer } from './sync-voice-player.js';
             const extension = attachment.name.split('.').pop().toLowerCase();
             if (['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence'].includes(type) || ['heic', 'heif', 'hif'].includes(extension)) return 'heic';
             if (['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'].includes(type) || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif'].includes(extension)) return 'image';
-            if (['video/mp4', 'video/webm', 'video/ogg'].includes(type) || ['mp4', 'webm', 'ogg', 'ogv'].includes(extension)) return 'video';
+            if (type.startsWith('audio/') || ['mp3', 'm4a', 'aac', 'wav', 'oga', 'opus', 'flac'].includes(extension)) return 'audio';
+            if (['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'].includes(type) || ['mp4', 'webm', 'ogg', 'ogv', 'mov', 'm4v'].includes(extension)) return 'video';
             if (type === 'application/pdf' || extension === 'pdf') return 'pdf';
             if (extension === 'docx') return 'word';
             if (['xlsx', 'xls', 'ods', 'csv', 'tsv'].includes(extension)) return 'spreadsheet';
@@ -553,23 +554,14 @@ import { createVoicePlayer } from './sync-voice-player.js';
         };
         const attachmentUrl = async (message, session) => {
             const base = await loadConfig();
-            for (let attempt = 0; attempt < 2; attempt++) {
-                const result = await attachmentTicket(message, session);
-                const url = `${base}/v1/spaces/${session.roomId}/downloads/${encodeURIComponent(result.ticket)}`;
-                const response = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(15000) });
-                if (response.ok) return url;
-                if ([401, 404].includes(response.status)) {
-                    downloadTickets.delete(message.id);
-                    if (!attempt) continue;
-                }
-                throw Object.assign(new Error('download_unavailable'), { code: response.status === 404 ? 'attachment_expired' : 'download_unavailable' });
-            }
+            const result = await attachmentTicket(message, session);
+            return `${base}/v1/spaces/${session.roomId}/downloads/${encodeURIComponent(result.ticket)}`;
         };
         const encryptedFile = async (message, session, download) => {
             const key = `${message.id}:${crypto.randomUUID()}`;
             {
-                const promise = attachmentUrl(message, session)
-                    .then(url => openEncryptedFile({ url, metadata: message.attachment, download }))
+                const promise = Promise.all([attachmentUrl(message, session), prepareEncryptedFiles()])
+                    .then(([url]) => openEncryptedFile({ url, metadata: message.attachment, download }))
                     .then(capability => {
                         if (credentials !== session || !messageNodes.has(message.id)) { capability.dispose(); throw new DOMException('Session ended', 'AbortError'); }
                         const dispose = capability.dispose;
@@ -595,9 +587,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 const frame = document.createElement('iframe');
                 frame.hidden = true;
                 frame.src = capability.url;
-                frame.addEventListener('load', () => frame.remove(), { once: true });
                 document.body.append(frame);
-                setTimeout(() => frame.remove(), 10 * 60 * 1000);
                 capability.closed.then(() => frame.remove());
                 capability.result.then(result => {
                     if (result.status === 'failed' && credentials === session && messageNodes.has(message.id)) showAttachmentError(new Error('encrypted_file_unavailable'));
@@ -613,10 +603,9 @@ import { createVoicePlayer } from './sync-voice-player.js';
         const previewAttachment = async (message, button) => {
             if (message.sendState || button.disabled) return;
             const session = credentials;
-            const request = ++previewRequest;
             const kind = previewKind(message.attachment);
             const limit = ['image', 'heic'].includes(kind) ? 20 : kind === 'text' ? 2 : 25;
-            if (!['pdf', 'video'].includes(kind) && message.attachment.size > limit * 1024 * 1024) {
+            if (!['pdf', 'video', 'audio'].includes(kind) && message.attachment.size > limit * 1024 * 1024) {
                 setNotice('syncPreviewTooLarge', true);
                 return;
             }
@@ -627,12 +616,9 @@ import { createVoicePlayer } from './sync-voice-player.js';
                         imageResource: imageResources.get(message.id) });
                     return;
                 }
-                const capability = await encryptedFile(message, session, false);
-                if (request !== previewRequest || credentials !== session || !active || !messageNodes.has(message.id)) { capability.dispose(); return; }
-                if (!app.classList.contains('is-active')) { capability.dispose(); setNotice('syncPreviewReady'); return; }
-                attachmentPreview.open({
+                await attachmentPreview.open({
                     id: message.id, name: message.attachment.name, kind,
-                    url: capability.url, cleanup: capability.dispose
+                    load: () => encryptedFile(message, session, false)
                 });
             } catch (error) {
                 if (credentials === session && active && messageNodes.has(message.id)) showAttachmentError(error);
@@ -1219,6 +1205,8 @@ import { createVoicePlayer } from './sync-voice-player.js';
             const session = credentials;
             const offer = await pairing.readOffer(value, session);
             if (revision !== pairingRevision || session !== credentials) return;
+            if (offer?.offerId !== displayedOfferId) find('pairing').open = !!offer;
+            displayedOfferId = offer?.offerId || null;
             pairExpiresAt = offer?.expiresAt || 0;
             find('pairing').hidden = !offer;
             find('pair-code').textContent = offer?.code || '';
@@ -1248,7 +1236,6 @@ import { createVoicePlayer } from './sync-voice-player.js';
             inlineImages.clear();
             imageResources.forEach(resource => resource.dispose());
             imageResources.clear();
-            previewRequest++;
             downloadTickets.clear();
             fileCapabilities.forEach(promise => promise.then(capability => capability.dispose()).catch(() => {}));
             fileCapabilities.clear();
@@ -1293,6 +1280,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             followOnRestore = true;
             followLatest = true;
             pairExpiresAt = 0;
+            displayedOfferId = null;
             pairingRevision++;
             cooldowns.pair = 0;
             unread.clear();
@@ -1310,6 +1298,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             credentials = session;
             setup.hidden = true;
             room.hidden = false;
+            if (active) prepareEncryptedFiles().catch(() => {});
             try {
                 const encrypted = sessionStorage.getItem(draftKey());
                 const draft = encrypted ? await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted) : null;
@@ -1446,6 +1435,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             show: () => {
                 manager.showWindow(app, entry.task, { revealTask: true });
                 active = true;
+                if (credentials) prepareEncryptedFiles().catch(() => {});
                 lastInteraction = performance.now();
                 interactionRevision++;
                 reconcileSession();
@@ -1465,7 +1455,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 manager.hideWindow(app, entry.task, state, { hideTask: state === 'is-closed' });
                 if (state === 'is-closed') {
                     clearTimeout(searchTimer);
-                    previewRequest++;
+                    voicePlayers.forEach(player => player.release());
                     active = false;
                     fileDragDepth = 0;
                     app.classList.remove('is-dragging-files');
@@ -1562,7 +1552,10 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 const offer = await pairing.createOffer();
                 if (credentials !== session) return;
                 if (pairingRevision === revision) await showPairing(offer);
-                if (secondsLeft(pairExpiresAt)) setNotice('syncPaired');
+                if (secondsLeft(pairExpiresAt)) {
+                    find('pairing').open = true;
+                    setNotice('syncPaired');
+                }
             } catch (error) { if (credentials === session) showError(error, 'pair'); }
             finally { if (credentials === session) { busy = false; updateControls(); } }
         });
@@ -2086,7 +2079,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
         });
         window.addEventListener('pagehide', () => {
             cancelRecording();
-            pauseVoiceMedia();
+            voicePlayers.forEach(player => player.release());
             releaseVoicePreview();
             saveDraft(); disconnect(); soundVersion++; soundUnlocking = false;
             messageSound.pause(); inlineImages.forEach(image => image.pause());

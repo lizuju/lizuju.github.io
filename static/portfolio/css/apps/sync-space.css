@@ -276,6 +276,56 @@
     background: #e5f0ec;
 }
 
+.sync-pairing:not([open]) {
+    align-self: flex-start;
+    margin-top: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
+.sync-pairing:not([open]) > .sync-pairing-toggle {
+    justify-content: center;
+    width: 24px;
+    min-height: 24px;
+}
+
+.sync-pairing:not([open]) > .sync-pairing-toggle > span {
+    display: none;
+}
+
+.sync-pairing-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    list-style: none;
+}
+
+.sync-pairing-toggle::-webkit-details-marker {
+    display: none;
+}
+
+.sync-pairing-toggle::before {
+    content: '▸';
+}
+
+.sync-pairing[open] > .sync-pairing-toggle::before {
+    content: '▾';
+}
+
+.sync-pairing-toggle:focus-visible {
+    outline: 2px solid #153f45;
+    outline-offset: 3px;
+}
+
+.sync-pairing-toggle [data-sync-pair-expiry] {
+    margin-left: auto;
+    color: #3c6060;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
 .sync-pairing-heading {
     display: flex;
     flex-wrap: wrap;
@@ -298,7 +348,7 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 6px;
     margin-top: 6px;
     color: #3c6060;
@@ -536,13 +586,19 @@ button.sync-attachment-info:focus-visible {
     background: #fff7ef;
 }
 
+.sync-voice-message {
+    width: 300px;
+    max-width: 100%;
+}
+
 [data-sync-voice-time] {
     font-variant-numeric: tabular-nums;
 }
 
 .sync-voice-preview,
 .sync-voice-message audio {
-    width: min(300px, 100%);
+    width: 300px;
+    max-width: 100%;
     height: 38px;
 }
 

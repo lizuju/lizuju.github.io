@@ -42,6 +42,13 @@
     object-fit: contain;
 }
 
+.sync-preview-body > audio {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    margin: 24px auto;
+}
+
 .sync-preview-page {
     width: var(--sync-preview-width);
     margin: 0 auto 16px;

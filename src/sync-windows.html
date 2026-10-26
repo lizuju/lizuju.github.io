@@ -58,7 +58,11 @@
                                 data-i18n="syncLeave">离开空间</button>
                         </div>
                     </div>
-                    <div class="sync-pairing" data-sync-pairing hidden>
+                    <details class="sync-pairing" data-sync-pairing hidden>
+                        <summary class="sync-pairing-toggle" aria-labelledby="sync-pairing-title">
+                            <span id="sync-pairing-title" data-i18n="syncCodeLabel">4 位配对码</span>
+                            <span data-sync-pair-expiry></span>
+                        </summary>
                         <p class="sync-hint" data-i18n="syncPairOnline">配对时请保持原设备在线。</p>
                         <div class="sync-pairing-heading">
                             <span data-i18n="syncPairCodeLabel">在另一台设备输入</span>
@@ -66,11 +70,10 @@
                         </div>
                         <p class="sync-hint" data-i18n="syncPairHint">配对码 10 分钟内有效，请只分享给信任的人。</p>
                         <div class="sync-pairing-footer">
-                            <span data-sync-pair-expiry></span>
                             <button class="sync-button" type="button" data-sync-copy-code
                                 data-i18n="syncCopyCode">复制配对码</button>
                         </div>
-                    </div>
+                    </details>
                     <div class="sync-message-toolbar">
                         <label class="visually-hidden" for="sync-search" data-i18n="syncSearchPlaceholder">搜索消息或文件名</label>
                         <input id="sync-search" type="search" placeholder="搜索消息或文件名"

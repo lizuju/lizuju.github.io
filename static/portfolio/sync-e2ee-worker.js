@@ -42,7 +42,7 @@ const prepare = async (descriptor, owner) => {
     const key = await crypto.subtle.importKey('raw', bytes(metadata.key, 32), 'AES-GCM', false, ['decrypt']);
     const download = descriptor.download === true;
     if (download && descriptor.expiresAt && descriptor.expiresAt <= Date.now()) throw new Error('encrypted_file_unavailable');
-    return { owner, url: url.href, metadata, download, key, noncePrefix: bytes(metadata.noncePrefix, 8), controllers: new Set(), pendingChunks: new Map(), cachedChunk: null, streamCount: 0, expiresAt: download ? descriptor.expiresAt : null, expiryTimer: null };
+    return { owner, url: url.href, metadata, download, key, noncePrefix: bytes(metadata.noncePrefix, 8), controllers: new Set(), pendingChunks: new Map(), cachedChunks: new Map(), streamCount: 0, expiresAt: download ? descriptor.expiresAt : null, expiryTimer: null };
 };
 const trustedClient = (client) => client?.type === 'window' && new URL(client.url).origin === self.location.origin
     && new URL(client.url).pathname.startsWith(new URL(self.registration.scope).pathname);
@@ -56,7 +56,7 @@ self.addEventListener('message', (event) => {
         if (entry && entry.owner !== event.source.id) return;
         revoked.add(`${event.source.id}:${token}`);
         entry?.controllers.forEach(controller => controller.abort());
-        if (entry) { entry.cachedChunk = null; clearTimeout(entry.expiryTimer); }
+        if (entry) { entry.cachedChunks.clear(); clearTimeout(entry.expiryTimer); }
         entries.delete(token);
     } else if (type === 'open') event.waitUntil((async () => {
         try {
@@ -100,25 +100,52 @@ const fetchChunk = async (entry, index, signal) => {
     const clearSize = Math.min(CLEAR_CHUNK, entry.metadata.size - index * CLEAR_CHUNK);
     const start = index * CIPHER_CHUNK;
     const end = start + clearSize + 15;
-    const response = await fetch(entry.url, {
-        headers: { Range: `bytes=${start}-${end}` }, credentials: 'omit', cache: 'no-store', redirect: 'error', signal
-    });
-    if (response.status !== 206 || !response.body) throw new Error('encrypted_file_unavailable');
     const total = entry.metadata.size + Math.ceil(entry.metadata.size / CLEAR_CHUNK) * 16;
-    if (response.headers.get('Content-Range') !== `bytes ${start}-${end}/${total}`) throw new Error('invalid_file');
     const encrypted = new Uint8Array(clearSize + 16);
-    const reader = response.body.getReader();
-    let offset = 0;
-    try {
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            if (offset + value.byteLength > encrypted.length) throw new Error('invalid_file');
-            encrypted.set(value, offset);
-            offset += value.byteLength;
+    for (let attempt = 0; ; attempt++) {
+        signal.throwIfAborted();
+        try {
+            const response = await fetch(entry.url, {
+                headers: { Range: `bytes=${start}-${end}` }, credentials: 'omit', cache: 'no-store', redirect: 'error', signal
+            });
+            if (response.status !== 206 || !response.body) {
+                await response.body?.cancel();
+                const retryAfter = response.headers.get('Retry-After');
+                const delay = retryAfter !== null && Number.isFinite(Number(retryAfter))
+                    ? Number(retryAfter) * 1000 : Date.parse(retryAfter) - Date.now();
+                throw Object.assign(new Error('encrypted_file_unavailable'), {
+                    retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+                    retryAfter: Number.isFinite(delay) ? Math.max(0, delay) : 0
+                });
+            }
+            if (response.headers.get('Content-Range') !== `bytes ${start}-${end}/${total}`) {
+                await response.body.cancel();
+                throw new Error('invalid_file');
+            }
+            const reader = response.body.getReader();
+            let offset = 0;
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    if (offset + value.byteLength > encrypted.length) throw new Error('invalid_file');
+                    encrypted.set(value, offset);
+                    offset += value.byteLength;
+                }
+                if (offset !== encrypted.length) throw Object.assign(new Error('encrypted_file_unavailable'), { retryable: true });
+            } catch (error) { await reader.cancel().catch(() => {}); throw error; }
+            break;
+        } catch (error) {
+            signal.throwIfAborted();
+            if (attempt >= 2 || (!error.retryable && error.name !== 'TypeError')) throw error;
+            await new Promise((resolve, reject) => {
+                const abort = () => { clearTimeout(timer); reject(signal.reason); };
+                const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, Math.max(500 * 2 ** attempt, error.retryAfter || 0));
+                signal.addEventListener('abort', abort, { once: true });
+                if (signal.aborted) abort();
+            });
         }
-        if (offset !== encrypted.length) throw new Error('invalid_file');
-    } catch (error) { await reader.cancel().catch(() => {}); throw error; }
+    }
     const nonce = new Uint8Array(12);
     nonce.set(entry.noncePrefix);
     new DataView(nonce.buffer).setUint32(8, index);
@@ -127,7 +154,12 @@ const fetchChunk = async (entry, index, signal) => {
 };
 const readChunk = async (entry, index, signal) => {
     signal.throwIfAborted();
-    if (entry.cachedChunk?.index === index) return entry.cachedChunk.bytes;
+    if (entry.cachedChunks.has(index)) {
+        const bytes = entry.cachedChunks.get(index);
+        entry.cachedChunks.delete(index);
+        entry.cachedChunks.set(index, bytes);
+        return bytes;
+    }
     let flight = entry.pendingChunks.get(index);
     if (!flight || flight.controller.signal.aborted) {
         const controller = new AbortController();
@@ -135,7 +167,10 @@ const readChunk = async (entry, index, signal) => {
         entry.controllers.add(controller);
         flight.promise = fetchChunk(entry, index, controller.signal).then(bytes => {
             controller.signal.throwIfAborted();
-            if (!entry.download) entry.cachedChunk = { index, bytes };
+            if (!entry.download) {
+                entry.cachedChunks.set(index, bytes);
+                if (entry.cachedChunks.size > 3) entry.cachedChunks.delete(entry.cachedChunks.keys().next().value);
+            }
             return bytes;
         }).finally(() => {
             if (entry.pendingChunks.get(index) === flight) entry.pendingChunks.delete(index);
@@ -158,7 +193,7 @@ const readChunk = async (entry, index, signal) => {
 const releaseDownload = async (entry, owner, token, status = 'disposed') => {
     clearTimeout(entry.expiryTimer);
     revoked.add(`${owner}:${token}`);
-    entry.cachedChunk = null;
+    entry.cachedChunks.clear();
     entry.controllers.forEach(controller => controller.abort());
     entries.delete(token);
     const client = await self.clients.get(owner);
