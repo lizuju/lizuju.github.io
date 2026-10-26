@@ -2635,6 +2635,11 @@ summary:focus-visible {
     filter: brightness(0);
 }
 
+.sync-open-chat,
+.sync-open-chat:visited {
+    color: #000;
+}
+
 .sync-button:active:not(:disabled) {
     border-style: inset;
 }
