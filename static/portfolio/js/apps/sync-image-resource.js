@@ -1,5 +1,6 @@
 const idle = new Map();
 let idleBytes = 0;
+const AUTOMATIC_PIXEL_LIMIT = 8 * 1024 * 1024;
 
 const inspectImage = async blob => {
     const bytes = new Uint8Array(await blob.slice(0, 1024 * 1024).arrayBuffer());
@@ -94,6 +95,7 @@ export function createImageResource({ kind = 'image', name = '', load }) {
         removeIdle(state);
         state.evictOnRelease = true;
         state.controller.abort();
+        state.blob = null;
         if (state.url) { URL.revokeObjectURL(state.url); state.url = null; }
         state.users.forEach(user => user.reject(error));
         if (current === state) current = null;
@@ -106,7 +108,7 @@ export function createImageResource({ kind = 'image', name = '', load }) {
         }
     };
     return {
-        async acquire({ signal } = {}) {
+        async acquire({ signal, automatic = false } = {}) {
             if (disposed || signal?.aborted) throw abortError();
             if (!current) {
                 const state = { controller: new AbortController(), users: new Set(), url: null, bytes: 0 };
@@ -123,29 +125,10 @@ export function createImageResource({ kind = 'image', name = '', load }) {
                     } finally { capability.dispose?.(); }
                     state.controller.signal.throwIfAborted();
                     const details = await inspectImage(blob);
-                    const pixels = details.width * details.height;
-                    state.animated = details.animated || /^image\/gif$/i.test(blob.type) || /\.gif$/i.test(name);
-                    if (kind === 'heic') blob = blob.slice(0, blob.size, 'image/heic');
-                    state.url = URL.createObjectURL(blob);
-                    if (kind === 'heic') {
-                        const image = new Image();
-                        image.src = state.url;
-                        try { await image.decode(); }
-                        catch {
-                            state.controller.signal.throwIfAborted();
-                            const { heicTo } = await import(/* webpackChunkName: "preview-heic" */ 'heic-to/csp');
-                            state.controller.signal.throwIfAborted();
-                            const converted = await heicTo({ blob, type: 'image/jpeg', quality: 0.9 });
-                            state.controller.signal.throwIfAborted();
-                            URL.revokeObjectURL(state.url);
-                            state.url = URL.createObjectURL(converted);
-                            blob = converted;
-                        } finally { image.removeAttribute('src'); }
-                    }
                     state.controller.signal.throwIfAborted();
-                    state.bytes = Math.max(blob.size, pixels * 4);
-                    state.ready = true;
-                    return state.url;
+                    state.pixels = details.width * details.height;
+                    state.animated = details.animated || /^image\/gif$/i.test(blob.type) || /\.gif$/i.test(name);
+                    state.blob = blob;
                 }).catch(error => { clear(state, error); throw error; });
             }
             const state = current;
@@ -166,7 +149,37 @@ export function createImageResource({ kind = 'image', name = '', load }) {
             };
             signal?.addEventListener('abort', release, { once: true });
             try {
-                const url = await Promise.race([state.promise, released]);
+                await Promise.race([state.promise, released]);
+                if (automatic && (!state.pixels || state.pixels > AUTOMATIC_PIXEL_LIMIT)) {
+                    throw Object.assign(new Error('image_preview_deferred'), { code: 'image_preview_deferred' });
+                }
+                state.urlPromise ||= state.promise.then(async () => {
+                    state.controller.signal.throwIfAborted();
+                    let blob = state.blob;
+                    state.blob = null;
+                    if (kind === 'heic') blob = blob.slice(0, blob.size, 'image/heic');
+                    state.url = URL.createObjectURL(blob);
+                    if (kind === 'heic') {
+                        const image = new Image();
+                        image.src = state.url;
+                        try { await image.decode(); }
+                        catch {
+                            state.controller.signal.throwIfAborted();
+                            const { heicTo } = await import(/* webpackChunkName: "preview-heic" */ 'heic-to/csp');
+                            state.controller.signal.throwIfAborted();
+                            const converted = await heicTo({ blob, type: 'image/jpeg', quality: 0.9 });
+                            state.controller.signal.throwIfAborted();
+                            URL.revokeObjectURL(state.url);
+                            state.url = URL.createObjectURL(converted);
+                            blob = converted;
+                        } finally { image.removeAttribute('src'); }
+                    }
+                    state.controller.signal.throwIfAborted();
+                    state.bytes = Math.max(blob.size, state.pixels * 4);
+                    state.ready = true;
+                    return state.url;
+                }).catch(error => { clear(state, error); throw error; });
+                const url = await Promise.race([state.urlPromise, released]);
                 return { url, animated: state.animated, release };
             } catch (error) { release(); throw error; }
         },

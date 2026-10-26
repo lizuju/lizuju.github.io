@@ -74,6 +74,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                     return new Promise(resolve => { this.statusWaiter = { count, resolve }; });
                   }
                   testExpireDiscoveryWindow() { this.discoveryWindow.expiresAt = Date.now() - 1; }
+                  testExpireDiscoveryCache() { if (this.discoveryCache) this.discoveryCache.expiresAt = Date.now() - 1; }
                   testDiscoverySources() { return this.discoveryWindow?.attempts.size || 0; }
                   testDiscoveryAttempts() { return [...(this.discoveryWindow?.attempts.values() || [])].reduce((sum, count) => sum + count, 0); }
                   testWaitDiscoveryAttempts(count) {
@@ -90,12 +91,12 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   testDropAlarm() { return this.ctx.storage.deleteAlarm(); }
                   testFailPairingRead() { this.failPairingRead = true; }
-                  currentInvite(roomId) {
+                  currentInvite(...args) {
                     if (this.failPairingRead) {
                       this.failPairingRead = false;
                       throw new Error('test_pairing_read_failed');
                     }
-                    return super.currentInvite(roomId);
+                    return super.currentInvite(...args);
                   }
                 }
                 export class SyncRoom extends ProductionSyncRoom {
@@ -118,6 +119,16 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                   testHoldOnlineProbe() { this.onlineProbeGate = new Promise(resolve => { this.releaseOnlineProbe = resolve; }); }
                   testReleaseOnlineProbe() { this.releaseOnlineProbe(); this.onlineProbeGate = null; }
                   testFailOnlineProbe() { this.failOnlineProbe = true; }
+                  testFailPairingDelivery() { this.failPairingDelivery = true; }
+                  testPairingDeliveries() { return this.pairingDeliveries || 0; }
+                  testHoldPairingDelivery() { this.pairingDeliveryGate = new Promise(resolve => { this.releasePairingDelivery = resolve; }); }
+                  testReleasePairingDelivery() { this.releasePairingDelivery(); this.pairingDeliveryGate = null; }
+                  async publishToDevice(...args) {
+                    this.pairingDeliveries = (this.pairingDeliveries || 0) + 1;
+                    if (this.pairingDeliveryGate) await this.pairingDeliveryGate;
+                    if (this.failPairingDelivery) { this.failPairingDelivery = false; throw new Error('test_pairing_delivery_failed'); }
+                    return super.publishToDevice(...args);
+                  }
                   testOnlineProbes() { return this.onlineProbes || 0; }
                   testWaitOnlineProbes(count) {
                     if ((this.onlineProbes || 0) >= count) return;
@@ -928,7 +939,7 @@ test('pairing discovery excludes offline invitation owners without deleting thei
   assert.deepEqual(await storage.exec('SELECT * FROM offers ORDER BY offer_id'), retained);
 });
 
-test('anonymous discovery coalesces concurrent probes and limits one source without per-request database writes', async () => {
+test('anonymous discovery caches successful probes briefly and limits one source without per-request database writes', async () => {
   const request = client(), space = await createSpace(request);
   await authenticateSocket(space);
   const room = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
@@ -949,16 +960,18 @@ test('anonymous discovery coalesces concurrent probes and limits one source with
   }
   assert.equal(await room.testOnlineProbes(), probes + 1);
   for (let index = 0; index < 4; index++) assert.equal((await request.raw('/v1/pair/offers')).status, 200);
-  assert.equal(await room.testOnlineProbes(), probes + 5, 'Completed online results are not cached across disconnects');
+  assert.equal(await room.testOnlineProbes(), probes + 1, 'Sequential requests reuse the completed discovery result');
   const blocked = await request.raw('/v1/pair/offers');
   assert.equal(blocked.status, 429);
   assert.equal(blocked.body.error, 'rate_limited');
   assert.ok(Number(blocked.headers.get('Retry-After')) >= 1 && Number(blocked.headers.get('Retry-After')) <= 60);
-  assert.equal(await room.testOnlineProbes(), probes + 5);
+  assert.equal(await room.testOnlineProbes(), probes + 1);
   assert.equal((await client().raw('/v1/pair/offers')).status, 200);
   assert.deepEqual(await storage.exec('SELECT * FROM attempts ORDER BY key'), attempts);
   await registry.testExpireDiscoveryWindow();
+  await registry.testExpireDiscoveryCache();
   assert.equal((await request.raw('/v1/pair/offers')).status, 200);
+  assert.equal(await room.testOnlineProbes(), probes + 2, 'Discovery probes again after its short cache expires');
   assert.equal(await registry.testDiscoverySources(), 1);
   await registry.testFillDiscoveryWindow();
   assert.equal((await client().raw('/v1/pair/offers')).status, 429);
@@ -982,14 +995,30 @@ test('discovery revalidates an invitation changed during online probes and does 
   assert.deepEqual((await second).body.offers, [{ offerId: replacement.body.offerId, expiresAt: replacement.body.expiresAt }]);
 });
 
-test('discovery excludes invitations expiring during probes and fails closed on an uncertain online result', async () => {
+test('completed discovery cache is invalidated when an invitation is replaced', async () => {
+  const request = client(), space = await createSpace(request);
+  await authenticateSocket(space);
+  const room = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  assert.equal((await request.raw('/v1/pair/offers')).body.offers[0].offerId, space.pairing.offerId);
+  const probes = await room.testOnlineProbes();
+  assert.equal((await request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'DELETE', token: space.token })).status, 200);
+  const replacement = await request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token });
+  assert.equal((await request.raw('/v1/pair/offers')).body.offers[0].offerId, replacement.body.offerId);
+  assert.equal(await room.testOnlineProbes(), probes + 1);
+});
+
+test('discovery retains uncertain candidates for PAKE and excludes invitations expiring during probes', async () => {
   const request = client(), space = await createSpace(request);
   await authenticateSocket(space);
   const room = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
   await room.testFailOnlineProbe();
   const failed = await request.raw('/v1/pair/offers');
-  assert.equal(failed.status, 500);
+  assert.equal(failed.status, 200);
+  assert.equal(failed.body.offers[0].offerId, space.pairing.offerId, 'An uncertain candidate cannot be skipped when checking duplicate codes');
   assert.equal((await request.raw('/v1/pair/offers')).body.offers.length, 1, 'A failed probe must not poison subsequent discovery');
+  assert.equal(await room.testOnlineProbes(), 2, 'Uncertain discovery results are not cached');
+  const registry = (await runtime.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  await registry.testExpireDiscoveryCache();
   await room.testHoldOnlineProbe();
   const pending = request.raw('/v1/pair/offers');
   await room.testWaitOnlineProbes(3);
@@ -997,6 +1026,53 @@ test('discovery excludes invitations expiring during probes and fails closed on 
   await storage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
   await room.testReleaseOnlineProbe();
   assert.deepEqual((await pending).body.offers, []);
+});
+
+test('an unrelated room cannot fail or indefinitely delay discovery and durable pairing delivery', { timeout: 15000 }, async () => {
+  const request = client(), active = await createSpace(request), other = await createSpace();
+  const host = await authenticateSocket(active);
+  const otherHost = await authenticateSocket(other);
+  const room = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(other.roomId);
+  const activeRoom = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(active.roomId);
+  const expected = [active.pairing.offerId, other.pairing.offerId].sort();
+  await room.testHoldOnlineProbe();
+  try {
+    const discovered = await request.raw('/v1/pair/offers');
+    assert.equal(discovered.status, 200);
+    assert.deepEqual(discovered.body.offers.map(offer => offer.offerId).sort(), expected, 'A timed-out candidate remains required for the client ambiguity check');
+  } finally { await room.testReleaseOnlineProbe(); }
+
+  for (const delayed of [false, true]) {
+    const activeDeliveries = await activeRoom.testPairingDeliveries(), otherDeliveries = await room.testPairingDeliveries();
+    if (delayed) await room.testHoldPairingDelivery();
+    else await room.testFailPairingDelivery();
+    const requestId = randomUUID(), requestToken = 'c'.repeat(64);
+    const requests = await Promise.all(expected.map(async offerId => ({ offerId, startLoginRequest: (await cryptoClient.startPairingClient(active.code, offerId)).startLoginRequest })));
+    const received = [host, otherHost].map(value => new Promise(resolve => {
+      const handler = event => {
+        const frame = JSON.parse(event.data);
+        if (frame.type !== 'pair-request' || frame.requestId !== requestId) return;
+        value.socket.removeEventListener('message', handler);
+        resolve(frame);
+      };
+      value.socket.addEventListener('message', handler);
+    }));
+    try {
+      const started = await request.raw('/v1/pair', { method: 'POST', json: { requestId, requestToken, requests } });
+      assert.equal(started.status, 202, 'Failure to notify one host cannot discard the durable pairing request');
+      assert.equal((await received[0]).offerId, active.pairing.offerId);
+      if (!delayed) assert.equal((await received[1]).offerId, other.pairing.offerId, 'A transient notification failure recovers without the host reconnecting');
+      assert.equal(await activeRoom.testPairingDeliveries(), activeDeliveries + 1, 'A successful candidate is not notified twice');
+      assert.equal(await room.testPairingDeliveries(), otherDeliveries + 2, 'Only the failed or timed-out candidate receives one bounded retry');
+      const pending = await request.raw(`/v1/spaces/${other.roomId}/pair-requests`, { token: other.token });
+      assert.ok(pending.body.requests.some(frame => frame.requestId === requestId), 'The other host can recover its request by polling');
+      const stored = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+      assert.deepEqual((await stored.exec('SELECT offer_id FROM pair_candidates WHERE request_id = ? ORDER BY offer_id', requestId)).map(row => row.offer_id), expected);
+    } finally {
+      if (delayed) await room.testReleasePairingDelivery();
+      await request.raw(`/v1/pair/${requestId}`, { method: 'DELETE', token: requestToken });
+    }
+  }
 });
 
 test('leaving thirty invitation spaces releases every slot immediately for a new space', async () => {

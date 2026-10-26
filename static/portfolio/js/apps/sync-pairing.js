@@ -322,14 +322,17 @@ export class EncryptedPairing {
             await useAttempts('join', state.requestId);
             for (const offer of offers) {
                 signal.throwIfAborted();
-                const result = await startPairingClient(code, offer.offerId);
+                const result = await startPairingClient(code, offer.offerId, signal);
                 state.states[offer.offerId] = result.clientState;
                 state.requests.push({ offerId: offer.offerId, startLoginRequest: result.startLoginRequest });
                 await pause(signal, 0);
             }
             sessionStorage.setItem(RECOVERY_KEY, state.id);
             await this.storeRecovery(state);
-            return await navigator.locks.request(`gavin-sync-pair-recovery:${state.id}`, () => this.continueJoin(state, controller, signal));
+            return await navigator.locks.request(`gavin-sync-pair-recovery:${state.id}`, { signal }, () => this.continueJoin(state, controller, signal));
+        } catch (error) {
+            if (error.name === 'TimeoutError' && error.code !== 'network_error') throw failure('pairing_timeout');
+            throw error;
         } finally {
             if (this.joinController === controller) this.joinController = null;
         }
@@ -354,7 +357,7 @@ export class EncryptedPairing {
                         if (!state.states[response.offerId] || tried.has(response.offerId)) continue;
                         signal.throwIfAborted();
                         tried.add(response.offerId);
-                        try { matches.set(response.offerId, await finishPairingClient(state.states[response.offerId], response.offerId, state.requestId, response.loginResponse)); }
+                        try { matches.set(response.offerId, await finishPairingClient(state.states[response.offerId], response.offerId, state.requestId, response.loginResponse, signal)); }
                         catch (error) { if (error.code !== 'invalid_code') throw error; }
                         if (matches.size > 1) throw failure('pairing_ambiguous');
                         await pause(signal, 0);
@@ -393,6 +396,7 @@ export class EncryptedPairing {
                 }
             } catch { /* The encrypted request remains recoverable while offline. */ }
             if (cancelled()) throw new DOMException('Cancelled', 'AbortError');
+            if (error.name === 'TimeoutError' && error.code !== 'network_error') throw failure('pairing_timeout');
             throw error;
         } finally {
             if (this.joinController === controller) this.joinController = null;

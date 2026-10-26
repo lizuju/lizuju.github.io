@@ -19,6 +19,8 @@ const ACTIVITY_WRITE_INTERVAL = 60 * 60 * 1000;
 const DEVICE_ACTIVITY_WRITE_INTERVAL = 60 * 1000;
 const PAIR_CANDIDATE_LIMIT = 30;
 const PAIR_REQUEST_LIMIT = 100;
+const PAIR_RPC_TIMEOUT = 2000;
+const PAIR_DISCOVERY_CACHE_LIFETIME = 2000;
 const ROOM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function json(data, status = 200, headers = {}) {
@@ -58,6 +60,16 @@ function relayValue(value) {
 
 function credential() {
   return Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function pairingResult(operation) {
+  let timer;
+  try {
+    return await Promise.race([
+      operation.then(value => ({ ok: true, value }), () => ({ ok: false })),
+      new Promise(resolve => { timer = setTimeout(() => resolve({ ok: false }), PAIR_RPC_TIMEOUT); })
+    ]);
+  } finally { clearTimeout(timer); }
 }
 
 async function readBytes(request, maximum) {
@@ -727,12 +739,18 @@ export class E2eePairingRegistry extends DurableObject {
     this.prunePairings();
     const offers = this.sql.exec('SELECT offer_id AS offerId, room_id AS roomId, owner_device_id AS ownerDeviceId, expires_at AS expiresAt FROM offers ORDER BY expires_at, offer_id LIMIT ?', PAIR_CANDIDATE_LIMIT).toArray();
     const snapshot = JSON.stringify(offers);
+    if (this.discoveryCache?.snapshot === snapshot && this.discoveryCache.expiresAt > now) return this.discoveryCache.result;
     if (this.discoveryRefresh?.snapshot === snapshot) return this.discoveryRefresh.promise;
     const refresh = { snapshot };
     refresh.promise = (async () => {
-      const online = await Promise.all(offers.map(offer => this.env.E2EE_SYNC_ROOMS.getByName(offer.roomId).deviceOnline(offer.ownerDeviceId)));
+      const online = await Promise.all(offers.map(offer => pairingResult(this.env.E2EE_SYNC_ROOMS.getByName(offer.roomId).deviceOnline(offer.ownerDeviceId))));
       const current = new Set(this.sql.exec('SELECT offer_id AS offerId, room_id AS roomId, owner_device_id AS ownerDeviceId, expires_at AS expiresAt FROM offers WHERE expires_at > ?', Date.now()).toArray().map(offer => JSON.stringify(offer)));
-      return { offers: offers.filter((offer, index) => online[index] && current.has(JSON.stringify(offer))).map(({ offerId, expiresAt }) => ({ offerId, expiresAt })) };
+      // Unknown candidates must still answer PAKE so duplicate codes cannot be mistaken for a unique match.
+      const result = { offers: offers.filter((offer, index) => (!online[index].ok || online[index].value) && current.has(JSON.stringify(offer))).map(({ offerId, expiresAt }) => ({ offerId, expiresAt })) };
+      if (this.discoveryRefresh === refresh && online.every(probe => probe.ok)) {
+        this.discoveryCache = { snapshot, result, expiresAt: Math.min(Date.now() + PAIR_DISCOVERY_CACHE_LIFETIME, ...offers.map(offer => offer.expiresAt)) };
+      }
+      return result;
     })().finally(() => { if (this.discoveryRefresh === refresh) this.discoveryRefresh = null; });
     this.discoveryRefresh = refresh;
     return refresh.promise;
@@ -749,7 +767,13 @@ export class E2eePairingRegistry extends DurableObject {
     });
   }
 
-  currentInvite(roomId) {
+  invalidateDiscovery() {
+    this.discoveryCache = null;
+    this.discoveryRefresh = null;
+  }
+
+  currentInvite(roomId, presenceChanged = false) {
+    if (presenceChanged) this.invalidateDiscovery();
     return this.sql.exec('SELECT offer_id AS offerId, owner_device_id AS ownerDeviceId, secret, expires_at AS expiresAt, expires_at AS revision FROM offers WHERE room_id = ? AND expires_at > ?', roomId, Date.now()).toArray()[0] || null;
   }
 
@@ -798,7 +822,11 @@ export class E2eePairingRegistry extends DurableObject {
       this.sql.exec('INSERT INTO pair_requests (request_id, token_hash, expires_at) VALUES (?, ?, ?)', requestId, tokenHash, Date.now() + INVITE_LIFETIME);
       for (const value of offers) this.sql.exec('INSERT INTO pair_candidates (request_id, offer_id, start_request, owner_device_id, source_id) VALUES (?, ?, ?, ?, ?)', requestId, value.offerId, value.startLoginRequest, value.offer.owner_device_id, value.sourceId);
     });
-    await Promise.all(offers.map(value => this.env.E2EE_SYNC_ROOMS.getByName(value.offer.room_id).publishToDevice(value.offer.owner_device_id, { type: 'pair-request', requestId, offerId: value.offerId, startLoginRequest: value.startLoginRequest, sourceId: value.sourceId })));
+    await Promise.all(offers.map(async value => {
+      const room = this.env.E2EE_SYNC_ROOMS.getByName(value.offer.room_id);
+      const frame = { type: 'pair-request', requestId, offerId: value.offerId, startLoginRequest: value.startLoginRequest, sourceId: value.sourceId };
+      if (!(await pairingResult(room.publishToDevice(value.offer.owner_device_id, frame))).ok) await pairingResult(room.publishToDevice(value.offer.owner_device_id, frame));
+    }));
     return { requestId };
   }
 
@@ -1547,7 +1575,7 @@ export class E2eeSyncRoom extends DurableObject {
   pairingSnapshot(roomId, receive) {
     // Send ready before a newer pairing broadcast can overtake its registry read.
     const work = this.pairingQueue.then(async () => {
-      const pairing = await this.env.E2EE_PAIRING_REGISTRY.getByName('registry').currentInvite(roomId);
+      const pairing = await this.env.E2EE_PAIRING_REGISTRY.getByName('registry').currentInvite(roomId, true);
       return receive(pairing?.expiresAt > Date.now() ? pairing : null);
     });
     this.pairingQueue = work.catch(() => {});
@@ -1773,14 +1801,20 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   async webSocketClose(socket) {
-    if (this.initialized && socket.deserializeAttachment()?.deviceId && !socket.deserializeAttachment()?.closing) this.touchDevice(socket.deserializeAttachment().deviceId);
+    if (this.initialized && socket.deserializeAttachment()?.deviceId && !socket.deserializeAttachment()?.closing) {
+      this.touchDevice(socket.deserializeAttachment().deviceId);
+      this.ctx.waitUntil(this.env.E2EE_PAIRING_REGISTRY.getByName('registry').invalidateDiscovery());
+    }
     socket.serializeAttachment({ closing: true });
     socket.close(1000, 'Connection closed');
     await this.scheduleAlarm();
   }
 
   async webSocketError(socket) {
-    if (this.initialized && socket.deserializeAttachment()?.deviceId && !socket.deserializeAttachment()?.closing) this.touchDevice(socket.deserializeAttachment().deviceId);
+    if (this.initialized && socket.deserializeAttachment()?.deviceId && !socket.deserializeAttachment()?.closing) {
+      this.touchDevice(socket.deserializeAttachment().deviceId);
+      this.ctx.waitUntil(this.env.E2EE_PAIRING_REGISTRY.getByName('registry').invalidateDiscovery());
+    }
     socket.serializeAttachment({ closing: true });
     socket.close(1011, 'Connection error');
     await this.scheduleAlarm();

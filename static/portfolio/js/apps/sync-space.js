@@ -62,6 +62,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
         let online = false;
         let busy = false;
         let sending = false;
+        let sendingText = false;
         let active = false;
         let followOnRestore = true;
         let followLatest = true;
@@ -270,7 +271,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             find('devices').disabled = busy || sending || !online;
             find('clear').disabled = busy || sending || !online || !history.length;
             find('leave').disabled = busy || sending;
-            find('send').disabled = busy || sending || recording() || !online || (!selectedFile && (pendingUpload || !input.value.trim()));
+            find('send').disabled = busy || sendingText || recording() || !online || (!(selectedFile && !uploadController) && !input.value.trim());
             find('attach').disabled = busy || sending || recording() || !online;
             find('file-input').disabled = busy || sending || recording() || !online;
             find('voice-record').disabled = busy || sending || recording() || !online || !!selectedFile || !!pendingUpload;
@@ -278,7 +279,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             find('voice-stop').disabled = recorder.state !== 'recording';
             setText(find('voice-status'), recorder.state === 'starting' ? 'syncVoiceStarting' : 'syncVoiceRecording');
             find('remove-file').disabled = busy || sending;
-            find('cancel-upload').hidden = !sending || !pendingUpload;
+            find('cancel-upload').hidden = !uploadController || !pendingUpload;
             find('cancel-upload').disabled = busy || !uploadController || pendingUpload?.completing || uploadController.signal.aborted;
             find('copy-code').disabled = secondsLeft(pairExpiresAt) === 0;
             find('history-more').hidden = !historyState || !history.length || history[0].id <= historyState.oldestId;
@@ -289,7 +290,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             });
             for (const message of outbox.values()) {
                 const retry = messageNodes.get(message.id)?.querySelector('[data-sync-retry-message]');
-                if (retry) retry.disabled = busy || sending || !online || (!!message.attachment && !(pendingUpload?.clientId === message.clientId && pendingUpload.file instanceof File));
+                if (retry) retry.disabled = busy || !online || (message.attachment ? !!uploadController || !(pendingUpload?.clientId === message.clientId && pendingUpload.file instanceof File) : sendingText);
             }
         };
         const updateCountdowns = () => {
@@ -337,13 +338,14 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 upload_conflict: 'syncUploadConflict',
                 invalid_ciphertext: 'syncDecryptFailed', key_unavailable: 'syncKeyUnavailable', key_changed: 'syncKeyChanged', rekey_required: 'syncKeyChanged',
                 pairing_limited: 'syncPairLimited', pairing_ambiguous: 'syncPairAmbiguous', pairing_busy: 'syncPairBusy', pairing_timeout: 'syncPairTimeout',
-                encryption_unavailable: 'syncEncryptionUnavailable'
+                encryption_unavailable: 'syncEncryptionUnavailable',
+                network_error: 'syncNetworkError', encryption_load_failed: 'syncEncryptionLoadFailed'
             };
             if (['rate_limited', 'pairing_limited'].includes(error.code) && action && error.retryAfter > 0) {
                 cooldowns[action] = Date.now() + error.retryAfter * 1000;
                 startCountdowns();
             }
-            setNotice(keys[error.code] || 'syncError', true);
+            setNotice(keys[error.code] || (error.name === 'TimeoutError' ? 'syncNetworkError' : 'syncError'), true);
         };
         const decodeMessage = async (message, session) => {
             try {
@@ -375,7 +377,12 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 signal.throwIfAborted();
                 const xhr = new XMLHttpRequest();
                 const cleanup = () => signal.removeEventListener('abort', abort);
-                const abort = () => { xhr.abort(); cleanup(); reject(signal.reason); };
+                const abort = () => {
+                    xhr.abort();
+                    cleanup();
+                    reject(signal.reason.name === 'TimeoutError'
+                        ? Object.assign(new Error(signal.reason.message), { name: 'TimeoutError', code: 'network_error' }) : signal.reason);
+                };
                 xhr.open(options.method, base + path);
                 for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
                 xhr.upload.addEventListener('progress', (event) => options.uploadProgress(event.loaded));
@@ -383,10 +390,14 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     cleanup();
                     resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'Retry-After': xhr.getResponseHeader('Retry-After') || '' } }));
                 });
-                xhr.addEventListener('error', () => { cleanup(); reject(new TypeError('Upload network request failed')); });
+                xhr.addEventListener('error', () => { cleanup(); reject(Object.assign(new TypeError('Upload network request failed'), { code: 'network_error' })); });
                 signal.addEventListener('abort', abort, { once: true });
                 xhr.send(options.body);
-            }) : await fetch(base + path, { ...options, headers, signal });
+            }) : await fetch(base + path, { ...options, headers, signal }).catch(error => {
+                if (error instanceof TypeError) error.code = 'network_error';
+                else if (error.name === 'TimeoutError') throw Object.assign(new Error(error.message), { name: 'TimeoutError', code: 'network_error' });
+                throw error;
+            });
             const result = await response.json().catch(error => {
                 if (response.ok) throw error;
                 return { error: 'unavailable' };
@@ -484,7 +495,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             find('file-name').textContent = file && voice ? `${translate('syncVoiceMessage')} · ${voiceTime(voice.durationMs)}` : file?.name || '';
             find('file-size').textContent = file ? formatSize(file.size) : '';
             const preview = find('voice-preview');
-            if (voice && file instanceof File && !sending) {
+            if (voice && file instanceof File && !uploadController) {
                 if (voicePreviewFile !== file) {
                     releaseVoicePreview();
                     voicePreviewFile = file;
@@ -493,8 +504,8 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 }
                 preview.hidden = false;
             } else if (voicePreviewUrl) releaseVoicePreview();
-            find('upload-status').hidden = !sending || !pendingUpload;
-            if (sending && pendingUpload) {
+            find('upload-status').hidden = !uploadController || !pendingUpload;
+            if (uploadController && pendingUpload) {
                 const wireBytes = (pendingUpload.receivedBytes || 0) + (pendingUpload.inflightBytes || 0);
                 const transferred = Math.min(pendingUpload.file.size, Math.floor(wireBytes / FILE_CIPHER_CHUNK_SIZE) * FILE_PLAIN_CHUNK_SIZE + Math.min(wireBytes % FILE_CIPHER_CHUNK_SIZE, FILE_PLAIN_CHUNK_SIZE));
                 const percent = pendingUpload.file.size ? Math.floor(transferred / pendingUpload.file.size * 100) : 100;
@@ -509,7 +520,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 find('upload-status').textContent = text;
                 find('upload-progress').value = percent;
             }
-            find('upload-progress').hidden = !sending || !pendingUpload;
+            find('upload-progress').hidden = !uploadController || !pendingUpload;
             updateControls();
         };
         const disposeAttachment = (id) => {
@@ -887,6 +898,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                             name: message.attachment.name,
                             viewport: feed,
                             retryLabel: () => translate('syncImageRetry'),
+                            previewLabel: () => translate('syncPreview'),
                             resource,
                             onPreview: () => previewAttachment(message, item.querySelector('[data-sync-preview-file]')),
                             onLoad: () => { if (followLatest) scrollToLatest(); }
@@ -1353,6 +1365,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             app.classList.remove('is-dragging-files');
             busy = false;
             sending = false;
+            sendingText = false;
             leavingSession = null;
             followOnRestore = true;
             followLatest = true;
@@ -1667,7 +1680,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                             ...options, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(timeout)])
                         }, session);
                     } catch (error) {
-                        if (controller.signal.aborted || credentials !== session || attempt === 2 || (error.code && !['storage_cleaning', 'rate_limited'].includes(error.code))) throw error;
+                        if (controller.signal.aborted || credentials !== session || attempt === 2 || (error.code && !['storage_cleaning', 'rate_limited', 'network_error'].includes(error.code))) throw error;
                         upload.inflightBytes = 0;
                         const stage = upload.stage;
                         upload.retryAt = Date.now() + Math.max(error.retryAfter || 0, 2 ** attempt) * 1000;
@@ -1861,7 +1874,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             updateSelectedFile();
         });
         find('cancel-upload').addEventListener('click', async () => {
-            if (busy || !sending || !pendingUpload || !uploadController) return;
+            if (busy || !pendingUpload || !uploadController) return;
             const session = credentials;
             const uploadId = pendingUpload.uploadId;
             busy = true;
@@ -1883,7 +1896,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             finally { if (credentials === session) { busy = false; updateSelectedFile(); } }
         });
         const sendOutgoing = async (outgoing) => {
-            if (busy || sending || !online || !outbox.has(outgoing.clientId)) return;
+            if (busy || !online || !outbox.has(outgoing.clientId) || (outgoing.attachment ? !!uploadController : sendingText)) return;
             const session = credentials;
             const upload = outgoing.attachment ? pendingUpload : null;
             if (outgoing.attachment && (upload?.clientId !== outgoing.clientId || !(upload.file instanceof File))) return;
@@ -1891,7 +1904,8 @@ import { createVoicePlayer } from './sync-voice-player.js';
             outgoing.sendState = 'sending';
             sending = true;
             const controller = upload ? new AbortController() : null;
-            uploadController = controller;
+            if (upload) uploadController = controller;
+            else sendingText = true;
             saveDraft();
             render(true);
             updateSelectedFile();
@@ -1932,13 +1946,19 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     else showError(error);
                 }
             } finally {
-                if (credentials === session && uploadController === controller) { sending = false; uploadController = null; render(); updateSelectedFile(); }
+                if (credentials === session && (!upload || uploadController === controller)) {
+                    if (upload) uploadController = null;
+                    else sendingText = false;
+                    sending = sendingText || !!uploadController;
+                    render();
+                    updateSelectedFile();
+                }
             }
         };
         find('send-form').addEventListener('submit', (event) => {
             event.preventDefault();
-            if (busy || sending || recording() || !online || (!selectedFile && (pendingUpload || !input.value.trim())) || !find('send-form').reportValidity()) return;
-            const file = selectedFile;
+            const file = uploadController ? null : selectedFile;
+            if (busy || sendingText || recording() || !online || (!file && !input.value.trim()) || !find('send-form').reportValidity()) return;
             const resuming = file && pendingUpload?.file === file;
             const text = resuming ? pendingUpload.text : input.value;
             const reply = resuming ? pendingUpload.reply : selectedReply;

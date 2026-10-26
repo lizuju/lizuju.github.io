@@ -1,6 +1,7 @@
 const { test, expect } = require('@playwright/test');
 const { readFileSync } = require('node:fs');
 const source = readFileSync(require.resolve('../static/portfolio/js/apps/sync-image-resource.js'));
+const heic = readFileSync(require.resolve('./fixtures/heic-gradient.heic'));
 
 test.beforeEach(async ({ page }) => {
     await page.route('http://image-resource.test/**', route => route.fulfill(route.request().url().endsWith('/resource.js')
@@ -146,6 +147,75 @@ test('allows high-resolution pictures while immediately releasing their oversize
         resource.dispose();
         return { retainedWhileActive, retainedAfterRelease };
     })).toEqual({ retainedWhileActive: 1, retainedAfterRelease: 0 });
+});
+
+test('defers oversized or unknown images before decoding while still allowing an explicit preview', async ({ page }) => {
+    expect(await page.evaluate(async () => {
+        let decodes = 0;
+        window.Image = class {
+            decode() { decodes++; return Promise.resolve(); }
+            removeAttribute() {}
+        };
+        const oversized = new Uint8Array(33);
+        oversized.set([137, 80, 78, 71, 13, 10, 26, 10]);
+        const view = new DataView(oversized.buffer);
+        view.setUint32(16, 8192);
+        view.setUint32(20, 8192);
+        const results = [];
+        for (const bytes of [oversized, new Uint8Array(16)]) {
+            window.fetch = async () => new Response(new Blob([bytes]));
+            const resource = window.createImageResource({ kind: 'heic', load: async () => ({ url: '/photo' }) });
+            const createdBefore = window.created.length;
+            const decodesBefore = decodes;
+            const automatic = await resource.acquire({ automatic: true }).then(() => 'loaded', error => error.code);
+            const autoCreated = window.created.length - createdBefore;
+            const autoDecodes = decodes - decodesBefore;
+            const manual = await resource.acquire();
+            results.push({ automatic, autoCreated, autoDecodes, manual: manual.url.startsWith('blob:') });
+            manual.release();
+            resource.dispose();
+        }
+        return { results, decodes };
+    })).toEqual({
+        results: Array.from({ length: 2 }, () => ({ automatic: 'image_preview_deferred', autoCreated: 0, autoDecodes: 0, manual: true })),
+        decodes: 2
+    });
+});
+
+test('keeps a simultaneous manual preview alive when its oversized automatic preview is deferred', async ({ page }) => {
+    expect(await page.evaluate(async () => {
+        const bytes = new Uint8Array(33);
+        bytes.set([137, 80, 78, 71, 13, 10, 26, 10]);
+        const view = new DataView(bytes.buffer);
+        view.setUint32(16, 8192);
+        view.setUint32(20, 8192);
+        let loads = 0;
+        let decodes = 0;
+        window.Image = class { decode() { decodes++; return Promise.resolve(); } removeAttribute() {} };
+        window.fetch = async () => new Response(new Blob([bytes]));
+        const resource = window.createImageResource({ kind: 'heic', load: async () => { loads++; return { url: '/photo' }; } });
+        const automatic = resource.acquire({ automatic: true }).then(() => 'loaded', error => error.code);
+        const manual = await resource.acquire();
+        const failure = await automatic;
+        const alive = (await window.nativeFetch(manual.url)).ok;
+        manual.release();
+        resource.dispose();
+        return { loads, decodes, failure, alive, remaining: window.created.length - window.revoked.length };
+    })).toEqual({ loads: 1, decodes: 1, failure: 'image_preview_deferred', alive: true, remaining: 0 });
+});
+
+test('permits ordinary HEIC dimensions through the automatic gate', async ({ page }) => {
+    expect(await page.evaluate(async bytes => {
+        let decodes = 0;
+        window.Image = class { decode() { decodes++; return Promise.resolve(); } removeAttribute() {} };
+        window.fetch = async () => new Response(new Blob([Uint8Array.from(bytes)], { type: 'image/heic' }));
+        const resource = window.createImageResource({ kind: 'heic', load: async () => ({ url: '/photo' }) });
+        const lease = await resource.acquire({ automatic: true });
+        const url = lease.url;
+        lease.release();
+        resource.dispose();
+        return { decodes, created: window.created.length, revoked: window.revoked.includes(url) };
+    }, Array.from(heic))).toEqual({ decodes: 1, created: 1, revoked: true });
 });
 
 test('handles truncated format headers without reading outside their bytes', async ({ page }) => {

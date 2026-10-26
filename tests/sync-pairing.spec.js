@@ -17,6 +17,78 @@ test.beforeEach(async ({ page }) => {
     await page.goto('/__sync-pairing-test__/');
 });
 
+test('bounds a stalled encryption module by the join deadline without submitting a request', async ({ page }) => {
+    await page.route('**/__sync-pairing-test__/opaque.js', route => route.fulfill({
+        contentType: 'text/javascript', body: 'export const ready = new Promise(() => {});'
+    }));
+    const result = await page.evaluate(async () => {
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const timeout = AbortSignal.timeout.bind(AbortSignal);
+        AbortSignal.timeout = delay => timeout(delay === 30000 ? 200 : delay);
+        const requests = [];
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async path => {
+            requests.push(path);
+            return { offers: [{ offerId: crypto.randomUUID(), expiresAt: Date.now() + 600000 }] };
+        } });
+        const started = performance.now();
+        try { await pairing.join('1234'); return { code: 'unexpected_success' }; }
+        catch (error) {
+            return { code: error.code, elapsed: performance.now() - started, requests,
+                recovery: pairing.hasPendingJoin(), busy: Boolean(pairing.joinController) };
+        } finally { AbortSignal.timeout = timeout; }
+    });
+    expect(result.code).toBe('pairing_timeout');
+    expect(result.elapsed).toBeLessThan(2000);
+    expect(result.requests).toEqual(['/v1/pair/offers']);
+    expect(result.recovery).toBe(false);
+    expect(result.busy).toBe(false);
+});
+
+test('reports encryption loading failure separately from invalid pairing codes', async ({ page }) => {
+    await page.route('**/__sync-pairing-test__/opaque.js', route => route.abort());
+    const result = await page.evaluate(async () => {
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const requests = [];
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async path => {
+            requests.push(path);
+            return { offers: [{ offerId: crypto.randomUUID(), expiresAt: Date.now() + 600000 }] };
+        } });
+        try { await pairing.join('1234'); return { code: 'unexpected_success' }; }
+        catch (error) { return { code: error.code, requests, busy: Boolean(pairing.joinController) }; }
+    });
+    expect(result).toEqual({ code: 'encryption_load_failed', requests: ['/v1/pair/offers'], busy: false });
+});
+
+test('keeps service timeouts distinct from a missing host response', async ({ page }) => {
+    const code = await page.evaluate(async () => {
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async () => {
+            throw Object.assign(new Error('Request timed out'), { name: 'TimeoutError', code: 'network_error' });
+        } });
+        try { await pairing.join('1234'); }
+        catch (error) { return error.code; }
+    });
+    expect(code).toBe('network_error');
+});
+
+test('cancels a join while encryption loads without waiting for that module', async ({ page }) => {
+    await page.route('**/__sync-pairing-test__/opaque.js', route => route.fulfill({
+        contentType: 'text/javascript', body: 'export const ready = new Promise(() => {});'
+    }));
+    const result = await page.evaluate(async () => {
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const requests = [];
+        const pairing = new EncryptedPairing({ getSession: () => null, api: async path => {
+            requests.push(path);
+            setTimeout(() => pairing.reset(), 100);
+            return { offers: [{ offerId: crypto.randomUUID(), expiresAt: Date.now() + 600000 }] };
+        } });
+        try { await pairing.join('1234'); return { name: 'unexpected_success' }; }
+        catch (error) { return { name: error.name, requests, recovery: pairing.hasPendingJoin() }; }
+    });
+    expect(result).toEqual({ name: 'AbortError', requests: ['/v1/pair/offers'], recovery: false });
+});
+
 test('refuses old-epoch offers and never reuses a cached offer after key rotation', async ({ page }) => {
     const result = await page.evaluate(async () => {
         const c = await import('/__sync-pairing-test__/crypto.js');

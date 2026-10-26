@@ -1695,7 +1695,12 @@ button.sync-attachment-info:focus-visible {
 }
 
 @media (max-width: 560px) {
-    .sync-message-reply-action,
+    .sync-message-copy,
+    .sync-message-reply-action {
+        min-height: 32px;
+        min-width: 44px;
+    }
+
     .sync-reply-cancel {
         min-height: 32px;
         min-width: 32px;

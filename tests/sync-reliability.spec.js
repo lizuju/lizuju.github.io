@@ -24,6 +24,65 @@ const routeDefault = (route) => {
     return route.fulfill({ headers, json: { deviceId, devices: [], grants: [], hasMore: false, keyId } });
 };
 
+for (const failure of ['TypeError', 'TimeoutError']) {
+    test(`shows a network diagnosis when joining fails with ${failure}`, async ({ page, isMobile }) => {
+        test.skip(isMobile, 'the sync application is a desktop window');
+        await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
+        await page.addInitScript(failure => {
+            const fetch = window.fetch;
+            window.fetch = (url, options) => {
+                if (String(url).endsWith('/v1/pair/offers')) {
+                    return Promise.reject(failure === 'TypeError' ? new TypeError('Failed to fetch') : new DOMException('Request timed out', 'TimeoutError'));
+                }
+                return fetch(url, options);
+            };
+        }, failure);
+        await page.goto('/portfolio/');
+        await page.locator('[data-window-action="minimize"]').click();
+        await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+        await page.locator('[data-sync-code]').fill('1234');
+        await page.locator('[data-sync-join]').click();
+        await expect(page.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncNetworkError');
+        await expect(page.locator('[data-sync-join]')).toBeEnabled();
+        await expect(page.locator('[data-sync-code]')).toHaveValue('1234');
+    });
+}
+
+for (const failure of ['network', 'timeout']) test(`retries upload ${failure} failures and reports a network error after exhaustion`, async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the sync application is a desktop window');
+    await prepare(page);
+    if (failure === 'timeout') await page.addInitScript(() => {
+        const timeout = AbortSignal.timeout.bind(AbortSignal);
+        AbortSignal.timeout = delay => timeout(delay === 300000 ? 100 : delay);
+    });
+    let chunks = 0;
+    await page.route('https://sync.test/**', async route => {
+        if (route.request().method() === 'OPTIONS') return routeDefault(route);
+        const path = new URL(route.request().url()).pathname;
+        if (path.endsWith('/uploads')) return route.fulfill({ headers, json: { uploadId: 'network-upload', receivedBytes: 0, chunkSize: 8 * 1024 * 1024 } });
+        if (path.includes('/chunks/')) {
+            chunks++;
+            if (failure === 'timeout') await new Promise(resolve => setTimeout(resolve, 250));
+            return route.abort('failed');
+        }
+        return routeDefault(route);
+    });
+    await page.routeWebSocket('wss://sync.test/**', socket => socket.onMessage(data => {
+        if (data === 'ping') return socket.send('pong');
+        if (JSON.parse(data).type !== 'auth') return;
+        socket.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null, history: bounds(null), historyMode: 'replace' }));
+    }));
+    await open(page);
+    await page.locator('[data-sync-file-input]').setInputFiles({ name: 'network.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(1024) });
+    await page.locator('[data-sync-send]').click();
+    await page.locator('[data-sync-input]').fill('Keep the next draft');
+    await expect(page.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncNetworkError', { timeout: 10000 });
+    expect(chunks).toBe(3);
+    await expect(page.locator('.sync-message[data-state="failed"]')).toHaveCount(1);
+    await expect(page.locator('[data-sync-retry-message]')).toBeEnabled();
+    await expect(page.locator('[data-sync-input]')).toHaveValue('Keep the next draft');
+});
+
 test('reconnects after a temporary key initialization failure without reopening the window', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
     await prepare(page);

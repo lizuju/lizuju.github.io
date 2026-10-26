@@ -5,7 +5,6 @@ const path = require('node:path');
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1kAAAAASUVORK5CYII=', 'base64');
 const gif = Buffer.from('R0lGODlhAQABAIAAAP8AAAAA/yH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAQABAAACAkQBACH5BAAKAAAALAAAAAABAAEAAAICTAEAOw==', 'base64');
-const jpeg = Buffer.from('/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjExLjEwMAD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABMAAEBAAAAAAAAAAAAAAAAAAAABwEBAQAAAAAAAAAAAAAAAAAABQcQAQAAAAAAAAAAAAAAAAAAAAARAQAAAAAAAAAAAAAAAAAAAAD/wAARCAACAAIDASIAAhEAAxEA/9oADAMBAAIRAxEAPwCOAL+Kf//Z', 'base64');
 const avif = Buffer.from('AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAAD5bWV0YQAAAAAAAAAvaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAFBpY3R1cmVIYW5kbGVyAAAAAA5waXRtAAAAAAABAAAAHmlsb2MAAAAARAAAAQABAAAAAQAAASEAAAAiAAAAKGlpbmYAAAAAAAEAAAAaaW5mZQIAAAAAAQAAYXYwMUNvbG9yAAAAAGppcHJwAAAAS2lwY28AAAAUaXNwZQAAAAAAAAAIAAAACAAAABBwaXhpAAAAAAMICAgAAAAMYXYxQ4EADAAAAAATY29scm5jbHgAAgACAAIAAAAAF2lwbWEAAAAAAAAAAQABBAECgwQAAAAqbWRhdAoJAAAAARfjV8gCMhUQAJeAEECCAAAQAPrtxigjB7SrLoA=', 'base64');
 let site;
 let server;
@@ -34,7 +33,8 @@ const openChat = async (page, mobile = false, iframe = false) => {
 };
 
 test.beforeEach(async ({ page }) => {
-    bytes = [Buffer.concat([gif, Buffer.alloc(1536 * 1024 - gif.length)]), png, jpeg,
+    bytes = [Buffer.concat([gif, Buffer.alloc(1536 * 1024 - gif.length)]), png,
+        await readFile(path.join(__dirname, '../static/portfolio/assets/project-vision.jpg')),
         await readFile(path.join(__dirname, '../static/portfolio/assets/project-vision-480.webp')), avif,
         await readFile(path.join(__dirname, 'fixtures/heic-gradient.heic')),
         await readFile(path.join(__dirname, '../static/portfolio/assets/li-zuju-resume.pdf')),

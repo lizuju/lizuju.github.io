@@ -8,7 +8,7 @@ const pump = () => {
     }
 };
 
-export function createInlineImage({ name, resource, onPreview, onLoad, onError, viewport, retryLabel }) {
+export function createInlineImage({ name, resource, onPreview, onLoad, onError, viewport, retryLabel, previewLabel }) {
     const element = document.createElement('button');
     element.type = 'button';
     element.className = 'sync-message-image';
@@ -29,14 +29,15 @@ export function createInlineImage({ name, resource, onPreview, onLoad, onError, 
     let visible = false;
     let running = false;
     let failed = false;
+    let deferred = false;
     let version = 0;
     let finishLoad;
     let observer;
     let disposed = false;
 
     const updateRetry = () => {
-        retry.textContent = retryLabel();
-        element.setAttribute('aria-label', failed ? `${name} · ${retry.textContent}` : name);
+        retry.textContent = deferred ? previewLabel() : retryLabel();
+        element.setAttribute('aria-label', failed || deferred ? `${name} · ${retry.textContent}` : name);
     };
     const releaseFull = () => {
         image.onload = null;
@@ -68,7 +69,7 @@ export function createInlineImage({ name, resource, onPreview, onLoad, onError, 
         onError?.(error);
     };
     const enqueue = () => {
-        if (!enabled || !visible || disposed || running || failed || lease || (poster && !animated)) return;
+        if (!enabled || !visible || disposed || running || failed || deferred || lease || (poster && !animated)) return;
         waiting.add(run);
         pump();
     };
@@ -79,7 +80,7 @@ export function createInlineImage({ name, resource, onPreview, onLoad, onError, 
         const request = ++version;
         controller = new AbortController();
         try {
-            const opened = await resource.acquire({ signal: controller.signal });
+            const opened = await resource.acquire({ signal: controller.signal, automatic: true });
             if (request !== version || !enabled || disposed) { opened.release(); return; }
             lease = opened;
             animated = opened.animated;
@@ -113,7 +114,15 @@ export function createInlineImage({ name, resource, onPreview, onLoad, onError, 
                 image.src = opened.url;
             });
         } catch (error) {
-            if (request === version && enabled && !disposed && error.name !== 'AbortError') fail(error);
+            if (request === version && enabled && !disposed && error.name !== 'AbortError') {
+                if (error.code === 'image_preview_deferred') {
+                    deferred = true;
+                    releaseFull();
+                    retry.hidden = false;
+                    element.dataset.state = 'deferred';
+                    updateRetry();
+                } else fail(error);
+            }
         } finally {
             running = false;
             loading--;
@@ -139,7 +148,7 @@ export function createInlineImage({ name, resource, onPreview, onLoad, onError, 
         releaseFull();
         image.hidden = true;
         image.removeAttribute('src');
-        if (!failed) element.dataset.state = 'loading';
+        if (!failed && !deferred) element.dataset.state = 'loading';
         if (poster) URL.revokeObjectURL(poster);
         poster = null;
     };

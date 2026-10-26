@@ -97,6 +97,13 @@ test('loads nearby encrypted GIFs with bounded concurrency, retries a failed GIF
     expect(gets.get(20)).toBe(4);
     await page.locator('[data-sync-feed]').evaluate(feed => feed.scrollBy({ top: -200, behavior: 'instant' }));
     await expect.poll(() => page.locator('[data-sync-feed]').evaluate(feed => feed.scrollHeight - feed.scrollTop - feed.clientHeight)).toBeGreaterThan(100);
+    await expect.poll(() => page.locator('[data-sync-feed]').evaluate(feed => {
+        const viewport = feed.getBoundingClientRect();
+        return [...feed.querySelectorAll('.sync-message-image')].filter(image => {
+            const bounds = image.getBoundingClientRect();
+            return bounds.bottom > viewport.top - 160 && bounds.top < viewport.bottom + 160;
+        }).every(image => image.dataset.state === 'loaded');
+    })).toBe(true);
     const position = await page.locator('[data-sync-feed]').evaluate(feed => {
         const top = feed.getBoundingClientRect().top;
         const rows = [...feed.querySelectorAll('.sync-message')];

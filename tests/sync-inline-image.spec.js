@@ -22,7 +22,7 @@ test.beforeEach(async ({ page }) => {
             target.style.minHeight = '260px';
             viewport.append(target);
             const resource = window.createImageResource({ name: options.name, load: options.load });
-            const inline = window.createInlineImage({ retryLabel: () => 'Retry send', ...options, resource, viewport, target });
+            const inline = window.createInlineImage({ retryLabel: () => 'Retry send', previewLabel: () => 'Preview', ...options, resource, viewport, target });
             target.append(inline.element);
             inline.element.style.width = '160px';
             const pause = inline.pause;
@@ -122,7 +122,7 @@ test('a failed image offers a localized retry and recovers without reopening the
         window.retryText = 'Retry send';
         window.inlineGif = window.mountGif({
             name: 'recover.gif', retryLabel: () => window.retryText,
-            load: async () => ({ url: ++window.openCount === 1 ? 'data:image/gif;base64,AA==' : url, dispose: () => window.closeCount++ }),
+            load: async () => ({ url: ++window.openCount === 1 ? 'data:image/gif;base64,R0lGODlhAQABAIAA' : url, dispose: () => window.closeCount++ }),
             onPreview: () => {}, onError: () => window.failedCount++
         });
     }, gif);
@@ -132,6 +132,33 @@ test('a failed image offers a localized retry and recovers without reopening the
     await page.getByRole('button', { name: 'recover.gif · 重试发送' }).click();
     await expect(page.getByRole('button', { name: 'recover.gif', exact: true }).locator('img')).toHaveJSProperty('naturalWidth', 1);
     expect(await page.evaluate(() => window.openCount)).toBe(2);
+});
+
+test('large pictures offer manual preview without assigning their source or repeatedly decoding on scroll', async ({ page }) => {
+    await page.evaluate(() => {
+        const bytes = new Uint8Array(33);
+        bytes.set([137, 80, 78, 71, 13, 10, 26, 10]);
+        new DataView(bytes.buffer).setUint32(16, 8192);
+        new DataView(bytes.buffer).setUint32(20, 8192);
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
+        window.previewCount = 0;
+        window.openCount = 0;
+        window.previewText = 'Preview';
+        window.largeImage = window.mountGif({
+            name: 'large-photo.png', previewLabel: () => window.previewText,
+            load: async () => { window.openCount++; return { url }; },
+            onPreview: () => window.previewCount++
+        });
+    });
+    const button = page.getByRole('button', { name: 'large-photo.png · Preview' });
+    await expect(button).toHaveAttribute('data-state', 'deferred');
+    await expect(button.locator('img')).not.toHaveAttribute('src');
+    await button.click();
+    expect(await page.evaluate(() => [window.openCount, window.previewCount])).toEqual([1, 1]);
+    await page.evaluate(() => { window.largeImage.pause(); window.previewText = '预览'; window.largeImage.start(); });
+    await expect(page.getByRole('button', { name: 'large-photo.png · 预览' })).toHaveAttribute('data-state', 'deferred');
+    expect(await page.evaluate(() => window.openCount)).toBe(1);
+    await page.evaluate(() => window.largeImage.dispose());
 });
 
 test('loads nearby images once, retains their source while scrolling, and releases them when paused', async ({ page }) => {

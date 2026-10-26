@@ -3,11 +3,19 @@ export const FILE_PLAIN_CHUNK_SIZE = FILE_CIPHER_CHUNK_SIZE - 16;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 let opaqueModule;
-const loadOpaque = () => {
+const loadOpaque = (signal) => {
+    signal?.throwIfAborted();
     opaqueModule ||= import(/* webpackChunkName: "sync-pake" */ '@serenity-kit/opaque')
         .then(async (module) => { await module.ready; return module; })
-        .catch((error) => { opaqueModule = null; throw error; });
-    return opaqueModule;
+        .catch(() => { opaqueModule = null; throw failure('encryption_load_failed'); });
+    return new Promise((resolve, reject) => {
+        const finish = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); };
+        const abort = () => { finish(); reject(signal.reason); };
+        const timer = setTimeout(() => { finish(); reject(failure('encryption_load_failed')); }, 30000);
+        signal?.addEventListener('abort', abort, { once: true });
+        opaqueModule.then(value => { finish(); resolve(value); }, error => { finish(); reject(error); });
+        if (signal?.aborted) abort();
+    });
 };
 const failure = (code) => Object.assign(new Error(code), { code });
 const randomBytes = (length) => crypto.getRandomValues(new Uint8Array(length));
@@ -107,9 +115,10 @@ export async function createPairingSecret(code, offerId) {
     return { code, serverSetup, registrationRecord, expiresAt: Date.now() + 10 * 60 * 1000 };
 }
 
-export async function startPairingClient(code, offerId) {
+export async function startPairingClient(code, offerId, signal) {
     if (typeof code !== 'string' || !/^\d{4}$/.test(code)) throw failure('invalid_code');
-    const opaque = await loadOpaque();
+    const opaque = await loadOpaque(signal);
+    signal?.throwIfAborted();
     const start = opaque.client.startLogin({ password: code });
     return { clientState: { state: start.clientLoginState, code, offerId }, startLoginRequest: start.startLoginRequest };
 }
@@ -123,9 +132,10 @@ export async function startPairingHost(secret, offerId, requestId, startLoginReq
     } catch { throw failure('invalid_code'); }
 }
 
-export async function finishPairingClient(clientState, offerId, requestId, loginResponse) {
+export async function finishPairingClient(clientState, offerId, requestId, loginResponse, signal) {
     if (clientState.offerId !== offerId) throw failure('invalid_code');
-    const opaque = await loadOpaque();
+    const opaque = await loadOpaque(signal);
+    signal?.throwIfAborted();
     try {
         const result = opaque.client.finishLogin({ clientLoginState: clientState.state, password: clientState.code, loginResponse, identifiers: pairingIdentifiers(offerId) });
         if (!result) throw failure('invalid_code');

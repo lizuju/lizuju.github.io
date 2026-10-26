@@ -31,7 +31,7 @@ const fixture = async (size = chunkSize + 97) => {
   for (let offset = 0; offset < size; offset += chunkSize) chunks.push(await encrypt(metadata, clear.subarray(offset, offset + chunkSize), chunks.length));
   return { metadata, clear, wire: Buffer.concat(chunks), url: apiUrl };
 };
-const worker = (descriptor, getBytes, Stream = ReadableStream) => {
+const worker = (descriptor, getBytes, Stream = ReadableStream, refresh) => {
   descriptor = { ...descriptor, expiresAt: descriptor.download ? Date.now() + 60000 : null };
   const handlers = new Map();
   const requests = [];
@@ -44,6 +44,7 @@ const worker = (descriptor, getBytes, Stream = ReadableStream) => {
       notifications.push(message);
       if (message.type === 'released') { alive = false; return; }
       if (message.type === 'download-state') { descriptor.expiresAt = message.expiresAt; return; }
+      if (message.type === 'refresh') { Promise.resolve(refresh()).then(url => ports[0].postMessage(url)); return; }
       assert.equal(message.type, 'resolve');
       resolutions++;
       ports[0].postMessage(alive && message.token === token ? descriptor : null);
@@ -55,7 +56,7 @@ const worker = (descriptor, getBytes, Stream = ReadableStream) => {
     URL, crypto: webcrypto, atob, TextEncoder, Response, Headers, ReadableStream: Stream, AbortController, MessageChannel, setTimeout, clearTimeout,
     async fetch(url, options) {
       if (String(url) === `${scope}sync-config.json`) return Response.json({ apiBase: 'https://sync.test' });
-      assert.equal(String(url), apiUrl);
+      assert.equal(new URL(url).origin, new URL(apiUrl).origin);
       assert.equal(options.credentials, 'omit');
       const range = /^bytes=(\d+)-(\d+)$/.exec(options.headers.Range);
       assert.ok(range);
@@ -64,7 +65,8 @@ const worker = (descriptor, getBytes, Stream = ReadableStream) => {
       requests.push([start, end]);
       assert.ok(end - start + 1 <= 8 * 1024 * 1024);
       const total = descriptor.metadata.size + Math.ceil(descriptor.metadata.size / chunkSize) * 16;
-      return new Response(await getBytes(start, end), { status: 206, headers: { 'Content-Range': `bytes ${start}-${end}/${total}` } });
+      const bytes = await getBytes(start, end, String(url));
+      return bytes instanceof Response ? bytes : new Response(bytes, { status: 206, headers: { 'Content-Range': `bytes ${start}-${end}/${total}` } });
     }
   });
   return {
@@ -111,6 +113,68 @@ test('encrypted file ranges authenticate full chunks before returning exact plai
   assert.deepEqual(Buffer.from(await suffix.arrayBuffer()), Buffer.from(file.clear.subarray(-19)));
   assert.equal(bridge.requests.length, 2);
   for (const range of ['bytes=-0', `bytes=${file.clear.length}-`, 'bytes=0-1,4-5']) assert.equal((await bridge.get({ range })).status, 416);
+});
+
+test('a failed ticket refresh can recover on a later range request', async () => {
+  const file = await fixture(100);
+  let refreshes = 0;
+  const freshUrl = apiUrl.replace('ticket', 'b'.repeat(64));
+  const bridge = worker(file, (start, end, url) => url === freshUrl
+    ? file.wire.subarray(start, end + 1) : new Response(null, { status: 401 }), ReadableStream,
+  () => ++refreshes === 1 ? null : freshUrl);
+  await bridge.open();
+  await assert.rejects((await bridge.get({ range: 'bytes=0-9' })).arrayBuffer(), /encrypted_file_unavailable/);
+  assert.deepEqual(Buffer.from(await (await bridge.get({ range: 'bytes=0-9' })).arrayBuffer()), Buffer.from(file.clear.subarray(0, 10)));
+  assert.equal(refreshes, 2);
+  bridge.close();
+});
+
+test('different chunks share an in-flight ticket refresh and allow the next expiry to refresh again', async () => {
+  const file = await fixture(chunkSize * 2 + 97);
+  let refreshes = 0;
+  let completeRefresh;
+  let acceptedUrl = '';
+  const bridge = worker(file, (start, end, url) => url === acceptedUrl
+    ? file.wire.subarray(start, end + 1) : new Response(null, { status: 401 }), ReadableStream,
+  () => { refreshes++; return new Promise(resolve => { completeRefresh = () => { acceptedUrl = apiUrl.replace('ticket', String(refreshes).repeat(64)); resolve(acceptedUrl); }; }); });
+  await bridge.open();
+  const ranges = ['bytes=0-9', `bytes=${chunkSize}-${chunkSize + 9}`];
+  const reading = ranges.map(async range => (await bridge.get({ range })).arrayBuffer());
+  while (!completeRefresh || bridge.requests.length < 2) await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(refreshes, 1);
+  completeRefresh();
+  const results = await Promise.all(reading);
+  assert.deepEqual(Buffer.from(results[0]), Buffer.from(file.clear.subarray(0, 10)));
+  assert.deepEqual(Buffer.from(results[1]), Buffer.from(file.clear.subarray(chunkSize, chunkSize + 10)));
+  assert.equal(refreshes, 1);
+  acceptedUrl = '';
+  completeRefresh = null;
+  const later = (await bridge.get({ range: `bytes=${chunkSize * 2}-` })).arrayBuffer();
+  while (!completeRefresh) await new Promise(resolve => setTimeout(resolve, 0));
+  completeRefresh();
+  assert.deepEqual(Buffer.from(await later), Buffer.from(file.clear.subarray(chunkSize * 2)));
+  assert.equal(refreshes, 2);
+  bridge.close();
+});
+
+test('a late rejection of an old ticket reuses the URL another chunk already refreshed', async () => {
+  const file = await fixture();
+  const freshUrl = apiUrl.replace('ticket', 'c'.repeat(64));
+  let refreshes = 0;
+  let rejectOldTicket;
+  const bridge = worker(file, (start, end, url) => {
+    if (url === freshUrl) return file.wire.subarray(start, end + 1);
+    if (start) return new Promise(resolve => { rejectOldTicket = () => resolve(new Response(null, { status: 401 })); });
+    return new Response(null, { status: 401 });
+  }, ReadableStream, () => { refreshes++; return freshUrl; });
+  await bridge.open();
+  const late = (await bridge.get({ range: `bytes=${chunkSize}-${chunkSize + 9}` })).arrayBuffer();
+  while (!rejectOldTicket) await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(Buffer.from(await (await bridge.get({ range: 'bytes=0-9' })).arrayBuffer()), Buffer.from(file.clear.subarray(0, 10)));
+  rejectOldTicket();
+  assert.deepEqual(Buffer.from(await late), Buffer.from(file.clear.subarray(chunkSize, chunkSize + 10)));
+  assert.equal(refreshes, 1);
+  bridge.close();
 });
 
 test('encrypted file stream rejects tampering, invalid origins and other browser clients', async () => {

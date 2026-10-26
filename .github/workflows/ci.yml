@@ -40,6 +40,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      playwright-version: ${{ steps.browser-version.outputs.version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -54,6 +56,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Read installed browser version
+        id: browser-version
+        run: node -p "'version=' + require('@playwright/test/package.json').version" >> "$GITHUB_OUTPUT"
 
       - name: Audit dependencies
         run: npm audit --audit-level=moderate
@@ -77,6 +83,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v${{ needs.build.outputs.playwright-version }}-noble
+      options: --ipc=host
     strategy:
       fail-fast: false
       matrix:
@@ -109,9 +118,6 @@ jobs:
           name: production-site
           path: docs/
 
-      - name: Install browser engine
-        run: npx playwright install --with-deps ${{ matrix.browser }}
-
       - name: Run browser regression suite
         run: npm run test:smoke -- --project=${{ matrix.project }} --shard=${{ matrix.shard }}
 
@@ -125,3 +131,31 @@ jobs:
             test-results
           if-no-files-found: ignore
           retention-days: 7
+
+  deploy:
+    name: Deploy verified site
+    needs: [build, sync-backend, browser-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download verified production site
+        uses: actions/download-artifact@v8
+        with:
+          name: production-site
+          path: docs/
+
+      - name: Prepare Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

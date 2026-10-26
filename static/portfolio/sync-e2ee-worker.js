@@ -117,7 +117,8 @@ const fetchChunk = async (entry, index, signal) => {
         };
         progress();
         try {
-            const response = await fetch(entry.url, {
+            const requestUrl = entry.url;
+            const response = await fetch(requestUrl, {
                 headers: { Range: `bytes=${start}-${end}` }, credentials: 'omit', cache: 'no-store', redirect: 'error', signal: request.signal
             });
             progress();
@@ -125,7 +126,7 @@ const fetchChunk = async (entry, index, signal) => {
                 await response.body?.cancel();
                 clearTimeout(idleTimer);
                 if ([401, 404].includes(response.status) && !refreshed) {
-                    if (!entry.refreshPromise) entry.refreshPromise = (async () => {
+                    if (entry.url === requestUrl && !entry.refreshPromise) entry.refreshPromise = (async () => {
                         const client = await self.clients.get(entry.owner);
                         if (!trustedClient(client)) throw new Error('encrypted_file_unavailable');
                         const url = await new Promise(resolve => {
@@ -141,7 +142,7 @@ const fetchChunk = async (entry, index, signal) => {
                             || next.pathname.slice(0, next.pathname.lastIndexOf('/') + 1) !== previous.pathname.slice(0, previous.pathname.lastIndexOf('/') + 1)
                             || !/^[0-9a-f]{64}$/.test(next.pathname.split('/').pop())) throw new Error('invalid_endpoint');
                         entry.url = next.href;
-                    })();
+                    })().finally(() => { entry.refreshPromise = null; });
                     await entry.refreshPromise;
                     signal.throwIfAborted();
                     refreshed = true;
