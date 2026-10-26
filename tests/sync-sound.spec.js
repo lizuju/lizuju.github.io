@@ -1,5 +1,7 @@
 const { test, expect, roomId, deviceId, otherId, keyId, message, authorize, allowSyncOrigin } = require('./fixtures/sync-e2ee.cjs');
 
+test.use({ serviceWorkers: 'block' });
+
 const preference = 'portfolio-sync-notification-sound';
 const headers = {
     'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id',

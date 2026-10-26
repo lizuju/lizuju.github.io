@@ -1,5 +1,7 @@
 const { test, expect, deviceId, otherId, keyId, message, authorize } = require('./fixtures/sync-e2ee.cjs');
 
+test.use({ serviceWorkers: 'block' });
+
 const headers = {
     'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'

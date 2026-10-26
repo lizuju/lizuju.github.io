@@ -28,7 +28,7 @@ const getApi = () => {
         }).catch(error => { configPromise = null; throw error; });
     return configPromise;
 };
-const prepare = async (descriptor, owner) => {
+const prepare = async (descriptor, owner, token) => {
     const api = await getApi();
     const url = new URL(descriptor.url);
     const basePath = api.pathname.replace(/\/$/, '');
@@ -42,7 +42,7 @@ const prepare = async (descriptor, owner) => {
     const key = await crypto.subtle.importKey('raw', bytes(metadata.key, 32), 'AES-GCM', false, ['decrypt']);
     const download = descriptor.download === true;
     if (download && descriptor.expiresAt && descriptor.expiresAt <= Date.now()) throw new Error('encrypted_file_unavailable');
-    return { owner, url: url.href, metadata, download, key, noncePrefix: bytes(metadata.noncePrefix, 8), controllers: new Set(), pendingChunks: new Map(), cachedChunks: new Map(), streamCount: 0, expiresAt: download ? descriptor.expiresAt : null, expiryTimer: null };
+    return { owner, token, url: url.href, metadata, download, key, noncePrefix: bytes(metadata.noncePrefix, 8), controllers: new Set(), pendingChunks: new Map(), cachedChunks: new Map(), streamCount: 0, expiresAt: download ? descriptor.expiresAt : null, expiryTimer: null };
 };
 const trustedClient = (client) => client?.type === 'window' && new URL(client.url).origin === self.location.origin
     && new URL(client.url).pathname.startsWith(new URL(self.registration.scope).pathname);
@@ -60,7 +60,7 @@ self.addEventListener('message', (event) => {
         entries.delete(token);
     } else if (type === 'open') event.waitUntil((async () => {
         try {
-            const entry = await prepare(descriptor, event.source.id);
+            const entry = await prepare(descriptor, event.source.id, token);
             if (revoked.has(`${event.source.id}:${token}`)) throw new Error('encrypted_file_unavailable');
             entries.set(token, entry);
             if (entry.download) expireDownload(entry, entry.owner, token, entry.expiresAt);
@@ -89,7 +89,7 @@ const resolve = async (owner, token) => {
             client.postMessage({ source: 'gavin-sync-e2ee', type: 'resolve', token }, [channel.port2]);
         });
         if (!descriptor || revoked.has(capability)) return null;
-        const recovered = await prepare(descriptor, owner);
+        const recovered = await prepare(descriptor, owner, token);
         if (revoked.has(capability)) return null;
         entries.set(token, recovered);
         return recovered;
@@ -102,6 +102,7 @@ const fetchChunk = async (entry, index, signal) => {
     const end = start + clearSize + 15;
     const total = entry.metadata.size + Math.ceil(entry.metadata.size / CLEAR_CHUNK) * 16;
     const encrypted = new Uint8Array(clearSize + 16);
+    let refreshed = false;
     for (let attempt = 0; ; attempt++) {
         signal.throwIfAborted();
         try {
@@ -110,6 +111,30 @@ const fetchChunk = async (entry, index, signal) => {
             });
             if (response.status !== 206 || !response.body) {
                 await response.body?.cancel();
+                if ([401, 404].includes(response.status) && !refreshed) {
+                    if (!entry.refreshPromise) entry.refreshPromise = (async () => {
+                        const client = await self.clients.get(entry.owner);
+                        if (!trustedClient(client)) throw new Error('encrypted_file_unavailable');
+                        const url = await new Promise(resolve => {
+                            const channel = new MessageChannel();
+                            const timer = setTimeout(() => { channel.port1.close(); resolve(null); }, 15000);
+                            channel.port1.onmessage = ({ data }) => { clearTimeout(timer); channel.port1.close(); resolve(data); };
+                            client.postMessage({ source: 'gavin-sync-e2ee', type: 'refresh', token: entry.token }, [channel.port2]);
+                        });
+                        if (typeof url !== 'string' || entries.get(entry.token) !== entry) throw new Error('encrypted_file_unavailable');
+                        const previous = new URL(entry.url);
+                        const next = new URL(url);
+                        if (next.origin !== previous.origin || next.username || next.password || next.search || next.hash
+                            || next.pathname.slice(0, next.pathname.lastIndexOf('/') + 1) !== previous.pathname.slice(0, previous.pathname.lastIndexOf('/') + 1)
+                            || !/^[0-9a-f]{64}$/.test(next.pathname.split('/').pop())) throw new Error('invalid_endpoint');
+                        entry.url = next.href;
+                    })();
+                    await entry.refreshPromise;
+                    signal.throwIfAborted();
+                    refreshed = true;
+                    attempt--;
+                    continue;
+                }
                 const retryAfter = response.headers.get('Retry-After');
                 const delay = retryAfter !== null && Number.isFinite(Number(retryAfter))
                     ? Number(retryAfter) * 1000 : Date.parse(retryAfter) - Date.now();

@@ -5,18 +5,22 @@ export function createVoicePlayer({ durationMs, load, canPlay, onStart, onError,
     element.className = 'sync-voice-message';
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'sync-button';
+    button.className = 'sync-button sync-voice-toggle';
     button.dataset.syncVoicePlay = '';
+    const progress = document.createElement('input');
+    progress.type = 'range';
+    progress.className = 'sync-voice-progress';
+    progress.min = '0';
+    progress.step = '0.1';
+    progress.value = '0';
+    progress.disabled = true;
     const duration = document.createElement('span');
     duration.className = 'sync-voice-duration';
-    const seconds = Math.ceil(durationMs / 1000);
-    duration.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
     const audio = document.createElement('audio');
-    audio.controls = true;
     audio.preload = 'auto';
     audio.setAttribute('playsinline', '');
     audio.hidden = true;
-    element.append(button, duration, audio);
+    element.append(button, progress, duration, audio);
     let capability = null;
     let controller = null;
     let objectUrl = null;
@@ -25,12 +29,25 @@ export function createVoicePlayer({ durationMs, load, canPlay, onStart, onError,
     let loading = false;
     let autoplay = false;
 
+    const formatTime = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+    const updateProgress = () => {
+        const total = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : durationMs / 1000;
+        const current = Math.min(audio.currentTime, total);
+        progress.max = String(total);
+        progress.value = String(current);
+        duration.textContent = `${formatTime(audio.ended ? Math.ceil(total) : current)} / ${formatTime(Math.ceil(total))}`;
+        progress.setAttribute('aria-valuetext', duration.textContent);
+    };
     const updateLanguage = () => {
         const label = translate('syncVoiceMessage');
-        element.setAttribute('aria-label', `${label} ${duration.textContent}`);
+        element.setAttribute('aria-label', `${label} ${formatTime(Math.ceil(durationMs / 1000))}`);
         audio.setAttribute('aria-label', label);
-        button.textContent = translate(loading ? 'syncVoiceLoading' : 'syncVoicePlay');
-        button.title = translate(element.dataset.state === 'failed' ? 'syncVoicePlaybackFailed' : 'syncVoicePlay');
+        const action = loading ? 'syncVoiceLoading' : audio.paused ? 'syncVoicePlay' : 'syncVoicePause';
+        button.textContent = loading ? '…' : audio.paused ? '▶' : 'Ⅱ';
+        button.setAttribute('aria-label', translate(action));
+        button.title = translate(element.dataset.state === 'failed' ? 'syncVoicePlaybackFailed' : action);
+        progress.setAttribute('aria-label', translate('syncVoiceSeek'));
+        element.setAttribute('aria-busy', String(loading));
     };
     const pause = () => {
         autoplay = false;
@@ -47,13 +64,13 @@ export function createVoicePlayer({ durationMs, load, canPlay, onStart, onError,
         capability = null;
         audio.removeAttribute('src');
         audio.load();
-        audio.hidden = true;
         if (objectUrl) URL.revokeObjectURL(objectUrl);
         objectUrl = null;
         cachedPlayers.delete(element);
-        button.hidden = false;
         button.disabled = disposed;
+        progress.disabled = true;
         element.dataset.state = 'idle';
+        updateProgress();
         updateLanguage();
     };
     const retain = () => {
@@ -72,6 +89,17 @@ export function createVoicePlayer({ durationMs, load, canPlay, onStart, onError,
     };
     button.addEventListener('click', async () => {
         if (disposed || loading || !canPlay()) return;
+        if (objectUrl) {
+            if (!audio.paused) { pause(); return; }
+            const request = version;
+            autoplay = true;
+            if (audio.ended) audio.currentTime = 0;
+            try { await audio.play(); }
+            catch (error) {
+                if (!['NotAllowedError', 'AbortError'].includes(error.name)) fail(error, request);
+            }
+            return;
+        }
         onStart();
         const request = ++version;
         controller = new AbortController();
@@ -101,8 +129,8 @@ export function createVoicePlayer({ durationMs, load, canPlay, onStart, onError,
             loading = false;
             audio.onerror = () => fail(new Error('voice_playback_failed'), request);
             audio.src = objectUrl;
-            audio.hidden = false;
-            button.hidden = true;
+            button.disabled = false;
+            progress.disabled = false;
             element.dataset.state = 'ready';
             updateLanguage();
             if (autoplay && canPlay()) {
@@ -117,8 +145,17 @@ export function createVoicePlayer({ durationMs, load, canPlay, onStart, onError,
         if (disposed || !objectUrl || !canPlay()) { pause(); return; }
         retain();
         onStart();
+        updateLanguage();
     });
+    progress.addEventListener('input', () => {
+        if (!objectUrl || !canPlay()) return;
+        audio.currentTime = Number(progress.value);
+        updateProgress();
+    });
+    ['loadedmetadata', 'durationchange', 'timeupdate', 'ended'].forEach(event => audio.addEventListener(event, updateProgress));
+    audio.addEventListener('pause', updateLanguage);
     audio.addEventListener('ended', pause);
+    updateProgress();
     updateLanguage();
     return {
         element,

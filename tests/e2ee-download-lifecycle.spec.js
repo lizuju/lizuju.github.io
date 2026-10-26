@@ -322,3 +322,24 @@ for (const [name, fault] of [['revoked authorization', { status: 403 }], ['incor
         await page.evaluate(() => window.capability.dispose());
     });
 }
+
+test('rejects ticket renewal into a different space before making another upstream request', async ({ page }) => {
+    faults = [{ status: 404 }];
+    await page.goto(`${origin}/portfolio/client.html`);
+    await page.waitForFunction(() => typeof window.openEncryptedFile === 'function');
+    const result = await page.evaluate(async ({ apiBase, metadata }) => {
+        let renewals = 0;
+        const capability = await window.openEncryptedFile({
+            url: `${apiBase}/v1/spaces/room/downloads/${'a'.repeat(64)}`, metadata,
+            refresh: async () => { renewals++; return `${apiBase}/v1/spaces/another-room/downloads/${'b'.repeat(64)}`; }
+        });
+        try {
+            const response = await fetch(capability.url);
+            await response.arrayBuffer();
+            return { rejected: false, renewals };
+        } catch { return { rejected: true, renewals }; }
+        finally { capability.dispose(); }
+    }, { apiBase, metadata });
+    expect(result).toEqual({ rejected: true, renewals: 1 });
+    expect(requests).toBe(1);
+});

@@ -85,6 +85,7 @@ for (const [index, format] of formats.entries()) {
         await media.evaluate(async element => { element.muted = true; element.loop = true; await element.play(); });
         await expect(media).toHaveJSProperty('paused', false);
         await media.evaluate(element => { element.pause(); element.currentTime = 0.5; });
+        await expect(media).toHaveJSProperty('seeking', false);
         await expect.poll(() => media.evaluate(element => element.currentTime)).toBeCloseTo(0.5, 1);
         await media.evaluate(element => element.play());
         await viewer.locator('[data-sync-preview-action="minimize"]').click();

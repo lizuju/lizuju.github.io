@@ -847,7 +847,8 @@ summary:focus-visible {
     cursor: default;
 }
 
-.sync-sound-toggle {
+.sync-sound-toggle,
+.sync-open-chat {
     display: inline-grid;
     width: 30px;
     flex: 0 0 30px;
@@ -1283,16 +1284,36 @@ button.sync-attachment-info:focus-visible {
 }
 
 .sync-voice-message {
+    display: grid;
+    grid-template-columns: 30px minmax(32px, 1fr) auto;
     width: 300px;
     max-width: 100%;
+}
+
+.sync-voice-toggle {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+}
+
+.sync-voice-progress {
+    min-width: 0;
+    width: 100%;
+    margin: 0;
+    accent-color: #153f45;
+}
+
+.sync-voice-duration {
+    white-space: nowrap;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
 }
 
 [data-sync-voice-time] {
     font-variant-numeric: tabular-nums;
 }
 
-.sync-voice-preview,
-.sync-voice-message audio {
+.sync-voice-preview {
     width: 300px;
     max-width: 100%;
     height: 38px;
@@ -1624,7 +1645,8 @@ button.sync-attachment-info:focus-visible {
         padding-left: 7px;
     }
 
-    .sync-room-actions .sync-sound-toggle {
+    .sync-room-actions .sync-sound-toggle,
+    .sync-room-actions .sync-open-chat {
         flex: 0 0 30px;
     }
 }
@@ -2452,7 +2474,8 @@ body.standalone-sync .sync-window {
 }
 
 .standalone-sync .sync-window > .window-titlebar > .window-controls,
-.standalone-sync .sync-window > .window-resize-handle {
+.standalone-sync .sync-window > .window-resize-handle,
+.standalone-sync .sync-open-chat {
     display: none;
 }
 

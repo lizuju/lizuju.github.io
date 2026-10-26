@@ -14,7 +14,8 @@ body.standalone-sync .sync-window {
 }
 
 .standalone-sync .sync-window > .window-titlebar > .window-controls,
-.standalone-sync .sync-window > .window-resize-handle {
+.standalone-sync .sync-window > .window-resize-handle,
+.standalone-sync .sync-open-chat {
     display: none;
 }
 

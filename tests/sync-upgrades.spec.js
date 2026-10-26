@@ -17,6 +17,9 @@ const openSync = async (page) => {
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
 };
 
+test.describe('mocked sync API upgrades', () => {
+test.use({ serviceWorkers: 'block' });
+
 test('loads earlier messages without jumping, searches retained history, and reconnects incrementally', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
     await page.clock.install();
@@ -130,7 +133,10 @@ test('honors Retry-After during uploads and cancels the waiting retry', async ({
     expect(cancelled).toBe(1);
 });
 
-test('downloads real XLSX bytes from a cross-origin server inside the immersive iframe', async ({ page, isMobile }) => {
+});
+
+for (const [status, persistent] of [[401, false], [404, false], [404, true]]) {
+test(`downloads real XLSX bytes inside the immersive iframe after ${status}${persistent ? ' remains unavailable' : ' ticket renewal'}`, async ({ page, isMobile }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['项目', '进度'], ['机器人', 123]]), '项目');
@@ -139,7 +145,10 @@ test('downloads real XLSX bytes from a cross-origin server inside the immersive 
     const encrypted = file(filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', bytes);
     const attachmentMessage = message(1, '', deviceId, encrypted.metadata, 'xlsx');
     let issuedTickets = 0;
+    let headRequests = 0;
+    let fileRequests = 0;
     const server = createServer((request, response) => {
+        if (request.method === 'HEAD') headRequests++;
         if (request.method === 'OPTIONS') { response.writeHead(204, headers); response.end(); return; }
         response.setHeader('Content-Type', 'application/json');
         if (request.url.endsWith('/key-grants')) {
@@ -152,7 +161,8 @@ test('downloads real XLSX bytes from a cross-origin server inside the immersive 
             issuedTickets++;
             response.writeHead(200, headers); response.end(JSON.stringify({ ticket: String(issuedTickets).repeat(64), expiresAt: Date.now() + 86400000 })); return;
         }
-        if (request.url.endsWith('1'.repeat(64))) { response.writeHead(404, headers); response.end(); return; }
+        fileRequests++;
+        if (persistent || request.url.endsWith('1'.repeat(64))) { response.writeHead(status, headers); response.end(); return; }
         const range = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range || '');
         const start = range ? Number(range[1]) : 0;
         const end = range ? Number(range[2]) : encrypted.bytes.length - 1;
@@ -177,10 +187,19 @@ test('downloads real XLSX bytes from a cross-origin server inside the immersive 
         const received = page.waitForEvent('download');
         await desktop.locator('[data-sync-download-file]').click();
         const download = await received;
+        if (persistent) {
+            expect(await download.failure()).toBeTruthy();
+            expect(issuedTickets).toBe(2);
+            expect(fileRequests).toBe(2);
+            expect(headRequests).toBe(0);
+            await expect(desktop.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncDownloadFailed');
+            return;
+        }
         expect(await download.failure()).toBeNull();
         expect(download.suggestedFilename()).toBe(filename);
         expect(readFileSync(await download.path())).toEqual(bytes);
         expect(issuedTickets).toBe(2);
+        expect(headRequests).toBe(0);
         await expect(desktop.locator('[data-sync-notice]')).not.toHaveAttribute('data-i18n', 'syncDownloadFailed');
         await desktop.locator('[data-sync-preview-file]').click();
         await expect(desktop.locator('.sync-document-sheet')).toContainText('机器人');
@@ -188,3 +207,4 @@ test('downloads real XLSX bytes from a cross-origin server inside the immersive 
         expect(issuedTickets).toBe(2);
     } finally { await site.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
+}

@@ -44,6 +44,12 @@
                             <p class="sync-hint" data-i18n="syncEncrypted">消息与附件已端到端加密</p>
                         </div>
                         <div class="sync-room-actions">
+                            <a class="sync-button sync-open-chat" href="/portfolio/chat/" target="_blank" rel="noopener">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+                                    <path d="M14 3h7v7M21 3l-11 11M10 5H4v15h15v-6" />
+                                </svg>
+                                <span class="visually-hidden" data-i18n="syncOpenChat">在新标签页打开联络站</span>
+                            </a>
                             <button class="sync-button sync-sound-toggle" type="button" data-sync-sound
                                 aria-pressed="true" aria-label="关闭新消息提示音" title="关闭新消息提示音">
                                 <img data-sync-sound-icon alt="">
@@ -63,12 +69,11 @@
                             <span id="sync-pairing-title" data-i18n="syncPairingTitle">配对码</span>
                             <span data-sync-pair-expiry></span>
                         </summary>
-                        <p class="sync-hint" data-i18n="syncPairOnline">配对时请保持原设备在线。</p>
                         <div class="sync-pairing-heading">
                             <span data-i18n="syncPairCodeLabel">在另一台设备输入</span>
                             <code data-sync-pair-code></code>
                         </div>
-                        <p class="sync-hint" data-i18n="syncPairHint">配对码 10 分钟内有效，请只分享给信任的人。</p>
+                        <p class="sync-hint" data-i18n="syncPairOnline">配对码 10 分钟内有效，请保持原设备在线，仅分享给信任的人。</p>
                         <div class="sync-pairing-footer">
                             <button class="sync-button" type="button" data-sync-copy-code
                                 data-i18n="syncCopyCode">复制配对码</button>

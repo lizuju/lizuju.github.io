@@ -9,6 +9,14 @@ navigator.serviceWorker?.addEventListener('message', (event) => {
     if (event.data.type === 'released') entries.get(event.data.token)?.release(event.data.status);
     else if (event.data.type === 'download-state') entries.get(event.data.token)?.update(event.data);
     else if (event.data.type === 'resolve' && event.ports[0]) event.ports[0].postMessage(entries.get(event.data.token)?.descriptor || null);
+    else if (event.data.type === 'refresh' && event.ports[0]) {
+        const entry = entries.get(event.data.token);
+        Promise.resolve().then(() => entry?.refresh?.()).then(url => {
+            if (!url || entries.get(event.data.token) !== entry) { event.ports[0].postMessage(null); return; }
+            entry.descriptor.url = url;
+            event.ports[0].postMessage(url);
+        }).catch(() => event.ports[0].postMessage(null));
+    }
 });
 
 export const prepareEncryptedFiles = () => {
@@ -38,7 +46,7 @@ export const prepareEncryptedFiles = () => {
     return workerPromise;
 };
 
-export async function openEncryptedFile({ url, metadata, download = false }) {
+export async function openEncryptedFile({ url, metadata, download = false, refresh }) {
     await prepareEncryptedFiles();
     const worker = navigator.serviceWorker.controller;
     const token = Array.from(crypto.getRandomValues(new Uint8Array(24)), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -70,7 +78,7 @@ export async function openEncryptedFile({ url, metadata, download = false }) {
         if (expiresAt) idleTimer = setTimeout(dispose, Math.max(0, expiresAt - Date.now()));
         if (status) report(status);
     };
-    entries.set(token, { descriptor, release, update });
+    entries.set(token, { descriptor, release, update, refresh });
     if (download) update({ expiresAt: descriptor.expiresAt });
     try {
         const localUrl = await new Promise((resolve, reject) => {

@@ -342,48 +342,65 @@ test('loads voices only on activation and replays cached audio after ending or h
     await first.locator('[data-sync-voice-play]').focus();
     await first.locator('[data-sync-voice-play]').press('Enter');
     const firstAudio = first.locator('audio');
-    await expect(firstAudio).toBeVisible();
+    await expect(firstAudio).toBeHidden();
+    await expect(firstAudio).toHaveJSProperty('controls', false);
     await expect.poll(() => firstAudio.evaluate(audio => audio.readyState)).toBeGreaterThanOrEqual(1);
-    const playerLayout = await firstAudio.evaluate(audio => {
-        const message = audio.closest('.sync-message');
-        const feed = audio.closest('[data-sync-messages]').parentElement;
+    const playerLayout = await first.evaluate(player => {
+        const message = player.closest('.sync-message');
+        const feed = player.closest('[data-sync-messages]').parentElement;
         const feedStyle = getComputedStyle(feed);
         const messageStyle = getComputedStyle(message);
         const available = (feed.clientWidth - parseFloat(feedStyle.paddingLeft) - parseFloat(feedStyle.paddingRight)) * 0.92
             - parseFloat(messageStyle.paddingLeft) - parseFloat(messageStyle.paddingRight)
             - parseFloat(messageStyle.borderLeftWidth) - parseFloat(messageStyle.borderRightWidth);
-        return { width: audio.getBoundingClientRect().width, expected: Math.min(300, available),
+        const [button, progress, duration] = [...player.children].map(child => child.getBoundingClientRect());
+        return { width: player.getBoundingClientRect().width, expected: Math.min(300, available),
+            separate: button.right < progress.left && progress.right < duration.left,
             overflow: feed.scrollWidth - feed.clientWidth };
     });
     expect(playerLayout.width).toBeGreaterThanOrEqual(playerLayout.expected - 1);
+    expect(playerLayout.separate).toBe(true);
     expect(playerLayout.overflow).toBeLessThanOrEqual(1);
-    await firstAudio.evaluate(audio => { audio.pause(); audio.currentTime = 1; });
-    await expect(firstAudio).toHaveJSProperty('currentTime', 1);
-    await firstAudio.evaluate(async audio => { audio.muted = true; await audio.play(); });
+    await firstAudio.evaluate(audio => { audio.pause(); audio.muted = true; });
+    const progress = first.getByRole('slider', { name: '语音播放进度' });
+    await progress.focus();
+    await progress.press('Home');
+    await progress.press('ArrowRight');
+    await expect(firstAudio).toHaveJSProperty('currentTime', 0.1);
+    await first.getByRole('button', { name: '播放语音' }).click();
     await expect(firstAudio).toHaveJSProperty('paused', false);
+    await first.getByRole('button', { name: '暂停语音' }).press('Space');
+    await expect(firstAudio).toHaveJSProperty('paused', true);
+    await first.getByRole('button', { name: '播放语音' }).press('Enter');
+    await expect(firstAudio).toHaveJSProperty('paused', false);
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(first.getByRole('button', { name: 'Pause voice message' })).toBeVisible();
+    await expect(first.getByRole('slider', { name: 'Voice playback position' })).toBeEnabled();
+    await page.locator('[data-taskbar-lang]').click();
     expect(tickets).toEqual([1]);
     expect(downloads).toContain(1);
     const second = voices.nth(1);
     await second.locator('[data-sync-voice-play]').click();
     const secondAudio = second.locator('audio');
-    await expect(secondAudio).toBeVisible();
+    await expect(secondAudio).toBeHidden();
     await expect.poll(() => secondAudio.evaluate(audio => audio.readyState)).toBeGreaterThanOrEqual(1);
     await expect(firstAudio).toHaveJSProperty('paused', true);
     await expect(firstAudio).toHaveAttribute('src', /^blob:/);
-    await expect(firstAudio).toBeVisible();
+    await expect(first.getByRole('button', { name: '播放语音' })).toBeVisible();
     const secondUrl = await secondAudio.getAttribute('src');
     const requests = { tickets: [...tickets], downloads: [...downloads] };
     await secondAudio.evaluate(audio => audio.dispatchEvent(new Event('ended')));
     await expect(secondAudio).toHaveJSProperty('paused', true);
     await expect(secondAudio).toHaveAttribute('src', secondUrl);
     await expect.poll(() => page.evaluate(() => window.voiceMock.closes)).toBeGreaterThanOrEqual(2);
-    await secondAudio.evaluate(async audio => { audio.muted = true; audio.currentTime = 0; await audio.play(); });
+    await secondAudio.evaluate(audio => { audio.muted = true; audio.currentTime = 0; });
+    await second.getByRole('button', { name: '播放语音' }).click();
     await expect(secondAudio).toHaveJSProperty('paused', false);
     await page.locator('[data-retro-desktop]').evaluate(element => { element.inert = true; });
     await expect(secondAudio).toHaveJSProperty('paused', true);
     await expect(secondAudio).toHaveAttribute('src', secondUrl);
     await page.locator('[data-retro-desktop]').evaluate(element => { element.inert = false; });
-    await secondAudio.evaluate(async audio => { audio.currentTime = 0; await audio.play(); });
+    await second.getByRole('button', { name: '播放语音' }).click();
     await expect(secondAudio).toHaveJSProperty('paused', false);
     expect(tickets).toEqual(requests.tickets);
     expect(downloads).toEqual(requests.downloads);
@@ -420,7 +437,7 @@ test('rejects invalid encrypted voice duration and finishes a retried load in th
     await expect(audio).toHaveJSProperty('paused', true);
     const requests = { tickets: [...tickets], downloads: [...downloads] };
     await page.locator('[data-retro-desktop]').evaluate(element => { element.inert = false; });
-    await expect(audio).toBeVisible();
+    await expect(first.getByRole('button', { name: '播放语音' })).toBeVisible();
     await expect.poll(() => audio.evaluate(audio => audio.readyState)).toBeGreaterThanOrEqual(1);
     await audio.evaluate(async audio => { audio.muted = true; await audio.play(); });
     await expect(audio).toHaveJSProperty('paused', false);

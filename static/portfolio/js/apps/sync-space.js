@@ -561,7 +561,13 @@ import { createVoicePlayer } from './sync-voice-player.js';
             const key = `${message.id}:${crypto.randomUUID()}`;
             {
                 const promise = Promise.all([attachmentUrl(message, session), prepareEncryptedFiles()])
-                    .then(([url]) => openEncryptedFile({ url, metadata: message.attachment, download }))
+                    .then(([url]) => openEncryptedFile({ url, metadata: message.attachment, download, refresh: async () => {
+                        if (credentials !== session || !messageNodes.has(message.id)) throw new DOMException('Session ended', 'AbortError');
+                        downloadTickets.delete(message.id);
+                        const nextUrl = await attachmentUrl(message, session);
+                        if (credentials !== session || !messageNodes.has(message.id)) throw new DOMException('Session ended', 'AbortError');
+                        return nextUrl;
+                    } }))
                     .then(capability => {
                         if (credentials !== session || !messageNodes.has(message.id)) { capability.dispose(); throw new DOMException('Session ended', 'AbortError'); }
                         const dispose = capability.dispose;
