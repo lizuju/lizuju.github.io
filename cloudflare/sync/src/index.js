@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { API_VERSION } from './api-version.js';
 import { collectDailyUsage, unavailableDailyUsage } from './daily-usage.js';
 
 const INVITE_LIFETIME = 10 * 60 * 1000;
@@ -183,7 +184,7 @@ export default {
   async route(request, env) {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/health') {
-      return json({ ok: true, service: 'portfolio-sync', apiVersion: 1, encryptionVersion: 1, revision: env.RELEASE_REVISION || null, versionId: env.WORKER_VERSION?.id || null });
+      return json({ ok: true, service: 'portfolio-sync', apiVersion: API_VERSION, encryptionVersion: 1, revision: env.RELEASE_REVISION || null, versionId: env.WORKER_VERSION?.id || null });
     }
 
     const registry = env.E2EE_PAIRING_REGISTRY.getByName('registry');

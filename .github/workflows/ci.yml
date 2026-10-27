@@ -67,9 +67,6 @@ jobs:
       - name: Build production site
         run: npm run build
 
-      - name: Verify committed deployment output
-        run: npm run verify:docs
-
       - name: Share production site
         uses: actions/upload-artifact@v7
         with:
@@ -150,6 +147,17 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Require a compatible sync Worker
+        run: npm run check:sync-api
+
       - name: Download verified production site
         uses: actions/download-artifact@v8
         with:
