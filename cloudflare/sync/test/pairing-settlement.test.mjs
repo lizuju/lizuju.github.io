@@ -10,6 +10,7 @@ async function setup(t) {
     name: 'pair-settlement', compatibilityDate: '2026-10-23', manifest: { mainModule: 'harness.js', modules: {
       'index.js': { type: 'esm', contents: await readFile(new URL('../src/index.js', import.meta.url), 'utf8') },
       'daily-usage.js': { type: 'esm', contents: await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8') },
+      'api-version.js': { type: 'esm', contents: await readFile(new URL('../src/api-version.js', import.meta.url), 'utf8') },
       'harness.js': { type: 'esm', contents: `
         import { E2eeSyncRoom as Room, E2eePairingRegistry as Registry } from './index.js';
         export { default, E2eeFileShard } from './index.js';

@@ -83,6 +83,7 @@ async function createRuntime() {
       manifest: { mainModule: 'harness.js', modules: {
         'index.js': { type: 'esm', contents: await readFile(new URL('../src/index.js', import.meta.url), 'utf8') },
         'daily-usage.js': { type: 'esm', contents: await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8') },
+        'api-version.js': { type: 'esm', contents: await readFile(new URL('../src/api-version.js', import.meta.url), 'utf8') },
         'harness.js': { type: 'esm', contents: `
           import worker, { E2eePairingRegistry as ProductionRegistry } from './index.js';
           export { E2eeSyncRoom, E2eeFileShard } from './index.js';

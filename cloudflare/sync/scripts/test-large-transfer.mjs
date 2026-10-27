@@ -16,6 +16,7 @@ const disk = await statfs(directory);
 assert.ok(disk.bavail * disk.bsize > 7 * 1024 ** 3, 'This isolated acceptance needs at least 7 GiB of free temporary disk space');
 const contents = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
 const dailyUsageContents = await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8');
+const apiVersionContents = await readFile(new URL('../src/api-version.js', import.meta.url), 'utf8');
 let runtime;
 let space;
 let session;
@@ -29,7 +30,7 @@ async function startRuntime() {
     resourcePersistencePath: directory,
     workers: [{ config: {
       name: 'sync-large-transfer', compatibilityDate: '2026-10-23',
-      manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents }, 'daily-usage.js': { type: 'esm', contents: dailyUsageContents } } },
+      manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents }, 'daily-usage.js': { type: 'esm', contents: dailyUsageContents }, 'api-version.js': { type: 'esm', contents: apiVersionContents } } },
       env: {
         ALLOWED_ORIGINS: { type: 'text', value: origin },
         E2EE_PAIRING_REGISTRY: { type: 'durable-object', worker: 'sync-large-transfer', exportName: 'E2eePairingRegistry' },
