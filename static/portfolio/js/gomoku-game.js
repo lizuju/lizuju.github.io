@@ -43,6 +43,7 @@
             computer: '电脑',
             chooseMode: '选择对局模式',
             modeCopy: '请选择双人对局或人机对局。',
+            backToModes: '返回选择',
             localMode: '双人对局',
             computerMode: '人机对局',
             blackPlayer: '黑方',
@@ -95,6 +96,7 @@
             computer: 'PC',
             chooseMode: 'Choose Game Mode',
             modeCopy: 'Choose two players or play against the computer.',
+            backToModes: 'Choose Mode',
             localMode: 'Two Players',
             computerMode: 'Vs Computer',
             blackPlayer: 'Black',
@@ -151,11 +153,12 @@
         const dialogCopy = document.querySelector('[data-gomoku-dialog-copy]');
         const launcher = document.querySelector('[data-gomoku-launcher]');
         const launchLog = document.querySelector('[data-gomoku-launch-log]');
+        const modeHome = document.querySelector('[data-gomoku-mode-home]');
         const Engine = window.GomokuEngine?.GomokuSolution;
 
         if (!desktop || !gameWindow || !gameTask || !titlebar
             || !resizeHandle || !canvas || !boardFrame || !status || !movesOutput || !scoreOutput
-            || !faceButton || !dialog || !dialogTitle || !dialogCopy || !launcher || !launchLog || !Engine) return;
+            || !faceButton || !dialog || !dialogTitle || !dialogCopy || !launcher || !launchLog || !modeHome || !Engine) return;
 
         const context = canvas.getContext('2d');
         let canvasSize = 480;
@@ -253,6 +256,11 @@
         }
 
         function updateInterface() {
+            const choosing = phase === 'choosing';
+            modeHome.hidden = !choosing || gameWindow.classList.contains('is-launching');
+            gameWindow.querySelector('.gomoku-menubar').hidden = choosing;
+            gameWindow.querySelector('.gomoku-game-area').hidden = choosing;
+            gameWindow.querySelector('.gomoku-statusbar').hidden = choosing;
             status.textContent = getStatusText();
             movesOutput.textContent = String(history.length).padStart(3, '0');
             scoreOutput.textContent = `${humanScore}:${computerScore}`;
@@ -481,6 +489,18 @@
             render();
         }
 
+        function showModeSelection() {
+            closeDialog();
+            humanScore = 0;
+            computerScore = 0;
+            newGame();
+            phase = 'choosing';
+            currentPlayer = null;
+            keyboardMode = false;
+            render();
+            if (gameWindow.classList.contains('is-active')) modeHome.querySelector('[data-gomoku-mode]')?.focus();
+        }
+
         function undoMove() {
             if (history.length === 0 || phase === 'thinking') return;
             clearAiTimer();
@@ -570,8 +590,8 @@
                 launcher.hidden = true;
                 launcher.classList.remove('is-complete');
                 gameWindow.classList.remove('is-launching');
-                showDialog('mode');
-                window.requestAnimationFrame(resizeBoard);
+                updateInterface();
+                if (gameWindow.classList.contains('is-active')) modeHome.querySelector('[data-gomoku-mode]')?.focus();
             }, 180));
         }
 
@@ -580,6 +600,7 @@
             launchLog.textContent = '';
             launcher.hidden = false;
             gameWindow.classList.add('is-launching');
+            updateInterface();
 
             const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             const lineDelay = reducedMotion ? 1 : 140;
@@ -605,7 +626,7 @@
 
         function parkGame() {
             if (gameWindow.classList.contains('is-closed')) return;
-            if (dialog.dataset.type !== 'mode') closeDialog();
+            closeDialog();
             gameWindow.classList.add('is-minimized');
             gameWindow.classList.remove('is-active');
             gameTask.classList.remove('is-active');
@@ -622,16 +643,13 @@
             document.querySelector('[data-start-menu]')?.setAttribute('hidden', '');
             document.querySelector('[data-start-toggle]')?.setAttribute('aria-expanded', 'false');
             if (wasClosed) {
-                closeDialog();
-                newGame();
-                phase = 'choosing';
-                currentPlayer = null;
-                render();
+                showModeSelection();
                 startLaunchSequence();
             } else {
                 window.requestAnimationFrame(resizeBoard);
             }
             focusGame();
+            if (!modeHome.hidden) modeHome.querySelector('[data-gomoku-mode]')?.focus();
             if (!dialog.hidden) dialog.querySelector('button:not([hidden])')?.focus();
         }
 
@@ -866,27 +884,20 @@
                 dialogReturnFocus = opener?.closest('.window-menu').querySelector('[data-window-menu]') || canvas;
             }
             const isHelp = type === 'help';
-            const choosing = type === 'mode';
-            dialogTitle.textContent = choosing ? copy().chooseMode : isHelp ? copy().helpTitle : copy().aboutTitle;
-            dialogCopy.textContent = choosing ? copy().modeCopy : isHelp
+            dialogTitle.textContent = isHelp ? copy().helpTitle : copy().aboutTitle;
+            dialogCopy.textContent = isHelp
                 ? mode === 'local' ? copy().localHelpCopy : copy().helpCopy : copy().aboutCopy;
-            dialog.querySelectorAll('[data-gomoku-mode]').forEach(button => { button.hidden = !choosing; });
-            dialog.querySelector('.gomoku-dialog-actions [data-gomoku-dialog-close]').hidden = choosing;
-            gameWindow.querySelector('.gomoku-game-area').inert = choosing;
-            gameWindow.querySelector('.gomoku-menubar').inert = choosing;
             dialog.dataset.type = type;
             dialog.hidden = false;
             closeMenus();
             if (gameWindow.classList.contains('is-active')) {
-                dialog.querySelector(choosing ? '[data-gomoku-mode]' : '[data-gomoku-dialog-close]')?.focus();
+                dialog.querySelector('[data-gomoku-dialog-close]')?.focus();
             }
         }
 
         function closeDialog() {
             if (dialog.hidden) return;
             dialog.hidden = true;
-            gameWindow.querySelector('.gomoku-game-area').inert = false;
-            gameWindow.querySelector('.gomoku-menubar').inert = false;
             dialogReturnFocus.focus({ preventScroll: true });
             dialogReturnFocus = undefined;
         }
@@ -928,20 +939,18 @@
         });
 
         document.querySelectorAll('[data-gomoku-new]').forEach((button) => button.addEventListener('click', newGame));
+        document.querySelector('[data-gomoku-back]').addEventListener('click', showModeSelection);
         document.querySelector('[data-gomoku-undo]')?.addEventListener('click', undoMove);
         document.querySelector('[data-gomoku-help]')?.addEventListener('click', (event) => showDialog('help', event.currentTarget));
         document.querySelector('[data-gomoku-about]')?.addEventListener('click', (event) => showDialog('about', event.currentTarget));
         document.querySelectorAll('[data-gomoku-dialog-close]').forEach((button) => {
-            button.addEventListener('click', () => {
-                if (dialog.dataset.type === 'mode') closeGame();
-                else closeDialog();
-            });
+            button.addEventListener('click', closeDialog);
         });
         document.querySelectorAll('[data-gomoku-mode]').forEach((button) => {
             button.addEventListener('click', () => {
                 mode = button.dataset.gomokuMode;
-                closeDialog();
                 newGame();
+                resizeBoard();
                 canvas.focus({ preventScroll: true });
             });
         });
@@ -986,14 +995,30 @@
             if (!dialog.hidden) {
                 if (event.key === 'Escape') {
                     event.preventDefault();
-                    if (dialog.dataset.type === 'mode') closeGame();
-                    else closeDialog();
+                    closeDialog();
                 } else if (event.key === 'Tab') {
                     event.preventDefault();
                     const buttons = Array.from(dialog.querySelectorAll('button:not([hidden])'));
                     const index = buttons.indexOf(document.activeElement);
                     const offset = event.shiftKey ? -1 : 1;
                     buttons[(index + offset + buttons.length) % buttons.length].focus();
+                }
+                return;
+            }
+            if (phase === 'choosing') {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    closeGame();
+                } else if (event.key === 'Tab' && !modeHome.hidden) {
+                    event.preventDefault();
+                    const buttons = Array.from(modeHome.querySelectorAll('[data-gomoku-mode]'));
+                    const index = buttons.indexOf(document.activeElement);
+                    const next = index < 0 ? (event.shiftKey ? buttons.length - 1 : 0)
+                        : (index + (event.shiftKey ? -1 : 1) + buttons.length) % buttons.length;
+                    buttons[next].focus();
+                } else if (!event.ctrlKey && !event.metaKey && event.key.toLowerCase() === 'f') {
+                    event.preventDefault();
+                    toggleMaximize();
                 }
                 return;
             }
@@ -1095,7 +1120,9 @@
         if (!restoredSession) createEngine();
         applyLanguage();
         render();
-        if (restoredSession && phase === 'choosing') showDialog('mode');
+        if (restoredSession && phase === 'choosing' && gameWindow.classList.contains('is-active')) {
+            modeHome.querySelector('[data-gomoku-mode]')?.focus();
+        }
         if (restoredSession && phase === 'thinking') {
             clearAiTimer();
             aiTimer = window.setTimeout(runComputerMove, AI_DELAY);

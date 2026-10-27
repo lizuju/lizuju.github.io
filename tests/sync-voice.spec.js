@@ -227,9 +227,9 @@ test('records a real WAV for local review and sends only encrypted bytes and voi
     expect(JSON.stringify(upload.body)).not.toContain('Voice caption');
     const clear = payload(upload.body);
     expect(clear.text).toBe('Voice caption remains until sent');
-    expect(clear.attachment).toMatchObject({ type: 'audio/wav', kind: 'voice', durationMs: 500, size: recorded.length });
+    expect(clear.attachment).toMatchObject({ version: 2, type: 'audio/wav', kind: 'voice', durationMs: 500, size: recorded.length });
     const nonce = Buffer.concat([Buffer.from(clear.attachment.noncePrefix, 'base64url'), Buffer.alloc(4)]);
-    expect(openCipher(Buffer.from(clear.attachment.key, 'base64url'), nonce, `gavin-sync-file-v1:${clear.attachment.fileId}:0`, upload.bytes)).toEqual(recorded);
+    expect(openCipher(Buffer.from(clear.attachment.key, 'base64url'), nonce, `gavin-sync-file-v2:${clear.attachment.fileId}:0`, upload.bytes)).toEqual(recorded);
     expect(upload.bytes).not.toEqual(recorded);
     await expect(preview).toBeHidden();
     await expect(page.locator('.sync-voice-message')).toHaveCount(1);
@@ -266,7 +266,7 @@ for (const forceWav of [false, true]) test(`encrypts ${forceWav ? 'a native WAV 
         const upload = uploads[0];
         const clear = payload(upload.body);
         const type = compressed ? 'audio/webm' : 'audio/wav';
-        expect(clear.attachment).toMatchObject({ type, kind: 'voice', size: recorded.length });
+        expect(clear.attachment).toMatchObject({ version: 2, type, kind: 'voice', size: recorded.length });
         expect(clear.attachment.durationMs).toBeGreaterThan(300);
         expect(clear.attachment.durationMs).toBeLessThan(2000);
         if (compressed) {
@@ -281,7 +281,7 @@ for (const forceWav of [false, true]) test(`encrypts ${forceWav ? 'a native WAV 
         expect(upload.body.type).toBe('application/octet-stream');
         expect(JSON.stringify(upload.body)).not.toContain(type);
         const nonce = Buffer.concat([Buffer.from(clear.attachment.noncePrefix, 'base64url'), Buffer.alloc(4)]);
-        expect(openCipher(Buffer.from(clear.attachment.key, 'base64url'), nonce, `gavin-sync-file-v1:${clear.attachment.fileId}:0`, upload.bytes)).toEqual(recorded);
+        expect(openCipher(Buffer.from(clear.attachment.key, 'base64url'), nonce, `gavin-sync-file-v2:${clear.attachment.fileId}:0`, upload.bytes)).toEqual(recorded);
         attachments[0] = { metadata: clear.attachment, bytes: upload.bytes };
         await page.locator('[data-sync-voice-play]').click();
         const player = page.locator('.sync-voice-message audio');

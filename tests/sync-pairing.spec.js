@@ -84,14 +84,15 @@ for (const responseOrder of ['empty-read-first', 'new-offer-first', 'empty-read-
                 await expect.poll(() => deviceReads).toBeGreaterThan(initialDeviceReads);
                 if (responseOrder === 'closed-while-generating') {
                     connection.send(JSON.stringify({ type: 'pairing', pairing: { enabled: false, locked: false, revision: 11 } }));
-                    await expect(page.locator('[data-sync-pair-hint]')).toHaveAttribute('data-i18n', 'syncPairClosedHint');
+                    await expect(page.locator('[data-sync-pair-expiry]')).toHaveText('');
                 }
                 newOffer(postedOffer);
             }
             await expect(page.locator('[data-sync-pair]')).toBeEnabled();
             if (responseOrder === 'closed-while-generating') {
                 await expect(page.locator('[data-sync-pair-code]')).toHaveText('');
-                await expect(page.locator('[data-sync-pairing]')).toBeVisible();
+                await expect(page.locator('[data-sync-pairing]')).toBeHidden();
+                await expect(page.locator('[data-sync-pair]')).toHaveText('生成配对码');
             } else {
                 await expect(page.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/);
                 await expect(page.locator('[data-sync-pairing]')).toBeVisible();

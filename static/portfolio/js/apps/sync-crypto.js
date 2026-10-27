@@ -1,5 +1,10 @@
 export const FILE_CIPHER_CHUNK_SIZE = 8 * 1024 * 1024;
-export const FILE_PLAIN_CHUNK_SIZE = FILE_CIPHER_CHUNK_SIZE - 16;
+export function fileChunkLayout(metadata) {
+    if (metadata.version !== undefined && metadata.version !== 1 && metadata.version !== 2) throw failure('invalid_file');
+    const cipherSize = metadata.version === 2 ? 512 * 1024 : FILE_CIPHER_CHUNK_SIZE;
+    const plainSize = cipherSize - 16;
+    return { cipherSize, plainSize, uploadPlainSize: FILE_CIPHER_CHUNK_SIZE / cipherSize * plainSize };
+}
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 let opaqueModule;
@@ -68,6 +73,7 @@ export async function decryptPayload(keyring, roomId, purpose, envelope) {
 
 export function createFileMetadata(file) {
     return {
+        version: 2,
         fileId: crypto.randomUUID(), key: encode(randomBytes(32)), noncePrefix: encode(randomBytes(8)),
         size: file.size, type: file.type || 'application/octet-stream', name: file.name
     };
@@ -80,21 +86,37 @@ const fileParameters = (metadata, index) => {
     const iv = new Uint8Array(12);
     iv.set(prefix);
     new DataView(iv.buffer).setUint32(8, index);
-    return { name: 'AES-GCM', iv, additionalData: encoder.encode(`gavin-sync-file-v1:${metadata.fileId}:${index}`) };
+    return { name: 'AES-GCM', iv, additionalData: encoder.encode(`gavin-sync-file-v${metadata.version || 1}:${metadata.fileId}:${index}`) };
 };
 
 export async function encryptFileChunk(metadata, index, plaintext) {
-    const expected = Math.min(FILE_PLAIN_CHUNK_SIZE, metadata.size - index * FILE_PLAIN_CHUNK_SIZE);
+    const { plainSize } = fileChunkLayout(metadata);
+    const expected = Math.min(plainSize, metadata.size - index * plainSize);
     if (expected <= 0 || plaintext.byteLength !== expected) throw failure('invalid_chunk');
     return crypto.subtle.encrypt(fileParameters(metadata, index), await aesKey(metadata.key, ['encrypt']), plaintext);
 }
 
 export async function decryptFileChunk(metadata, index, ciphertext) {
-    const expected = Math.min(FILE_PLAIN_CHUNK_SIZE, metadata.size - index * FILE_PLAIN_CHUNK_SIZE);
+    const { plainSize } = fileChunkLayout(metadata);
+    const expected = Math.min(plainSize, metadata.size - index * plainSize);
     if (expected <= 0 || ciphertext.byteLength !== expected + 16) throw failure('invalid_ciphertext');
     try {
         return await crypto.subtle.decrypt(fileParameters(metadata, index), await aesKey(metadata.key, ['decrypt']), ciphertext);
     } catch { throw failure('invalid_ciphertext'); }
+}
+
+export async function encryptUploadChunk(metadata, index, plaintext) {
+    const { cipherSize, plainSize, uploadPlainSize } = fileChunkLayout(metadata);
+    const expected = Math.min(uploadPlainSize, metadata.size - index * uploadPlainSize);
+    if (expected <= 0 || plaintext.byteLength !== expected) throw failure('invalid_chunk');
+    const clear = new Uint8Array(plaintext);
+    const encrypted = new Uint8Array(clear.length + Math.ceil(clear.length / plainSize) * 16);
+    const first = index * (FILE_CIPHER_CHUNK_SIZE / cipherSize);
+    for (let offset = 0, part = 0; offset < clear.length; offset += plainSize, part++) {
+        const chunk = await encryptFileChunk(metadata, first + part, clear.subarray(offset, offset + plainSize));
+        encrypted.set(new Uint8Array(chunk), part * cipherSize);
+    }
+    return encrypted;
 }
 
 export async function keyedFingerprint(metadata, fingerprint) {

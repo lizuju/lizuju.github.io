@@ -6,6 +6,8 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const source = await readFile(new URL('../../../static/portfolio/sync-e2ee-worker.js', import.meta.url), 'utf8');
+const cryptoSource = await readFile(new URL('../../../static/portfolio/js/apps/sync-crypto.js', import.meta.url), 'utf8');
+const fileCrypto = await import(`data:text/javascript;base64,${Buffer.from(cryptoSource).toString('base64')}`);
 const chunkSize = 8 * 1024 * 1024 - 16;
 const apiUrl = 'https://sync.test/v1/spaces/room/downloads/ticket';
 const token = 'a'.repeat(48);
@@ -64,7 +66,8 @@ const worker = (descriptor, getBytes, Stream = ReadableStream, refresh) => {
       const end = Number(range[2]);
       requests.push([start, end]);
       assert.ok(end - start + 1 <= 8 * 1024 * 1024);
-      const total = descriptor.metadata.size + Math.ceil(descriptor.metadata.size / chunkSize) * 16;
+      const plainSize = fileCrypto.fileChunkLayout(descriptor.metadata).plainSize;
+      const total = descriptor.metadata.size + Math.ceil(descriptor.metadata.size / plainSize) * 16;
       const bytes = await getBytes(start, end, String(url));
       return bytes instanceof Response ? bytes : new Response(bytes, { status: 206, headers: { 'Content-Range': `bytes ${start}-${end}/${total}` } });
     }
@@ -300,5 +303,142 @@ test('a downstream close racing with plaintext enqueue reports cancellation with
   assert.equal((await (await bridge.get()).arrayBuffer()).byteLength, 0);
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.deepEqual(bridge.notifications.filter(message => message.status).map(message => message.status), ['cancelled']);
+  bridge.close();
+});
+
+const smallChunkFixture = async size => {
+  const metadata = fileCrypto.createFileMetadata({ size, type: 'video/mp4', name: 'video.mp4' });
+  const clear = Uint8Array.from({ length: size }, (_, index) => index % 251);
+  const { uploadPlainSize } = fileCrypto.fileChunkLayout(metadata);
+  const chunks = [];
+  for (let offset = 0; offset < size; offset += uploadPlainSize) chunks.push(await fileCrypto.encryptUploadChunk(metadata, chunks.length, clear.slice(offset, offset + uploadPlainSize)));
+  return { metadata, clear, wire: Buffer.concat(chunks), url: apiUrl };
+};
+
+test('new attachment previews authenticate only 512 KiB for a two-byte range and reuse that block', async () => {
+  const file = await smallChunkFixture(2 * 1024 * 1024);
+  const bridge = worker(file, (start, end) => file.wire.subarray(start, end + 1));
+  await bridge.open();
+  assert.deepEqual(Buffer.from(await (await bridge.get({ range: 'bytes=0-1' })).arrayBuffer()), Buffer.from(file.clear.subarray(0, 2)));
+  assert.deepEqual(bridge.requests, [[0, 512 * 1024 - 1]]);
+  assert.deepEqual(Buffer.from(await (await bridge.get({ range: 'bytes=2-3' })).arrayBuffer()), Buffer.from(file.clear.subarray(2, 4)));
+  assert.equal(bridge.requests.length, 1);
+  bridge.close();
+});
+
+test('new attachment ranges cross independent authentication blocks and handle a partial final block', async () => {
+  const file = await smallChunkFixture(1024 * 1024 + 31);
+  const plainSize = fileCrypto.fileChunkLayout(file.metadata).plainSize;
+  const bridge = worker(file, (start, end) => file.wire.subarray(start, end + 1));
+  await bridge.open();
+  const start = plainSize - 11;
+  const end = file.clear.length - 1;
+  assert.deepEqual(Buffer.from(await (await bridge.get({ range: `bytes=${start}-${end}` })).arrayBuffer()), Buffer.from(file.clear.subarray(start)));
+  assert.deepEqual(bridge.requests, [[0, file.wire.length - 1]]);
+  bridge.close();
+});
+
+test('new sequential downloads keep 8 MiB network batches while returning the first authenticated block immediately', async () => {
+  const file = { ...await smallChunkFixture(9 * 1024 * 1024), download: true };
+  let release;
+  const bridge = worker(file, (start, end) => {
+    if (start) return file.wire.subarray(start, end + 1);
+    return new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(file.wire.subarray(0, 512 * 1024));
+        release = () => { controller.enqueue(file.wire.subarray(512 * 1024, end + 1)); controller.close(); };
+      }
+    }), { status: 206, headers: { 'Content-Range': `bytes ${start}-${end}/${file.wire.length}` } });
+  });
+  await bridge.open();
+  const reader = (await bridge.get()).body.getReader();
+  const first = await reader.read();
+  assert.equal(first.value.length, 512 * 1024 - 16);
+  assert.deepEqual(Buffer.from(first.value), Buffer.from(file.clear.subarray(0, first.value.length)));
+  assert.deepEqual(bridge.requests, [[0, 8 * 1024 * 1024 - 1]]);
+  release();
+  const chunks = [first.value];
+  for (;;) { const { value, done } = await reader.read(); if (done) break; chunks.push(value); }
+  assert.deepEqual(Buffer.concat(chunks), Buffer.from(file.clear));
+  assert.deepEqual(bridge.requests, [[0, 8 * 1024 * 1024 - 1], [8 * 1024 * 1024, file.wire.length - 1]]);
+});
+
+test('a new-format range retries an interrupted batch without duplicating plaintext already delivered', async () => {
+  const file = await smallChunkFixture(1024 * 1024 + 31);
+  let fail;
+  let calls = 0;
+  const bridge = worker(file, (start, end) => {
+    if (++calls > 1) return file.wire.subarray(start, end + 1);
+    return new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(file.wire.subarray(0, 512 * 1024));
+        fail = () => controller.error(new TypeError('connection interrupted'));
+      }
+    }), { status: 206, headers: { 'Content-Range': `bytes ${start}-${end}/${file.wire.length}` } });
+  });
+  await bridge.open();
+  const reader = (await bridge.get()).body.getReader();
+  const chunks = [(await reader.read()).value];
+  fail();
+  for (;;) { const { value, done } = await reader.read(); if (done) break; chunks.push(value); }
+  assert.deepEqual(Buffer.concat(chunks), Buffer.from(file.clear));
+  assert.equal(calls, 2);
+  bridge.close();
+});
+
+test('new-format batches never return a corrupted block after an earlier authenticated block', async () => {
+  const file = await smallChunkFixture(1024 * 1024);
+  const wire = Buffer.from(file.wire);
+  wire[512 * 1024 + 17] ^= 1;
+  const bridge = worker(file, (start, end) => wire.subarray(start, end + 1));
+  await bridge.open();
+  const reader = (await bridge.get()).body.getReader();
+  assert.deepEqual(Buffer.from((await reader.read()).value), Buffer.from(file.clear.subarray(0, 512 * 1024 - 16)));
+  await assert.rejects(reader.read(), /encrypted_file_unavailable/);
+  bridge.close();
+});
+
+test('a new-format 2 GiB attachment can seek to the final partial block', async () => {
+  const metadata = fileCrypto.createFileMetadata({ size: 2 * 1024 ** 3, type: 'application/pdf', name: 'large.pdf' });
+  const { cipherSize, plainSize } = fileCrypto.fileChunkLayout(metadata);
+  const index = Math.floor((metadata.size - 1) / plainSize);
+  const clear = Uint8Array.from({ length: metadata.size - index * plainSize }, (_, offset) => offset % 251);
+  const wire = await fileCrypto.encryptFileChunk(metadata, index, clear);
+  const bridge = worker({ url: apiUrl, metadata }, () => wire);
+  await bridge.open();
+  assert.deepEqual(Buffer.from(await (await bridge.get({ range: `bytes=${metadata.size - 13}-` })).arrayBuffer()), Buffer.from(clear.subarray(-13)));
+  assert.deepEqual(bridge.requests, [[index * cipherSize, index * cipherSize + wire.byteLength - 1]]);
+  bridge.close();
+});
+
+test('unknown attachment layouts are rejected before any file request', async () => {
+  const file = await smallChunkFixture(1);
+  const bridge = worker({ ...file, metadata: { ...file.metadata, version: 3 } }, () => file.wire);
+  assert.equal((await bridge.open()).error, 'encrypted_file_unavailable');
+  assert.equal(bridge.requests.length, 0);
+});
+
+test('overlapping new-format ranges share pending blocks when one reader is cancelled', async () => {
+  const file = await smallChunkFixture((512 * 1024 - 16) * 3);
+  const plainSize = fileCrypto.fileChunkLayout(file.metadata).plainSize;
+  let release;
+  const bridge = worker(file, (start, end) => start === 0 ? file.wire.subarray(start, end + 1)
+    : new Promise(resolve => { release = () => resolve(file.wire.subarray(start, end + 1)); }));
+  await bridge.open();
+  const abort = new AbortController();
+  const firstReader = (await bridge.get({ range: `bytes=${plainSize}-`, signal: abort.signal })).body.getReader();
+  const cancelled = firstReader.read().then(() => false, () => true);
+  while (!release) await new Promise(resolve => setTimeout(resolve, 0));
+  const secondReader = (await bridge.get()).body.getReader();
+  const chunks = [(await secondReader.read()).value];
+  const secondChunk = secondReader.read();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  abort.abort();
+  release();
+  chunks.push((await secondChunk).value);
+  for (;;) { const { value, done } = await secondReader.read(); if (done) break; chunks.push(value); }
+  assert.equal(await cancelled, true);
+  assert.deepEqual(Buffer.concat(chunks), Buffer.from(file.clear));
+  assert.deepEqual(bridge.requests, [[512 * 1024, file.wire.length - 1], [0, 512 * 1024 - 1]]);
   bridge.close();
 });

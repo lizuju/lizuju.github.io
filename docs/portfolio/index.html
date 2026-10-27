@@ -33,8 +33,8 @@
     <link rel="preload" as="image" type="image/webp" href="assets/portfolio-hero-960.webp"
         imagesrcset="assets/portfolio-hero-480.webp 480w, assets/portfolio-hero-960.webp 960w, assets/portfolio-hero.webp 1672w"
         imagesizes="(max-width: 560px) calc(100vw - 48px), (max-width: 900px) calc(100vw - 56px), (max-width: 1040px) 620px, calc(42.5vw - 145px)">
-    <link rel="stylesheet" href="css/main.css?v=ec6f54f0caf6">
-    <link rel="stylesheet" href="../shared/scene-link.css?v=ec6f54f0caf6">
+    <link rel="stylesheet" href="css/main.css?v=63a99e543a0e">
+    <link rel="stylesheet" href="../shared/scene-link.css?v=63a99e543a0e">
 </head>
 
 <body>
@@ -185,7 +185,7 @@
                         <div class="sync-space-heading">
                             <strong class="sync-space-title" data-sync-space-title></strong>
                             <button class="sync-button sync-space-rename" type="button" data-sync-space-rename
-                                data-i18n-aria="syncSpaceRename" aria-label="修改本机备注" title="修改本机备注">
+                                data-i18n-aria="syncSpaceRename" aria-label="修改空间名称" title="修改空间名称">
                                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
                                     <path d="m15 4 5 5-11 11H4v-5L15 4zM13 6l5 5" />
                                 </svg>
@@ -307,8 +307,13 @@
                                 data-i18n-aria="syncReplyCancel" aria-label="取消引用"><span aria-hidden="true">×</span></button>
                         </div>
                         <label class="visually-hidden" for="sync-message" data-i18n="syncInputLabel">消息内容</label>
+                        <div class="sync-mention-composer">
+                        <div class="sync-mention-menu" id="sync-mention-menu" data-sync-mention-menu role="listbox"
+                            data-i18n-aria="syncMentionMember" aria-label="提及成员" hidden></div>
                         <textarea id="sync-message" rows="3" placeholder="写下要同步的内容…"
-                            data-i18n-placeholder="syncInputPlaceholder" aria-describedby="sync-compose-hint" data-sync-input></textarea>
+                            data-i18n-placeholder="syncInputPlaceholder" aria-describedby="sync-compose-hint"
+                            aria-controls="sync-mention-menu" aria-autocomplete="list" data-sync-input></textarea>
+                        </div>
                         <p class="visually-hidden" id="sync-compose-hint" data-i18n="syncComposeHint">Enter 发送 · Shift+Enter 换行</p>
                         <div class="sync-compose-footer">
                             <p class="sync-hint" data-i18n="syncHistoryLimit">消息和附件最多保留 7 天、500 条；空间不足自动清理，清空同步所有设备。</p>
@@ -347,15 +352,15 @@
             <dialog class="sync-confirm-dialog sync-space-name-dialog" data-sync-space-name-dialog aria-labelledby="sync-space-name-title">
                 <form data-sync-space-name-form>
                     <div class="window-titlebar">
-                        <div class="window-title"><span id="sync-space-name-title" data-i18n="syncSpaceRename">修改本机备注</span></div>
+                        <div class="window-title"><span id="sync-space-name-title" data-i18n="syncSpaceRename">修改空间名称</span></div>
                         <div class="window-controls">
                             <button type="button" data-sync-space-name-close data-i18n-aria="syncDialogClose" aria-label="关闭确认窗口"><span aria-hidden="true">×</span></button>
                         </div>
                     </div>
                     <div class="sync-space-name-body">
-                        <label for="sync-space-name" data-i18n="syncSpaceLocalName">空间本机备注</label>
+                        <label for="sync-space-name" data-i18n="syncSpaceSharedName">空间名称</label>
                         <input id="sync-space-name" type="text" autocomplete="off" data-sync-space-name>
-                        <p class="sync-hint" data-i18n="syncSpaceNameHint">仅此浏览器可见，留空恢复默认名称。</p>
+                        <p class="sync-hint" data-i18n="syncSpaceNameHint">所有成员可见，留空恢复默认名称。</p>
                         <p data-sync-space-name-status role="status"></p>
                     </div>
                     <div class="sync-confirm-actions">
@@ -451,6 +456,10 @@
                         <i class="sync-gomoku-stone sync-gomoku-stone--black" aria-hidden="true"></i>
                         <span data-i18n="syncGameBlack">黑方</span>
                         <strong data-sync-gomoku-host></strong>
+                    </div>
+                    <div class="sync-gomoku-player sync-gomoku-move-count">
+                        <span data-i18n="syncGameMoveCount">步数</span>
+                        <strong data-sync-gomoku-move-count>0</strong>
                     </div>
                     <div class="sync-gomoku-player" data-sync-gomoku-player="guest">
                         <i class="sync-gomoku-stone sync-gomoku-stone--white" aria-hidden="true"></i>
@@ -702,7 +711,7 @@
                     <div class="hero-actions">
                         <a class="primary-action" href="#experience" data-i18n="heroPrimary">查看工作经历</a>
                         <a class="secondary-action" href="#contact" data-i18n="heroSecondary">联系我</a>
-                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=ec6f54f0caf6"
+                        <a class="secondary-action" href="assets/li-zuju-resume.pdf?v=63a99e543a0e"
                             download="李祖钜简历.pdf" data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                     </div>
                 </div>
@@ -958,7 +967,7 @@
                     </div>
                     <div class="contact-item">
                         <span class="contact-label" data-i18n="contactResume">个人简历</span>
-                        <a href="assets/li-zuju-resume.pdf?v=ec6f54f0caf6" download="李祖钜简历.pdf"
+                        <a href="assets/li-zuju-resume.pdf?v=63a99e543a0e" download="李祖钜简历.pdf"
                             data-resume-download data-i18n="resumeDownload">下载简历 PDF</a>
                         <span class="contact-note" data-i18n="resumeDetails">中文版 · 5 页 · 577 KB</span>
                     </div>
@@ -1682,12 +1691,26 @@
                             data-gomoku-i18n="about">关于五子棋</button>
                     </div>
                 </div>
+                <button class="window-menu-trigger gomoku-back-button" type="button" data-gomoku-back
+                    data-gomoku-i18n="backToModes">返回选择</button>
             </div>
 
             <div class="gomoku-launcher" data-gomoku-launcher hidden aria-live="polite"
                 aria-label="Gomoku startup terminal">
                 <pre class="gomoku-launch-log" data-gomoku-launch-log></pre>
                 <span class="gomoku-launch-cursor" aria-hidden="true"></span>
+            </div>
+
+            <div class="gomoku-mode-home" data-gomoku-mode-home hidden aria-labelledby="gomoku-mode-title">
+                <div class="gomoku-mode-content">
+                    <span class="gomoku-mode-stones" aria-hidden="true"><i></i><i></i></span>
+                    <h2 id="gomoku-mode-title" data-gomoku-i18n="chooseMode">选择对局模式</h2>
+                    <p data-gomoku-i18n="modeCopy">请选择双人对局或人机对局。</p>
+                    <div class="gomoku-mode-actions">
+                        <button type="button" data-gomoku-mode="local" data-gomoku-i18n="localMode">双人对局</button>
+                        <button type="button" data-gomoku-mode="computer" data-gomoku-i18n="computerMode">人机对局</button>
+                    </div>
+                </div>
             </div>
 
             <div class="gomoku-game-area">
@@ -1741,8 +1764,6 @@
                     <p data-gomoku-dialog-copy></p>
                 </div>
                 <div class="gomoku-dialog-actions">
-                    <button type="button" data-gomoku-mode="local" data-gomoku-i18n="localMode" hidden>双人对局</button>
-                    <button type="button" data-gomoku-mode="computer" data-gomoku-i18n="computerMode" hidden>人机对局</button>
                     <button type="button" data-gomoku-dialog-close data-gomoku-i18n="ok">确定</button>
                 </div>
             </div>
@@ -1919,10 +1940,10 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=ec6f54f0caf6"></script>
-    <script src="js/gomoku-game.js?v=ec6f54f0caf6"></script>
-    <script src="js/content.js?v=ec6f54f0caf6"></script>
-    <script src="js/main.js?v=ec6f54f0caf6"></script>
+    <script src="js/gomoku-engine.js?v=63a99e543a0e"></script>
+    <script src="js/gomoku-game.js?v=63a99e543a0e"></script>
+    <script src="js/content.js?v=63a99e543a0e"></script>
+    <script src="js/main.js?v=63a99e543a0e"></script>
 </body>
 
 </html>

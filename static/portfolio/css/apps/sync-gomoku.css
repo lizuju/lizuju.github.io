@@ -37,7 +37,7 @@
 
 .sync-gomoku-players {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     gap: 8px;
 }
 
@@ -54,6 +54,14 @@
 
 .sync-gomoku-player.is-turn {
     background: #fffde6;
+}
+
+.sync-gomoku-move-count {
+    display: flex;
+    min-width: 44px;
+    flex-direction: column;
+    justify-content: center;
+    font-variant-numeric: tabular-nums;
 }
 
 .sync-gomoku-player strong {

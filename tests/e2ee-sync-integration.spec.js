@@ -137,8 +137,10 @@ const sendText = async (page, text) => {
     await page.locator('[data-sync-send]').click();
     await expect(page.locator('[data-sync-input]')).toHaveValue('');
 };
-const readSession = page => page.evaluate(async () => {
-    const descriptor = JSON.parse(localStorage.getItem('portfolio-sync-space-e2ee1'));
+const readSession = (page, roomId) => page.evaluate(async roomId => {
+    const descriptor = roomId
+        ? JSON.parse(localStorage.getItem('portfolio-sync-spaces-e2ee1')).find(space => space.roomId === roomId)
+        : JSON.parse(localStorage.getItem('portfolio-sync-space-e2ee1'));
     const database = await new Promise((resolve, reject) => {
         const request = indexedDB.open('gavin-sync-key-vault', 1);
         request.onsuccess = () => resolve(request.result);
@@ -153,7 +155,30 @@ const readSession = page => page.evaluate(async () => {
     const bytes = text => Uint8Array.from(atob(text.replaceAll('-', '+').replaceAll('_', '/')), byte => byte.charCodeAt(0));
     const opened = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes(saved.encrypted.iv), additionalData: new TextEncoder().encode(`gavin-sync-vault-v1:${descriptor.vaultId}`) }, saved.key, bytes(saved.encrypted.ciphertext));
     return JSON.parse(new TextDecoder().decode(opened));
-});
+}, roomId);
+
+const watchSpaceConnections = page => {
+    const connections = [];
+    page.on('websocket', socket => {
+        const match = new URL(socket.url()).pathname.match(/^\/v1\/spaces\/([^/]+)\/socket$/);
+        if (!match) return;
+        const connection = { socket, roomId: match[1], auth: 0, ready: 0, frames: [], sent: [] };
+        connections.push(connection);
+        socket.on('framesent', ({ payload }) => {
+            if (payload.toString() === 'ping') return;
+            const frame = JSON.parse(payload.toString());
+            if (frame.type === 'auth') connection.auth++;
+            connection.sent.push(frame);
+        });
+        socket.on('framereceived', ({ payload }) => {
+            if (payload.toString() === 'pong') return;
+            const frame = JSON.parse(payload.toString());
+            if (frame.type === 'ready') connection.ready++;
+            connection.frames.push(frame);
+        });
+    });
+    return connections;
+};
 
 const expandSpaces = async page => {
     const toggle = page.locator('[data-sync-spaces-toggle]');
@@ -170,6 +195,11 @@ const selectSpace = async (page, roomId) => {
 
 test('switches saved spaces without mixing history, drafts, replies or selected files and restores the active space', async ({ page, isMobile, browserName }, testInfo) => {
     test.setTimeout(60000);
+    const connections = watchSpaceConnections(page);
+    const historyRequests = [];
+    page.on('request', request => {
+        if (request.method() === 'GET' && /\/messages$/.test(new URL(request.url()).pathname)) historyRequests.push(request.url());
+    });
     if (browserName === 'chromium') await page.context().grantPermissions(['local-network-access']);
     await page.goto(`${siteOrigin}/chat/`);
     await page.locator('[data-sync-create]').click();
@@ -217,6 +247,11 @@ test('switches saved spaces without mixing history, drafts, replies or selected 
     await sendText(page, secondText);
     await expect(page.locator('[data-sync-messages]')).toContainText(secondText);
     await page.locator('[data-sync-input]').fill(secondDraft);
+    const connected = connections.map(({ roomId, auth, ready }) => ({ roomId, auth, ready }));
+    const firstConnection = connections.filter(connection => connection.roomId === first.roomId).at(-1);
+    const secondConnection = connections.find(connection => connection.roomId === second.roomId);
+    const historyReads = historyRequests.length;
+    expect(firstConnection.socket.isClosed()).toBe(false);
 
     await selectSpace(page, first.roomId);
     expect((await readSession(page)).deviceId).toBe(first.deviceId);
@@ -234,6 +269,10 @@ test('switches saved spaces without mixing history, drafts, replies or selected 
     await expect(page.locator('[data-sync-input]')).toHaveValue(secondDraft);
     await expect(page.locator('[data-sync-messages]')).toContainText(secondText);
     await expect(page.locator('[data-sync-messages]')).not.toContainText(firstDraft);
+    expect(connections.map(({ roomId, auth, ready }) => ({ roomId, auth, ready }))).toEqual(connected);
+    expect(historyRequests).toHaveLength(historyReads);
+    expect(firstConnection.socket.isClosed()).toBe(false);
+    expect(secondConnection.socket.isClosed()).toBe(false);
     await page.reload();
     await awaitOnline(page);
     expect((await readSession(page)).roomId).toBe(second.roomId);
@@ -264,6 +303,208 @@ test('switches saved spaces without mixing history, drafts, replies or selected 
     const unchanged = await fetch(`${apiOrigin}/v1/spaces/${first.roomId}/devices`, { headers: { Origin: siteOrigin, Authorization: `Bearer ${first.token}` } });
     expect(unchanged.status).toBe(200);
     for (const secret of [firstDraft, secondDraft, firstText, secondText]) expect(Buffer.concat(wireBodies).includes(Buffer.from(secret))).toBe(false);
+});
+
+test('keeps background spaces paired and synchronized through key rotation, clearing and connection loss, then revokes only their own connection', async ({ browser, isMobile }) => {
+    test.setTimeout(90000);
+    const contexts = await Promise.all(Array.from({ length: 2 }, () => browser.newContext({
+        viewport: isMobile ? { width: 320, height: 568 } : { width: 1366, height: 900 }, isMobile, hasTouch: isMobile
+    })));
+    if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
+    const [owner, peer] = await Promise.all(contexts.map(context => context.newPage()));
+    const connections = watchSpaceConnections(owner);
+    await owner.addInitScript(() => {
+        window.testSpaceSockets = [];
+        window.WebSocket = new Proxy(window.WebSocket, {
+            construct(Target, args) {
+                const socket = Reflect.construct(Target, args);
+                window.testSpaceSockets.push(socket);
+                return socket;
+            }
+        });
+    });
+    try {
+        await Promise.all([owner, peer].map(page => page.goto(`${siteOrigin}/chat/`)));
+        await owner.locator('[data-sync-create]').click();
+        await awaitOnline(owner);
+        await expect(owner.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/);
+        const code = await owner.locator('[data-sync-pair-code]').textContent();
+        const first = await readSession(owner);
+        await sendText(owner, 'first-space-before-background');
+        await expect(owner.locator('.sync-message[data-state="sent"]')).toContainText('first-space-before-background');
+        await expandSpaces(owner);
+        await owner.locator('[data-sync-add-space]').click();
+        await owner.locator('[data-sync-create]').click();
+        await expect.poll(async () => (await readSession(owner)).roomId).not.toBe(first.roomId);
+        await awaitOnline(owner);
+        const second = await readSession(owner);
+        await sendText(owner, 'second-space-remains-active');
+        await expect(owner.locator('.sync-message[data-state="sent"]')).toContainText('second-space-remains-active');
+        const firstConnection = connections.find(connection => connection.roomId === first.roomId);
+        const secondConnection = connections.find(connection => connection.roomId === second.roomId);
+        const connected = connections.map(({ roomId, auth, ready }) => ({ roomId, auth, ready }));
+        expect(firstConnection.socket.isClosed()).toBe(false);
+
+        await peer.locator('[data-sync-code]').fill(code);
+        await peer.locator('[data-sync-join]').click();
+        await awaitOnline(peer);
+        const joined = await readSession(peer);
+        expect(joined.roomId).toBe(first.roomId);
+        expect(joined.keyring.currentKeyId).not.toBe(first.keyring.currentKeyId);
+        await expect.poll(async () => (await readSession(owner, first.roomId)).keyring.currentKeyId).toBe(joined.keyring.currentKeyId);
+        expect((await readSession(owner)).roomId).toBe(second.roomId);
+
+        let messageCount = firstConnection.frames.filter(frame => frame.type === 'message').length;
+        await sendText(peer, 'first-space-background-message');
+        await expect.poll(() => firstConnection.frames.filter(frame => frame.type === 'message').length).toBeGreaterThan(messageCount);
+        await expect(owner.locator('[data-sync-messages]')).not.toContainText('first-space-background-message');
+        await expect(owner.locator('[data-sync-messages]')).toContainText('second-space-remains-active');
+        const backgroundMessageId = firstConnection.frames.filter(frame => frame.type === 'message').at(-1).message.id;
+        expect(firstConnection.sent.some(frame => frame.type === 'read' && frame.messageId >= backgroundMessageId)).toBe(false);
+        await selectSpace(owner, first.roomId);
+        await expect(owner.locator('[data-sync-messages]')).toContainText('first-space-background-message');
+        await expect(owner.locator('[data-sync-messages]')).not.toContainText('second-space-remains-active');
+        await selectSpace(owner, second.roomId);
+
+        await peer.locator('[data-sync-clear]').click();
+        await peer.locator('[data-sync-confirm-accept]').click();
+        await expect.poll(() => firstConnection.frames.some(frame => frame.type === 'cleared')).toBe(true);
+        messageCount = firstConnection.frames.filter(frame => frame.type === 'message').length;
+        await sendText(peer, 'first-space-after-background-clear');
+        await expect.poll(() => firstConnection.frames.filter(frame => frame.type === 'message').length).toBeGreaterThan(messageCount);
+        await expect(owner.locator('[data-sync-messages]')).toContainText('second-space-remains-active');
+        await expect(owner.locator('[data-sync-messages]')).not.toContainText('first-space-after-background-clear');
+        await selectSpace(owner, first.roomId);
+        await expect(owner.locator('.sync-message-text')).toHaveText('first-space-after-background-clear');
+        expect(connections.map(({ roomId, auth, ready }) => ({ roomId, auth, ready }))).toEqual(connected);
+        expect(firstConnection.socket.isClosed()).toBe(false);
+        expect(secondConnection.socket.isClosed()).toBe(false);
+
+        await selectSpace(owner, second.roomId);
+        await owner.evaluate(roomId => {
+            const socket = window.testSpaceSockets.find(socket => new URL(socket.url).pathname === `/v1/spaces/${roomId}/socket`
+                && socket.readyState === WebSocket.OPEN);
+            socket.close();
+        }, first.roomId);
+        await expect.poll(() => firstConnection.socket.isClosed()).toBe(true);
+        await expect.poll(() => connections.filter(connection => connection.roomId === first.roomId).length).toBe(2);
+        const recovered = connections.filter(connection => connection.roomId === first.roomId).at(-1);
+        await expect.poll(() => recovered.ready).toBe(1);
+        await awaitOnline(owner);
+        expect((await readSession(owner)).roomId).toBe(second.roomId);
+        expect(connections.filter(connection => connection.roomId === second.roomId)).toHaveLength(1);
+        expect(secondConnection.socket.isClosed()).toBe(false);
+
+        await sendText(peer, 'first-space-after-background-reconnect');
+        await expect.poll(() => recovered.frames.some(frame => frame.type === 'message')).toBe(true);
+        const unreadMessageId = recovered.frames.filter(frame => frame.type === 'message').at(-1).message.id;
+        await owner.bringToFront();
+        await owner.locator('[data-sync-input]').fill('second-space-unsent-during-background-reconnect');
+        await expect(owner.locator('[data-sync-input]')).toHaveValue('second-space-unsent-during-background-reconnect');
+        await expect(owner.locator('[data-sync-messages]')).not.toContainText('first-space-after-background-reconnect');
+        expect(recovered.sent.some(frame => frame.type === 'read' && frame.messageId >= unreadMessageId)).toBe(false);
+        await expect(recovered.socket.waitForEvent('framesent', {
+            predicate: ({ payload }) => {
+                if (payload.toString() === 'ping') return false;
+                const frame = JSON.parse(payload.toString());
+                return frame.type === 'read' && frame.messageId >= unreadMessageId;
+            },
+            timeout: 1000
+        })).rejects.toThrow(/Timeout/);
+        const reconnected = connections.map(({ roomId, auth, ready }) => ({ roomId, auth, ready }));
+        await selectSpace(owner, first.roomId);
+        await expect(owner.locator('.sync-message-text')).toHaveText(['first-space-after-background-clear', 'first-space-after-background-reconnect']);
+        expect(connections.map(({ roomId, auth, ready }) => ({ roomId, auth, ready }))).toEqual(reconnected);
+        expect(recovered.socket.isClosed()).toBe(false);
+        await selectSpace(owner, second.roomId);
+        await expect(owner.locator('[data-sync-input]')).toHaveValue('second-space-unsent-during-background-reconnect');
+        await peer.locator('[data-sync-devices]').click();
+        const ownerDevice = peer.locator(`[data-sync-devices-list] [data-device-id="${first.deviceId}"]`);
+        await ownerDevice.locator('[data-sync-device-remove]').click();
+        await peer.locator('[data-sync-confirm-accept]').click();
+        await expect(ownerDevice).toHaveCount(0, { timeout: 30000 });
+        await expect(owner.locator(`[data-sync-space-id="${first.roomId}"]`)).toHaveCount(0);
+        await expect(owner.locator(`[data-sync-space-id="${second.roomId}"]`)).toHaveCount(1);
+        expect((await readSession(owner)).roomId).toBe(second.roomId);
+        await awaitOnline(owner);
+        await expect.poll(() => recovered.socket.isClosed()).toBe(true);
+        expect(secondConnection.socket.isClosed()).toBe(false);
+        expect(connections.map(({ roomId, auth, ready }) => ({ roomId, auth, ready }))).toEqual(reconnected);
+        await sendText(owner, 'second-space-after-background-revocation');
+        await expect(owner.locator('.sync-message[data-state="sent"]')).toContainText(['second-space-remains-active', 'second-space-after-background-revocation']);
+    } finally { await Promise.all(contexts.map(context => context.close())); }
+});
+
+test('restores every retained space connection after closing and reopening the app without losing the active draft', async ({ browser, isMobile }) => {
+    test.setTimeout(60000);
+    const contexts = await Promise.all(Array.from({ length: 2 }, () => browser.newContext({
+        viewport: isMobile ? { width: 320, height: 568 } : { width: 1366, height: 900 }, isMobile, hasTouch: isMobile
+    })));
+    if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
+    const [owner, peer] = await Promise.all(contexts.map(context => context.newPage()));
+    const connections = watchSpaceConnections(owner);
+    const draft = 'second-space-draft-survives-app-close';
+    try {
+        await Promise.all([openApp(owner), peer.goto(`${siteOrigin}/chat/`)]);
+        await owner.locator('[data-sync-create]').click();
+        await awaitOnline(owner);
+        await expect(owner.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/);
+        await peer.locator('[data-sync-code]').fill(await owner.locator('[data-sync-pair-code]').textContent());
+        await peer.locator('[data-sync-join]').click();
+        await awaitOnline(peer);
+        const joined = await readSession(peer);
+        await expect.poll(async () => (await readSession(owner)).keyring.currentKeyId).toBe(joined.keyring.currentKeyId);
+        const first = await readSession(owner);
+        await sendText(peer, 'first-space-before-app-close');
+        await expect(owner.locator('[data-sync-messages]')).toContainText('first-space-before-app-close');
+        await expandSpaces(owner);
+        await owner.locator('[data-sync-add-space]').click();
+        await owner.locator('[data-sync-create]').click();
+        await expect.poll(async () => (await readSession(owner)).roomId).not.toBe(first.roomId);
+        await awaitOnline(owner);
+        const second = await readSession(owner);
+        await sendText(owner, 'second-space-before-app-close');
+        await expect(owner.locator('.sync-message[data-state="sent"]')).toContainText('second-space-before-app-close');
+        await owner.locator('[data-sync-input]').fill(draft);
+        expect(connections).toHaveLength(2);
+        const originalConnections = [...connections];
+
+        await owner.locator('[data-sync-action="close"]').click();
+        await expect(owner.locator('[data-sync-window]')).toBeHidden();
+        await expect.poll(() => originalConnections.every(connection => connection.socket.isClosed())).toBe(true);
+        await sendText(peer, 'first-space-during-app-close');
+        await expect(peer.locator('.sync-message[data-state="sent"] .sync-message-text')).toHaveText([
+            'first-space-before-app-close', 'first-space-during-app-close'
+        ]);
+
+        await owner.locator('.desktop-shortcut[data-open-sync-space]').click();
+        await awaitOnline(owner);
+        await expect.poll(() => connections.filter(connection => connection.roomId === first.roomId).length).toBe(2);
+        await expect.poll(() => connections.filter(connection => connection.roomId === second.roomId).length).toBe(2);
+        const resumedFirst = connections.filter(connection => connection.roomId === first.roomId).at(-1);
+        const resumedSecond = connections.filter(connection => connection.roomId === second.roomId).at(-1);
+        await expect.poll(() => resumedFirst.ready).toBe(1);
+        await expect.poll(() => resumedSecond.ready).toBe(1);
+        expect(resumedFirst.auth).toBe(1);
+        expect(resumedSecond.auth).toBe(1);
+        expect((await readSession(owner)).roomId).toBe(second.roomId);
+        await expect(owner.locator('[data-sync-input]')).toHaveValue(draft);
+        await expect(owner.locator('.sync-message-text')).toHaveText('second-space-before-app-close');
+
+        await sendText(peer, 'first-space-after-app-reopen');
+        await expect.poll(() => resumedFirst.frames.some(frame => frame.type === 'message')).toBe(true);
+        await expect(owner.locator('[data-sync-messages]')).not.toContainText('first-space-after-app-reopen');
+        await selectSpace(owner, first.roomId);
+        await expect(owner.locator('.sync-message-text')).toHaveText([
+            'first-space-before-app-close', 'first-space-during-app-close', 'first-space-after-app-reopen'
+        ]);
+        await selectSpace(owner, second.roomId);
+        await expect(owner.locator('[data-sync-input]')).toHaveValue(draft);
+        await expect(owner.locator('.sync-message-text')).toHaveText('second-space-before-app-close');
+        expect(connections).toHaveLength(4);
+        expect(resumedFirst.socket.isClosed()).toBe(false);
+        expect(resumedSecond.socket.isClosed()).toBe(false);
+    } finally { await Promise.all(contexts.map(context => context.close())); }
 });
 
 test('keeps both spaces created concurrently by two empty tabs and follows their shared active selection', async ({ page, browserName }) => {
@@ -323,6 +564,7 @@ test('adds a paired space without duplicating a saved membership and leaves only
     })));
     if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
     const [owner, member] = await Promise.all(contexts.map(context => context.newPage()));
+    const connections = watchSpaceConnections(member);
     const admittedDevices = [], removedDevices = [];
     interceptApi = async request => {
         const pathname = new URL(request.url).pathname;
@@ -375,6 +617,10 @@ test('adds a paired space without duplicating a saved membership and leaves only
         expect(removedDevices).toEqual([`/v1/spaces/${shared.roomId}/device`]);
         await sendText(member, 'saved-membership-after-repeat-pairing');
         await expect(owner.locator('[data-sync-messages]')).toContainText('saved-membership-after-repeat-pairing');
+        const originalConnection = connections.filter(connection => connection.roomId === original.roomId).at(-1);
+        const sharedConnection = connections.filter(connection => connection.roomId === shared.roomId).at(-1);
+        const connected = connections.map(({ roomId, auth, ready }) => ({ roomId, auth, ready }));
+        expect(originalConnection.socket.isClosed()).toBe(false);
         await member.locator('[data-sync-leave]').click();
         await member.locator('[data-sync-confirm-accept]').click();
         await expandSpaces(member);
@@ -383,6 +629,9 @@ test('adds a paired space without duplicating a saved membership and leaves only
         await selectSpace(member, original.roomId);
         expect((await readSession(member)).deviceId).toBe(original.deviceId);
         await expect(member.locator('[data-sync-messages]')).toContainText('member-original-space');
+        await expect.poll(() => sharedConnection.socket.isClosed()).toBe(true);
+        expect(originalConnection.socket.isClosed()).toBe(false);
+        expect(connections.map(({ roomId, auth, ready }) => ({ roomId, auth, ready }))).toEqual(connected);
         const left = await fetch(`${apiOrigin}/v1/spaces/${joined.roomId}/messages`, { headers: { Origin: siteOrigin, Authorization: `Bearer ${joined.token}` } });
         expect(left.status).toBe(401);
     } finally { await Promise.all(contexts.map(context => context.close())); }
@@ -592,47 +841,142 @@ test('keeps the current draft and space when local storage cannot save it before
     await expect(page.locator('[data-sync-input]')).toHaveValue(draft);
 });
 
-test('keeps an eight-character space name local across language changes and reloads', async ({ browser, isMobile }) => {
-    test.setTimeout(60000);
-    const contexts = await Promise.all(Array.from({ length: 2 }, () => browser.newContext({
+test('synchronizes encrypted eight-character space names across devices, reconnects and saved spaces', async ({ browser, isMobile }, testInfo) => {
+    test.setTimeout(90000);
+    const contexts = await Promise.all(Array.from({ length: 3 }, () => browser.newContext({
         viewport: isMobile ? { width: 320, height: 568 } : { width: 1366, height: 900 }, isMobile, hasTouch: isMobile
     })));
     if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
-    const [owner, member] = await Promise.all(contexts.map(context => context.newPage()));
-    const name = '本机私密空间🎵🎸';
+    const [owner, member, newcomer] = await Promise.all(contexts.map(context => context.newPage()));
+    const errors = [];
+    for (const page of [owner, member, newcomer]) page.on('pageerror', error => errors.push(error.message));
+    await member.addInitScript(() => {
+        const NativeWebSocket = window.WebSocket;
+        window.__testSockets = new Set();
+        window.WebSocket = class extends NativeWebSocket {
+            constructor(...args) {
+                super(...args);
+                window.__testSockets.add(this);
+                this.addEventListener('close', () => window.__testSockets.delete(this));
+            }
+        };
+    });
+    const firstName = '共享私密空间🎵🎸';
+    const memberName = '团队协作空间甲乙';
+    const offlineName = '离线更新空间甲乙';
+    const secondName = '独立工作空间甲乙';
+    const latestName = '后来成员可见房间';
+    const rename = async (page, name, expected = name) => {
+        await page.locator('[data-sync-space-rename]').click();
+        await page.locator('[data-sync-space-name]').fill(name);
+        await expect(page.locator('[data-sync-space-name]')).toHaveValue(expected);
+        await page.locator('[data-sync-space-name-form] button[type="submit"]').click();
+        await expect(page.locator('[data-sync-space-name-dialog]')).toBeHidden();
+    };
     try {
-        await Promise.all([owner, member].map(page => page.goto(`${siteOrigin}/chat/`)));
+        await Promise.all([owner, member, newcomer].map(page => page.goto(`${siteOrigin}/chat/`)));
         await owner.locator('[data-sync-create]').click();
         await awaitOnline(owner);
         await expect(owner.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/);
-        await member.locator('[data-sync-code]').fill(await owner.locator('[data-sync-pair-code]').textContent());
+        await owner.locator('[data-sync-pair-lock]').click();
+        await expect(owner.locator('[data-sync-pair-lock]')).toHaveAttribute('aria-pressed', 'true');
+        const code = await owner.locator('[data-sync-pair-code]').textContent();
+        await member.locator('[data-sync-code]').fill(code);
         await member.locator('[data-sync-join]').click();
         await awaitOnline(member);
-        await owner.locator('[data-sync-space-rename]').click();
-        await owner.locator('[data-sync-space-name]').fill(`${name}超出`);
-        await expect(owner.locator('[data-sync-space-name]')).toHaveValue(name);
-        await owner.locator('[data-sync-space-name-form] button[type="submit"]').click();
-        await expect(owner.locator('[data-sync-space-name-dialog]')).toBeHidden();
-        await expect(owner.locator('[data-sync-space-title]')).toHaveText(name);
-        await expandSpaces(owner);
-        await expect(owner.locator('[data-sync-space-list] button')).toHaveText(name);
-        await owner.locator('[data-sync-spaces-toggle]').click();
+        const first = await readSession(owner);
+
+        await rename(owner, `${firstName}超出`, firstName);
+        for (const page of [owner, member]) {
+            await expect(page.locator('[data-sync-space-title]')).toHaveText(firstName);
+            await expect(page.locator(`[data-sync-space-id="${first.roomId}"]`)).toHaveText(firstName);
+        }
+        const profileResponse = await fetch(`${apiOrigin}/v1/spaces/${first.roomId}/profile`, {
+            headers: { Origin: siteOrigin, Authorization: `Bearer ${first.token}` }
+        });
+        expect(profileResponse.status).toBe(200);
+        const { profile } = await profileResponse.json();
+        expect(profile.name).toMatch(/^e2ee1\./);
+        expect(profile.revision).toBeGreaterThan(0);
+
         await owner.locator('[data-taskbar-lang]').click();
         await expect(owner.locator('html')).toHaveAttribute('lang', 'en');
-        await expect(owner.locator('[data-sync-space-title]')).toHaveText(name);
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText(firstName);
+        await rename(member, memberName);
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText(memberName);
+        await member.reload();
+        await awaitOnline(member);
+        await expect(member.locator('[data-sync-space-title]')).toHaveText(memberName);
+
+        await contexts[1].setOffline(true);
+        await member.evaluate(() => { for (const socket of window.__testSockets) socket.close(); });
+        await expect(member.locator('[data-sync-status]')).not.toHaveAttribute('data-state', 'online');
+        await rename(owner, offlineName);
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText(offlineName);
+        await expect(member.locator('[data-sync-space-title]')).toHaveText(memberName);
+        await contexts[1].setOffline(false);
+        await awaitOnline(member);
+        await expect(member.locator('[data-sync-space-title]')).toHaveText(offlineName);
+
+        await expandSpaces(owner);
+        await owner.locator('[data-sync-add-space]').click();
+        await owner.locator('[data-sync-create]').click();
+        await expect.poll(async () => (await readSession(owner)).roomId).not.toBe(first.roomId);
+        await awaitOnline(owner);
+        const second = await readSession(owner);
+        expect(second.roomId).not.toBe(first.roomId);
+        await rename(owner, secondName);
+        await rename(member, latestName);
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText(secondName);
+        await selectSpace(owner, first.roomId);
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText(latestName);
+        await expect(owner.locator(`[data-sync-space-id="${second.roomId}"]`)).toHaveText(secondName);
+
+        await newcomer.locator('[data-sync-code]').fill(code);
+        await newcomer.locator('[data-sync-join]').click();
+        await awaitOnline(newcomer);
+        await expect(newcomer.locator('[data-sync-space-title]')).toHaveText(latestName);
+        await expect(newcomer.locator(`[data-sync-space-id="${first.roomId}"]`)).toHaveText(latestName);
+        await rename(owner, '');
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText('Space 1');
+        for (const page of [member, newcomer]) await expect(page.locator('[data-sync-space-title]')).toHaveText('空间 1');
+        const clearedProfile = await fetch(`${apiOrigin}/v1/spaces/${first.roomId}/profile`, {
+            headers: { Origin: siteOrigin, Authorization: `Bearer ${first.token}` }
+        });
+        const cleared = (await clearedProfile.json()).profile;
+        expect(cleared.name).toMatch(/^e2ee1\./);
+        expect(cleared.revision).toBeGreaterThan(profile.revision);
         await owner.reload();
         await awaitOnline(owner);
-        await expect(owner.locator('[data-sync-space-title]')).toHaveText(name);
-        await expect(member.locator('[data-sync-space-title]')).toHaveText('空间 1');
-        await expect(member.locator('[data-sync-space-list] button')).toHaveText('空间 1');
-        expect(Buffer.concat(wireBodies).includes(Buffer.from(name))).toBe(false);
-        await owner.locator('[data-sync-space-rename]').click();
-        await owner.locator('[data-sync-space-name]').fill('');
-        await owner.locator('[data-sync-space-name-form] button[type="submit"]').click();
         await expect(owner.locator('[data-sync-space-title]')).toHaveText('Space 1');
+        await selectSpace(owner, second.roomId);
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText(secondName);
+        await owner.screenshot({ path: testInfo.outputPath('shared-space-name-isolation.png') });
+        const secondProfileResponse = await fetch(`${apiOrigin}/v1/spaces/${second.roomId}/profile`, {
+            headers: { Origin: siteOrigin, Authorization: `Bearer ${second.token}` }
+        });
+        const secondProfile = (await secondProfileResponse.json()).profile;
+        const envelope = JSON.parse(Buffer.from(secondProfile.name.slice(6), 'base64url').toString());
+        const damagedBytes = Buffer.from(envelope.ciphertext, 'base64url');
+        damagedBytes[0] ^= 1;
+        envelope.ciphertext = damagedBytes.toString('base64url');
+        const damagedName = `e2ee1.${Buffer.from(JSON.stringify(envelope)).toString('base64url')}`;
+        const damagedResponse = await fetch(`${apiOrigin}/v1/spaces/${second.roomId}/profile`, {
+            method: 'PATCH',
+            headers: { Origin: siteOrigin, Authorization: `Bearer ${second.token}`, 'Content-Type': 'application/json', 'X-Sync-Key-Id': second.keyring.currentKeyId },
+            body: JSON.stringify({ name: damagedName })
+        });
+        expect(damagedResponse.status).toBe(200);
         await owner.reload();
         await awaitOnline(owner);
-        await expect(owner.locator('[data-sync-space-title]')).toHaveText('Space 1');
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText(secondName);
+        const afterDamagedName = 'message-after-invalid-encrypted-space-name';
+        await sendText(owner, afterDamagedName);
+        await expect(owner.locator('.sync-message[data-state="sent"]').filter({ hasText: afterDamagedName })).toHaveCount(1);
+        for (const name of [firstName, memberName, offlineName, secondName, latestName]) {
+            expect(Buffer.concat(wireBodies).includes(Buffer.from(name))).toBe(false);
+        }
+        expect(errors).toEqual([]);
     } finally { await Promise.all(contexts.map(context => context.close())); }
 });
 
@@ -713,13 +1057,21 @@ test('keeps a locked code across reload and key rotation, then closes it for eve
 
         await member.locator('[data-sync-pair-close]').click();
         for (const page of [owner, member]) {
-            await expect(page.locator('[data-sync-pair-expiry]')).toHaveText('配对已关闭');
+            await expect(page.locator('[data-sync-pairing]')).toBeHidden();
+            await expect(page.locator('[data-sync-pair-code]')).toHaveText('');
+            await expect(page.locator('[data-sync-pair]')).toHaveText('生成配对码');
             await expect(page.locator('[data-sync-pair-lock]')).toHaveAttribute('aria-pressed', 'false');
         }
+        await member.screenshot({ path: testInfo.outputPath('closed-pairing.png') });
         await member.reload();
         await awaitOnline(member);
-        await expect(member.locator('[data-sync-pair-expiry]')).toHaveText('配对已关闭');
+        await expect(member.locator('[data-sync-pairing]')).toBeHidden();
+        await expect(member.locator('[data-sync-pair]')).toHaveText('生成配对码');
         await expect(member.locator('[data-sync-pair-lock]')).toHaveAttribute('aria-pressed', 'false');
+        await member.locator('[data-taskbar-lang]').click();
+        await expect(member.locator('[data-sync-pair]')).toHaveText('Generate pairing code');
+        await expect(member.locator('[data-sync-pairing]')).toBeHidden();
+        await member.locator('[data-taskbar-lang]').click();
         await newcomer.locator('[data-sync-code]').fill(code);
         await newcomer.locator('[data-sync-join]').click();
         await expect(newcomer.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncInvalidCode');
@@ -742,6 +1094,7 @@ test('keeps a locked code across reload and key rotation, then closes it for eve
         await member.locator('[data-sync-pair]').click();
         const newCode = String((Number(code) + 1) % 10000).padStart(4, '0');
         for (const page of [owner, member]) {
+            await expect(page.locator('[data-sync-pairing]')).toBeVisible();
             await expect(page.locator('[data-sync-pair-code]')).toHaveText(newCode);
             await expect(page.locator('[data-sync-pair-lock]')).toHaveAttribute('aria-pressed', 'false');
             await expect(page.locator('[data-sync-pair-expiry]')).toHaveText(/剩余 (10:00|9:\d{2})/);

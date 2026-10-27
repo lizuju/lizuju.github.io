@@ -32,10 +32,12 @@ const openChat = async (page, history, handleRequest) => {
         return route.fulfill({ headers, json: { deviceId, devices: [profile(''), profile('', otherId)], grants: [], hasMore: false, keyId } });
     });
     let connection;
+    const reads = [];
     await page.routeWebSocket('wss://sync.test/**', socket => {
         connection = socket;
         socket.onMessage(raw => {
             if (raw === 'ping') return socket.send('pong');
+            if (JSON.parse(raw).type === 'read') reads.push(JSON.parse(raw).messageId);
             if (JSON.parse(raw).type === 'auth') socket.send(JSON.stringify({
                 type: 'ready', deviceId, messages: history, historyMode: 'replace', history: bounds(history.at(-1)?.id ?? null), readReceipts: [], pairing: null
             }));
@@ -46,7 +48,9 @@ const openChat = async (page, history, handleRequest) => {
     if (await page.locator('[data-window-action="minimize"]').isVisible()) await page.locator('[data-window-action="minimize"]').click();
     await page.locator('.desktop-shortcut[data-open-sync-space]').click();
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
-    return frame => connection.send(JSON.stringify(frame));
+    const frame = value => connection.send(JSON.stringify(value));
+    frame.reads = reads;
+    return frame;
 };
 
 test('encrypts the quoted snapshot and clears it immediately without clearing a new reply draft', async ({ page }) => {
@@ -195,4 +199,89 @@ test('rejects malformed encrypted quote metadata and clears a selected quote whe
     await expect(page.locator('.sync-message')).toHaveCount(0);
     await expect(page.locator('[data-sync-reply]')).toBeHidden();
     await expect(page.locator('[data-sync-input]')).toHaveValue('Independent draft');
+});
+
+test('opens a quoted original with the keyboard, clears search and keeps newer unseen messages unread', async ({ page }) => {
+    const original = message(1, 'Original at the start', otherId);
+    const quote = quotedMessage(41, 'Searchable answer', { id: 1, deviceId: otherId, text: 'Original at the start', attachmentName: '' });
+    const frame = await openChat(page, [original, ...Array.from({ length: 39 }, (_, i) => message(i + 2, `Filler ${i + 2}`, otherId)), quote]);
+    await page.locator('[data-sync-search]').fill('Searchable answer');
+    const button = page.locator('[data-sync-jump-reply]');
+    await expect(button).toHaveAttribute('title', '跳转到原消息');
+    await button.focus();
+    const reads = frame.reads.length;
+    await button.press('Enter');
+    const source = page.locator('.sync-message').filter({ has: page.locator('.sync-message-text', { hasText: 'Original at the start' }) });
+    await expect(page.locator('[data-sync-search]')).toHaveValue('');
+    await expect(source).toBeFocused();
+    await expect(source).toHaveClass(/is-reply-target/);
+    await expect.poll(() => source.evaluate(element => {
+        const box = element.getBoundingClientRect();
+        const feed = document.querySelector('[data-sync-feed]').getBoundingClientRect();
+        return box.bottom > feed.top && box.top < feed.bottom;
+    })).toBe(true);
+    await page.waitForTimeout(750);
+    expect(frame.reads).toHaveLength(reads);
+    await expect(source).not.toHaveClass(/is-reply-target/);
+});
+
+test('loads older encrypted history pages before locating the referenced message', async ({ page }) => {
+    const requested = [];
+    const all = Array.from({ length: 120 }, (_, i) => message(i + 1, `Original ${i + 1}`, otherId));
+    const quote = quotedMessage(121, 'Newest answer', { id: 2, deviceId: otherId, text: 'Original 2', attachmentName: '' });
+    await openChat(page, [...all.slice(100), quote], async route => {
+        const url = new URL(route.request().url());
+        if (!url.pathname.endsWith('/messages') || !url.searchParams.has('before')) return false;
+        const before = Number(url.searchParams.get('before'));
+        requested.push(before);
+        const older = all.filter(item => item.id < before).slice(-50);
+        await route.fulfill({ headers, json: { messages: older, historyMode: 'prepend', history: bounds(121) } });
+        return true;
+    });
+    await page.locator('[data-sync-jump-reply]').click();
+    const source = page.locator('.sync-message').filter({ has: page.locator('.sync-message-text', { hasText: /^Original 2$/ }) });
+    await expect(source).toBeFocused();
+    expect(requested).toEqual([101, 51]);
+    await expect(source).toHaveClass(/is-reply-target/);
+    await expect(page.locator('[data-sync-notice]')).toHaveText('已定位原消息');
+});
+
+test('keeps a missing original snapshot and reports expiry without opening a wrong sender message', async ({ page }) => {
+    await openChat(page, [message(1, 'A different sender', deviceId), quotedMessage(2, 'Reply with retained snapshot', {
+        id: 1, deviceId: otherId, text: 'Expired source', attachmentName: ''
+    })]);
+    await page.locator('[data-sync-jump-reply]').click();
+    await expect(page.locator('[data-sync-notice]')).toHaveText('原消息已删除或过期。');
+    await expect(page.locator('.sync-message .sync-message-quote-text')).toHaveText('Expired source');
+    await expect(page.locator('.is-reply-target')).toHaveCount(0);
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(page.locator('[data-sync-jump-reply]')).toHaveAttribute('title', 'Go to original message');
+    await page.locator('[data-sync-jump-reply]').press('Space');
+    await expect(page.locator('[data-sync-notice]')).toHaveText('The original message was deleted or expired.');
+});
+
+test('does not navigate after history is cleared during a quoted-history request', async ({ page }) => {
+    let release;
+    let requested = false;
+    const pending = new Promise(resolve => { release = resolve; });
+    const frame = await openChat(page, [quotedMessage(51, 'Reply to an older page', { id: 1, deviceId: otherId, text: 'Old source', attachmentName: '' })], async route => {
+        if (!new URL(route.request().url()).searchParams.has('before')) return false;
+        requested = true;
+        await pending;
+        await route.fulfill({ headers, json: { messages: [message(1, 'Old source', otherId)], historyMode: 'prepend', history: bounds(51) } });
+        return true;
+    });
+    try {
+        await page.locator('[data-sync-jump-reply]').click();
+        await expect.poll(() => requested).toBe(true);
+        frame({ type: 'cleared', history: { ...bounds(null), generation: '2' }, readReceipts: [] });
+        await expect(page.locator('.sync-message')).toHaveCount(0);
+        const response = page.waitForResponse(value => new URL(value.url()).searchParams.has('before'));
+        release();
+        await response;
+        await page.waitForTimeout(100);
+        await expect(page.locator('[data-sync-history-more]')).toBeHidden();
+        await expect(page.locator('.is-reply-target')).toHaveCount(0);
+        await expect(page.locator('[data-sync-notice]')).not.toHaveText('已定位原消息');
+    } finally { release(); }
 });

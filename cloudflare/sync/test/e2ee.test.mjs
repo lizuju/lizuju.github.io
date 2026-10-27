@@ -135,7 +135,7 @@ test('pairing rejects plaintext discovery, excess candidates, unowned challenges
 
 test('encrypted file transport admits full 2 GiB plus tags while rejecting identifying metadata and oversize ciphertext',async()=>{
  const owner=await space(),path=`/v1/spaces/${owner.roomId}`;
- const maximum=2*1024**3+Math.ceil(2*1024**3/(8*1024**2-16))*16;
+ const maximum=2*1024**3+Math.ceil(2*1024**3/(512*1024-16))*16;
  const metadata={clientId:randomUUID(),name:randomUUID(),type:'application/octet-stream',size:maximum,text:cipher(owner.keyId),fingerprint:randomBytes(32).toString('hex')};
  for(const change of [{name:'private-video.mp4'},{type:'video/mp4'},{text:'private caption'},{fingerprint:undefined},{size:maximum+1}]) {
   const result=await request(`${path}/files/uploads`,{method:'POST',token:owner.token,keyId:owner.keyId,json:{...metadata,...change}});

@@ -23,11 +23,29 @@ export const prepareEncryptedFiles = () => {
     if (!workerPromise) {
         workerPromise = (async () => {
             if (!navigator.serviceWorker) throw new Error('encrypted_file_unavailable');
-            await navigator.serviceWorker.register(workerUrl.href, { scope: root.pathname, updateViaCache: 'none' });
-            if (navigator.serviceWorker.controller?.scriptURL !== workerUrl.href) {
+            const registration = await navigator.serviceWorker.register(workerUrl.href, { scope: root.pathname, updateViaCache: 'none' });
+            if (registration.active) await registration.update();
+            const installing = registration.installing || registration.waiting;
+            if (installing && installing.state !== 'activated') {
                 await new Promise((resolve, reject) => {
                     const check = () => {
-                        if (navigator.serviceWorker.controller?.scriptURL !== workerUrl.href) return;
+                        if (!['activated', 'redundant'].includes(installing.state)) return;
+                        clearTimeout(timer);
+                        installing.removeEventListener('statechange', check);
+                        installing.state === 'activated' ? resolve() : reject(new Error('encrypted_file_unavailable'));
+                    };
+                    const timer = setTimeout(() => {
+                        installing.removeEventListener('statechange', check);
+                        reject(new Error('encrypted_file_unavailable'));
+                    }, 15000);
+                    installing.addEventListener('statechange', check);
+                    check();
+                });
+            }
+            if (navigator.serviceWorker.controller !== registration.active) {
+                await new Promise((resolve, reject) => {
+                    const check = () => {
+                        if (navigator.serviceWorker.controller !== registration.active) return;
                         clearTimeout(timer);
                         navigator.serviceWorker.removeEventListener('controllerchange', check);
                         resolve();

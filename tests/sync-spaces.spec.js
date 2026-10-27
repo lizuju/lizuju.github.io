@@ -145,7 +145,7 @@ test('removing the active space selects another space and deletes only the remov
     expect(result).toEqual({ removedVault: true, preserved: 'second', activeAfterRemove: 'second', empty: [], active: null });
 });
 
-test('local names survive migration and key updates without changing credentials and can be cleared', async ({ page }) => {
+test('shared names keep their revision across key updates and reject delayed or revoked updates', async ({ page }) => {
     const result = await page.evaluate(async () => {
         const c = await import('/__sync-spaces-test__/sync-crypto.js');
         const { SavedSpaces } = await import('/__sync-spaces-test__/sync-spaces.js');
@@ -153,20 +153,27 @@ test('local names survive migration and key updates without changing credentials
         const session = { roomId: 'named-room', deviceId: 'named-device', token: 'named-token', keyring: await c.createKeyring() };
         await spaces.save(session, { activate: true });
         const before = spaces.active();
-        await spaces.rename(session.roomId, '工作😀');
+        await spaces.updateName(session, '工作😀', 1);
         const after = spaces.active();
         await spaces.importActive();
         await spaces.save(session);
         const named = spaces.list()[0];
-        let rejected = false;
-        try { await spaces.rename(session.roomId, '123456789'); } catch { rejected = true; }
-        await spaces.rename(session.roomId, '');
+        await spaces.updateName(session, '旧名称', 0);
+        const afterStale = spaces.list()[0];
+        await spaces.updateName(session, '', 2);
+        await spaces.updateName(session, '延迟名称', 1);
         await spaces.importActive();
-        return { before, after, named, rejected, cleared: spaces.list()[0] };
+        const cleared = spaces.list()[0];
+        await spaces.remove(session);
+        await spaces.updateName(session, '已离开空间', 3);
+        return { before, after, named, afterStale, cleared, removed: spaces.list() };
     });
     expect(result.before).toEqual(result.after);
     expect(result.named.name).toBe('工作😀');
     expect(result.named.token).toBe(result.before.token);
-    expect(result.rejected).toBe(true);
+    expect(result.named.nameRevision).toBe(1);
+    expect(result.afterStale.name).toBe('工作😀');
     expect(result.cleared.name).toBeUndefined();
+    expect(result.cleared.nameRevision).toBe(2);
+    expect(result.removed).toEqual([]);
 });

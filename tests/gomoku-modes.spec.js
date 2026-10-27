@@ -18,10 +18,21 @@ test.beforeEach(async ({ page, isMobile }) => {
     await page.goto(isMobile ? '/portfolio/?view=mobile-homepage' : '/portfolio/');
     await page.evaluate(() => window.GomokuGame.open());
     await expect(page.locator('[data-gomoku-launcher]')).toBeHidden();
-    await expect(page.locator('[data-gomoku-dialog]')).toBeVisible();
+    await expect(page.locator('[data-gomoku-mode-home]')).toBeVisible();
 });
 
-test('requires a mode after launch and preserves the choice dialog through minimize and reload', async ({ page }, testInfo) => {
+test('fills the game content with mode selection and preserves it through minimize and reload', async ({ page }, testInfo) => {
+    const modeHome = page.locator('[data-gomoku-mode-home]');
+    await expect(page.locator('[data-gomoku-board]')).toBeHidden();
+    await expect(page.locator('[data-gomoku-menubar]')).toBeHidden();
+    await expect(page.locator('.gomoku-statusbar')).toBeHidden();
+    await expect(page.locator('[data-gomoku-dialog]')).toBeHidden();
+    const windowBox = await page.locator('[data-gomoku-window]').boundingBox();
+    const titleBox = await page.locator('[data-gomoku-drag]').boundingBox();
+    const homeBox = await modeHome.boundingBox();
+    expect(homeBox.width).toBeGreaterThanOrEqual(windowBox.width - 4);
+    expect(homeBox.y).toBeCloseTo(titleBox.y + titleBox.height, 0);
+    expect(homeBox.y + homeBox.height).toBeCloseTo(windowBox.y + windowBox.height - 2, 0);
     await expect(page.locator('[data-gomoku-mode="local"]')).toBeFocused();
     await page.keyboard.press('F2');
     expect(await page.evaluate(() => window.GomokuGame.playMove(7, 7))).toBe(false);
@@ -29,8 +40,10 @@ test('requires a mode after launch and preserves the choice dialog through minim
     await page.keyboard.press('Tab');
     await expect(page.locator('[data-gomoku-mode="computer"]')).toBeFocused();
     await page.keyboard.press('Tab');
-    await expect(page.locator('.gomoku-dialog .window-controls button')).toBeFocused();
-    await page.keyboard.press('Tab');
+    await expect(page.locator('[data-gomoku-mode="local"]')).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(page.locator('[data-gomoku-mode="computer"]')).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
     await expect(page.locator('[data-gomoku-mode="local"]')).toBeFocused();
     await page.screenshot({ path: testInfo.outputPath('mode-choice.png') });
 
@@ -43,14 +56,52 @@ test('requires a mode after launch and preserves the choice dialog through minim
         await page.locator('[data-gomoku-task]').click();
     }
     await page.evaluate(() => window.dispatchEvent(new CustomEvent('portfolio-language-change', { detail: { language: 'en' } })));
-    await expect(page.locator('[data-gomoku-dialog-title]')).toHaveText('Choose Game Mode');
+    await expect(modeHome.locator('h2')).toHaveText('Choose Game Mode');
     await expect(page.locator('[data-gomoku-mode="local"]')).toHaveText('Two Players');
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-gomoku-window]')).toHaveClass(/is-closed/);
     await page.evaluate(() => window.GomokuGame.open());
     await expect(page.locator('[data-gomoku-mode="computer"]')).toBeVisible();
+    await page.setViewportSize({ width: 980, height: 320 });
+    await page.locator('[data-gomoku-window-action="maximize"]').click();
+    await expect(page.locator('[data-gomoku-window]')).toHaveClass(/is-maximized/);
+    const shortHome = await modeHome.boundingBox();
+    for (const button of await modeHome.locator('[data-gomoku-mode]').all()) {
+        const box = await button.boundingBox();
+        expect(box.y).toBeGreaterThanOrEqual(shortHome.y);
+        expect(box.y + box.height).toBeLessThanOrEqual(shortHome.y + shortHome.height);
+    }
+    await page.screenshot({ path: testInfo.outputPath('mode-choice-short.png') });
     await choose(page, 'computer');
     expect((await state(page)).mode).toBe('computer');
+    await expect(modeHome).toBeHidden();
+    await expect(page.locator('[data-gomoku-board]')).toBeVisible();
+});
+
+test('returns to mode selection during a computer turn and starts a fresh game in either mode', async ({ page }, testInfo) => {
+    await choose(page, 'computer');
+    await expect(page.locator('[data-gomoku-back]')).toBeVisible();
+    await page.evaluate(() => {
+        window.GomokuGame.playMove(7, 7);
+        document.querySelector('[data-gomoku-back]').click();
+    });
+    await page.waitForTimeout(350);
+    await page.evaluate(() => window.advanceTime(1000));
+    expect(await state(page)).toMatchObject({ phase: 'choosing', currentPlayer: null, moves: [], score: { human: 0, computer: 0 } });
+    await expect(page.locator('[data-gomoku-mode-home]')).toBeVisible();
+    await expect(page.locator('[data-gomoku-board]')).toBeHidden();
+    await expect(page.locator('[data-gomoku-mode="local"]')).toBeFocused();
+    await choose(page, 'local');
+    expect(await state(page)).toMatchObject({ mode: 'local', phase: 'playing', currentPlayer: 'player-black', moves: [] });
+    await clickPoint(page, 7, 7);
+    await page.locator('[data-gomoku-menu="help"]').click();
+    await page.locator('[data-gomoku-help]').click();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-gomoku-menu="help"]')).toBeFocused();
+    await page.locator('[data-gomoku-back]').click();
+    await choose(page, 'computer');
+    expect(await state(page)).toMatchObject({ mode: 'computer', phase: 'playing', currentPlayer: 'human-black', moves: [] });
+    await page.screenshot({ path: testInfo.outputPath('game-return-control.png') });
 });
 
 test('alternates local mouse and keyboard moves, restores the white turn and undoes one stone', async ({ page }, testInfo) => {

@@ -6,6 +6,7 @@ const matches = (a, b) => !!a && !!b && a.roomId === b.roomId && a.token === b.t
 const valid = value => value && ['roomId', 'token', 'deviceId', 'vaultId'].every(key => typeof value[key] === 'string' && value[key].length);
 const descriptor = value => ({ roomId: value.roomId, token: value.token, deviceId: value.deviceId,
     vaultId: value.vaultId, ...(typeof value.revision === 'string' ? { revision: value.revision } : {}),
+    ...(Number.isSafeInteger(value.nameRevision) ? { nameRevision: value.nameRevision } : {}),
     ...(typeof value.name === 'string' && value.name ? { name: value.name } : {}) });
 const locked = operation => navigator.locks.request('gavin-sync-spaces', operation);
 
@@ -31,6 +32,7 @@ export class SavedSpaces {
             if (active) {
                 const index = list.findIndex(value => value.roomId === active.roomId);
                 const item = { ...active, ...(list[index]?.name ? { name: list[index].name } : {}),
+                    ...(Number.isSafeInteger(list[index]?.nameRevision) ? { nameRevision: list[index].nameRevision } : {}),
                     number: index < 0 ? Math.max(0, ...list.map(value => value.number)) + 1 : list[index].number };
                 if (index >= 0 && !list[index].name) delete item.name;
                 if (index < 0) list.push(item);
@@ -52,6 +54,7 @@ export class SavedSpaces {
             const previous = list[index];
             const item = { ...saved, revision: session.revision,
                 ...(previous?.name ? { name: previous.name } : {}),
+                ...(Number.isSafeInteger(previous?.nameRevision) ? { nameRevision: previous.nameRevision } : {}),
                 number: previous?.number || Math.max(0, ...list.map(value => value.number)) + 1 };
             if (index < 0) list.push(item);
             else list[index] = item;
@@ -72,15 +75,15 @@ export class SavedSpaces {
         });
     }
 
-    rename(roomId, name) {
+    updateName(session, name, revision) {
         const value = String(name).trim();
-        if (Array.from(value).length > 8) throw new Error('invalid_space_name');
         return locked(() => {
             const list = this.list();
-            const item = list.find(space => space.roomId === roomId);
-            if (!item) throw new Error('key_unavailable');
+            const item = list.find(space => matches(space, session));
+            if (!item || (item.nameRevision ?? -1) >= revision) return;
             if (value) item.name = value;
             else delete item.name;
+            item.nameRevision = revision;
             localStorage.setItem(CATALOG_KEY, JSON.stringify(list));
         });
     }

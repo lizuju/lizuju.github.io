@@ -1317,12 +1317,26 @@
                             data-gomoku-i18n="about">关于五子棋</button>
                     </div>
                 </div>
+                <button class="window-menu-trigger gomoku-back-button" type="button" data-gomoku-back
+                    data-gomoku-i18n="backToModes">返回选择</button>
             </div>
 
             <div class="gomoku-launcher" data-gomoku-launcher hidden aria-live="polite"
                 aria-label="Gomoku startup terminal">
                 <pre class="gomoku-launch-log" data-gomoku-launch-log></pre>
                 <span class="gomoku-launch-cursor" aria-hidden="true"></span>
+            </div>
+
+            <div class="gomoku-mode-home" data-gomoku-mode-home hidden aria-labelledby="gomoku-mode-title">
+                <div class="gomoku-mode-content">
+                    <span class="gomoku-mode-stones" aria-hidden="true"><i></i><i></i></span>
+                    <h2 id="gomoku-mode-title" data-gomoku-i18n="chooseMode">选择对局模式</h2>
+                    <p data-gomoku-i18n="modeCopy">请选择双人对局或人机对局。</p>
+                    <div class="gomoku-mode-actions">
+                        <button type="button" data-gomoku-mode="local" data-gomoku-i18n="localMode">双人对局</button>
+                        <button type="button" data-gomoku-mode="computer" data-gomoku-i18n="computerMode">人机对局</button>
+                    </div>
+                </div>
             </div>
 
             <div class="gomoku-game-area">
@@ -1376,8 +1390,6 @@
                     <p data-gomoku-dialog-copy></p>
                 </div>
                 <div class="gomoku-dialog-actions">
-                    <button type="button" data-gomoku-mode="local" data-gomoku-i18n="localMode" hidden>双人对局</button>
-                    <button type="button" data-gomoku-mode="computer" data-gomoku-i18n="computerMode" hidden>人机对局</button>
                     <button type="button" data-gomoku-dialog-close data-gomoku-i18n="ok">确定</button>
                 </div>
             </div>

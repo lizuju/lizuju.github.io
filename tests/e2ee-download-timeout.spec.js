@@ -26,16 +26,18 @@ async function scenario(respond) {
             return respond({ signal, attempt: requests.length });
         }
     });
-    runInContext(`${source}\nglobalThis.read = fetchChunk;`, scope);
+    runInContext(`${source}\nglobalThis.read = fetchChunks;`, scope);
     const entry = {
         url: 'https://local.test/download', metadata: { size: clear.length, fileId: 'test-file' },
+        cipherSize: 8 * 1024 * 1024, plainSize: 8 * 1024 * 1024 - 16,
         noncePrefix: new Uint8Array(8), key: await webcrypto.subtle.importKey('raw', key, 'AES-GCM', false, ['decrypt'])
     };
     const controller = new AbortController();
     let settled = false;
-    const result = scope.read(entry, 0, controller.signal).then(bytes => {
+    const chunks = [];
+    const result = scope.read(entry, 0, 1, controller.signal, (_index, bytes) => chunks.push(Buffer.from(bytes))).then(() => {
         settled = true;
-        return { bytes: Buffer.from(bytes) };
+        return { bytes: Buffer.concat(chunks) };
     }, error => { settled = true; return { error: error.name }; });
     const flush = () => new Promise(setImmediate);
     const advance = async duration => {

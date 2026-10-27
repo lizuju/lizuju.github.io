@@ -129,10 +129,10 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
     };
 
     const statusText = () => {
-        if (!online) return text('syncGameOffline');
-        if (current.status === 'waiting') return text('syncGameWaiting');
         if (current.status === 'finished') return text('syncGameFinished');
         if (current.status === 'cancelled') return text('syncGameCancelled');
+        if (!online) return text('syncGameOffline');
+        if (current.status === 'waiting') return text('syncGameWaiting');
         if (pending) return text('syncGameSendingMove');
         if (current.turnDeviceId === getDeviceId()) return text('syncGameYourTurn');
         return translate('syncGamePlayerTurn', { name: deviceLabel(current.turnDeviceId) });
@@ -142,13 +142,16 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
         if (!current) return;
         find('host').textContent = deviceLabel(current.hostDeviceId);
         find('guest').textContent = current.guestDeviceId ? deviceLabel(current.guestDeviceId) : text('syncGameWaitingPlayer');
+        find('move-count').textContent = current.board.filter(Boolean).length;
         for (const seat of ['host', 'guest']) {
             app.querySelector(`[data-sync-gomoku-player="${seat}"]`).classList.toggle('is-turn',
                 current.status === 'playing' && current.turnDeviceId === current[`${seat}DeviceId`]);
         }
         const status = statusText();
+        const review = ['finished', 'cancelled'].includes(current.status);
         find('status').textContent = status;
-        find('role').textContent = text(player() === 1 ? 'syncGamePlayingBlack' : player() === 2 ? 'syncGamePlayingWhite' : 'syncGameSpectating');
+        find('role').textContent = text(review ? 'syncGameReviewRole' : player() === 1 ? 'syncGamePlayingBlack' : player() === 2 ? 'syncGamePlayingWhite' : 'syncGameSpectating');
+        app.querySelector('#sync-gomoku-keyboard-help').textContent = text(review ? 'syncGameReviewRole' : 'syncGameKeyboardHelp');
         find('error').hidden = !errorKey;
         find('error').textContent = errorKey ? text(errorKey) : '';
         canvas.classList.toggle('is-playable', canMove());

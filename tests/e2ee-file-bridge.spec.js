@@ -11,8 +11,13 @@ let site;
 let api;
 let origin;
 let apiBase;
+let servedWorker = worker;
 let metadata;
 let encrypted;
+let media;
+let mediaEncrypted;
+const mediaClear = Buffer.alloc(1024 * 1024 + 31, 37);
+const mediaRanges = [];
 
 test.beforeAll(async () => {
     const key = webcrypto.getRandomValues(new Uint8Array(32));
@@ -28,20 +33,25 @@ test.beforeAll(async () => {
         name: 'AES-GCM', iv: nonce,
         additionalData: new TextEncoder().encode(`gavin-sync-file-v1:${metadata.fileId}:0`)
     }, cryptoKey, clear));
+    const c = await import(`data:text/javascript;base64,${readFileSync(require.resolve('../static/portfolio/js/apps/sync-crypto.js')).toString('base64')}`);
+    media = c.createFileMetadata({ name: 'video.mp4', type: 'video/mp4', size: mediaClear.length });
+    mediaEncrypted = Buffer.from(await c.encryptUploadChunk(media, 0, mediaClear));
     api = createServer((request, response) => {
         const headers = { 'Access-Control-Allow-Origin': origin, 'Access-Control-Expose-Headers': 'Content-Range, Content-Length' };
         const range = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range || '');
-        if (request.url !== '/v1/spaces/room/downloads/ticket' || !range) { response.writeHead(404, headers); response.end(); return; }
+        if (!['/v1/spaces/room/downloads/ticket', '/v1/spaces/room/downloads/media'].includes(request.url) || !range) { response.writeHead(404, headers); response.end(); return; }
         const start = Number(range[1]);
         const end = Number(range[2]);
-        const body = encrypted.subarray(start, end + 1);
-        response.writeHead(206, { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Range': `bytes ${start}-${end}/${encrypted.length}`, 'Content-Length': body.length });
+        const wire = request.url.endsWith('/media') ? mediaEncrypted : encrypted;
+        if (request.url.endsWith('/media')) mediaRanges.push([start, end]);
+        const body = wire.subarray(start, end + 1);
+        response.writeHead(206, { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Range': `bytes ${start}-${end}/${wire.length}`, 'Content-Length': body.length });
         response.end(body);
     });
     await new Promise(resolve => api.listen(0, '127.0.0.1', resolve));
     apiBase = `http://127.0.0.1:${api.address().port}`;
     site = createServer((request, response) => {
-        if (request.url === '/portfolio/sync-e2ee-worker.js') { response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' }); response.end(worker); }
+        if (request.url === '/portfolio/sync-e2ee-worker.js') { response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' }); response.end(servedWorker); }
         else if (request.url === '/portfolio/client.js') { response.writeHead(200, { 'Content-Type': 'application/javascript' }); response.end(helper); }
         else if (request.url === '/portfolio/sync-config.json') { response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ apiBase })); }
         else if (request.url === '/portfolio/client.html') { response.writeHead(200, { 'Content-Type': 'text/html' }); response.end('<script type="module">import {openEncryptedFile} from "./client.js"; window.openEncryptedFile = openEncryptedFile;</script>'); }
@@ -94,4 +104,57 @@ test('streams decrypted ranges and native downloads inside the immersive iframe'
         window.capability.dispose();
         return (await fetch(window.capability.url)).status;
     })).toBe(404);
+});
+
+
+test('previews new media with one small authenticated block and downloads every block in a browser', async ({ page }) => {
+    mediaRanges.length = 0;
+    await page.goto(`${origin}/portfolio/client.html`);
+    await page.waitForFunction(() => typeof window.openEncryptedFile === 'function');
+    const result = await page.evaluate(async ({ apiBase, metadata }) => {
+        window.mediaCapability = await window.openEncryptedFile({ url: `${apiBase}/v1/spaces/room/downloads/media`, metadata });
+        const response = await fetch(window.mediaCapability.url, { headers: { Range: 'bytes=0-1' } });
+        return Array.from(new Uint8Array(await response.arrayBuffer()));
+    }, { apiBase, metadata: media });
+    expect(result).toEqual([37, 37]);
+    expect(mediaRanges).toEqual([[0, 512 * 1024 - 1]]);
+    mediaRanges.length = 0;
+    const downloading = page.waitForEvent('download');
+    await page.evaluate(async ({ apiBase, metadata }) => {
+        window.mediaCapability.dispose();
+        const capability = await window.openEncryptedFile({ url: `${apiBase}/v1/spaces/room/downloads/media`, metadata, download: true });
+        const iframe = document.createElement('iframe');
+        iframe.src = capability.url;
+        document.body.append(iframe);
+    }, { apiBase, metadata: media });
+    const download = await downloading;
+    expect((await readFile(await download.path())).equals(mediaClear)).toBe(true);
+    expect(mediaRanges).toEqual([[0, mediaEncrypted.length - 1]]);
+});
+
+
+test('waits for an updated worker before opening a new attachment format', async ({ page }) => {
+    servedWorker = Buffer.from(`
+        self.addEventListener('install', () => self.skipWaiting());
+        self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+        self.addEventListener('message', event => event.ports[0]?.postMessage({ error: 'old_worker' }));
+    `);
+    try {
+        await page.goto(`${origin}/portfolio/client.html`);
+        await page.waitForFunction(() => typeof window.openEncryptedFile === 'function');
+        await page.evaluate(async () => {
+            await navigator.serviceWorker.register('./sync-e2ee-worker.js', { scope: './', updateViaCache: 'none' });
+            await navigator.serviceWorker.ready;
+            if (!navigator.serviceWorker.controller) await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+        });
+        servedWorker = Buffer.concat([worker, Buffer.from("\nself.addEventListener('install', event => event.waitUntil(new Promise(resolve => setTimeout(resolve, 300))));")]);
+        const result = await page.evaluate(async ({ apiBase, metadata }) => {
+            const capability = await window.openEncryptedFile({ url: `${apiBase}/v1/spaces/room/downloads/media`, metadata });
+            const response = await fetch(capability.url, { headers: { Range: 'bytes=0-1' } });
+            const bytes = Array.from(new Uint8Array(await response.arrayBuffer()));
+            capability.dispose();
+            return bytes;
+        }, { apiBase, metadata: media });
+        expect(result).toEqual([37, 37]);
+    } finally { servedWorker = worker; }
 });

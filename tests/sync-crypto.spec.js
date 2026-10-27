@@ -28,8 +28,8 @@ test('authenticates messages and file chunks with room, sender and sequence cont
         const first = await c.encryptPayload(keyring, 'room', purpose, payload);
         const second = await c.encryptPayload(keyring, 'room', purpose, payload);
         const rejected = async (operation) => { try { await operation(); return false; } catch { return true; } };
-        const metadata = c.createFileMetadata({ name: 'private.mp4', type: 'video/mp4', size: c.FILE_PLAIN_CHUNK_SIZE + 31 });
-        const firstBytes = new Uint8Array(c.FILE_PLAIN_CHUNK_SIZE).fill(7);
+        const metadata = c.createFileMetadata({ name: 'private.mp4', type: 'video/mp4', size: 512 * 1024 - 16 + 31 });
+        const firstBytes = new Uint8Array(c.fileChunkLayout(metadata).plainSize).fill(7);
         const lastBytes = new Uint8Array(31).fill(11);
         const firstChunk = await c.encryptFileChunk(metadata, 0, firstBytes);
         const lastChunk = await c.encryptFileChunk(metadata, 1, lastBytes);
@@ -57,7 +57,7 @@ test('authenticates messages and file chunks with room, sender and sequence cont
     });
     expect(result.payload).toEqual({ text: 'private message', attachment: { name: '私人文件.xlsx' } });
     for (const name of ['freshNonce', 'hidesContent', 'rejectsPlaintext', 'rejectsRoom', 'rejectsSender', 'rejectsTampering', 'rejectsWrongKey', 'firstContent', 'rejectsChunkTampering', 'rejectsChunkSwap', 'keyedIdentity']) expect(result[name], name).toBe(true);
-    expect(result.chunkSizes).toEqual([8 * 1024 * 1024, 47]);
+    expect(result.chunkSizes).toEqual([512 * 1024, 47]);
     expect(result.lastContent).toEqual(Array(31).fill(11));
 });
 
@@ -387,3 +387,37 @@ for (const scenario of ['lost-response', 'timeout', 'cancel-before-commit', 'can
         expect(result.settles).toBe(scenario === 'lost-response' ? 2 : ['keep-persisted', 'abandon-unpersisted'].includes(scenario) ? 0 : 1);
     });
 }
+
+
+test('encrypts independent media blocks into resumable transport chunks and preserves old-format uploads', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const c = await import('/__sync-crypto-test__/module.js');
+        const outcomes = [];
+        for (const version of [1, 2]) {
+            const metadata = c.createFileMetadata({ name: 'resume.mp4', type: 'video/mp4', size: 1 });
+            if (version === 1) delete metadata.version;
+            const { cipherSize, plainSize, uploadPlainSize } = c.fileChunkLayout(metadata);
+            const remaining = version === 2 ? plainSize + 31 : 31;
+            metadata.size = uploadPlainSize + remaining;
+            const first = await c.encryptUploadChunk(metadata, 0, new Uint8Array(uploadPlainSize).fill(7));
+            const final = await c.encryptUploadChunk(metadata, 1, new Uint8Array(remaining).fill(11));
+            const resumed = await c.encryptUploadChunk(metadata, 1, new Uint8Array(remaining).fill(11));
+            const firstBlock = await c.decryptFileChunk(metadata, 0, first.slice(0, cipherSize));
+            const tailIndex = c.FILE_CIPHER_CHUNK_SIZE / cipherSize;
+            const tailBlock = await c.decryptFileChunk(metadata, tailIndex, final.slice(0, cipherSize));
+            const lastBlock = version === 2 ? await c.decryptFileChunk(metadata, tailIndex + 1, final.slice(cipherSize)) : tailBlock;
+            outcomes.push({ version, firstSize: first.byteLength, finalSize: final.byteLength,
+                first: new Uint8Array(firstBlock).every(value => value === 7),
+                tail: new Uint8Array(tailBlock).every(value => value === 11),
+                last: Array.from(new Uint8Array(lastBlock)),
+                resumed: final.every((value, index) => value === resumed[index]) });
+        }
+        return outcomes;
+    });
+    for (const item of result) {
+        expect(item.firstSize).toBe(8 * 1024 * 1024);
+        expect(item.finalSize).toBe((item.version === 2 ? 512 * 1024 : 0) + 47);
+        expect(item.first && item.tail && item.resumed).toBe(true);
+        expect(item.last).toEqual(Array(31).fill(11));
+    }
+});

@@ -1,6 +1,5 @@
 const PREFIX = new URL('__sync-e2ee__/', self.registration.scope).pathname;
 const CIPHER_CHUNK = 8 * 1024 * 1024;
-const CLEAR_CHUNK = CIPHER_CHUNK - 16;
 const DOWNLOAD_IDLE_MS = 60000;
 const CHUNK_IDLE_MS = 30000;
 const entries = new Map();
@@ -40,10 +39,12 @@ const prepare = async (descriptor, owner, token) => {
         || typeof metadata.fileId !== 'string' || !/^[a-zA-Z0-9-]{1,128}$/.test(metadata.fileId)
         || typeof metadata.name !== 'string' || metadata.name.length > 1024
         || typeof metadata.type !== 'string' || !/^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/.test(metadata.type)) throw new Error('invalid_file');
+    if (metadata.version !== undefined && metadata.version !== 1 && metadata.version !== 2) throw new Error('invalid_file');
+    const cipherSize = metadata.version === 2 ? 512 * 1024 : CIPHER_CHUNK;
     const key = await crypto.subtle.importKey('raw', bytes(metadata.key, 32), 'AES-GCM', false, ['decrypt']);
     const download = descriptor.download === true;
     if (download && descriptor.expiresAt && descriptor.expiresAt <= Date.now()) throw new Error('encrypted_file_unavailable');
-    return { owner, token, url: url.href, metadata, download, key, noncePrefix: bytes(metadata.noncePrefix, 8), controllers: new Set(), pendingChunks: new Map(), cachedChunks: new Map(), streamCount: 0, expiresAt: download ? descriptor.expiresAt : null, expiryTimer: null };
+    return { owner, token, url: url.href, metadata, download, cipherSize, plainSize: cipherSize - 16, key, noncePrefix: bytes(metadata.noncePrefix, 8), controllers: new Set(), pendingChunks: new Map(), cachedChunks: new Map(), streamCount: 0, expiresAt: download ? descriptor.expiresAt : null, expiryTimer: null };
 };
 const trustedClient = (client) => client?.type === 'window' && new URL(client.url).origin === self.location.origin
     && new URL(client.url).pathname.startsWith(new URL(self.registration.scope).pathname);
@@ -97,12 +98,10 @@ const resolve = async (owner, token) => {
     })().finally(() => pending.delete(capability)));
     return pending.get(capability);
 };
-const fetchChunk = async (entry, index, signal) => {
-    const clearSize = Math.min(CLEAR_CHUNK, entry.metadata.size - index * CLEAR_CHUNK);
-    const start = index * CIPHER_CHUNK;
-    const end = start + clearSize + 15;
-    const total = entry.metadata.size + Math.ceil(entry.metadata.size / CLEAR_CHUNK) * 16;
-    const encrypted = new Uint8Array(clearSize + 16);
+const fetchChunks = async (entry, index, count, signal, receive) => {
+    const start = index * entry.cipherSize;
+    const total = entry.metadata.size + Math.ceil(entry.metadata.size / entry.plainSize) * 16;
+    const end = Math.min(total, (index + count) * entry.cipherSize) - 1;
     let refreshed = false;
     for (let attempt = 0; ; attempt++) {
         signal.throwIfAborted();
@@ -163,16 +162,34 @@ const fetchChunk = async (entry, index, signal) => {
             }
             const reader = response.body.getReader();
             let offset = 0;
+            let part = index;
+            let filled = 0;
+            let encrypted = new Uint8Array(Math.min(entry.cipherSize, total - part * entry.cipherSize));
             try {
                 while (true) {
                     const { value, done } = await reader.read();
                     if (done) break;
-                    if (offset + value.byteLength > encrypted.length) throw new Error('invalid_file');
-                    encrypted.set(value, offset);
+                    if (offset + value.byteLength > end - start + 1) throw new Error('invalid_file');
                     offset += value.byteLength;
                     if (value.byteLength) progress();
+                    for (let position = 0; position < value.byteLength;) {
+                        const length = Math.min(encrypted.length - filled, value.byteLength - position);
+                        encrypted.set(value.subarray(position, position + length), filled);
+                        filled += length;
+                        position += length;
+                        if (filled !== encrypted.length) continue;
+                        const nonce = new Uint8Array(12);
+                        nonce.set(entry.noncePrefix);
+                        new DataView(nonce.buffer).setUint32(8, part);
+                        const additionalData = new TextEncoder().encode(`gavin-sync-file-v${entry.metadata.version || 1}:${entry.metadata.fileId}:${part}`);
+                        const clear = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce, additionalData }, entry.key, encrypted));
+                        signal.throwIfAborted();
+                        receive(part++, clear);
+                        filled = 0;
+                        if (part < index + count) encrypted = new Uint8Array(Math.min(entry.cipherSize, total - part * entry.cipherSize));
+                    }
                 }
-                if (offset !== encrypted.length) throw Object.assign(new Error('encrypted_file_unavailable'), { retryable: true });
+                if (offset !== end - start + 1) throw Object.assign(new Error('encrypted_file_unavailable'), { retryable: true });
             } catch (error) { await reader.cancel().catch(() => {}); throw error; }
             break;
         } catch (error) {
@@ -191,49 +208,58 @@ const fetchChunk = async (entry, index, signal) => {
             signal.removeEventListener('abort', abort);
         }
     }
-    const nonce = new Uint8Array(12);
-    nonce.set(entry.noncePrefix);
-    new DataView(nonce.buffer).setUint32(8, index);
-    const additionalData = new TextEncoder().encode(`gavin-sync-file-v1:${entry.metadata.fileId}:${index}`);
-    return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce, additionalData }, entry.key, encrypted));
 };
-const readChunk = async (entry, index, signal) => {
+const readChunk = async (entry, index, last, signal) => {
     signal.throwIfAborted();
     if (entry.cachedChunks.has(index)) {
         const bytes = entry.cachedChunks.get(index);
         entry.cachedChunks.delete(index);
-        entry.cachedChunks.set(index, bytes);
+        if (!entry.download) entry.cachedChunks.set(index, bytes);
         return bytes;
     }
     let flight = entry.pendingChunks.get(index);
     if (!flight || flight.controller.signal.aborted) {
         const controller = new AbortController();
-        flight = { controller, consumers: new Set() };
+        let count = Math.min(CIPHER_CHUNK / entry.cipherSize, last - index + 1);
+        for (let part = index + 1; part < index + count; part++) {
+            if (entry.cachedChunks.has(part) || entry.pendingChunks.has(part)) { count = part - index; break; }
+        }
+        flight = { controller, consumers: new Map(), chunks: new Map() };
+        for (let part = index; part < index + count; part++) {
+            let resolve, reject;
+            const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+            promise.catch(() => {});
+            flight.chunks.set(part, { promise, resolve, reject, received: false });
+            entry.pendingChunks.set(part, flight);
+        }
         entry.controllers.add(controller);
-        flight.promise = fetchChunk(entry, index, controller.signal).then(bytes => {
-            controller.signal.throwIfAborted();
-            if (!entry.download) {
-                entry.cachedChunks.set(index, bytes);
-                if (entry.cachedChunks.size > 3) entry.cachedChunks.delete(entry.cachedChunks.keys().next().value);
-            }
-            return bytes;
+        flight.promise = fetchChunks(entry, index, count, controller.signal, (part, bytes) => {
+            const chunk = flight.chunks.get(part);
+            if (chunk.received) return;
+            chunk.received = true;
+            entry.cachedChunks.set(part, bytes);
+            const limit = entry.metadata.version === 2 ? 16 : 3;
+            while (entry.cachedChunks.size > limit) entry.cachedChunks.delete(entry.cachedChunks.keys().next().value);
+            chunk.resolve(bytes);
+        }).catch(error => {
+            for (const chunk of flight.chunks.values()) chunk.reject(error);
         }).finally(() => {
-            if (entry.pendingChunks.get(index) === flight) entry.pendingChunks.delete(index);
+            for (const part of flight.chunks.keys()) if (entry.pendingChunks.get(part) === flight) entry.pendingChunks.delete(part);
+            for (const [consumer, abort] of flight.consumers) consumer.removeEventListener('abort', abort);
             entry.controllers.delete(controller);
         });
-        entry.pendingChunks.set(index, flight);
     }
-    flight.consumers.add(signal);
-    const abort = () => {
-        flight.consumers.delete(signal);
-        if (!flight.consumers.size) flight.controller.abort();
-    };
-    signal.addEventListener('abort', abort, { once: true });
-    try { return await flight.promise; }
-    finally {
-        signal.removeEventListener('abort', abort);
-        flight.consumers.delete(signal);
+    if (!flight.consumers.has(signal)) {
+        const abort = () => {
+            flight.consumers.delete(signal);
+            if (!flight.consumers.size) flight.controller.abort();
+        };
+        flight.consumers.set(signal, abort);
+        signal.addEventListener('abort', abort, { once: true });
     }
+    const bytes = await flight.chunks.get(index).promise;
+    if (entry.download) entry.cachedChunks.delete(index);
+    return bytes;
 };
 const releaseDownload = async (entry, owner, token, status = 'disposed') => {
     clearTimeout(entry.expiryTimer);
@@ -318,13 +344,13 @@ const serve = async (event, owner, token) => {
     const abortRequest = () => { controller.abort(event.request.signal.reason); return finish('cancelled'); };
     event.request.signal.addEventListener('abort', abortRequest, { once: true });
     if (event.request.signal.aborted) await abortRequest();
-    let index = Math.floor(start / CLEAR_CHUNK);
-    const last = Math.floor((end - 1) / CLEAR_CHUNK);
+    let index = Math.floor(start / entry.plainSize);
+    const last = Math.floor((end - 1) / entry.plainSize);
     const stream = new ReadableStream({
         async pull(output) {
             let chunk;
             try {
-                chunk = await readChunk(entry, index, controller.signal);
+                chunk = await readChunk(entry, index, last, controller.signal);
                 controller.signal.throwIfAborted();
             } catch {
                 const cancelled = event.request.signal.aborted || controller.signal.aborted;
@@ -335,7 +361,7 @@ const serve = async (event, owner, token) => {
             }
             const complete = index === last;
             try {
-                output.enqueue(chunk.subarray(Math.max(0, start - index * CLEAR_CHUNK), Math.min(chunk.length, end - index * CLEAR_CHUNK)));
+                output.enqueue(chunk.subarray(Math.max(0, start - index * entry.plainSize), Math.min(chunk.length, end - index * entry.plainSize)));
                 if (complete) output.close();
             } catch {
                 controller.abort();

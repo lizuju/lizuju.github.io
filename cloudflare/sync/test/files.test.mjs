@@ -63,10 +63,13 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   async databaseProbe() { this.probeCount = (this.probeCount || 0) + 1; if (this.probeGate) await this.probeGate; return super.databaseProbe(); }
                   testProbeCount() { return this.probeCount || 0; }
                   testFailRead() { this.failRead = true; }
-                  readStream(offset, length) {
+                  testHoldRead() { this.readGate = new Promise(resolve => { this.releaseRead = resolve; }); }
+                  testReleaseRead() { this.releaseRead(); this.readGate = null; }
+                  async readStream(offset, length) {
                     if (this.failRead) throw new Error('private-rpc-sentinel-ticket-and-secret');
                     this.readRequests ||= [];
                     this.readRequests.push({ offset, length });
+                    if (this.readGate) await this.readGate;
                     return super.readStream(offset, length);
                   }
                   testReadRequests() { return this.readRequests || []; }
@@ -84,6 +87,8 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   }
                 };
                 export class PairingRegistry extends ProductionRegistry {
+                  hasRoom(roomId) { this.roomLookups = (this.roomLookups || 0) + 1; return super.hasRoom(roomId); }
+                  testRoomLookups() { return this.roomLookups || 0; }
                   async testExpireDiagnosticsCache() { this.diagnosticsCacheUntil = Date.now() - 1; await caches.default.delete('https://sync.test/v1/status?release=local'); }
                   testSizeStart() {
                     this.sizeCalls = (this.sizeCalls || 0) + 1;
@@ -113,6 +118,21 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                 }
                 export class SyncRoom extends ProductionSyncRoom {
+                  testBeginReads() {
+                    this.readCursors = [];
+                    const sql = this.sql;
+                    this.sql = new Proxy(sql, { get: (target, key) => key === 'exec' ? (...args) => {
+                      const cursor = target.exec(...args); this.readCursors.push(cursor); return cursor;
+                    } : Reflect.get(target, key, target) });
+                  }
+                  testReadCount() { return this.readCursors.reduce((sum, cursor) => sum + cursor.rowsRead, 0); }
+                  testArmUploadAuthorization() { this.uploadAuthorizationArmed = true; this.uploadAuthorized = false; }
+                  testUploadAuthorized() { return !!this.uploadAuthorized; }
+                  checkWrite(...args) {
+                    const result = super.checkWrite(...args);
+                    if (this.uploadAuthorizationArmed) this.uploadAuthorized = true;
+                    return result;
+                  }
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   storageUsage() {
@@ -545,7 +565,7 @@ test('upload initialization validates the 2 GiB boundary and reserves an idempot
   const request = client();
   const space = await createSpace(request);
   const clientId = randomUUID();
-  const maximumCipherSize = maximumFileSize + Math.ceil(maximumFileSize / (chunkSize - 16)) * 16;
+  const maximumCipherSize = maximumFileSize + Math.ceil(maximumFileSize / (512 * 1024 - 16)) * 16;
   const started = await initiate(request, space, { clientId, size: maximumCipherSize, name: 'maximum.bin' });
   assert.equal(started.status, 201, JSON.stringify(started.body));
   assert.equal(started.body.chunkSize, chunkSize);
@@ -1343,4 +1363,100 @@ test('a stalled shard health probe preserves the healthy room result and recover
   const recovered = await request('/v1/status');
   assert.equal(recovered.body.ok, true);
   assert.equal(recovered.body.database.sampledShard.ok, true);
+});
+
+test('download row reads stay bounded across thousands of streamed network chunks', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const bytes = randomBytes(chunkSize);
+  const sent = await upload(request, space, { bytes });
+  const room = await roomObject(space, instance);
+  await room.testBeginReads();
+  const response = await instance.dispatchFetch(`https://sync.test/v1/spaces/${space.roomId}/files/${sent.body.id}`, {
+    headers: { Origin: origin, Authorization: `Bearer ${space.token}` }
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+  assert.ok(await room.testReadCount() < 20, 'download access checks must not query on every transport chunk');
+});
+
+for (const mutation of ['remove-device', 'clear-history', 'prune-history', 'remove-other-device']) {
+  test(`a pending shard read honors ${mutation} before releasing bytes`, async t => {
+    const instance = await createRuntime(); t.after(() => instance.dispose());
+    const request = client(instance), space = await createSpace(request);
+    const room = await roomObject(space, instance);
+    const peer = await room.addDevice();
+    const bytes = randomBytes(32768);
+    const sent = await upload(request, space, { bytes });
+    const storage = await roomStorage(space, instance);
+    const [{ file_id: fileId }] = await storage.exec('SELECT file_id FROM files WHERE message_id = ?', sent.body.id);
+    const shard = (await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS')).getByName(`${fileId}:0`);
+    await shard.testHoldRead();
+    const response = await instance.dispatchFetch(`https://sync.test/v1/spaces/${space.roomId}/files/${sent.body.id}`, {
+      headers: { Origin: origin, Authorization: `Bearer ${space.token}` }
+    });
+    const reading = response.arrayBuffer();
+    const result = reading.then(value => ({ value }), error => ({ error }));
+    while (!(await shard.testReadRequests()).length) await new Promise(resolve => setTimeout(resolve, 0));
+    if (mutation === 'remove-device') await room.removeDevice(space.deviceId);
+    else if (mutation === 'remove-other-device') await room.removeDevice(peer.deviceId, space.deviceId);
+    else if (mutation === 'clear-history') await room.clearMessages(space.deviceId);
+    else {
+      // Deletion is synchronous; shard cleanup awaits a separate RPC and need not finish for access to end.
+      await room.pruneOldest();
+    }
+    await shard.testReleaseRead();
+    const outcome = await result;
+    if (mutation === 'remove-other-device') assert.deepEqual(Buffer.from(outcome.value), bytes);
+    else assert.ok(outcome.error, 'revocation/deletion must reject the in-flight bytes');
+  });
+}
+
+for (const mutation of ['remove-device', 'rotate-key']) {
+  test(`an upload rechecks ${mutation} after waiting for the request body`, async t => {
+    const instance = await createRuntime(); t.after(() => instance.dispose());
+    const request = client(instance), space = await createSpace(request);
+    const started = await initiate(request, space, { size: 2 });
+    const room = await roomObject(space, instance);
+    const keyId = request.state.sessions.get(space.token).keyring.currentKeyId;
+    await room.testArmUploadAuthorization();
+    let controller;
+    const body = new ReadableStream({ start(value) { controller = value; value.enqueue(Uint8Array.of(1)); } });
+    const pending = instance.dispatchFetch(`https://sync.test/v1/spaces/${space.roomId}/files/uploads/${started.body.uploadId}/chunks/0`, {
+      method: 'PUT', body, duplex: 'half', headers: { Origin: origin, Authorization: `Bearer ${space.token}`, 'X-Sync-Key-Id': keyId }
+    });
+    for (let attempt = 0; attempt < 100 && !await room.testUploadAuthorized(); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(await room.testUploadAuthorized(), true);
+    if (mutation === 'remove-device') await room.removeDevice(space.deviceId);
+    else {
+      const nextKeyId = randomUUID();
+      const envelope = await cryptoClient.encryptPayload(request.state.sessions.get(space.token).keyring, space.roomId, 'test-rotation', { nextKeyId });
+      const rotated = await room.rotateKeys(space.deviceId, keyId, { rotationId: randomUUID(), newKeyId: nextKeyId, removedDeviceId: null,
+        grants: [{ deviceId: space.deviceId, envelope }] });
+      assert.equal(rotated.ok, true);
+    }
+    controller.enqueue(Uint8Array.of(2)); controller.close();
+    const response = await pending;
+    assert.equal(response.status, mutation === 'remove-device' ? 401 : 409);
+    const storage = await roomStorage(space, instance);
+    assert.deepEqual(await storage.exec('SELECT * FROM file_upload_chunks'), []);
+  });
+}
+
+test('upload chunks bypass the global registry while retaining device authentication', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const started = await initiate(request, space, { size: 4 });
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const before = await registry.testRoomLookups();
+  const path = `https://sync.test/v1/spaces/${space.roomId}/files/uploads/${started.body.uploadId}/chunks/0`;
+  const keyId = request.state.sessions.get(space.token).keyring.currentKeyId;
+  for (const token of [undefined, 'a'.repeat(64), space.token]) {
+    const response = await instance.dispatchFetch(path, { method: 'PUT', body: Buffer.from('file'),
+      headers: { Origin: origin, 'X-Sync-Key-Id': keyId, ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
+    assert.equal(response.status, token === space.token ? 200 : 401);
+    await response.arrayBuffer();
+  }
+  assert.equal(await registry.testRoomLookups(), before);
+  assert.equal((await complete(request, space, started.body.uploadId)).status, 201);
 });

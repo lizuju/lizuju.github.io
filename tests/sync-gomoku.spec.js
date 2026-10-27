@@ -164,7 +164,7 @@ const expectBlackStone = (page, row, col) => expect.poll(() => page.locator('[da
     const size = canvas.getBoundingClientRect().width;
     const margin = Math.max(12, size / 16);
     const step = (size - margin * 2) / 14;
-    const x = Math.round((margin + col * step) * canvas.width / size);
+    const x = Math.round((margin + (col + 0.2) * step) * canvas.width / size);
     const y = Math.round((margin + row * step) * canvas.height / size);
     const color = canvas.getContext('2d').getImageData(x, y, 1, 1).data;
     return color[0] < 80 && color[1] < 80 && color[2] < 80 && color[3] === 255;
@@ -190,6 +190,7 @@ test('keeps an encrypted invitation and one opponent through concurrent joins, r
         expect(Buffer.concat(wireBodies).includes(Buffer.from(draft))).toBe(false);
         for (const page of pages) await expect(page.locator('[data-sync-game-result]')).toBeHidden();
         await expect(owner.locator('[data-sync-gomoku-window]')).toBeVisible();
+        await expect(owner.locator('[data-sync-gomoku-move-count]')).toHaveText('0');
 
         let joinRequests = 0;
         let releaseJoins;
@@ -213,6 +214,19 @@ test('keeps an encrypted invitation and one opponent through concurrent joins, r
         const watcher = pages[watcherIndex];
         const watcherSession = sessions[watcherIndex];
         await Promise.all(pages.map(page => expect(page.locator('[data-sync-gomoku-board]')).toBeVisible()));
+        for (const page of pages) {
+            await expect(page.locator('[data-sync-gomoku-move-count]')).toHaveText('0');
+            await expect(page.locator('[data-i18n="syncGameMoveCount"]')).toHaveText('步数');
+        }
+        const [hostBounds, countBounds, guestBounds] = await Promise.all([
+            owner.locator('[data-sync-gomoku-player="host"]').boundingBox(),
+            owner.locator('[data-sync-gomoku-move-count]').locator('..').boundingBox(),
+            owner.locator('[data-sync-gomoku-player="guest"]').boundingBox()
+        ]);
+        expect(hostBounds.x + hostBounds.width).toBeLessThanOrEqual(countBounds.x);
+        expect(countBounds.x + countBounds.width).toBeLessThanOrEqual(guestBounds.x);
+        expect(Math.abs(countBounds.y - hostBounds.y)).toBeLessThanOrEqual(1);
+        expect(Math.abs(countBounds.y - guestBounds.y)).toBeLessThanOrEqual(1);
         await expect(watcher.locator('[data-sync-gomoku-board]')).toHaveAttribute('aria-disabled', 'true');
         expect(started.board).toEqual(Array(225).fill(0));
         expect(started.result).toBeNull();
@@ -237,6 +251,7 @@ test('keeps an encrypted invitation and one opponent through concurrent joins, r
                 expect(state.board[row * 15 + col]).toBe(index % 2 === 0 ? 1 : 2);
                 expect(state.result).toBeNull();
                 for (const page of pages) await expect(page.locator('[data-sync-game-result]')).toBeHidden();
+                for (const page of [owner, guest]) await expect(page.locator('[data-sync-gomoku-move-count]')).toHaveText(String(index + 1));
             }
             if (index === 2) {
                 const saved = await readGame(hostSession, id);
@@ -260,6 +275,7 @@ test('keeps an encrypted invitation and one opponent through concurrent joins, r
                     await expect(owner.locator('[data-sync-gomoku-window]')).toBeVisible();
                     await expect(owner.locator('[data-sync-window]')).toBeHidden();
                     expect((await readGame(hostSession, id)).board).toEqual(saved.board);
+                    await expect(owner.locator('[data-sync-gomoku-move-count]')).toHaveText('3');
                 }
                 await contexts[guestIndex].setOffline(true);
                 upgradedSockets.forEach((protocol, socket) => {
@@ -273,12 +289,14 @@ test('keeps an encrypted invitation and one opponent through concurrent joins, r
                     await guest.locator(`[data-sync-game-card="${id}"] [data-sync-game-open]`).click();
                 }
                 await expect(guest.locator('[data-sync-gomoku-board]')).toBeVisible();
+                await expect(guest.locator('[data-sync-gomoku-move-count]')).toHaveText('3');
                 const resumed = await readGame(hostSession, id);
                 expect(resumed.board).toEqual(saved.board);
                 expect(resumed.guestDeviceId).toBe(started.guestDeviceId);
                 await expectBlackStone(guest, 7, 3);
                 await watcher.locator(`[data-sync-game-card="${id}"] [data-sync-game-watch]`).click();
                 await expect(watcher.locator('[data-sync-gomoku-board]')).toBeVisible();
+                await expect(watcher.locator('[data-sync-gomoku-move-count]')).toHaveText('3');
                 await expectBlackStone(watcher, 7, 3);
                 await watcher.screenshot({ path: testInfo.outputPath('playing-gomoku-spectator.png') });
             }
@@ -287,7 +305,10 @@ test('keeps an encrypted invitation and one opponent through concurrent joins, r
         await expect.poll(async () => (await readGame(hostSession, id)).status).toBe('finished');
         const finished = await readGame(hostSession, id);
         expect(finished.result).toMatchObject({ winnerDeviceId: hostSession.deviceId, hostMoves: 5, guestMoves: 4, hostScore: 1, guestScore: 0 });
-        expect(finished).not.toHaveProperty('board');
+        const finalBoard = Array(225).fill(0);
+        moves.forEach(([, row, col], index) => { finalBoard[row * 15 + col] = index % 2 === 0 ? 1 : 2; });
+        expect(finished.board).toEqual(finalBoard);
+        expect(finished.lastMove).toEqual({ row: 7, col: 7 });
         for (const page of pages) {
             await expect(page.locator('[data-sync-gomoku-window]')).toBeHidden();
             const result = page.locator(`[data-sync-game-card="${id}"] [data-sync-game-result]`);
@@ -296,15 +317,70 @@ test('keeps an encrypted invitation and one opponent through concurrent joins, r
             await expect(result).toContainText('4');
             await expect(page.locator(`[data-sync-game-card="${id}"] [data-sync-game-join]`)).toBeHidden();
             await expect(page.locator(`[data-sync-game-card="${id}"] [data-sync-game-watch]`)).toBeHidden();
+            await expect(page.locator(`[data-sync-game-card="${id}"] [data-sync-game-view]`)).toBeVisible();
         }
         await expect(owner.locator('[data-sync-input]')).toHaveValue(draft);
         const pairingDetails = owner.locator('details.sync-pairing');
         if (await pairingDetails.getAttribute('open') !== null) await pairingDetails.locator('summary').click();
         await owner.screenshot({ path: testInfo.outputPath('finished-gomoku-in-chat.png') });
+        const finishedWrites = [];
+        beforeForward = incoming => {
+            if (incoming.method === 'POST' && incoming.url.startsWith(`/v1/spaces/${hostSession.roomId}/gomoku/${id}/`)) finishedWrites.push(incoming.url);
+        };
+        for (const page of [owner, watcher]) {
+            await page.locator(`[data-sync-game-card="${id}"] [data-sync-game-view]`).click();
+            const gameWindow = page.locator('[data-sync-gomoku-window]');
+            const board = page.locator('[data-sync-gomoku-board]');
+            await expect(gameWindow).toBeVisible();
+            await expect(page.locator('[data-sync-gomoku-move-count]')).toHaveText('9');
+            await expect(page.locator('[data-sync-gomoku-role]')).toHaveText('终局 · 仅供查看');
+            await expect(page.locator('#sync-gomoku-keyboard-help')).toHaveText('终局 · 仅供查看');
+            await expect(board).toHaveAttribute('aria-disabled', 'true');
+            await expect.poll(() => page.evaluate(() => JSON.parse(window.render_game_to_text()).board)).toEqual(finalBoard);
+            await expectBlackStone(page, 7, 7);
+            await expect(gameWindow.getByRole('button', { name: /回放|重播|上一手|下一手|Replay|Previous move|Next move/i })).toHaveCount(0);
+            await expect(gameWindow.locator('input[type="range"], [role="slider"]')).toHaveCount(0);
+            await clickCell(page, 0, 0, isMobile);
+            await board.press('ArrowRight');
+            await board.press('Enter');
+            await board.press('Space');
+            await expect.poll(() => page.evaluate(() => JSON.parse(window.render_game_to_text()).board)).toEqual(finalBoard);
+            expect((await readGame(hostSession, id)).revision).toBe(finished.revision);
+            const boardBounds = await board.boundingBox();
+            const windowBounds = await gameWindow.boundingBox();
+            expect(boardBounds.width).toBeGreaterThan(180);
+            expect(Math.abs(boardBounds.width - boardBounds.height)).toBeLessThanOrEqual(1);
+            expect(boardBounds.x).toBeGreaterThanOrEqual(windowBounds.x);
+            expect(boardBounds.x + boardBounds.width).toBeLessThanOrEqual(windowBounds.x + windowBounds.width);
+            expect(boardBounds.y + boardBounds.height).toBeLessThanOrEqual(windowBounds.y + windowBounds.height);
+            await page.screenshot({ path: testInfo.outputPath(`finished-gomoku-${page === owner ? 'owner' : 'spectator'}-review.png`) });
+            await page.locator('[data-sync-gomoku-action="close"]').click();
+            await expect(gameWindow).toBeHidden();
+            await expect(page.locator('[data-sync-gomoku-confirm]')).not.toBeVisible();
+        }
+        expect(finishedWrites).toEqual([]);
         await guest.reload();
         await awaitOnline(guest);
         await expect(guest.locator(`[data-sync-game-card="${id}"] [data-sync-game-result]`)).toBeVisible();
         await expect(guest.locator('[data-sync-gomoku-window]')).toBeHidden();
+        await guest.locator(`[data-sync-game-card="${id}"] [data-sync-game-view]`).click();
+        await expect(guest.locator('[data-sync-gomoku-window]')).toBeVisible();
+        await expect(guest.locator('[data-sync-gomoku-move-count]')).toHaveText('9');
+        await expect.poll(() => guest.evaluate(() => JSON.parse(window.render_game_to_text()).board)).toEqual(finalBoard);
+        await expectBlackStone(guest, 7, 7);
+        await guest.locator('[data-taskbar-lang]').click();
+        await expect(guest.locator('[data-sync-gomoku-role]')).toHaveText('Final position · Read only');
+        await expect(guest.locator('#sync-gomoku-keyboard-help')).toHaveText('Final position · Read only');
+        await expect(guest.locator('[data-i18n="syncGameMoveCount"]')).toHaveText('Moves');
+        await expect(guest.locator('[data-sync-gomoku-move-count]')).toHaveText('9');
+        expect(finishedWrites).toEqual([]);
+        const cleared = await fetch(`${apiOrigin}/v1/spaces/${hostSession.roomId}/messages`, {
+            method: 'DELETE',
+            headers: { Origin: site.origin, Authorization: `Bearer ${hostSession.token}`, 'X-Sync-Key-Id': hostSession.keyring.currentKeyId }
+        });
+        expect(cleared.status).toBe(200);
+        await expect(guest.locator('[data-sync-gomoku-window]')).toBeHidden();
+        for (const page of pages) await expect(page.locator(`[data-sync-game-card="${id}"]`)).toHaveCount(0);
         expect(pageErrors).toEqual([]);
     } finally {
         await Promise.all(contexts.map(context => context.close()));

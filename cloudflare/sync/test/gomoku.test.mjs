@@ -145,7 +145,9 @@ test('concurrent joiners claim one seat, late joiners watch, and a device cannot
   const cancelled = await act(peers[3], other.body.game.id, 'leave');
   assert.equal(cancelled.body.game.status, 'cancelled');
   assert.equal(cancelled.body.game.result, null);
+  assert.equal(cancelled.body.game.canViewBoard, false);
   assert.equal(Object.hasOwn(cancelled.body.game, 'board'), false);
+  assert.equal(Object.hasOwn((await read(host, other.body.game.id)).body.game, 'board'), false);
   assert.equal((await invite(peers[3])).status, 201);
 });
 
@@ -183,28 +185,42 @@ test('enforces membership, turn, occupied cells and revision while duplicate com
 });
 
 for (const [dr, dc] of [[1, 0], [0, 1], [1, 1], [1, -1]]) {
-  test(`detects five along ${dr},${dc}, retains only the final score and rejects further moves`, async () => {
+  test(`detects five along ${dr},${dc}, retains the winning board only on request and rejects further moves`, async () => {
     const { host, guest, game, storage, path } = await playing();
+    const connected = await connect(guest);
+    const board = Array(225).fill(0);
     let current = game;
     for (let index = 0; index < 5; index++) {
       const sent = await move(host, current, 5 + index * dr, 7 + index * dc);
       assert.equal(sent.status, 200);
       current = sent.body.game;
-      if (index < 4) current = (await move(guest, current, 0, index * 2)).body.game;
+      board[(5 + index * dr) * 15 + 7 + index * dc] = 1;
+      if (index < 4) {
+        current = (await move(guest, current, 0, index * 2)).body.game;
+        board[index * 2] = 2;
+      }
     }
+    const lastMove = { row: 5 + 4 * dr, col: 7 + 4 * dc };
     assert.equal(current.status, 'finished');
+    assert.equal(current.canViewBoard, true);
     assert.equal(current.lastMove, null);
     assert.equal(Object.hasOwn(current, 'board'), false);
     assert.deepEqual(current.result, { winnerDeviceId: host.deviceId, reason: 'five', hostMoves: 5, guestMoves: 4, hostScore: 1, guestScore: 0 });
     assert.equal((await move(guest, current, 0, 14)).body.error, 'game_conflict');
-    assert.deepEqual(await storage.exec('SELECT board, last_move, move_count FROM gomoku_games WHERE game_id = ?', game.id), [{ board: null, last_move: null, move_count: 9 }]);
+    assert.deepEqual((await connected.next(frame => frame.type === 'gomoku' && frame.game.status === 'finished')).game, current);
+    connected.socket.close();
+    assert.deepEqual(await storage.exec('SELECT board, last_move, move_count FROM gomoku_games WHERE game_id = ?', game.id), [{ board: JSON.stringify(board), last_move: JSON.stringify(lastMove), move_count: 9 }]);
     await runtime.unsafeEvictDurableObject(workerName, 'E2eeSyncRoom', { name: host.roomId });
-    assert.deepEqual((await read(guest, game.id)).body.game, current);
-    assert.deepEqual((await request(`${path}/messages`, guest)).body.messages[0].game.result, current.result);
+    assert.deepEqual((await read(guest, game.id)).body.game, { ...current, board, lastMove });
+    assert.deepEqual((await request(`${path}/messages`, guest)).body.messages[0].game, current);
+    const restored = await connect(guest);
+    assert.deepEqual(restored.ready.messages[0].game, current);
+    assert.deepEqual(restored.ready.activeGames, []);
+    restored.socket.close();
   });
 }
 
-test('a guest victory scores the correct side and the winning command can be retried after the board is erased', async () => {
+test('a guest victory scores the correct side and the winning command can be retried without changing the final board', async () => {
   const { host, guest, game } = await playing();
   let current = game;
   for (let index = 0; index < 4; index++) {
@@ -216,10 +232,12 @@ test('a guest victory scores the correct side and the winning command can be ret
   const ended = await move(guest, current, 7, 8, commandId);
   assert.equal(ended.status, 200);
   assert.deepEqual(ended.body.game.result, { winnerDeviceId: guest.deviceId, reason: 'five', hostMoves: 5, guestMoves: 5, hostScore: 0, guestScore: 1 });
+  const final = await read(host, game.id);
   assert.deepEqual(await move(guest, current, 7, 8, commandId), ended);
+  assert.deepEqual(await read(host, game.id), final);
 });
 
-test('a full-board draw scores one point for both players and removes the board', async () => {
+test('a full-board draw scores one point for both players and preserves the final stone on request', async () => {
   const { host, game, storage } = await playing();
   const board = Array.from({ length: 225 }, (_, index) => 1 + ((Math.floor(index / 15) + Math.floor((index % 15) / 2)) % 2));
   for (let row = 0; row < 15; row++) for (let col = 0; col < 15; col++) for (const [dr, dc] of [[1, 0], [0, 1], [1, 1], [1, -1]]) {
@@ -232,6 +250,8 @@ test('a full-board draw scores one point for both players and removes the board'
   assert.equal(ended.status, 200);
   assert.deepEqual(ended.body.game.result, { winnerDeviceId: null, reason: 'draw', hostMoves: 113, guestMoves: 112, hostScore: 1, guestScore: 1 });
   assert.equal(Object.hasOwn(ended.body.game, 'board'), false);
+  board[14 * 15] = 1;
+  assert.deepEqual((await read(host, game.id)).body.game, { ...ended.body.game, board, lastMove: { row: 14, col: 0 } });
 });
 
 test('reconnects recover the same game, while spectators cannot leave for a player', async () => {
@@ -247,8 +267,30 @@ test('reconnects recover the same game, while spectators cannot leave for a play
   assert.equal((await act(spectator, game.id, 'leave')).body.error, 'game_not_player');
   const ended = (await act(guest, game.id, 'leave')).body.game;
   assert.deepEqual(ended.result, { winnerDeviceId: host.deviceId, reason: 'resigned', hostMoves: 1, guestMoves: 0, hostScore: 1, guestScore: 0 });
+  assert.equal(ended.canViewBoard, true);
+  assert.equal(Object.hasOwn(ended, 'board'), false);
+  assert.deepEqual((await restored.next(frame => frame.type === 'gomoku' && frame.game.status === 'finished')).game, ended);
+  const final = (await read(spectator, game.id)).body.game;
+  assert.deepEqual(final, { ...ended, board: moved.board, lastMove: moved.lastMove });
+  assert.equal((await move(host, final, 5, 5)).body.error, 'game_conflict');
+  assert.equal((await move(guest, final, 5, 5)).body.error, 'game_conflict');
+  assert.deepEqual((await act(spectator, game.id, 'join')).body.game, ended);
   assert.deepEqual((await act(guest, game.id, 'leave')).body.game, ended);
+  assert.deepEqual((await read(host, game.id)).body.game, final);
   assert.equal((await invite(host)).status, 201);
+});
+
+test('old finished games without a stored board do not advertise a viewable position', async () => {
+  const { host, guest, game, storage, path } = await playing();
+  await move(host, game, 4, 4);
+  await act(guest, game.id, 'leave');
+  await storage.exec('UPDATE gomoku_games SET board = NULL, last_move = NULL WHERE game_id = ?', game.id);
+  const final = (await read(host, game.id)).body.game;
+  assert.equal(final.status, 'finished');
+  assert.equal(final.canViewBoard, false);
+  assert.equal(Object.hasOwn(final, 'board'), false);
+  assert.equal(final.lastMove, null);
+  assert.deepEqual((await request(`${path}/messages`, host)).body.messages[0].game, final);
 });
 
 test('both self-removal and authenticated key rotation finish the departing player game', async () => {
@@ -291,15 +333,19 @@ test('moves maintain only the requested game and reject its expired invitation w
   connected.socket.close();
 });
 
-test('clearing, expiry, capacity pruning and the 500-message cap delete games with their invitations', async () => {
+test('clearing, seven-day expiry, capacity pruning and the 500-message cap delete final boards with their invitations', async () => {
   for (const mode of ['clear', 'expiry', 'capacity', 'count']) {
-    const { host, spectator, game, storage, path } = await playing();
+    const { host, guest, spectator, game, storage, path } = await playing();
+    const moved = (await move(host, game, 4, 4)).body.game;
+    await act(guest, game.id, 'leave');
+    assert.deepEqual((await read(host, game.id)).body.game.board, moved.board);
     const connected = await connect(host);
     let retainedGame = null;
     if (mode === 'clear') await request(`${path}/messages`, host, { method: 'DELETE' });
     if (mode === 'expiry') {
+      await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - 7 * 24 * 60 * 60 * 1000 + 60 * 60 * 1000, game.messageId);
+      assert.deepEqual((await read(host, game.id)).body.game.board, moved.board);
       await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - 7 * 24 * 60 * 60 * 1000 - 1, game.messageId);
-      await request(`${path}/messages`, host);
     }
     if (mode === 'capacity') await (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(host.roomId).pruneOldest();
     if (mode === 'count') {

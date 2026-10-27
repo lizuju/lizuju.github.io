@@ -7,7 +7,7 @@ const STORAGE_HIGH_WATER = 4_800_000_000;
 const STORAGE_CLEANUP_BYTES = 3_000_000_000;
 const MESSAGE_WRITE_HEADROOM = 128 * 1024;
 const FILE_PLAINTEXT_LIMIT = 2 * 1024 * 1024 * 1024;
-const FILE_SIZE_LIMIT = FILE_PLAINTEXT_LIMIT + Math.ceil(FILE_PLAINTEXT_LIMIT / (8 * 1024 * 1024 - 16)) * 16;
+const FILE_SIZE_LIMIT = FILE_PLAINTEXT_LIMIT + Math.ceil(FILE_PLAINTEXT_LIMIT / (512 * 1024 - 16)) * 16;
 const FILE_CHUNK_SIZE = 8 * 1024 * 1024;
 const FILE_SHARD_SIZE = 64 * 1024 * 1024;
 const BLOB_CHUNK_SIZE = 1024 * 1024;
@@ -244,11 +244,13 @@ export default {
       return json({ error: 'not_found' }, 404);
     }
 
-    const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/key-rotation|\/key-grants|\/pair-code|\/pair-challenge|\/pair-accept|\/pair-requests|\/messages|\/socket|\/device|\/devices(?:\/([^/]+))?|\/gomoku\/[^/]+(?:\/(?:join|move|leave))?|\/files(?:\/.*)?|\/downloads\/[0-9a-f]{64})?$/);
+    const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/key-rotation|\/key-grants|\/pair-code|\/pair-challenge|\/pair-accept|\/pair-requests|\/messages|\/socket|\/profile|\/device|\/devices(?:\/([^/]+))?|\/gomoku\/[^/]+(?:\/(?:join|move|leave))?|\/files(?:\/.*)?|\/downloads\/[0-9a-f]{64})?$/);
     if (!match || !ROOM_ID.test(match[1]) || (match[3] && !ROOM_ID.test(match[3]))) return json({ error: 'not_found' }, 404);
     const roomId = match[1];
+    const uploadChunk = match[2]?.match(/^\/files\/uploads\/([0-9a-f-]{36})\/chunks\/(0|[1-9][0-9]*)$/i);
+    if (request.method === 'PUT' && uploadChunk && ROOM_ID.test(uploadChunk[1])) return env.E2EE_SYNC_ROOMS.getByName(roomId).fetch(request);
     const gamePath = /^\/gomoku\/([^/]+)(?:\/(join|move|leave))?$/.exec(match[2] || '');
-    if (!gamePath && !await registry.hasRoom(roomId)) return json({ error: 'not_found' }, 404);
+    if (!gamePath && match[2] !== '/profile' && !await registry.hasRoom(roomId)) return json({ error: 'not_found' }, 404);
     const room = env.E2EE_SYNC_ROOMS.getByName(roomId);
     if (request.method === 'GET' && match[2] === '/socket') {
       const protocols = (request.headers.get('Sec-WebSocket-Protocol') || '').split(',').map(value => value.trim());
@@ -278,6 +280,14 @@ export default {
     const deviceId = token ? await room.authorize(token) : null;
     if (!deviceId) return json({ error: 'unauthorized' }, 401);
     const keyId = request.headers.get('X-Sync-Key-Id');
+    if (match[2] === '/profile') {
+      if (request.method === 'GET') return resultResponse(await room.readSpaceProfile(deviceId));
+      if (request.method !== 'PATCH') return json({ error: 'not_found' }, 404);
+      const body = await readJson(request, 8192);
+      if (body.error) return resultResponse(body);
+      if (Object.keys(body.value).some(key => key !== 'name') || !encrypted(body.value.name, 4096)) return json({ error: 'invalid_name' }, 400);
+      return resultResponse(await room.renameSpace(deviceId, body.value.name, keyId));
+    }
     if (gamePath) {
       if (!ROOM_ID.test(gamePath[1])) return json({ error: 'game_not_found' }, 404);
       if (request.method === 'GET' && !gamePath[2]) return resultResponse(await room.readGame(deviceId, gamePath[1]));
@@ -323,12 +333,7 @@ export default {
     const upload = match[2]?.match(/^\/files\/uploads\/([^/]+)(?:\/chunks\/(0|[1-9][0-9]*)|\/(complete))?$/);
     if (upload && ROOM_ID.test(upload[1])) {
       let result;
-      if (request.method === 'PUT' && upload[2] !== undefined) {
-        const body = await readBytes(request, FILE_CHUNK_SIZE);
-        if (body.error) return resultResponse(body);
-        // The complete upload was reserved at initialization; retain that budget until completion or cancellation.
-        return resultResponse(await room.writeFileChunk(deviceId, upload[1], Number(upload[2]), body.bytes, keyId));
-      } else if (request.method === 'POST' && upload[3]) {
+      if (request.method === 'POST' && upload[3]) {
         result = await room.completeUpload(deviceId, upload[1], keyId);
       } else if (request.method === 'DELETE' && !upload[2] && !upload[3]) {
         result = await room.cancelUpload(deviceId, upload[1]);
@@ -1095,6 +1100,7 @@ export class E2eeSyncRoom extends DurableObject {
     super(ctx, env);
     this.sql = ctx.storage.sql;
     this.pairingQueue = Promise.resolve();
+    this.downloadRevision = 0;
     // Stale requests can wake reclaimed objects; only initialize may create their tables.
     this.initialized = this.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'devices'").toArray().length !== 0;
     if (this.initialized) this.initializeStorage();
@@ -1219,6 +1225,7 @@ export class E2eeSyncRoom extends DurableObject {
     if (!preserveUploads) this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading'");
     if (rotation.removedDeviceId) {
       this.sql.exec('DELETE FROM devices WHERE device_id = ?', rotation.removedDeviceId);
+      this.downloadRevision++;
       this.sql.exec('DELETE FROM key_grants WHERE device_id = ?', rotation.removedDeviceId);
     }
     return rotation.removedDeviceId ? this.finishDeviceGames(rotation.removedDeviceId) : [];
@@ -1337,11 +1344,35 @@ export class E2eeSyncRoom extends DurableObject {
     return { ok: true };
   }
 
+  spaceProfile() {
+    const saved = this.sql.exec("SELECT value FROM metadata WHERE key = 'spaceProfile'").toArray()[0];
+    return saved ? JSON.parse(saved.value) : { name: null, revision: 0 };
+  }
+
+  readSpaceProfile(deviceId) {
+    if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+    return { profile: this.spaceProfile() };
+  }
+
+  renameSpace(deviceId, name, keyId) {
+    if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+    const denied = this.checkWrite(keyId, name);
+    if (denied.error) return denied;
+    const profile = this.spaceProfile();
+    if (profile.name === name) return { profile };
+    profile.name = name;
+    profile.revision++;
+    this.sql.exec("INSERT INTO metadata (key, value) VALUES ('spaceProfile', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", JSON.stringify(profile));
+    this.broadcast({ type: 'space-profile', profile });
+    return { profile };
+  }
+
   info() {
     if (!this.initialized) return null;
     return {
       ...this.keyState(),
       encryptionVersion: 1,
+      spaceProfile: this.spaceProfile(),
       createdAt: Number(this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'createdAt').one().value),
       ...this.messagePage()
     };
@@ -1352,14 +1383,14 @@ export class E2eeSyncRoom extends DurableObject {
     return this.decorateMessages(this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages ORDER BY id').toArray());
   }
 
-  gameSnapshot(game, includeBoard = true) {
-    const active = game.status === 'waiting' || game.status === 'playing';
+  gameSnapshot(game, includeBoard = game.status === 'waiting' || game.status === 'playing') {
     return {
       id: game.game_id, messageId: game.message_id, hostDeviceId: game.host_device_id,
       guestDeviceId: game.guest_device_id, status: game.status, revision: game.revision,
       turnDeviceId: game.status === 'playing' ? (game.move_count % 2 ? game.guest_device_id : game.host_device_id) : null,
-      ...(active && includeBoard ? { board: JSON.parse(game.board) } : {}),
-      lastMove: active && includeBoard && game.last_move ? JSON.parse(game.last_move) : null,
+      canViewBoard: game.status === 'finished' && !!game.board,
+      ...(includeBoard && game.board ? { board: JSON.parse(game.board) } : {}),
+      lastMove: includeBoard && game.last_move ? JSON.parse(game.last_move) : null,
       result: game.result ? JSON.parse(game.result) : null, updatedAt: game.updated_at
     };
   }
@@ -1380,7 +1411,7 @@ export class E2eeSyncRoom extends DurableObject {
     this.pruneExpired();
     if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
     const game = this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', gameId).toArray()[0];
-    return game ? { game: this.gameSnapshot(game) } : { error: 'game_not_found', status: 404 };
+    return game ? { game: this.gameSnapshot(game, true) } : { error: 'game_not_found', status: 404 };
   }
 
   finishGame(game, winnerDeviceId, reason) {
@@ -1392,11 +1423,13 @@ export class E2eeSyncRoom extends DurableObject {
     game.status = game.status === 'waiting' ? 'cancelled' : 'finished';
     game.revision++;
     game.updated_at = Date.now();
-    game.board = null;
-    game.last_move = null;
+    if (game.status === 'cancelled') {
+      game.board = null;
+      game.last_move = null;
+    }
     game.result = result ? JSON.stringify(result) : null;
-    this.sql.exec('UPDATE gomoku_games SET status = ?, revision = ?, move_count = ?, board = NULL, last_move = NULL, last_command_id = ?, last_command_device_id = ?, result = ?, updated_at = ? WHERE game_id = ?',
-      game.status, game.revision, game.move_count, game.last_command_id, game.last_command_device_id, game.result, game.updated_at, game.game_id);
+    this.sql.exec('UPDATE gomoku_games SET status = ?, revision = ?, move_count = ?, board = ?, last_move = ?, last_command_id = ?, last_command_device_id = ?, result = ?, updated_at = ? WHERE game_id = ?',
+      game.status, game.revision, game.move_count, game.board, game.last_move, game.last_command_id, game.last_command_device_id, game.result, game.updated_at, game.game_id);
     return this.gameSnapshot(game);
   }
 
@@ -1460,11 +1493,11 @@ export class E2eeSyncRoom extends DurableObject {
         if (count >= 5) { won = true; break; }
       }
       changed = true;
+      game.board = JSON.stringify(board);
+      game.last_move = JSON.stringify({ row, col });
       if (won || game.move_count === 225) return { game: this.finishGame(game, won ? deviceId : null, won ? 'five' : 'draw') };
       game.revision++;
       game.updated_at = Date.now();
-      game.board = JSON.stringify(board);
-      game.last_move = JSON.stringify({ row, col });
       this.sql.exec('UPDATE gomoku_games SET revision = ?, move_count = ?, board = ?, last_move = ?, last_command_id = ?, last_command_device_id = ?, updated_at = ? WHERE game_id = ?',
         game.revision, game.move_count, game.board, game.last_move, commandId, deviceId, game.updated_at, gameId);
       return { game: this.gameSnapshot(game) };
@@ -1517,6 +1550,7 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   historyChanged(type = 'history') {
+    this.downloadRevision++;
     this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
     const rows = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages ORDER BY id DESC LIMIT 50').toArray().reverse();
     this.broadcast({ type, messages: this.decorateMessages(rows), history: this.historySnapshot(rows[0]?.id), historyMode: 'replace', readReceipts: this.readReceipts(), activeGames: this.activeGames() });
@@ -1720,6 +1754,7 @@ export class E2eeSyncRoom extends DurableObject {
         if (pruned) this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
         return publicMessage(created);
       });
+      if (pruned) this.downloadRevision++;
       this.broadcast({ type: 'message', message, history: this.historySnapshot(), ...(pruned ? { activeGames: this.activeGames() } : {}) });
       await this.cleanupFiles();
       await this.scheduleAlarm();
@@ -1798,6 +1833,7 @@ export class E2eeSyncRoom extends DurableObject {
     });
     if (saved.error) return saved;
     const { message } = saved;
+    if (pruned) this.downloadRevision++;
     this.broadcast({ type: 'message', message, history: this.historySnapshot(), ...(pruned ? { activeGames: this.activeGames() } : {}) });
     if (gameType) this.broadcast({ type: 'gomoku', game: this.gameSnapshot(this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', clientId).one()) });
     await this.scheduleAlarm();
@@ -1822,6 +1858,7 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.sql.exec('DELETE FROM devices WHERE device_id = ? RETURNING device_id', deviceId).toArray().length) {
       return { error: 'device_not_found', status: 404 };
     }
+    this.downloadRevision++;
     const games = this.finishDeviceGames(deviceId);
     this.sql.exec('DELETE FROM download_tickets WHERE device_id = ?', deviceId);
     this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE device_id = ? AND status = 'uploading'", deviceId);
@@ -1865,6 +1902,19 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.initialized) return json({ error: 'not_found' }, 404);
     const url = new URL(request.url);
     const path = url.pathname;
+    const uploadChunk = path.match(/^\/v1\/spaces\/[^/]+\/files\/uploads\/([0-9a-f-]{36})\/chunks\/(0|[1-9][0-9]*)$/i);
+    if (request.method === 'PUT' && uploadChunk && ROOM_ID.test(uploadChunk[1])) {
+      const token = request.headers.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
+      const deviceId = token ? await this.authorize(token) : null;
+      if (!deviceId) return json({ error: 'unauthorized' }, 401);
+      const keyId = request.headers.get('X-Sync-Key-Id');
+      const denied = this.checkWrite(keyId);
+      if (denied.error) return resultResponse(denied);
+      const body = await readBytes(request, FILE_CHUNK_SIZE);
+      if (body.error) return resultResponse(body);
+      // Reading the body yields to revocations and rotations; validate again at the actual write.
+      return resultResponse(await this.writeFileChunk(deviceId, uploadChunk[1], Number(uploadChunk[2]), body.bytes, keyId));
+    }
     const download = path.match(/^\/v1\/spaces\/[^/]+\/files\/([1-9][0-9]*)$/);
     const ticketMatch = path.match(/^\/v1\/spaces\/[^/]+\/downloads\/([0-9a-f]{64})$/);
     if (['GET', 'HEAD'].includes(request.method) && (download || ticketMatch)) {
@@ -1913,10 +1963,20 @@ export class E2eeSyncRoom extends DurableObject {
       let offset = start;
       let shardReader = null;
       let shardIndex = -1;
+      // Only membership/history changes invalidate access; transport chunk boundaries do not.
+      let revision = this.downloadRevision;
+      const available = () => {
+        if (!this.initialized || file.created_at + MESSAGE_LIFETIME <= Date.now()) return false;
+        if (revision === this.downloadRevision) return true;
+        if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length
+            || !this.sql.exec("SELECT 1 FROM files WHERE file_id = ? AND status = 'complete'", file.file_id).toArray().length) return false;
+        revision = this.downloadRevision;
+        return true;
+      };
       const body = new ReadableStream({
         type: 'bytes',
         pull: async (controller) => {
-          if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length || !this.sql.exec("SELECT 1 FROM files WHERE file_id = ? AND status = 'complete'", file.file_id).toArray().length || file.created_at + MESSAGE_LIFETIME <= Date.now()) {
+          if (!available()) {
             await shardReader?.cancel();
             shardReader?.releaseLock();
             shardReader = null;
@@ -1941,6 +2001,7 @@ export class E2eeSyncRoom extends DurableObject {
               shardIndex = nextShard;
             }
             const { done, value } = await shardReader.read();
+            if (!available()) throw new Error('download_unavailable');
             if (done || !value?.byteLength) throw new Error('not_found');
             offset += value.byteLength;
             controller.enqueue(value);
@@ -2033,7 +2094,7 @@ export class E2eeSyncRoom extends DurableObject {
       this.pruneExpired();
       this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'roomId', attachment.roomId);
       socket.serializeAttachment({ deviceId, connectedAt: Date.now() });
-      socket.send(JSON.stringify({ type: 'ready', deviceId, ...this.keyState(), encryptionVersion: 1, ...this.messagePage({ after: attachment.after ?? null, generation: attachment.generation }), pairing, activeGames: this.activeGames() }));
+      socket.send(JSON.stringify({ type: 'ready', deviceId, ...this.keyState(), encryptionVersion: 1, ...this.messagePage({ after: attachment.after ?? null, generation: attachment.generation }), pairing, activeGames: this.activeGames(), spaceProfile: this.spaceProfile() }));
       return true;
     });
     await this.scheduleAlarm();
