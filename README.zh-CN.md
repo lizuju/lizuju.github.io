@@ -26,14 +26,19 @@ src/                       Three.js 外壳和桌面端 UI 源码
 static/portfolio/          响应式双语作品集源码
 static/portfolio/js/content.js  中英文简历与作品集数据
 static/portfolio/js/main.js     桌面启动及 JS/CSS 打包入口
-static/portfolio/js/desktop/    窗口管理、任务栏和沉浸式场景通信
-static/portfolio/js/apps/       主页、项目文件夹、邮件和卫星窗口
+static/portfolio/js/desktop/    窗口管理、任务栏、开始菜单和沉浸式场景通信
+static/portfolio/js/apps/       主页、项目文件夹、邮件、卫星、五子棋、控制面板
+                                以及端到端加密的联络站（sync-*.js）
 static/portfolio/css/           通用样式、各应用样式、响应式和打印规则
-static/portfolio/js/gomoku-game.js  五子棋应用逻辑
+static/portfolio/sync-config.json  联络站后端地址和前端所需的同步 API 版本
+static/portfolio/sync-e2ee-worker.js  流式解密附件的 Service Worker
+static/chat/               独立的 /chat/ 联络站页面
 static/                    3D 模型、纹理、音频和公开文件
+cloudflare/sync/           联络站后端（Cloudflare Worker 与 Durable Objects）
 bundler/                   Webpack 开发及生产配置
-docs/                      构建生成的 GitHub Pages 文件
-tests/smoke.spec.js        浏览器 smoke test
+scripts/                   开发服务器和图片元数据工具
+tests/                     Playwright 浏览器测试（Chromium、WebKit，桌面端和移动端）
+docs/                      生产构建产物（自动生成，不提交）
 ```
 
 ## 本地开发
@@ -61,7 +66,7 @@ npm run preview
 ```bash
 npm run build
 npm run test:smoke
-npm run verify:docs
+npm test --prefix cloudflare/sync
 node --check static/portfolio/js/main.js
 node --check static/portfolio/js/content.js
 node --check static/portfolio/js/gomoku-game.js
@@ -69,7 +74,13 @@ node --check static/portfolio/js/gomoku-game.js
 
 `npm run build` 会先执行 `npm run images:check`，如果 `static/` 下任何图片仍带有 EXIF、GPS、XMP、IPTC 或注释元数据，构建会失败。新增照片后运行 `npm run images:strip`，它会无损移除元数据，并保留 ICC 色彩配置。
 
-Webpack 将桌面模块和样式打包为 `docs/portfolio/js/main.js` 和 `docs/portfolio/css/main.css`；请修改 `static/portfolio/` 下对应的源码。
+Webpack 将桌面模块和样式打包为 `docs/portfolio/js/main.js` 和 `docs/portfolio/css/main.css`；请修改 `static/portfolio/` 下对应的源码。`docs/` 不纳入 Git，预览或运行浏览器测试前先执行 `npm run build`。首次运行后端测试前先执行 `npm ci --prefix cloudflare/sync`。
+
+## 发布
+
+推送到 `main` 后，GitHub Actions 依次运行后端测试、生产构建和浏览器测试，全部通过后把构建结果发布到 GitHub Pages。联络站后端需要在 `cloudflare/sync/` 下手动运行 `npm run deploy` 部署（见 [`cloudflare/sync/README.md`](cloudflare/sync/README.md)）。
+
+前端改动需要新的同步协议时，同时把 `static/portfolio/sync-config.json` 的 `apiVersion` 和 `cloudflare/sync/src/api-version.js` 的 `API_VERSION` 加 1，先部署 Worker，再推送到 `main`。CI 发布 Pages 前会运行 `npm run check:sync-api` 读取线上 `/health`，如果 Worker 的 API 版本低于前端需要的版本，就停止发布。Pages 发布后，运行 `npm run build && npm run verify:release -- <完整提交SHA>` 核对线上网站和 Worker 是否都对应这次提交。
 
 ## 开源来源
 
