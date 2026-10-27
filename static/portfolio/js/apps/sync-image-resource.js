@@ -129,6 +129,7 @@ export function createImageResource({ kind = 'image', name = '', load }) {
                     state.pixels = details.width * details.height;
                     state.animated = details.animated || /^image\/gif$/i.test(blob.type) || /\.gif$/i.test(name);
                     state.blob = blob;
+                    state.bytes = blob.size;
                 }).catch(error => { clear(state, error); throw error; });
             }
             const state = current;
@@ -143,7 +144,7 @@ export function createImageResource({ kind = 'image', name = '', load }) {
                 if (!state.users.delete(user)) return;
                 rejectAborted(abortError());
                 if (!state.users.size) {
-                    if (state.ready && !state.evictOnRelease && !disposed) retain(state);
+                    if ((state.ready || state.blob) && !state.evictOnRelease && !disposed) retain(state);
                     else clear(state);
                 }
             };

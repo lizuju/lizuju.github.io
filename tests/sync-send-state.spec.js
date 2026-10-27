@@ -197,6 +197,57 @@ test('treats two successful sends with identical text as two distinct messages',
     await expect(page.locator('.sync-message-text')).toHaveText(['Send this twice', 'Send this twice']);
 });
 
+test('restores and retries a failed sticker without losing the draft, then marks it sent and read', async ({ page }) => {
+    const submissions = [];
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        const body = route.request().postDataJSON();
+        submissions.push(body);
+        if (submissions.length === 1) await route.fulfill({ status: 503, headers, json: { error: 'unavailable' } });
+        else {
+            await gate;
+            await route.fulfill({ headers, json: confirmed(body, 1) });
+        }
+        return true;
+    });
+    try {
+        await page.locator('[data-sync-input]').fill('Keep my unfinished message');
+        await page.locator('[data-sync-stickers]').click();
+        await page.locator('[data-sync-sticker-choice="happy"]').click();
+        await expect(page.locator('.sync-message[data-state="failed"] [data-sync-sticker="happy"]')).toBeVisible();
+        await expect(receipt(page)).toBeHidden();
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Keep my unfinished message');
+        await expect(page.locator('[data-sync-download-file]')).toHaveCount(0);
+        await page.reload();
+        if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+        await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+        await expect(page.locator('.sync-message[data-state="failed"] [data-sync-sticker="happy"]')).toBeVisible();
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Keep my unfinished message');
+        await page.locator('[data-sync-retry-message]').click();
+        await expect(page.locator('.sync-message[data-state="sending"] [data-sync-sticker="happy"]')).toBeVisible();
+        await expect(receipt(page)).toBeHidden();
+        await expect.poll(() => submissions.length).toBe(2);
+        expect(submissions[1]).toEqual(submissions[0]);
+        expect(submissions[0].text).toMatch(/^e2ee1\./);
+        expect(JSON.stringify(submissions)).not.toContain('happy');
+        release();
+        await expect(page.locator('.sync-message[data-state="sent"] [data-sync-sticker="happy"]')).toBeVisible();
+        await expect(receipt(page)).toHaveAttribute('data-state', 'sent');
+        await expect(receipt(page)).toHaveText('✓');
+        const sentColor = await receipt(page).evaluate(element => getComputedStyle(element).color);
+        chat.read(deviceId, 1);
+        await expect(receipt(page)).toHaveAttribute('data-state', 'sent');
+        chat.read(otherId, 1);
+        await expect(receipt(page)).toHaveAttribute('data-state', 'read');
+        expect(await receipt(page).evaluate(element => getComputedStyle(element).color)).not.toBe(sentColor);
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Keep my unfinished message');
+        await expect(page.locator('.sync-message')).toHaveCount(1);
+        await expect(page.locator('[data-sync-download-file]')).toHaveCount(0);
+    } finally { release(); }
+});
+
 test('shows an uploading attachment immediately and enables preview and download after confirmation', async ({ page }) => {
     let uploaded;
     let completeRelease;

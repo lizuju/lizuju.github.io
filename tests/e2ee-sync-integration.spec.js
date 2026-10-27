@@ -98,7 +98,7 @@ test.beforeEach(async () => {
     site = createServer(async (request, response) => {
         try {
             const url = new URL(request.url, siteOrigin);
-            if (url.pathname === '/portfolio/sync-config.json') {
+            if (['/portfolio/sync-config.json', '/chat/sync-config.json'].includes(url.pathname)) {
                 response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
                 response.end(JSON.stringify({ apiBase: apiOrigin }));
                 return;
@@ -155,6 +155,725 @@ const readSession = page => page.evaluate(async () => {
     return JSON.parse(new TextDecoder().decode(opened));
 });
 
+const expandSpaces = async page => {
+    const toggle = page.locator('[data-sync-spaces-toggle]');
+    if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+    await expect(page.locator('[data-sync-spaces-panel]')).toBeVisible();
+};
+
+const selectSpace = async (page, roomId) => {
+    await expandSpaces(page);
+    await page.locator(`[data-sync-space-id="${roomId}"]`).click();
+    await expect.poll(async () => (await readSession(page)).roomId).toBe(roomId);
+    await awaitOnline(page);
+};
+
+test('switches saved spaces without mixing history, drafts, replies or selected files and restores the active space', async ({ page, isMobile, browserName }, testInfo) => {
+    test.setTimeout(60000);
+    if (browserName === 'chromium') await page.context().grantPermissions(['local-network-access']);
+    await page.goto(`${siteOrigin}/chat/`);
+    await page.locator('[data-sync-create]').click();
+    await awaitOnline(page);
+    const first = await readSession(page);
+    await page.evaluate(() => localStorage.removeItem('portfolio-sync-spaces-e2ee1'));
+    await page.reload();
+    await awaitOnline(page);
+    expect((await readSession(page)).vaultId).toBe(first.vaultId);
+    await expandSpaces(page);
+    await expect(page.locator('[data-sync-space-list] [data-sync-space-id]')).toHaveCount(1);
+    await expect(page.locator(`[data-sync-space-id="${first.roomId}"]`)).toHaveCount(1);
+    await page.locator('[data-sync-spaces-toggle]').click();
+    const firstText = 'first-space-private-message';
+    const firstDraft = 'first-space-unsent-draft';
+    const secondText = 'second-space-private-message';
+    const secondDraft = 'second-space-unsent-draft';
+    const selected = { name: 'first-space-selected.txt', mimeType: 'text/plain', buffer: Buffer.from('first-space-only-file') };
+    await sendText(page, firstText);
+    const firstMessage = page.locator('.sync-message').filter({ hasText: firstText });
+    await expect(firstMessage).toHaveCount(1);
+    await firstMessage.locator('[data-sync-reply-message]').click();
+    await page.locator('[data-sync-input]').fill(firstDraft);
+    await page.locator('[data-sync-file-input]').setInputFiles(selected);
+
+    await expandSpaces(page);
+    await page.locator('[data-sync-add-space]').click();
+    await expect(page.locator('[data-sync-setup]')).toBeVisible();
+    await page.locator('[data-sync-back-space]').click();
+    await expect(page.locator('[data-sync-input]')).toHaveValue(firstDraft);
+    await expect(page.locator('[data-sync-reply-text]')).toHaveText(firstText);
+    await expect(page.locator('[data-sync-file-name]')).toHaveText(selected.name);
+    await expandSpaces(page);
+    await page.locator('[data-sync-add-space]').click();
+    await page.locator('[data-sync-create]').click();
+    await expect.poll(async () => (await readSession(page)).roomId).not.toBe(first.roomId);
+    await awaitOnline(page);
+    const second = await readSession(page);
+    expect(second.roomId).not.toBe(first.roomId);
+    expect(second.vaultId).not.toBe(first.vaultId);
+    await expect(page.locator('[data-sync-messages]')).not.toContainText(firstText);
+    await expect(page.locator('[data-sync-input]')).toHaveValue('');
+    await expect(page.locator('[data-sync-reply]')).toBeHidden();
+    await expect(page.locator('[data-sync-selected-file]')).toBeHidden();
+    await sendText(page, secondText);
+    await expect(page.locator('[data-sync-messages]')).toContainText(secondText);
+    await page.locator('[data-sync-input]').fill(secondDraft);
+
+    await selectSpace(page, first.roomId);
+    expect((await readSession(page)).deviceId).toBe(first.deviceId);
+    await expect(page.locator('[data-sync-messages]')).toContainText(firstText);
+    await expect(page.locator('[data-sync-messages]')).not.toContainText(secondText);
+    await expect(page.locator('[data-sync-input]')).toHaveValue(firstDraft);
+    await expect(page.locator('[data-sync-reply-text]')).toHaveText(firstText);
+    await expect(page.locator('[data-sync-file-name]')).toHaveText(selected.name);
+    await page.locator('[data-sync-remove-file]').click();
+    await page.locator('[data-sync-send]').click();
+    await expect(page.locator('[data-sync-input]')).toHaveValue('');
+    await expect(page.locator('.sync-message').filter({ hasText: firstDraft }).locator('.sync-message-quote-text')).toContainText(firstText);
+
+    await selectSpace(page, second.roomId);
+    await expect(page.locator('[data-sync-input]')).toHaveValue(secondDraft);
+    await expect(page.locator('[data-sync-messages]')).toContainText(secondText);
+    await expect(page.locator('[data-sync-messages]')).not.toContainText(firstDraft);
+    await page.reload();
+    await awaitOnline(page);
+    expect((await readSession(page)).roomId).toBe(second.roomId);
+    await expect(page.locator('[data-sync-input]')).toHaveValue(secondDraft);
+    await expandSpaces(page);
+    await expect(page.locator('[data-sync-space-list] [data-sync-space-id]')).toHaveCount(2);
+    await expect(page.locator(`[data-sync-space-id="${second.roomId}"]`)).toHaveAttribute('aria-current', 'true');
+    await page.screenshot({ path: testInfo.outputPath(`spaces-${isMobile ? 'mobile' : 'desktop'}.png`) });
+    const windowBounds = await page.locator('[data-sync-window]').boundingBox();
+    const sidebarBounds = await page.locator('[data-sync-spaces-panel]').boundingBox();
+    expect(sidebarBounds.x + sidebarBounds.width).toBeLessThanOrEqual(windowBounds.x + windowBounds.width + 1);
+    await page.locator('[data-sync-spaces-toggle]').click();
+    await expect(page.locator('[data-sync-spaces-toggle]')).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('[data-sync-spaces-panel]')).toBeHidden();
+    await page.screenshot({ path: testInfo.outputPath(`spaces-collapsed-${isMobile ? 'mobile' : 'desktop'}.png`) });
+    const otherTab = await page.context().newPage();
+    try {
+        await otherTab.goto(`${siteOrigin}/chat/`);
+        await awaitOnline(otherTab);
+        expect((await readSession(otherTab)).roomId).toBe(second.roomId);
+        await selectSpace(page, first.roomId);
+        await expect(otherTab.locator('[data-sync-messages]')).toContainText(firstText);
+        await expect(otherTab.locator('[data-sync-messages]')).not.toContainText(secondText);
+        await selectSpace(page, second.roomId);
+        await expect(otherTab.locator('[data-sync-messages]')).toContainText(secondText);
+        await expect(page.locator('[data-sync-input]')).toHaveValue(secondDraft);
+    } finally { await otherTab.close(); }
+    const unchanged = await fetch(`${apiOrigin}/v1/spaces/${first.roomId}/devices`, { headers: { Origin: siteOrigin, Authorization: `Bearer ${first.token}` } });
+    expect(unchanged.status).toBe(200);
+    for (const secret of [firstDraft, secondDraft, firstText, secondText]) expect(Buffer.concat(wireBodies).includes(Buffer.from(secret))).toBe(false);
+});
+
+test('keeps both spaces created concurrently by two empty tabs and follows their shared active selection', async ({ page, browserName }) => {
+    test.setTimeout(60000);
+    if (browserName === 'chromium') await page.context().grantPermissions(['local-network-access']);
+    const other = await page.context().newPage();
+    const created = [];
+    let requests = 0;
+    let releaseRequests;
+    const ready = new Promise(resolve => { releaseRequests = resolve; });
+    interceptApi = async (request, forward) => {
+        if (request.method !== 'POST' || new URL(request.url).pathname !== '/v1/spaces') return;
+        requests++;
+        if (requests === 2) releaseRequests();
+        await ready;
+        const response = await forward();
+        created.push(await response.clone().json());
+        return response;
+    };
+    try {
+        await Promise.all([page, other].map(tab => tab.goto(`${siteOrigin}/chat/`)));
+        await Promise.all([page, other].map(tab => tab.locator('[data-sync-create]').click()));
+        await expect.poll(() => created.length).toBe(2);
+        const roomIds = created.map(session => session.roomId).sort();
+        expect(new Set(roomIds).size).toBe(2);
+        await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('portfolio-sync-spaces-e2ee1') || '[]').map(space => space.roomId).sort())).toEqual(roomIds);
+        await Promise.all([page, other].map(awaitOnline));
+        await Promise.all([page, other].map(tab => expect(tab.locator('[data-sync-add-space]')).toBeEnabled()));
+        const activeId = (await readSession(page)).roomId;
+        await Promise.all([page, other].map(tab => expect(tab.locator(`[data-sync-space-id="${activeId}"]`)).toHaveAttribute('aria-current', 'true')));
+        await selectSpace(page, roomIds[0]);
+        await expect(other.locator(`[data-sync-space-id="${roomIds[0]}"]`)).toHaveAttribute('aria-current', 'true');
+        await sendText(page, 'concurrent-space-one-message');
+        await expect(other.locator('[data-sync-messages]')).toContainText('concurrent-space-one-message');
+        await selectSpace(other, roomIds[1]);
+        await expect(page.locator(`[data-sync-space-id="${roomIds[1]}"]`)).toHaveAttribute('aria-current', 'true');
+        await sendText(other, 'concurrent-space-two-message');
+        await expect(page.locator('[data-sync-messages]')).toContainText('concurrent-space-two-message');
+        await expect(page.locator('[data-sync-messages]')).not.toContainText('concurrent-space-one-message');
+        await selectSpace(page, roomIds[0]);
+        await expect(page.locator('[data-sync-messages]')).toContainText('concurrent-space-one-message');
+        await expect(other.locator('[data-sync-messages]')).toContainText('concurrent-space-one-message');
+        await expect(other.locator('[data-sync-messages]')).not.toContainText('concurrent-space-two-message');
+        expect(requests).toBe(2);
+        await expect(page.locator('[data-sync-space-list] [data-sync-space-id]')).toHaveCount(2);
+        await expect(other.locator('[data-sync-space-list] [data-sync-space-id]')).toHaveCount(2);
+    } finally {
+        releaseRequests();
+        await other.close();
+    }
+});
+
+test('adds a paired space without duplicating a saved membership and leaves only the selected space', async ({ browser, isMobile }) => {
+    test.setTimeout(90000);
+    const contexts = await Promise.all(Array.from({ length: 2 }, () => browser.newContext({
+        viewport: isMobile ? { width: 320, height: 568 } : { width: 1366, height: 900 }, isMobile, hasTouch: isMobile
+    })));
+    if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
+    const [owner, member] = await Promise.all(contexts.map(context => context.newPage()));
+    const admittedDevices = [], removedDevices = [];
+    interceptApi = async request => {
+        const pathname = new URL(request.url).pathname;
+        if (request.method === 'POST' && /\/pair-accept$/.test(pathname)) admittedDevices.push((await request.clone().json()).deviceId);
+        if (request.method === 'DELETE' && /\/device$/.test(pathname)) removedDevices.push(pathname);
+    };
+    try {
+        await Promise.all([owner, member].map(page => page.goto(`${siteOrigin}/chat/`)));
+        await owner.locator('[data-sync-create]').click();
+        await awaitOnline(owner);
+        await expect(owner.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/, { timeout: 30000 });
+        const code = await owner.locator('[data-sync-pair-code]').textContent();
+        const shared = await readSession(owner);
+        await member.locator('[data-sync-create]').click();
+        await awaitOnline(member);
+        const original = await readSession(member);
+        await sendText(member, 'member-original-space');
+        await expandSpaces(member);
+        await member.locator('[data-sync-add-space]').click();
+        await member.locator('[data-sync-code]').fill(code);
+        await member.locator('[data-sync-join]').click();
+        await awaitOnline(member);
+        await expect.poll(async () => (await readSession(member)).roomId).toBe(shared.roomId);
+        const joined = await readSession(member);
+        await sendText(owner, 'shared-space-message');
+        await expect(member.locator('[data-sync-messages]')).toContainText('shared-space-message');
+        await selectSpace(member, original.roomId);
+        await expect(member.locator('[data-sync-messages]')).toContainText('member-original-space');
+        await expect(member.locator('[data-sync-messages]')).not.toContainText('shared-space-message');
+        await owner.locator('[data-sync-pair]').click();
+        await expect(owner.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/, { timeout: 30000 });
+        await expandSpaces(member);
+        await member.locator('[data-sync-add-space]').click();
+        await member.locator('[data-sync-code]').fill(await owner.locator('[data-sync-pair-code]').textContent());
+        await member.locator('[data-sync-join]').click();
+        await expect.poll(async () => (await readSession(member)).roomId).toBe(shared.roomId);
+        await awaitOnline(member);
+        expect((await readSession(member)).deviceId).toBe(joined.deviceId);
+        expect((await readSession(member)).vaultId).toBe(joined.vaultId);
+        await expandSpaces(member);
+        await expect(member.locator('[data-sync-space-list] [data-sync-space-id]')).toHaveCount(2);
+        await expect(member.locator(`[data-sync-space-id="${shared.roomId}"]`)).toHaveCount(1);
+        await member.locator('[data-sync-spaces-toggle]').click();
+        expect(admittedDevices).toHaveLength(2);
+        expect(admittedDevices[1]).not.toBe(joined.deviceId);
+        await expect.poll(async () => {
+            const response = await fetch(`${apiOrigin}/v1/spaces/${shared.roomId}/devices`, { headers: { Origin: siteOrigin, Authorization: `Bearer ${shared.token}` } });
+            return (await response.json()).devices.map(device => device.deviceId).sort();
+        }).toEqual([shared.deviceId, joined.deviceId].sort());
+        expect(removedDevices).toEqual([`/v1/spaces/${shared.roomId}/device`]);
+        await sendText(member, 'saved-membership-after-repeat-pairing');
+        await expect(owner.locator('[data-sync-messages]')).toContainText('saved-membership-after-repeat-pairing');
+        await member.locator('[data-sync-leave]').click();
+        await member.locator('[data-sync-confirm-accept]').click();
+        await expandSpaces(member);
+        await expect(member.locator(`[data-sync-space-id="${shared.roomId}"]`)).toHaveCount(0);
+        await expect(member.locator(`[data-sync-space-id="${original.roomId}"]`)).toHaveCount(1);
+        await selectSpace(member, original.roomId);
+        expect((await readSession(member)).deviceId).toBe(original.deviceId);
+        await expect(member.locator('[data-sync-messages]')).toContainText('member-original-space');
+        const left = await fetch(`${apiOrigin}/v1/spaces/${joined.roomId}/messages`, { headers: { Origin: siteOrigin, Authorization: `Bearer ${joined.token}` } });
+        expect(left.status).toBe(401);
+    } finally { await Promise.all(contexts.map(context => context.close())); }
+});
+
+test('recovers an added space after reload during its accepted pairing without replacing the existing membership', async ({ browser, isMobile }) => {
+    test.setTimeout(90000);
+    const contexts = await Promise.all(Array.from({ length: 2 }, () => browser.newContext({
+        viewport: isMobile ? { width: 320, height: 568 } : { width: 1366, height: 900 }, isMobile, hasTouch: isMobile
+    })));
+    if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
+    const [owner, joining] = await Promise.all(contexts.map(context => context.newPage()));
+    const started = [], admissions = [], grantPaths = [], acknowledged = [];
+    let heldGrant = false;
+    let releaseGrant;
+    const released = new Promise(resolve => { releaseGrant = resolve; });
+    interceptApi = async (request, forward) => {
+        const pathname = new URL(request.url).pathname;
+        if (request.method === 'POST' && /\/pair-accept$/.test(pathname)) admissions.push((await request.clone().json()).deviceId);
+        if (request.method === 'POST' && pathname === '/v1/pair') started.push((await request.clone().json()).requestId);
+        if (request.method === 'POST' && /\/ack$/.test(pathname)) acknowledged.push(pathname);
+        if (request.method === 'GET' && /^\/v1\/pair\/[0-9a-f-]{36}$/.test(pathname)) {
+            grantPaths.push(pathname);
+            const response = await forward(), result = await response.clone().json();
+            if (result.grant && !heldGrant) { heldGrant = true; await released; }
+            return response;
+        }
+    };
+    try {
+        await Promise.all([owner, joining].map(page => page.goto(`${siteOrigin}/chat/`)));
+        await joining.locator('[data-sync-create]').click();
+        await awaitOnline(joining);
+        const original = await readSession(joining);
+        await sendText(joining, 'original-space-before-pair-reload');
+        await owner.locator('[data-sync-create]').click();
+        await awaitOnline(owner);
+        const shared = await readSession(owner);
+        await expect(owner.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/, { timeout: 30000 });
+        await expandSpaces(joining);
+        await joining.locator('[data-sync-add-space]').click();
+        await joining.locator('[data-sync-code]').fill(await owner.locator('[data-sync-pair-code]').textContent());
+        await joining.locator('[data-sync-join]').click();
+        await expect.poll(() => heldGrant).toBe(true);
+        await expect.poll(() => joining.evaluate(() => sessionStorage.getItem('gavin-sync-pair-recovery'))).toBeTruthy();
+        expect((await readSession(joining)).roomId).toBe(original.roomId);
+        expect(started).toHaveLength(1);
+        expect(admissions).toHaveLength(1);
+        await joining.reload();
+        releaseGrant();
+        await expect.poll(async () => (await readSession(joining)).roomId).toBe(shared.roomId);
+        await awaitOnline(joining);
+        const recovered = await readSession(joining);
+        expect(recovered.deviceId).toBe(admissions[0]);
+        await expect.poll(() => acknowledged.length).toBe(1);
+        expect(started).toHaveLength(1);
+        expect(admissions).toHaveLength(1);
+        expect([...new Set(grantPaths)]).toEqual([`/v1/pair/${started[0]}`]);
+        expect(acknowledged).toEqual([`/v1/pair/${started[0]}/ack`]);
+        await expect.poll(() => joining.evaluate(() => sessionStorage.getItem('gavin-sync-pair-recovery'))).toBeNull();
+        await expandSpaces(joining);
+        await expect(joining.locator('[data-sync-space-list] [data-sync-space-id]')).toHaveCount(2);
+        await joining.locator('[data-sync-spaces-toggle]').click();
+        await sendText(joining, 'added-space-after-pair-reload');
+        await expect(owner.locator('[data-sync-messages]')).toContainText('added-space-after-pair-reload');
+        await selectSpace(joining, original.roomId);
+        expect((await readSession(joining)).deviceId).toBe(original.deviceId);
+        expect((await readSession(joining)).vaultId).toBe(original.vaultId);
+        await expect(joining.locator('[data-sync-messages]')).toContainText('original-space-before-pair-reload');
+        await expect(joining.locator('[data-sync-messages]')).not.toContainText('added-space-after-pair-reload');
+        await selectSpace(joining, shared.roomId);
+        expect((await readSession(joining)).deviceId).toBe(recovered.deviceId);
+        await sendText(owner, 'shared-space-after-returning');
+        await expect(joining.locator('[data-sync-messages]')).toContainText('shared-space-after-returning');
+    } finally {
+        releaseGrant();
+        await Promise.all(contexts.map(context => context.close()));
+    }
+});
+
+test('keeps an added space pairing alive when the current space rotates its encryption keys', async ({ browser, isMobile }) => {
+    test.setTimeout(60000);
+    const contexts = await Promise.all(Array.from({ length: 3 }, () => browser.newContext({
+        viewport: isMobile ? { width: 320, height: 568 } : { width: 1366, height: 900 }, isMobile, hasTouch: isMobile
+    })));
+    if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
+    const [member, owner, newcomer] = await Promise.all(contexts.map(context => context.newPage()));
+    let releaseGrant;
+    const released = new Promise(resolve => { releaseGrant = resolve; });
+    let heldGrant = false;
+    const removed = [];
+    interceptApi = async (request, forward) => {
+        const pathname = new URL(request.url).pathname;
+        if (request.method === 'DELETE' && pathname.endsWith('/device')) removed.push(pathname);
+        if (request.method === 'GET' && /^\/v1\/pair\/[0-9a-f-]{36}$/.test(pathname)) {
+            const response = await forward();
+            const result = await response.clone().json();
+            if (result.grant && !heldGrant) { heldGrant = true; await released; }
+            return response;
+        }
+    };
+    try {
+        await Promise.all([member, owner, newcomer].map(page => page.goto(`${siteOrigin}/chat/`)));
+        await owner.locator('[data-sync-create]').click();
+        await awaitOnline(owner);
+        await expect(owner.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/);
+        const added = await readSession(owner);
+        const addedCode = await owner.locator('[data-sync-pair-code]').textContent();
+        await member.locator('[data-sync-create]').click();
+        await awaitOnline(member);
+        await expect(member.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/);
+        const original = await readSession(member);
+        const originalCode = await member.locator('[data-sync-pair-code]').textContent();
+        await expandSpaces(member);
+        await member.locator('[data-sync-add-space]').click();
+        await member.locator('[data-sync-code]').fill(addedCode);
+        await member.locator('[data-sync-join]').click();
+        await expect.poll(() => heldGrant).toBe(true);
+        await newcomer.locator('[data-sync-code]').fill(originalCode);
+        await newcomer.locator('[data-sync-join]').click();
+        await awaitOnline(newcomer);
+        await expect.poll(async () => (await readSession(member)).keyring.currentKeyId).not.toBe(original.keyring.currentKeyId);
+        await expect(member.locator('[data-sync-join]')).toBeDisabled();
+        releaseGrant();
+        await expect.poll(async () => (await readSession(member)).roomId).toBe(added.roomId);
+        await awaitOnline(member);
+        await expect(member.locator('[data-sync-setup]')).toBeHidden();
+        await expect(member.locator('[data-sync-space-list] [data-sync-space-id]')).toHaveCount(2);
+        expect(removed).toEqual([]);
+        await sendText(owner, 'message-in-added-space-after-original-key-rotation');
+        await expect(member.locator('[data-sync-messages]')).toContainText('message-in-added-space-after-original-key-rotation');
+        await selectSpace(member, original.roomId);
+        await sendText(newcomer, 'message-in-original-space-with-new-key');
+        await expect(member.locator('[data-sync-messages]')).toContainText('message-in-original-space-with-new-key');
+    } finally {
+        releaseGrant();
+        await Promise.all(contexts.map(context => context.close()));
+    }
+});
+
+test('reuses the current membership when adding its own pairing code', async ({ page, browserName }) => {
+    test.setTimeout(60000);
+    if (browserName === 'chromium') await page.context().grantPermissions(['local-network-access']);
+    await page.goto(`${siteOrigin}/chat/`);
+    await page.locator('[data-sync-create]').click();
+    await awaitOnline(page);
+    await expect(page.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/);
+    const original = await readSession(page);
+    const code = await page.locator('[data-sync-pair-code]').textContent();
+    await expandSpaces(page);
+    await page.locator('[data-sync-add-space]').click();
+    await page.locator('[data-sync-code]').fill(code);
+    await page.locator('[data-sync-join]').click();
+    await expect(page.locator('[data-sync-setup]')).toBeHidden({ timeout: 30000 });
+    await awaitOnline(page);
+    expect((await readSession(page)).deviceId).toBe(original.deviceId);
+    expect((await readSession(page)).vaultId).toBe(original.vaultId);
+    await expect(page.locator('[data-sync-space-list] [data-sync-space-id]')).toHaveCount(1);
+    await expect.poll(async () => {
+        const response = await fetch(`${apiOrigin}/v1/spaces/${original.roomId}/devices`, {
+            headers: { Origin: siteOrigin, Authorization: `Bearer ${original.token}` }
+        });
+        return (await response.json()).devices.map(device => device.deviceId);
+    }).toEqual([original.deviceId]);
+});
+
+test('keeps the current draft and space when local storage cannot save it before switching', async ({ page, browserName }) => {
+    test.setTimeout(60000);
+    if (browserName === 'chromium') await page.context().grantPermissions(['local-network-access']);
+    await page.goto(`${siteOrigin}/chat/`);
+    await page.locator('[data-sync-create]').click();
+    await awaitOnline(page);
+    const first = await readSession(page);
+    await page.locator('[data-sync-input]').fill('previously-saved-draft');
+    await expect.poll(() => page.evaluate(id => sessionStorage.getItem(`portfolio-sync-draft:${id}`), first.roomId)).toBeTruthy();
+    await expandSpaces(page);
+    await page.locator('[data-sync-add-space]').click();
+    await page.locator('[data-sync-create]').click();
+    await expect.poll(async () => (await readSession(page)).roomId).not.toBe(first.roomId);
+    await awaitOnline(page);
+    const second = await readSession(page);
+    await selectSpace(page, first.roomId);
+    if (await page.locator('[data-sync-spaces-toggle]').getAttribute('aria-expanded') === 'true') await page.locator('[data-sync-spaces-toggle]').click();
+    await page.evaluate(() => {
+        const block = 'x'.repeat(1024);
+        for (let index = 0; ; index++) {
+            try { sessionStorage.setItem(`quota-test-${index}`, block); }
+            catch { break; }
+        }
+    });
+    const draft = 'new-unsaved-draft-'.repeat(500);
+    try {
+        await page.locator('[data-sync-input]').fill(draft);
+        await expect(page.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncStorageError');
+        await expandSpaces(page);
+        await page.locator(`[data-sync-space-id="${second.roomId}"]`).click();
+        await expect(page.locator(`[data-sync-space-id="${first.roomId}"]`)).toHaveAttribute('aria-current', 'true');
+        expect((await readSession(page)).roomId).toBe(first.roomId);
+        await expect(page.locator('[data-sync-input]')).toHaveValue(draft);
+        await expect(page.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncStorageError');
+    } finally {
+        await page.evaluate(() => {
+            Object.keys(sessionStorage).filter(key => key.startsWith('quota-test-')).forEach(key => sessionStorage.removeItem(key));
+        });
+    }
+    await selectSpace(page, second.roomId);
+    await selectSpace(page, first.roomId);
+    await expect(page.locator('[data-sync-input]')).toHaveValue(draft);
+});
+
+test('keeps an eight-character space name local across language changes and reloads', async ({ browser, isMobile }) => {
+    test.setTimeout(60000);
+    const contexts = await Promise.all(Array.from({ length: 2 }, () => browser.newContext({
+        viewport: isMobile ? { width: 320, height: 568 } : { width: 1366, height: 900 }, isMobile, hasTouch: isMobile
+    })));
+    if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
+    const [owner, member] = await Promise.all(contexts.map(context => context.newPage()));
+    const name = '本机私密空间🎵🎸';
+    try {
+        await Promise.all([owner, member].map(page => page.goto(`${siteOrigin}/chat/`)));
+        await owner.locator('[data-sync-create]').click();
+        await awaitOnline(owner);
+        await expect(owner.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/);
+        await member.locator('[data-sync-code]').fill(await owner.locator('[data-sync-pair-code]').textContent());
+        await member.locator('[data-sync-join]').click();
+        await awaitOnline(member);
+        await owner.locator('[data-sync-space-rename]').click();
+        await owner.locator('[data-sync-space-name]').fill(`${name}超出`);
+        await expect(owner.locator('[data-sync-space-name]')).toHaveValue(name);
+        await owner.locator('[data-sync-space-name-form] button[type="submit"]').click();
+        await expect(owner.locator('[data-sync-space-name-dialog]')).toBeHidden();
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText(name);
+        await expandSpaces(owner);
+        await expect(owner.locator('[data-sync-space-list] button')).toHaveText(name);
+        await owner.locator('[data-sync-spaces-toggle]').click();
+        await owner.locator('[data-taskbar-lang]').click();
+        await expect(owner.locator('html')).toHaveAttribute('lang', 'en');
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText(name);
+        await owner.reload();
+        await awaitOnline(owner);
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText(name);
+        await expect(member.locator('[data-sync-space-title]')).toHaveText('空间 1');
+        await expect(member.locator('[data-sync-space-list] button')).toHaveText('空间 1');
+        expect(Buffer.concat(wireBodies).includes(Buffer.from(name))).toBe(false);
+        await owner.locator('[data-sync-space-rename]').click();
+        await owner.locator('[data-sync-space-name]').fill('');
+        await owner.locator('[data-sync-space-name-form] button[type="submit"]').click();
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText('Space 1');
+        await owner.reload();
+        await awaitOnline(owner);
+        await expect(owner.locator('[data-sync-space-title]')).toHaveText('Space 1');
+    } finally { await Promise.all(contexts.map(context => context.close())); }
+});
+
+test('keeps an uploading space active until its file finishes before allowing a switch', async ({ page, browserName }) => {
+    test.setTimeout(60000);
+    if (browserName === 'chromium') await page.context().grantPermissions(['local-network-access']);
+    let releaseChunk;
+    let held = false;
+    let aborted = false;
+    const released = new Promise(resolve => { releaseChunk = resolve; });
+    try {
+        await page.goto(`${siteOrigin}/chat/`);
+        await page.locator('[data-sync-create]').click();
+        await awaitOnline(page);
+        const first = await readSession(page);
+        await expandSpaces(page);
+        await page.locator('[data-sync-add-space]').click();
+        await page.locator('[data-sync-create]').click();
+        await expect.poll(async () => (await readSession(page)).roomId).not.toBe(first.roomId);
+        await awaitOnline(page);
+        const second = await readSession(page);
+        interceptApi = async (request, forward) => {
+            if (request.method !== 'PUT' || !/\/files\/uploads\/[^/]+\/chunks\/0$/.test(new URL(request.url).pathname)) return;
+            held = true;
+            request.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+            await released;
+            return forward();
+        };
+        await page.locator('[data-sync-file-input]').setInputFiles({ name: 'stay-in-upload-space.txt', mimeType: 'text/plain', buffer: Buffer.from('upload must remain in the originating space') });
+        await page.locator('[data-sync-send]').click();
+        await expect.poll(() => held).toBe(true);
+        await expandSpaces(page);
+        const switchButton = page.locator(`[data-sync-space-id="${first.roomId}"]`);
+        await expect(switchButton).toBeDisabled();
+        await expect(page.locator('[data-sync-add-space]')).toBeDisabled();
+        expect((await readSession(page)).roomId).toBe(second.roomId);
+        expect(aborted).toBe(false);
+        releaseChunk();
+        await expect(page.locator('[data-sync-upload-status]')).toBeHidden({ timeout: 30000 });
+        await expect(page.locator('.sync-message[data-state="sent"] .sync-attachment-name')).toHaveText('stay-in-upload-space.txt');
+        await selectSpace(page, first.roomId);
+        await expect(page.locator('[data-sync-messages]')).not.toContainText('stay-in-upload-space.txt');
+    } finally { releaseChunk(); }
+});
+
+test('keeps a locked code across reload and key rotation, then closes it for every device and reopens with a fresh code', async ({ browser, isMobile }, testInfo) => {
+    test.setTimeout(90000);
+    const contexts = await Promise.all(Array.from({ length: 3 }, () => browser.newContext({
+        viewport: isMobile ? { width: 320, height: 568 } : { width: 1366, height: 900 }, isMobile, hasTouch: isMobile
+    })));
+    if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
+    const [owner, member, newcomer] = await Promise.all(contexts.map(context => context.newPage()));
+    try {
+        await Promise.all([owner, member, newcomer].map(page => page.goto(`${siteOrigin}/chat/`)));
+        await owner.locator('[data-sync-create]').click();
+        await awaitOnline(owner);
+        await expect(owner.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/, { timeout: 30000 });
+        const code = await owner.locator('[data-sync-pair-code]').textContent();
+        await owner.locator('[data-sync-pair-lock]').click();
+        await expect(owner.locator('[data-sync-pair-lock]')).toHaveAttribute('aria-pressed', 'true');
+        await expect(owner.locator('[data-sync-pair-expiry]')).toHaveText('已锁定');
+        await owner.screenshot({ path: testInfo.outputPath('locked-pairing.png') });
+        await owner.reload();
+        await awaitOnline(owner);
+        await expect(owner.locator('[data-sync-pair-code]')).toHaveText(code);
+        await expect(owner.locator('[data-sync-pair-lock]')).toHaveAttribute('aria-pressed', 'true');
+
+        await member.locator('[data-sync-code]').fill(code);
+        await member.locator('[data-sync-join]').click();
+        await awaitOnline(member);
+        const admitted = await readSession(member);
+        await expect.poll(async () => (await readSession(owner)).keyring.currentKeyId).toBe(admitted.keyring.currentKeyId);
+        for (const page of [owner, member]) {
+            await expect(page.locator('[data-sync-pair-code]')).toHaveText(code);
+            await expect(page.locator('[data-sync-pair-lock]')).toHaveAttribute('aria-pressed', 'true');
+            await expect(page.locator('[data-sync-pair-expiry]')).toHaveText('已锁定');
+        }
+
+        await member.locator('[data-sync-pair-close]').click();
+        for (const page of [owner, member]) {
+            await expect(page.locator('[data-sync-pair-expiry]')).toHaveText('配对已关闭');
+            await expect(page.locator('[data-sync-pair-lock]')).toHaveAttribute('aria-pressed', 'false');
+        }
+        await member.reload();
+        await awaitOnline(member);
+        await expect(member.locator('[data-sync-pair-expiry]')).toHaveText('配对已关闭');
+        await expect(member.locator('[data-sync-pair-lock]')).toHaveAttribute('aria-pressed', 'false');
+        await newcomer.locator('[data-sync-code]').fill(code);
+        await newcomer.locator('[data-sync-join]').click();
+        await expect(newcomer.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncInvalidCode');
+        await expect(newcomer.locator('[data-sync-setup]')).toBeVisible();
+        const afterClose = 'existing-members-still-chat-when-invitations-closed';
+        await sendText(member, afterClose);
+        await expect(owner.locator('[data-sync-messages]')).toContainText(afterClose);
+
+        await member.evaluate(previousCode => {
+            const getRandomValues = crypto.getRandomValues.bind(crypto);
+            crypto.getRandomValues = values => {
+                if (values instanceof Uint16Array && values.length === 1) {
+                    crypto.getRandomValues = getRandomValues;
+                    values[0] = (Number(previousCode) + 1) % 10000;
+                    return values;
+                }
+                return getRandomValues(values);
+            };
+        }, code);
+        await member.locator('[data-sync-pair]').click();
+        const newCode = String((Number(code) + 1) % 10000).padStart(4, '0');
+        for (const page of [owner, member]) {
+            await expect(page.locator('[data-sync-pair-code]')).toHaveText(newCode);
+            await expect(page.locator('[data-sync-pair-lock]')).toHaveAttribute('aria-pressed', 'false');
+            await expect(page.locator('[data-sync-pair-expiry]')).toHaveText(/剩余 (10:00|9:\d{2})/);
+        }
+        await newcomer.locator('[data-sync-join]').click();
+        await expect(newcomer.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncInvalidCode');
+        await expect(newcomer.locator('[data-sync-setup]')).toBeVisible();
+        await member.locator('[data-sync-pair-lock]').click();
+        await expect(owner.locator('[data-sync-pair-lock]')).toHaveAttribute('aria-pressed', 'true');
+        await newcomer.locator('[data-sync-code]').fill(newCode);
+        await newcomer.locator('[data-sync-join]').click();
+        await awaitOnline(newcomer);
+        expect((await readSession(newcomer)).roomId).toBe(admitted.roomId);
+        await expect(owner.locator('[data-sync-pair-code]')).toHaveText(newCode);
+        await expect(newcomer.locator('[data-sync-pair-code]')).toHaveText(newCode);
+
+        await newcomer.locator('[data-sync-pair-lock]').click();
+        for (const page of [owner, member, newcomer]) {
+            await expect(page.locator('[data-sync-pair-lock]')).toHaveAttribute('aria-pressed', 'false');
+            await expect(page.locator('[data-sync-pair-expiry]')).toHaveText(/剩余 (10:00|9:\d{2})/);
+            await expect(page.locator('[data-sync-pair-code]')).toHaveText(newCode);
+        }
+        for (const body of wireBodies) {
+            let value;
+            try { value = JSON.parse(body); } catch { continue; }
+            const inspect = value => {
+                if (typeof value === 'string') expect([code, newCode], 'pairing codes must stay encrypted on the wire').not.toContain(value);
+                else if (Array.isArray(value)) value.forEach(inspect);
+                else if (value && typeof value === 'object') {
+                    expect(Object.hasOwn(value, 'code')).toBe(false);
+                    Object.values(value).forEach(inspect);
+                }
+            };
+            inspect(value);
+        }
+    } finally { await Promise.all(contexts.map(context => context.close())); }
+});
+
+test('sends lightweight encrypted stickers without uploads or download actions and preserves the text draft', async ({ browser, isMobile }, testInfo) => {
+    test.setTimeout(60000);
+    const contexts = await Promise.all(Array.from({ length: 2 }, () => browser.newContext({
+        viewport: isMobile ? { width: 320, height: 568 } : { width: 1366, height: 900 }, isMobile, hasTouch: isMobile
+    })));
+    if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
+    const [sender, receiver] = await Promise.all(contexts.map(context => context.newPage()));
+    const uploadRequests = [];
+    interceptApi = request => { if (/\/files\/uploads/.test(request.url)) uploadRequests.push(request.url); };
+    try {
+        await Promise.all([sender, receiver].map(page => page.goto(`${siteOrigin}/chat/`)));
+        await sender.locator('[data-sync-create]').click();
+        await awaitOnline(sender);
+        await expect(sender.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/, { timeout: 30000 });
+        await receiver.locator('[data-sync-code]').fill(await sender.locator('[data-sync-pair-code]').textContent());
+        await receiver.locator('[data-sync-join]').click();
+        await awaitOnline(receiver);
+        await expect.poll(async () => (await readSession(sender)).keyring.currentKeyId).toBe((await readSession(receiver)).keyring.currentKeyId);
+        for (const page of [sender, receiver]) await expect(page.locator('[data-sync-notice]')).not.toHaveAttribute('data-state', 'error');
+
+        const draft = 'keep-this-unsent-text-草稿';
+        await sender.locator('[data-sync-input]').fill(draft);
+        expect(await sender.locator('[data-sync-voice-record]').evaluate(button => button.nextElementSibling.hasAttribute('data-sync-stickers'))).toBe(true);
+        await sender.locator('[data-sync-stickers]').click();
+        await expect(sender.locator('[data-sync-sticker-dialog]')).toBeVisible();
+        await expect(sender.locator('[data-sync-sticker-choice]')).toHaveCount(17);
+        const pickerImage = await sender.locator('[data-sync-sticker-choice="happy"] img').evaluate(image => ({ width: image.getBoundingClientRect().width, height: image.getBoundingClientRect().height }));
+        expect(Math.abs(pickerImage.width - pickerImage.height)).toBeLessThan(1);
+        await sender.screenshot({ path: testInfo.outputPath('sticker-picker.png') });
+        await sender.locator('[data-sync-sticker-choice="happy"]').click();
+        await expect(sender.locator('[data-sync-sticker-dialog]')).not.toBeVisible();
+        await expect(sender.locator('[data-sync-input]')).toHaveValue(draft);
+        for (const page of [sender, receiver]) {
+            const sticker = page.locator('.sync-message-sticker[data-sync-sticker="happy"]');
+            await expect(sticker).toBeVisible();
+            await expect.poll(() => sticker.locator('img').evaluate(image => image.naturalWidth)).toBe(128);
+            await expect(page.locator('[data-sync-download-file]')).toHaveCount(0);
+            await expect(sticker.locator('..')).toHaveAttribute('data-state', 'sent');
+        }
+        expect(uploadRequests).toEqual([]);
+        expect(messageBodies).toHaveLength(1);
+        expect(Object.keys(messageBodies[0]).sort()).toEqual(['clientId', 'text']);
+        expect(messageBodies[0].text).toMatch(/^e2ee1\./);
+        expect(messageBodies[0].text).not.toContain('happy');
+        const session = await readSession(sender);
+        const opened = await sender.evaluate(async ({ session, message }) => {
+            const bytes = text => Uint8Array.from(atob(text.replaceAll('-', '+').replaceAll('_', '/')), byte => byte.charCodeAt(0));
+            const envelope = JSON.parse(new TextDecoder().decode(bytes(message.text.slice(6))));
+            const key = await crypto.subtle.importKey('raw', bytes(session.keyring.keys[envelope.keyId]), 'AES-GCM', false, ['decrypt']);
+            const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes(envelope.iv),
+                additionalData: new TextEncoder().encode(`gavin-sync-v1:${session.roomId}:message:${session.deviceId}:${message.clientId}`) }, key, bytes(envelope.ciphertext));
+            return JSON.parse(new TextDecoder().decode(plaintext));
+        }, { session, message: messageBodies[0] });
+        expect(opened.sticker).toBe('happy');
+        expect(opened.text).toBe('');
+        expect(opened.attachment).toBeUndefined();
+
+        await receiver.locator('.sync-message-sticker').click();
+        const preview = receiver.locator('[data-sync-preview-window]');
+        await expect(preview).toBeVisible();
+        await expect(preview.locator('img')).toBeVisible();
+        expect(await preview.locator('img').evaluate(image => ({ width: image.getBoundingClientRect().width, rendering: getComputedStyle(image).imageRendering })))
+            .toEqual({ width: 192, rendering: 'auto' });
+        await expect(preview.locator('[data-sync-download-file], a[download]')).toHaveCount(0);
+        await receiver.locator('[data-taskbar-lang]').click();
+        await expect(preview.locator('[data-sync-preview-title]')).toContainText('Happy');
+        await expect(preview.locator('img')).toHaveAttribute('alt', /Happy/);
+        await preview.locator('[data-sync-preview-action="close"]').click();
+        await receiver.locator('[data-sync-stickers]').click();
+        await expect(receiver.locator('[data-sync-sticker-choice="happy"]')).toContainText('Happy');
+        await receiver.locator('[data-sync-sticker-close]').click();
+        await receiver.reload();
+        await awaitOnline(receiver);
+        await expect(receiver.locator('.sync-message-sticker[data-sync-sticker="happy"]')).toBeVisible();
+        await receiver.screenshot({ path: testInfo.outputPath('sticker-message.png') });
+        await receiver.locator('.sync-message').filter({ has: receiver.locator('[data-sync-sticker="happy"]') }).locator('[data-sync-reply-message]').click();
+        await expect(receiver.locator('[data-sync-reply-text]')).toContainText('Happy');
+        await sendText(receiver, 'reply-to-sticker');
+        const reply = sender.locator('.sync-message').filter({ has: sender.locator('.sync-message-text', { hasText: 'reply-to-sticker' }) });
+        await expect(reply.locator('.sync-message-quote-text')).toContainText('开心');
+        await expect(sender.locator('[data-sync-input]')).toHaveValue(draft);
+        await sender.locator('[data-sync-stickers]').click();
+        await sender.locator('[data-sync-sticker-choice="doge"]').click();
+        for (const page of [sender, receiver]) {
+            const doge = page.locator('.sync-message-sticker[data-sync-sticker="doge"]');
+            await expect(doge).toBeVisible();
+            await expect.poll(() => doge.locator('img').evaluate(image => image.naturalWidth)).toBe(128);
+        }
+        await receiver.screenshot({ path: testInfo.outputPath('sticker-doge-message.png') });
+        await expect(sender.locator('[data-sync-input]')).toHaveValue(draft);
+        expect(uploadRequests).toEqual([]);
+    } finally { await Promise.all(contexts.map(context => context.close())); }
+});
+
 test('pairs the standalone chat with the desktop, restores its session and transfers an encrypted file across entries', async ({ browser, isMobile }, testInfo) => {
     test.skip(isMobile, 'cross-entry pairing is exercised with isolated desktop contexts');
     test.setTimeout(90000);
@@ -188,7 +907,7 @@ test('pairs the standalone chat with the desktop, restores its session and trans
     chat.on('response', response => { if (/\.js(?:\?|$)/.test(response.url()) && response.ok()) chatScripts.push(response.url()); });
     chat.on('worker', worker => chatWorkerUrls.push(worker.url()));
     try {
-        await Promise.all([openApp(desktop), chat.goto(`${siteOrigin}/portfolio/chat/`)]);
+        await Promise.all([openApp(desktop), chat.goto(`${siteOrigin}/chat/`)]);
         await expect(chat.locator('[data-sync-window]')).toBeVisible();
         await desktop.locator('[data-sync-create]').click();
         await awaitOnline(desktop);

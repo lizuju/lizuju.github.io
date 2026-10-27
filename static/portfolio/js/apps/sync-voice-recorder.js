@@ -14,7 +14,7 @@ export class VoiceRecorder {
 
     async start() {
         if (this.disposed || this.run) return false;
-        const run = { state: 'starting', chunks: [], sampleCount: 0, listeners: [] };
+        const run = { state: 'starting', chunks: [], encodedChunks: [], sampleCount: 0, listeners: [] };
         run.cancelledSetup = new Promise(resolve => { run.cancelSetup = resolve; });
         this.run = run;
         try {
@@ -41,7 +41,22 @@ export class VoiceRecorder {
             }
             await Promise.race([run.context.audioWorklet.addModule(new URL('./sync-voice-worklet.js', import.meta.url)), run.cancelledSetup]);
             if (run.cancelled) return false;
-            run.node = new AudioWorkletNode(run.context, 'gavin-sync-voice', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+            const compressed = window.MediaRecorder?.isTypeSupported('audio/webm;codecs=opus') === true;
+            if (compressed) {
+                run.destination = run.context.createMediaStreamDestination();
+                run.destination.channelCount = 1;
+                run.recorder = new MediaRecorder(run.destination.stream, { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 24000 });
+                run.recorded = new Promise((resolve, reject) => {
+                    run.recorder.ondataavailable = event => { if (event.data.size) run.encodedChunks.push(event.data); };
+                    run.recorder.onstop = resolve;
+                    run.recorder.onerror = event => { reject(event.error); interrupted(); };
+                });
+                run.recorded.catch(() => {});
+                run.recorder.start();
+            }
+            run.node = new AudioWorkletNode(run.context, 'gavin-sync-voice', {
+                numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], processorOptions: { compressed }
+            });
             run.node.onprocessorerror = interrupted;
             run.node.port.onmessage = ({ data }) => {
                 if (run.cancelled) return;
@@ -50,12 +65,13 @@ export class VoiceRecorder {
                     run.chunks.push(samples);
                     run.sampleCount += samples.length;
                 } else if (data?.type === 'stopped' || data?.type === 'limit') {
+                    if (compressed) run.sampleCount = data.sampleCount;
                     this.finish(run);
                 }
             };
             run.source = run.context.createMediaStreamSource(run.stream);
             run.source.connect(run.node);
-            run.node.connect(run.context.destination);
+            run.node.connect(run.destination || run.context.destination);
             run.context.onstatechange = () => {
                 if (run.state === 'recording' && run.context.state !== 'running') interrupted();
             };
@@ -99,28 +115,48 @@ export class VoiceRecorder {
             return;
         }
         const durationMs = Math.max(1, Math.round(run.sampleCount / SAMPLE_RATE * 1000));
-        const buffer = new ArrayBuffer(44 + run.sampleCount * 2);
-        const view = new DataView(buffer);
-        const text = (offset, value) => { for (let index = 0; index < value.length; index++) view.setUint8(offset + index, value.charCodeAt(index)); };
-        text(0, 'RIFF');
-        view.setUint32(4, buffer.byteLength - 8, true);
-        text(8, 'WAVEfmt ');
-        view.setUint32(16, 16, true);
-        view.setUint16(20, 1, true);
-        view.setUint16(22, 1, true);
-        view.setUint32(24, SAMPLE_RATE, true);
-        view.setUint32(28, SAMPLE_RATE * 2, true);
-        view.setUint16(32, 2, true);
-        view.setUint16(34, 16, true);
-        text(36, 'data');
-        view.setUint32(40, run.sampleCount * 2, true);
-        let offset = 44;
-        for (const chunk of run.chunks) for (const value of chunk) {
-            const sample = Math.max(-1, Math.min(1, value));
-            view.setInt16(offset, sample < 0 ? sample * 32768 : sample * 32767, true);
-            offset += 2;
+        let file;
+        if (run.recorder) {
+            clearTimeout(run.flushTimeout);
+            try {
+                const timeout = new Promise((_, reject) => {
+                    run.flushTimeout = setTimeout(() => reject(new DOMException('Audio encoding stopped responding', 'NotReadableError')), 2000);
+                });
+                if (run.recorder.state !== 'inactive') run.recorder.stop();
+                await Promise.race([run.recorded, run.cancelledSetup, timeout]);
+                if (run.cancelled) return;
+                if (!run.encodedChunks.length) throw new DOMException('No audio was captured', 'NotReadableError');
+                file = new File(run.encodedChunks, `voice-${Date.now()}.webm`, { type: 'audio/webm' });
+            } catch (error) {
+                run.finishing = false;
+                await this.fail(run, error);
+                return;
+            }
+        } else {
+            const buffer = new ArrayBuffer(44 + run.sampleCount * 2);
+            const view = new DataView(buffer);
+            const text = (offset, value) => { for (let index = 0; index < value.length; index++) view.setUint8(offset + index, value.charCodeAt(index)); };
+            text(0, 'RIFF');
+            view.setUint32(4, buffer.byteLength - 8, true);
+            text(8, 'WAVEfmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, SAMPLE_RATE, true);
+            view.setUint32(28, SAMPLE_RATE * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            text(36, 'data');
+            view.setUint32(40, run.sampleCount * 2, true);
+            let offset = 44;
+            for (const chunk of run.chunks) for (const value of chunk) {
+                const sample = Math.max(-1, Math.min(1, value));
+                view.setInt16(offset, sample < 0 ? sample * 32768 : sample * 32767, true);
+                offset += 2;
+            }
+            file = new File([buffer], `voice-${Date.now()}.wav`, { type: 'audio/wav' });
         }
-        const result = { file: new File([buffer], `voice-${Date.now()}.wav`, { type: 'audio/wav' }), durationMs };
+        const result = { file, durationMs };
         await this.cleanup(run);
         if (!run.cancelled) { this.onTime(durationMs); this.onStop(result); run.resolve?.(result); }
     }
@@ -141,9 +177,18 @@ export class VoiceRecorder {
             clearTimeout(run.flushTimeout);
             run.listeners.forEach(remove => remove());
             if (run.node) { run.node.port.onmessage = null; run.node.onprocessorerror = null; run.node.port.close(); run.node.disconnect(); }
+            if (run.recorder) {
+                run.recorder.ondataavailable = null;
+                run.recorder.onstop = null;
+                run.recorder.onerror = null;
+                if (run.recorder.state !== 'inactive') run.recorder.stop();
+            }
+            run.destination?.stream.getTracks().forEach(track => track.stop());
+            run.destination?.disconnect();
             run.source?.disconnect();
             run.stream?.getTracks().forEach(track => track.stop());
             run.chunks.length = 0;
+            run.encodedChunks.length = 0;
             if (run.context) {
                 run.context.onstatechange = null;
                 await run.context.close().catch(() => {});

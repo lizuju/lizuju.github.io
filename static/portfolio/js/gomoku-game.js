@@ -41,6 +41,16 @@
             score: '比分',
             you: '你',
             computer: '电脑',
+            chooseMode: '选择对局模式',
+            modeCopy: '请选择双人对局或人机对局。',
+            localMode: '双人对局',
+            computerMode: '人机对局',
+            blackPlayer: '黑方',
+            whitePlayer: '白方',
+            blackTurn: '轮到黑方落子（黑棋）',
+            whiteTurn: '轮到白方落子（白棋）',
+            blackWins: '黑方获胜！五子连珠。',
+            whiteWins: '白方获胜！五子连珠。',
             ok: '确定',
             yourTurn: '轮到你落子（黑棋）',
             thinking: '电脑正在思考...',
@@ -53,6 +63,7 @@
             draw: '棋盘已满，本局平局。',
             helpTitle: '玩法说明',
             helpCopy: '你执黑棋先手，电脑执白棋。\n在棋盘交叉点落子，横、竖或斜线率先连成五子即可获胜。\nF2：新游戏　Ctrl+Z：悔棋　F：最大化',
+            localHelpCopy: '两位玩家在本设备轮流落子，黑棋先手。\n在棋盘交叉点落子，横、竖或斜线率先连成五子即可获胜。\nF2：新游戏　Ctrl+Z：悔棋　F：最大化',
             aboutTitle: '关于五子棋',
             aboutCopy: 'GavinOS 五子棋 1.0\n采用经典 Windows 扫雷式界面。\n电脑棋力由 Gomoku minimax 引擎提供。',
             launchLines: [
@@ -62,7 +73,7 @@
                 'C:\\GAVIN\\GAMES> gomoku.exe',
                 '[  OK  ] 正在挂载 15 x 15 棋盘',
                 '[  OK  ] 正在加载 Minimax 对弈引擎',
-                '[  OK  ] 正在初始化人机对局',
+                '[  OK  ] 正在初始化对局',
                 '',
                 'GOMOKU.EXE READY'
             ]
@@ -82,6 +93,16 @@
             score: 'Score',
             you: 'You',
             computer: 'PC',
+            chooseMode: 'Choose Game Mode',
+            modeCopy: 'Choose two players or play against the computer.',
+            localMode: 'Two Players',
+            computerMode: 'Vs Computer',
+            blackPlayer: 'Black',
+            whitePlayer: 'White',
+            blackTurn: 'Black to move',
+            whiteTurn: 'White to move',
+            blackWins: 'Black wins! Five in a row.',
+            whiteWins: 'White wins! Five in a row.',
             ok: 'OK',
             yourTurn: 'Your turn (black)',
             thinking: 'Computer is thinking...',
@@ -94,6 +115,7 @@
             draw: 'The board is full. Draw game.',
             helpTitle: 'How to Play',
             helpCopy: 'You play black and move first. The computer plays white.\nPlace stones on intersections. The first to connect five horizontally, vertically, or diagonally wins.\nF2: New game　Ctrl+Z: Undo　F: Maximize',
+            localHelpCopy: 'Two players take turns on this device. Black moves first.\nPlace stones on intersections. The first to connect five horizontally, vertically, or diagonally wins.\nF2: New game　Ctrl+Z: Undo　F: Maximize',
             aboutTitle: 'About Gomoku',
             aboutCopy: 'GavinOS Gomoku 1.0\nA classic Windows Minesweeper-inspired interface.\nComputer moves use a Gomoku minimax engine.',
             launchLines: [
@@ -145,6 +167,7 @@
         let board = createBoard();
         let history = [];
         let phase = 'playing';
+        let mode = 'computer';
         let currentPlayer = HUMAN;
         let winner = null;
         let winningLine = [];
@@ -220,10 +243,12 @@
         }
 
         function getStatusText() {
-            if (phase === 'player-won') return copy().playerWins;
-            if (phase === 'computer-won') return copy().computerWins;
+            if (phase === 'choosing') return copy().chooseMode;
+            if (phase === 'player-won') return mode === 'local' ? copy().blackWins : copy().playerWins;
+            if (phase === 'computer-won') return mode === 'local' ? copy().whiteWins : copy().computerWins;
             if (phase === 'draw') return copy().draw;
             if (phase === 'thinking') return copy().thinking;
+            if (mode === 'local') return currentPlayer === HUMAN ? copy().blackTurn : copy().whiteTurn;
             return copy().yourTurn;
         }
 
@@ -231,8 +256,10 @@
             status.textContent = getStatusText();
             movesOutput.textContent = String(history.length).padStart(3, '0');
             scoreOutput.textContent = `${humanScore}:${computerScore}`;
+            gameWindow.querySelector('[data-gomoku-i18n="you"]').textContent = mode === 'local' ? copy().blackPlayer : copy().you;
+            gameWindow.querySelector('[data-gomoku-i18n="computer"]').textContent = mode === 'local' ? copy().whitePlayer : copy().computer;
             faceButton.classList.toggle('is-thinking', phase === 'thinking');
-            faceButton.querySelector('span').textContent = phase === 'computer-won' ? '☹' : phase === 'thinking' ? '◉' : '☺';
+            faceButton.querySelector('span').textContent = mode === 'computer' && phase === 'computer-won' ? '☹' : phase === 'thinking' ? '◉' : '☺';
             canvas.classList.toggle('is-locked', phase !== 'playing');
             canvas.classList.toggle('is-thinking', phase === 'thinking');
             document.querySelectorAll('[data-gomoku-undo]').forEach((button) => {
@@ -286,7 +313,7 @@
             const previewPosition = keyboardMode ? keyboardPosition : hoverPosition;
             if (previewPosition && phase === 'playing'
                 && board[previewPosition.row][previewPosition.col] === EMPTY) {
-                drawStone(previewPosition.row, previewPosition.col, HUMAN, 0.35);
+                drawStone(previewPosition.row, previewPosition.col, currentPlayer, 0.35);
             }
 
             history.forEach((move) => drawStone(move.row, move.col, move.player, 1));
@@ -398,7 +425,7 @@
         }
 
         function runComputerMove() {
-            if (phase !== 'thinking') return;
+            if (mode !== 'computer' || phase !== 'thinking') return;
             clearAiTimer();
 
             let move;
@@ -427,10 +454,14 @@
         }
 
         function playHumanMove(row, col) {
-            if (phase !== 'playing' || currentPlayer !== HUMAN || !placeMove(row, col, HUMAN)) return false;
+            if (!dialog.hidden || gameWindow.classList.contains('is-launching') || phase !== 'playing'
+                || (mode === 'computer' && currentPlayer !== HUMAN)
+                || !placeMove(row, col, currentPlayer)) return false;
             hoverPosition = null;
-            if (!updateGameResult(row, col, HUMAN)) scheduleComputerMove();
-            else render();
+            if (!updateGameResult(row, col, currentPlayer)) {
+                if (mode === 'computer') scheduleComputerMove();
+                else { currentPlayer = 1 - currentPlayer; render(); }
+            } else render();
             return true;
         }
 
@@ -458,14 +489,15 @@
                 else computerScore -= 1;
                 roundScored = false;
             }
-            const removeCount = history.at(-1).player === COMPUTER ? Math.min(2, history.length) : 1;
+            const removeCount = mode === 'computer' && history.at(-1).player === COMPUTER ? Math.min(2, history.length) : 1;
+            const nextPlayer = history[history.length - removeCount].player;
             history.splice(-removeCount, removeCount);
             board = createBoard();
             history.forEach((move) => {
                 board[move.row][move.col] = move.player;
             });
             phase = 'playing';
-            currentPlayer = HUMAN;
+            currentPlayer = nextPlayer;
             winner = null;
             winningLine = [];
             createEngine();
@@ -538,6 +570,7 @@
                 launcher.hidden = true;
                 launcher.classList.remove('is-complete');
                 gameWindow.classList.remove('is-launching');
+                showDialog('mode');
                 window.requestAnimationFrame(resizeBoard);
             }, 180));
         }
@@ -572,7 +605,7 @@
 
         function parkGame() {
             if (gameWindow.classList.contains('is-closed')) return;
-            closeDialog();
+            if (dialog.dataset.type !== 'mode') closeDialog();
             gameWindow.classList.add('is-minimized');
             gameWindow.classList.remove('is-active');
             gameTask.classList.remove('is-active');
@@ -589,12 +622,17 @@
             document.querySelector('[data-start-menu]')?.setAttribute('hidden', '');
             document.querySelector('[data-start-toggle]')?.setAttribute('aria-expanded', 'false');
             if (wasClosed) {
+                closeDialog();
                 newGame();
+                phase = 'choosing';
+                currentPlayer = null;
+                render();
                 startLaunchSequence();
             } else {
                 window.requestAnimationFrame(resizeBoard);
             }
             focusGame();
+            if (!dialog.hidden) dialog.querySelector('button:not([hidden])')?.focus();
         }
 
         function minimizeGame() {
@@ -686,6 +724,7 @@
                 context: getSessionContext(),
                 history,
                 phase,
+                mode,
                 humanScore,
                 computerScore,
                 winner,
@@ -700,6 +739,8 @@
         function restoreGameSession() {
             const savedSession = readGameSession();
             if (!savedSession || savedSession.version !== 1 || savedSession.context !== getSessionContext()) return false;
+
+            mode = savedSession.mode === 'local' ? 'local' : 'computer';
 
             board = createBoard();
             history = [];
@@ -716,10 +757,11 @@
             roundScored = Boolean(savedSession.roundScored);
             winner = [HUMAN, COMPUTER].includes(savedSession.winner) ? savedSession.winner : null;
             winningLine = Array.isArray(savedSession.winningLine) ? savedSession.winningLine : [];
-            phase = ['playing', 'thinking', 'player-won', 'computer-won', 'draw'].includes(savedSession.phase)
+            phase = ['choosing', 'playing', 'thinking', 'player-won', 'computer-won', 'draw'].includes(savedSession.phase)
                 ? savedSession.phase
                 : 'playing';
-            currentPlayer = phase === 'thinking' ? COMPUTER : phase === 'playing' ? HUMAN : null;
+            currentPlayer = phase === 'thinking' ? COMPUTER : phase === 'playing'
+                ? mode === 'local' ? history.length % 2 : HUMAN : null;
             if (Number.isInteger(savedSession.keyboardPosition?.row) && Number.isInteger(savedSession.keyboardPosition?.col)) {
                 keyboardPosition = {
                     row: Math.min(BOARD_SIZE - 1, Math.max(0, savedSession.keyboardPosition.row)),
@@ -821,20 +863,30 @@
 
         function showDialog(type, opener) {
             if (dialog.hidden) {
-                dialogReturnFocus = opener.closest('.window-menu').querySelector('[data-window-menu]');
+                dialogReturnFocus = opener?.closest('.window-menu').querySelector('[data-window-menu]') || canvas;
             }
             const isHelp = type === 'help';
-            dialogTitle.textContent = isHelp ? copy().helpTitle : copy().aboutTitle;
-            dialogCopy.textContent = isHelp ? copy().helpCopy : copy().aboutCopy;
+            const choosing = type === 'mode';
+            dialogTitle.textContent = choosing ? copy().chooseMode : isHelp ? copy().helpTitle : copy().aboutTitle;
+            dialogCopy.textContent = choosing ? copy().modeCopy : isHelp
+                ? mode === 'local' ? copy().localHelpCopy : copy().helpCopy : copy().aboutCopy;
+            dialog.querySelectorAll('[data-gomoku-mode]').forEach(button => { button.hidden = !choosing; });
+            dialog.querySelector('.gomoku-dialog-actions [data-gomoku-dialog-close]').hidden = choosing;
+            gameWindow.querySelector('.gomoku-game-area').inert = choosing;
+            gameWindow.querySelector('.gomoku-menubar').inert = choosing;
             dialog.dataset.type = type;
             dialog.hidden = false;
             closeMenus();
-            dialog.querySelector('[data-gomoku-dialog-close]')?.focus();
+            if (gameWindow.classList.contains('is-active')) {
+                dialog.querySelector(choosing ? '[data-gomoku-mode]' : '[data-gomoku-dialog-close]')?.focus();
+            }
         }
 
         function closeDialog() {
             if (dialog.hidden) return;
             dialog.hidden = true;
+            gameWindow.querySelector('.gomoku-game-area').inert = false;
+            gameWindow.querySelector('.gomoku-menubar').inert = false;
             dialogReturnFocus.focus({ preventScroll: true });
             dialogReturnFocus = undefined;
         }
@@ -880,7 +932,18 @@
         document.querySelector('[data-gomoku-help]')?.addEventListener('click', (event) => showDialog('help', event.currentTarget));
         document.querySelector('[data-gomoku-about]')?.addEventListener('click', (event) => showDialog('about', event.currentTarget));
         document.querySelectorAll('[data-gomoku-dialog-close]').forEach((button) => {
-            button.addEventListener('click', closeDialog);
+            button.addEventListener('click', () => {
+                if (dialog.dataset.type === 'mode') closeGame();
+                else closeDialog();
+            });
+        });
+        document.querySelectorAll('[data-gomoku-mode]').forEach((button) => {
+            button.addEventListener('click', () => {
+                mode = button.dataset.gomokuMode;
+                closeDialog();
+                newGame();
+                canvas.focus({ preventScroll: true });
+            });
         });
 
         canvas.addEventListener('pointermove', (event) => {
@@ -923,10 +986,11 @@
             if (!dialog.hidden) {
                 if (event.key === 'Escape') {
                     event.preventDefault();
-                    closeDialog();
+                    if (dialog.dataset.type === 'mode') closeGame();
+                    else closeDialog();
                 } else if (event.key === 'Tab') {
                     event.preventDefault();
-                    const buttons = Array.from(dialog.querySelectorAll('[data-gomoku-dialog-close]'));
+                    const buttons = Array.from(dialog.querySelectorAll('button:not([hidden])'));
                     const index = buttons.indexOf(document.activeElement);
                     const offset = event.shiftKey ? -1 : 1;
                     buttons[(index + offset + buttons.length) % buttons.length].focus();
@@ -995,16 +1059,20 @@
             window: gameWindow.classList.contains('is-closed') ? 'closed'
                 : gameWindow.classList.contains('is-minimized') ? 'minimized' : 'open',
             launching: gameWindow.classList.contains('is-launching'),
+            mode,
             coordinateSystem: 'row 0 is top, column 0 is left; both increase toward bottom-right',
             boardSize: BOARD_SIZE,
             score: { human: humanScore, computer: computerScore },
             phase,
-            currentPlayer: currentPlayer === HUMAN ? 'human-black' : currentPlayer === COMPUTER ? 'computer-white' : null,
-            winner: winner === HUMAN ? 'human-black' : winner === COMPUTER ? 'computer-white' : null,
+            currentPlayer: currentPlayer === HUMAN ? (mode === 'local' ? 'player-black' : 'human-black')
+                : currentPlayer === COMPUTER ? (mode === 'local' ? 'player-white' : 'computer-white') : null,
+            winner: winner === HUMAN ? (mode === 'local' ? 'player-black' : 'human-black')
+                : winner === COMPUTER ? (mode === 'local' ? 'player-white' : 'computer-white') : null,
             moves: history.map((move) => ({
                 row: move.row,
                 col: move.col,
-                player: move.player === HUMAN ? 'human-black' : 'computer-white'
+                player: mode === 'local' ? (move.player === HUMAN ? 'player-black' : 'player-white')
+                    : move.player === HUMAN ? 'human-black' : 'computer-white'
             })),
             winningLine,
             keyboardCursor: keyboardMode ? { ...keyboardPosition } : null,
@@ -1027,6 +1095,7 @@
         if (!restoredSession) createEngine();
         applyLanguage();
         render();
+        if (restoredSession && phase === 'choosing') showDialog('mode');
         if (restoredSession && phase === 'thinking') {
             clearAiTimer();
             aiTimer = window.setTimeout(runComputerMove, AI_DELAY);

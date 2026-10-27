@@ -895,6 +895,7 @@ test('restores desktop session state after a portfolio reload', async ({ page, i
 
     await page.locator('.desktop-shortcut[data-open-gomoku]').click();
     await expect(page.locator('[data-gomoku-launcher]')).toBeHidden({ timeout: 3000 });
+    await page.locator('[data-gomoku-mode="computer"]').click();
     await page.evaluate(() => window.GomokuGame.loadPosition([
         { row: 7, col: 7, player: 0 },
         { row: 7, col: 8, player: 1 }
@@ -1112,6 +1113,7 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     await expect(launcher).toBeVisible();
     await expect(page.locator('[data-gomoku-launch-log]')).toContainText('C:\\GAVIN\\GAMES> gomoku.exe');
     await expect(launcher).toBeHidden({ timeout: 3000 });
+    await page.locator('[data-gomoku-mode="computer"]').click();
     await expect(page.locator('[data-gomoku-status]')).toContainText('轮到你落子');
 
     const canvas = page.locator('[data-gomoku-board]');

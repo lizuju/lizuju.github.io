@@ -23,7 +23,7 @@ const openChat = async (page, mobile = false, iframe = false) => {
         await expect(page.locator('iframe')).toBeVisible();
         await expect.poll(() => page.frames().length).toBe(2);
         chat = page.frames().find(frame => frame !== page.mainFrame());
-    } else await page.goto(`${site.origin}/portfolio/${mobile ? 'chat/' : ''}`);
+    } else await page.goto(`${site.origin}/${mobile ? 'chat/' : 'portfolio/'}`);
     if (!mobile || iframe) {
         if (await chat.locator('[data-window-action="minimize"]').isVisible()) await chat.locator('[data-window-action="minimize"]').click();
         await chat.locator('.desktop-shortcut[data-open-sync-space]').click();

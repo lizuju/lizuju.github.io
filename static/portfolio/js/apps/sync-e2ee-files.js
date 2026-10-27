@@ -1,4 +1,4 @@
-const root = new URL(document.body.dataset.assetRoot || '.', document.baseURI);
+const root = new URL('.', document.baseURI);
 const workerUrl = new URL('sync-e2ee-worker.js', root);
 const entries = new Map();
 const DOWNLOAD_IDLE_MS = 60000;

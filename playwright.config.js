@@ -51,6 +51,8 @@ module.exports = defineConfig({
             name: 'webkit-mobile',
             use: {
                 ...devices['iPhone 13'],
+                // macOS WebKit ships native media-control PNGs only at 1x and 2x.
+                deviceScaleFactor: process.platform === 'darwin' ? 2 : devices['iPhone 13'].deviceScaleFactor,
                 viewport: { width: 320, height: 568 }
             }
         }

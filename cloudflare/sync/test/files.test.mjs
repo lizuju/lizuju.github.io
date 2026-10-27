@@ -58,7 +58,9 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                       return super.storageBytes();
                     } finally { await registry.testSizeEnd(); }
                   }
-                  databaseProbe() { this.probeCount = (this.probeCount || 0) + 1; return super.databaseProbe(); }
+                  testHoldDatabaseProbe() { this.probeGate = new Promise(resolve => { this.releaseProbe = resolve; }); }
+                  testReleaseDatabaseProbe() { this.releaseProbe(); this.probeGate = null; }
+                  async databaseProbe() { this.probeCount = (this.probeCount || 0) + 1; if (this.probeGate) await this.probeGate; return super.databaseProbe(); }
                   testProbeCount() { return this.probeCount || 0; }
                   testFailRead() { this.failRead = true; }
                   readStream(offset, length) {
@@ -82,7 +84,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   }
                 };
                 export class PairingRegistry extends ProductionRegistry {
-                  testExpireDiagnosticsCache() { this.diagnosticsCacheUntil = Date.now() - 1; }
+                  async testExpireDiagnosticsCache() { this.diagnosticsCacheUntil = Date.now() - 1; await caches.default.delete('https://sync.test/v1/status?release=local'); }
                   testSizeStart() {
                     this.sizeCalls = (this.sizeCalls || 0) + 1;
                     this.sizeActive = (this.sizeActive || 0) + 1;
@@ -1319,4 +1321,26 @@ test('public diagnostics rotates existing shard samples without creating missing
   assert.equal(missingStatus.database.sampledShard.initialized, false);
   assert.deepEqual(await missing.exec(schema), []);
   assert.deepEqual(await storage.exec('SELECT file_id FROM files ORDER BY file_id'), files);
+});
+
+test('a stalled shard health probe preserves the healthy room result and recovers without a cached failure', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  await upload(request, space, { bytes: Buffer.from('probe fixture') });
+  const storage = await roomStorage(space, instance);
+  const [{ file_id: fileId }] = await storage.exec('SELECT file_id FROM files');
+  const shard = (await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS')).getByName(`${fileId}:0`);
+  await shard.testHoldDatabaseProbe();
+  const started = Date.now();
+  const partial = await request('/v1/status');
+  assert.ok(Date.now() - started < 6000);
+  assert.equal(partial.status, 200);
+  assert.equal(partial.body.ok, false);
+  assert.equal(partial.body.database.sampledRoom.ok, true);
+  assert.equal(partial.body.database.sampledShard.ok, false);
+  assert.equal(partial.body.storage.roomCount, 1);
+  await shard.testReleaseDatabaseProbe();
+  const recovered = await request('/v1/status');
+  assert.equal(recovered.body.ok, true);
+  assert.equal(recovered.body.database.sampledShard.ok, true);
 });

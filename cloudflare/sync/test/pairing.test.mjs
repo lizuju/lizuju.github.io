@@ -57,7 +57,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                     super(ctx, observe(env));
                   }
                   testRpcCalls() { return rpcCalls.splice(0); }
-                  testExpireDiagnosticsCache() { this.diagnosticsCacheUntil = Date.now() - 1; }
+                  async testExpireDiagnosticsCache() { this.diagnosticsCacheUntil = Date.now() - 1; await caches.default.delete('https://sync.test/v1/status?release=local'); }
                   testDiagnosticsCacheUntil() { return this.diagnosticsCacheUntil; }
                   testFailDiagnostics() { this.failDiagnostics = true; }
                   collectDiagnostics() {
@@ -188,7 +188,11 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                     if (this.failCommittedMessageReply) { this.failCommittedMessageReply = false; throw new Error('test_committed_reply_lost'); }
                     return result;
                   }
+                  testFailMaintenance(value) { this.failMaintenance = value; this.maintenanceCalls = 0; }
+                  testMaintenanceCalls() { return this.maintenanceCalls || 0; }
                   async maintain(roomId) {
+                    this.maintenanceCalls = (this.maintenanceCalls || 0) + 1;
+                    if (this.failMaintenance) throw new Error('test_maintenance_failed');
                     if (this.maintenanceRelease) {
                       this.startMaintenance();
                       await this.maintenanceRelease;
@@ -250,6 +254,7 @@ after(async () => {
 afterEach(async () => {
   const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   await storage.exec('DELETE FROM offers');
+  await storage.exec('DELETE FROM room_pairing');
   await storage.exec('DELETE FROM pair_candidates');
   await storage.exec('DELETE FROM pair_requests');
   client().state.offers.clear();
@@ -833,6 +838,176 @@ test('concurrent offer generation reuses one active encrypted offer without exte
   const { code, ...wire } = results[0].body;
   assert.deepEqual(wire, space.pairing);
   assert.ok(results.every(result => result.body.code === code && result.body.expiresAt === space.expiresAt));
+});
+
+async function setPairingLock(request, space, locked) {
+  const path = `/v1/spaces/${space.roomId}/pair-code`;
+  const session = request.state.sessions.get(space.token);
+  await request.update(session);
+  const current = (await request.raw(path, { token: space.token })).body;
+  const secret = await cryptoClient.decryptPayload(session.keyring, space.roomId, `offer:${current.offerId}`, current.secret);
+  secret.expiresAt = locked ? null : Date.now() + 600000;
+  const fixedSecret = locked ? await cryptoClient.encryptPayload(session.keyring, space.roomId, 'pairing-code', { code: secret.code }) : null;
+  const result = await request.raw(path, { method: 'PATCH', token: space.token, headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: {
+    offerId: current.offerId, locked, fixedSecret, revision: current.revision,
+    secret: await cryptoClient.encryptPayload(session.keyring, space.roomId, `offer:${current.offerId}`, secret)
+  } });
+  if (result.status === 200) request.state.offers.set(current.offerId, { ...result.body, secret, session: request.state.offers.get(current.offerId)?.session || session });
+  return result;
+}
+
+test('locked pairing code survives expiry and admissions without exposing its plaintext to storage', async () => {
+  const request = client(), space = await createSpace(request);
+  const path = `/v1/spaces/${space.roomId}/pair-code`;
+  const locked = await setPairingLock(request, space, true);
+  assert.equal(locked.status, 200);
+  assert.equal(locked.body.locked, true);
+  assert.equal(locked.body.expiresAt, null);
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await storage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 600000, space.roomId);
+  await authenticateSocket(space);
+  assert.deepEqual((await client().raw('/v1/pair/offers')).body.offers, [{ offerId: locked.body.offerId, expiresAt: null }]);
+  const second = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
+  assert.equal(second.status, 200);
+  const retained = (await request.raw(path, { token: space.token })).body;
+  assert.equal(retained.locked, true);
+  assert.equal(retained.enabled, true);
+  assert.equal(retained.offerId, undefined);
+  assert.ok(retained.revision > locked.body.revision);
+  const renewed = await request(path, { method: 'POST', token: space.token });
+  assert.equal(renewed.status, 200);
+  assert.equal(renewed.body.code, space.code);
+  assert.notEqual(renewed.body.offerId, locked.body.offerId);
+  assert.equal(renewed.body.expiresAt, null);
+  assert.equal((await client()('/v1/pair', { method: 'POST', json: { code: space.code } })).status, 200);
+  const rows = await storage.exec('SELECT * FROM room_pairing WHERE room_id = ?', space.roomId);
+  assert.ok(rows[0].fixed_secret.startsWith('e2ee1.'));
+  assert.deepEqual(Object.keys(rows[0]).sort(), ['enabled', 'fixed_secret', 'locked', 'revision', 'room_id']);
+});
+
+test('closing a fixed code clears its lock and reopens with a fresh invitation while retaining chat access', async t => {
+  const request = client(), space = await createSpace(request);
+  const peer = (await client()('/v1/pair', { method: 'POST', json: { code: space.code } })).body;
+  const path = `/v1/spaces/${space.roomId}/pair-code`;
+  await request(path, { method: 'POST', token: space.token });
+  const locked = (await setPairingLock(request, space, true)).body;
+  const { socket } = await authenticateSocket(space);
+  const changed = socketEvent(socket);
+  const closed = await request(path, { method: 'DELETE', token: peer.token });
+  assert.equal(closed.status, 200);
+  assert.equal(closed.body.enabled, false);
+  assert.equal(closed.body.locked, false);
+  assert.equal(closed.body.fixedSecret, null);
+  assert.deepEqual((await request.raw(path, { token: peer.token })).body, closed.body);
+  assert.deepEqual(JSON.parse((await changed).data).pairing, closed.body);
+  assert.deepEqual((await client().raw('/v1/pair/offers')).body.offers, []);
+  assert.equal((await client()('/v1/pair', { method: 'POST', json: { code: request.state.offers.get(locked.offerId).secret.code } })).status, 404);
+  const session = request.state.sessions.get(space.token);
+  const generatedId = randomUUID();
+  const generated = await cryptoClient.encryptPayload(session.keyring, space.roomId, `offer:${generatedId}`, await cryptoClient.createPairingSecret('1212', generatedId));
+  const stale = await request.raw(path, { method: 'POST', token: space.token, headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: { offerId: generatedId, secret: generated, revision: locked.revision } });
+  assert.equal(stale.body.error, 'pairing_conflict');
+  const disabled = await request.raw(path, { method: 'POST', token: space.token, headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: { offerId: generatedId, secret: generated, revision: closed.body.revision } });
+  assert.equal(disabled.body.error, 'pairing_closed');
+  assert.equal((await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: peer.token, json: { clientId: randomUUID(), text: 'Existing members can still chat' } })).status, 201);
+  const previousCode = request.state.offers.get(locked.offerId).secret.code;
+  const nextCode = (Number(previousCode) + 1) % 10000;
+  const random = t.mock.method(Math, 'random', () => (nextCode + 0.5) / 10000);
+  const reopened = await request(path, { method: 'POST', token: peer.token });
+  random.mock.restore();
+  assert.equal(reopened.status, 200);
+  assert.equal(reopened.body.code, String(nextCode).padStart(4, '0'));
+  assert.notEqual(reopened.body.offerId, locked.offerId);
+  assert.equal(reopened.body.locked, false);
+  assert.equal(reopened.body.fixedSecret, null);
+  assert.ok(reopened.body.expiresAt > Date.now() + 590000);
+  assert.equal((await client()('/v1/pair', { method: 'POST', json: { code: previousCode } })).status, 404);
+  assert.equal((await client()('/v1/pair', { method: 'POST', json: { code: reopened.body.code } })).status, 200);
+});
+
+test('unlocking restores ten-minute expiry and stale lock updates cannot replace a newer setting', async () => {
+  const request = client(), space = await createSpace(request);
+  const path = `/v1/spaces/${space.roomId}/pair-code`;
+  const locked = (await setPairingLock(request, space, true)).body;
+  const unlocked = await setPairingLock(request, space, false);
+  assert.equal(unlocked.status, 200);
+  assert.equal(unlocked.body.locked, false);
+  assert.equal(unlocked.body.fixedSecret, null);
+  assert.ok(unlocked.body.expiresAt > Date.now() + 590000);
+  const session = request.state.sessions.get(space.token);
+  const stale = await request.raw(path, { method: 'PATCH', token: space.token, headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: { offerId: locked.offerId, locked: true, revision: locked.revision, secret: locked.secret, fixedSecret: locked.fixedSecret } });
+  assert.equal(stale.body.error, 'pairing_conflict');
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await storage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
+  assert.equal((await client()('/v1/pair', { method: 'POST', json: { code: space.code } })).status, 404);
+  assert.equal((await request.raw(path, { token: space.token })).body.offerId, undefined);
+});
+
+test('closing an invitation rejects an already challenged admission and old-epoch control writes', async () => {
+  const request = client(), space = await createSpace(request);
+  const path = `/v1/spaces/${space.roomId}/pair-code`;
+  await setPairingLock(request, space, true);
+  const offer = request.state.offers.get(space.pairing.offerId);
+  const session = offer.session;
+  const requestId = randomUUID(), token = 'c'.repeat(64);
+  const start = await cryptoClient.startPairingClient(space.code, offer.offerId);
+  assert.equal((await request.raw('/v1/pair', { method: 'POST', json: { requestId, requestToken: token, requests: [{ offerId: offer.offerId, startLoginRequest: start.startLoginRequest }] } })).status, 202);
+  const host = await cryptoClient.startPairingHost(offer.secret, offer.offerId, requestId, start.startLoginRequest);
+  assert.equal((await request(`/v1/spaces/${space.roomId}/pair-challenge`, { method: 'POST', token: space.token, json: { requestId, offerId: offer.offerId, loginResponse: host.loginResponse } })).status, 200);
+  assert.equal((await request.raw(path, { method: 'DELETE', token: space.token, headers: { 'X-Sync-Key-Id': randomUUID() } })).body.error, 'key_changed');
+  const finish = await cryptoClient.finishPairingClient(start.clientState, offer.offerId, requestId, host.loginResponse);
+  const identity = await cryptoClient.createDeviceIdentity();
+  const clientData = await cryptoClient.encryptPairing(finish.sessionKey, offer.offerId, requestId, { nonce: 'nonce', publicKey: identity.publicKey });
+  assert.equal((await request.raw(`/v1/pair/${requestId}`, { method: 'POST', token, json: { offerId: offer.offerId, finishLoginRequest: finish.finishLoginRequest, clientData } })).status, 200);
+  const deviceId = randomUUID();
+  const rotation = await cryptoClient.createKeyRotation(session, [...Object.entries(session.trustedDevices).map(([deviceId, publicKey]) => ({ deviceId, publicKey })), { deviceId, publicKey: identity.publicKey }]);
+  const name = await cryptoClient.encryptPayload(rotation.next.keyring, space.roomId, `device:${deviceId}`, { name: '', publicKey: identity.publicKey });
+  const grant = await cryptoClient.encryptPairing(finish.sessionKey, offer.offerId, requestId, { roomId: space.roomId, deviceId, token: 'a'.repeat(64), ...rotation.next, nonce: 'nonce' });
+  assert.equal((await request(path, { method: 'DELETE', token: space.token })).status, 200);
+  const admission = await request(`/v1/spaces/${space.roomId}/pair-accept`, { method: 'POST', token: space.token, json: {
+    requestId, offerId: offer.offerId, deviceId, token: 'a'.repeat(64), name, grant,
+    rotationId: rotation.rotationId, newKeyId: rotation.newKeyId, grants: rotation.grants.filter(item => item.deviceId !== deviceId)
+  } });
+  assert.equal(admission.status, 404);
+  assert.equal(admission.body.error, 'code_expired');
+  const result = await request.raw(`/v1/pair/${requestId}`, { method: 'POST', token, json: { offerId: offer.offerId, finishLoginRequest: finish.finishLoginRequest, clientData } });
+  assert.equal(result.status, 404);
+  assert.equal(result.body.error, 'code_expired');
+  assert.equal((await request(`/v1/spaces/${space.roomId}/devices`, { token: session.token })).body.devices.length, 1);
+});
+
+test('fixed pairing settings survive a registry restart and are reclaimed with an abandoned empty room', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const locked = (await setPairingLock(request, space, true)).body;
+  const path = `/v1/spaces/${space.roomId}/pair-code`;
+  await instance.unsafeEvictDurableObject('sync-test', 'PairingRegistry', { name: 'registry' });
+  assert.deepEqual((await request.raw(path, { token: space.token })).body, locked);
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  await registry.refreshRoom(space.roomId);
+  assert.equal(await registry.hasRoom(space.roomId), true);
+  const roomStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await roomStorage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 8 * 24 * 60 * 60 * 1000), 'lastActiveAt');
+  await roomStorage.exec('UPDATE devices SET last_active_at = ?', Date.now() - sevenDays - 1);
+  await registry.refreshRoom(space.roomId);
+  assert.equal(await registry.hasRoom(space.roomId), false);
+  assert.deepEqual(await registryStorage.exec('SELECT * FROM room_pairing WHERE room_id = ?', space.roomId), []);
+  assert.deepEqual(await registryStorage.exec('SELECT * FROM offers WHERE room_id = ?', space.roomId), []);
+});
+
+test('fixed codes count towards the thirty open-space limit and closing one frees its slot', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  assert.equal((await setPairingLock(request, space, true)).status, 200);
+  await Promise.all(Array.from({ length: 29 }, () => createSpace(client(instance))));
+  const extraRequest = client(instance), extra = await createSpace(extraRequest);
+  const extraPath = `/v1/spaces/${extra.roomId}/pair-code`;
+  assert.equal((await extraRequest(extraPath, { method: 'POST', token: extra.token })).body.error, 'pairing_busy');
+  await request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'DELETE', token: space.token });
+  assert.equal((await extraRequest(extraPath, { method: 'POST', token: extra.token })).status, 200);
 });
 
 test('offer generation rechecks expiry and the thirty-space limit after an online probe', async t => {
@@ -2095,7 +2270,7 @@ test('public status coalesces diagnostics, caches healthy snapshots for fifteen 
   const before = await storage.exec('SELECT total_changes() AS changes');
   await room.testHoldDatabaseProbe();
   const pending = Array.from({ length: 6 }, () => request('/v1/status'));
-  await registry.testWaitStatusCalls(6);
+  await registry.testWaitStatusCalls(1);
   assert.equal(await room.testProbeCount(), 1);
   await room.testReleaseDatabaseProbe();
   const snapshots = await Promise.all(pending);
@@ -2235,4 +2410,117 @@ test('pairing sources are assigned by the relay, scoped to each offer and retain
   assert.equal(pending.body.requests.find(event => event.requestId === first.requestId).sourceId, id);
   const publicOffers = await source('/v1/pair/offers');
   assert.ok(publicOffers.body.offers.every(offer => !Object.hasOwn(offer, 'sourceId')));
+});
+
+test('maintenance isolates failed rooms, preserves their capacity estimate and retries after healthy rooms progress', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
+  for (let index = 0; index < 12; index++) await registry.createSpace(randomUUID());
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const ids = (await storage.exec('SELECT room_id FROM room_usage ORDER BY room_id')).map(row => row.room_id);
+  const rooms = ids.map(id => namespace.getByName(id));
+  for (const room of rooms) await room.testFailMaintenance(false);
+  await rooms[0].testFailMaintenance(true);
+  const before = await storage.exec('SELECT * FROM room_usage WHERE room_id = ?', ids[0]);
+  await registry.maintainRooms(); await registry.testDropAlarm();
+  await registry.testRunAlarm(); await registry.testDropAlarm();
+  assert.deepEqual(await Promise.all(rooms.map(room => room.testMaintenanceCalls())), [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0]);
+  await registry.testRunAlarm(); await registry.testDropAlarm();
+  assert.deepEqual(await Promise.all(rooms.map(room => room.testMaintenanceCalls())), Array(12).fill(1));
+  assert.deepEqual(await storage.exec('SELECT * FROM room_usage WHERE room_id = ?', ids[0]), before);
+  assert.equal((await storage.exec('SELECT phase FROM cleanup'))[0].phase, 'retry');
+  assert.equal((await registry.diagnostics()).maintenance.failedRooms, 1);
+  await registry.testRunAlarm(); await registry.testDropAlarm();
+  assert.equal(await rooms[0].testMaintenanceCalls(), 1, 'failed rooms back off instead of retrying every alarm');
+  await rooms[0].testFailMaintenance(false);
+  await storage.exec('UPDATE maintenance_failures SET retry_at = 0');
+  await registry.testRunAlarm(); await registry.testDropAlarm();
+  assert.deepEqual(await storage.exec('SELECT * FROM maintenance_failures'), []);
+  assert.deepEqual(await storage.exec('SELECT * FROM cleanup'), []);
+  assert.equal(await rooms[0].testMaintenanceCalls(), 1);
+});
+
+test('a slow health probe returns a partial snapshot before the control panel timeout and can recover', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const created = await registry.createSpace(randomUUID());
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(created.roomId);
+  await room.testHoldDatabaseProbe();
+  const started = Date.now();
+  const snapshots = await Promise.all(Array.from({ length: 2 }, async () => (await instance.dispatchFetch('https://sync.test/v1/status')).json()));
+  assert.ok(Date.now() - started < 6000);
+  assert.deepEqual(snapshots[0], snapshots[1]);
+  assert.equal(snapshots[0].ok, false);
+  assert.equal(snapshots[0].database.registry.ok, true);
+  assert.equal(snapshots[0].database.sampledRoom.ok, false);
+  assert.equal(snapshots[0].storage.roomCount, 1);
+  assert.equal(snapshots[0].dailyUsage.status, 'not_configured');
+  await room.testReleaseDatabaseProbe();
+  assert.equal((await (await instance.dispatchFetch('https://sync.test/v1/status')).json()).ok, true);
+});
+
+test('edge status snapshots coalesce requests before the registry and keep request-specific CORS', async t => {
+  const local = 'http://127.0.0.1:3117';
+  const instance = await createRuntime({ allowedOrigins: `${origin},${local}` }); t.after(() => instance.dispose());
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  await registry.testRpcCalls();
+  const responses = await Promise.all(Array.from({ length: 40 }, async (_, index) => {
+    const response = await instance.dispatchFetch('https://sync.test/v1/status', { headers: { Origin: index % 2 ? origin : local } });
+    return { headers: response.headers, body: await response.json() };
+  }));
+  assert.equal((await registry.testRpcCalls()).filter(method => method === 'publicStatus').length, 1);
+  const bodies = responses.map(response => response.body);
+  for (let index = 0; index < responses.length; index++) {
+    assert.equal(responses[index].headers.get('Access-Control-Allow-Origin'), index % 2 ? origin : local);
+    assert.equal(responses[index].headers.get('Cache-Control'), 'no-store');
+    assert.deepEqual(bodies[index], bodies[0]);
+  }
+  const cached = await instance.dispatchFetch('https://sync.test/v1/status');
+  assert.equal(cached.headers.get('Access-Control-Allow-Origin'), null);
+  assert.deepEqual(await cached.json(), bodies[0]);
+  assert.equal((await registry.testRpcCalls()).filter(method => method === 'publicStatus').length, 0);
+  const denied = await instance.dispatchFetch('https://sync.test/v1/status', { headers: { Origin: 'https://untrusted.test' } });
+  assert.equal(denied.status, 403);
+  await registry.testExpireDiagnosticsCache();
+  assert.equal((await instance.dispatchFetch('https://sync.test/v1/status')).status, 200);
+  assert.equal((await registry.testRpcCalls()).filter(method => method === 'publicStatus').length, 1);
+});
+
+test('capacity cleanup can prune healthy rooms while retaining failed-room estimates and its unfinished target', async t => {
+  const instance = await createRuntime({ virtualMessageBytes: 1_000_000_000 }); t.after(() => instance.dispose());
+  const request = client(instance), spaces = [await createSpace(request), await createSpace(request)];
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
+  for (let index = 0; index < 5; index++) {
+    const space = spaces[index < 3 ? 0 : 1];
+    assert.equal((await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: `maintenance fixture ${index}` } })).status, 201);
+  }
+  const failed = namespace.getByName(spaces[0].roomId), healthy = namespace.getByName(spaces[1].roomId);
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const before = await storage.exec('SELECT * FROM room_usage WHERE room_id = ?', spaces[0].roomId);
+  await failed.testFailMaintenance(true);
+  await registry.maintainRooms(); await registry.testDropAlarm();
+  await registry.testRunAlarm(); await registry.testDropAlarm();
+  const target = (await storage.exec('SELECT target_bytes FROM cleanup'))[0].target_bytes;
+  assert.ok(target > 1_900_000_000 && target < 2_100_000_000);
+  await registry.testRunAlarm(); await registry.testDropAlarm();
+  assert.equal((await healthy.messages()).length, 0);
+  assert.deepEqual(await storage.exec('SELECT * FROM room_usage WHERE room_id = ?', spaces[0].roomId), before);
+  assert.deepEqual(await storage.exec('SELECT phase, target_bytes FROM cleanup'), [{ phase: 'retry', target_bytes: target }]);
+  await registry.testRunAlarm();
+  assert.ok(await registry.testReadAlarm() > Date.now() + 30000);
+  await registry.maintainRooms();
+  assert.ok(await registry.testReadAlarm() <= Date.now() + 1000);
+  await registry.testDropAlarm();
+  assert.deepEqual(await storage.exec('SELECT phase, target_bytes FROM cleanup'), [{ phase: 'prune', target_bytes: target }]);
+  await registry.testRunAlarm(); await registry.testDropAlarm();
+  await failed.testFailMaintenance(false);
+  await storage.exec('UPDATE maintenance_failures SET retry_at = 0');
+  await registry.testRunAlarm(); await registry.testDropAlarm();
+  assert.deepEqual(await storage.exec('SELECT phase, target_bytes FROM cleanup'), [{ phase: 'prune', target_bytes: target }]);
+  await registry.testRunAlarm(); await registry.testDropAlarm();
+  assert.deepEqual(await storage.exec('SELECT * FROM cleanup'), []);
+  assert.deepEqual(await storage.exec('SELECT * FROM maintenance_failures'), []);
+  assert.ok((await registry.storageBytes()) <= target);
 });

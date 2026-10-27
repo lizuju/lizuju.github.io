@@ -40,7 +40,7 @@ module.exports = {
         chat: {
             import: path.resolve(rootDirectory, 'static/portfolio/js/chat.js'),
             filename: 'portfolio/js/chat.js',
-            publicPath: '../../',
+            publicPath: '../',
         },
     },
     output: {
@@ -57,6 +57,10 @@ module.exports = {
                     from: path.resolve(rootDirectory, 'node_modules/pdfjs-dist', folder),
                     to: `portfolio/assets/pdfjs/${folder}`,
                 })),
+                ...['sync-e2ee-worker.js', 'sync-config.json'].map((file) => ({
+                    from: path.resolve(rootDirectory, 'static/portfolio', file),
+                    to: `chat/${file}`,
+                })),
                 {
                 from: path.resolve(rootDirectory, 'static'),
                 globOptions: {
@@ -70,7 +74,7 @@ module.exports = {
                     ].map((pattern) => path.resolve(rootDirectory, pattern)),
                 },
                 transform(content, absolutePath) {
-                    if (absolutePath.endsWith('portfolio/index.html') || absolutePath.endsWith('portfolio/chat/index.html')) {
+                    if (absolutePath.endsWith('portfolio/index.html') || absolutePath.endsWith('chat/index.html')) {
                         return content
                             .toString()
                             .replace('__SYNC_WINDOWS__', () => fs.readFileSync(syncWindowsPath, 'utf8'))

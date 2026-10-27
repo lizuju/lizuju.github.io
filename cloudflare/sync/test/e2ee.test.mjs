@@ -129,8 +129,8 @@ test('pairing rejects plaintext discovery, excess candidates, unowned challenges
  const registry=await runtime.unsafeGetDurableObjectStorage('sync-e2ee-test','E2eePairingRegistry',{name:'registry'});
  await registry.exec('UPDATE pair_requests SET expires_at = ? WHERE request_id = ?',Date.now()-1,second.requestId);
  assert.equal((await request(`/v1/pair/${second.requestId}`,{token:second.requestToken})).status,404);
- assert.equal((await request(`${path}/pair-code`,{method:'DELETE',token:owner.token})).status,200);
- assert.equal((await request(path,{token:owner.token})).body.pairing,null);
+ assert.equal((await request(`${path}/pair-code`,{method:'DELETE',token:owner.token,keyId:owner.keyId})).status,200);
+ assert.equal((await request(path,{token:owner.token})).body.pairing.enabled,false);
 });
 
 test('encrypted file transport admits full 2 GiB plus tags while rejecting identifying metadata and oversize ciphertext',async()=>{
@@ -181,11 +181,12 @@ test('thirty spaces can pair concurrently and released or expired slots are reus
  const requestId=randomUUID(),requestToken=randomBytes(32).toString('hex');
  assert.equal((await request('/v1/pair',{method:'POST',json:{requestId,requestToken,requests:offers.map(offer=>({offerId:offer.offerId,startLoginRequest:relay()}))}})).status,202);
  assert.equal((await request(`/v1/pair/${requestId}`,{method:'DELETE',token:requestToken})).status,200);
- assert.equal((await request(`/v1/spaces/${owners[0].roomId}/pair-code`,{method:'DELETE',token:owners[0].token})).status,200);
+ const closed=await request(`/v1/spaces/${owners[0].roomId}/pair-code`,{method:'DELETE',token:owners[0].token,keyId:owners[0].keyId});
+ assert.equal(closed.status,200);
  assert.equal((await request(`/v1/spaces/${last.roomId}/pair-code`,{method:'POST',token:last.token,keyId:last.keyId,json:body})).status,200);
  assert.equal((await request('/v1/pair/offers')).body.offers.length,30);
  await registry.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?',Date.now()-1,last.roomId);
- assert.equal((await request(`/v1/spaces/${owners[0].roomId}/pair-code`,{method:'POST',token:owners[0].token,keyId:owners[0].keyId,json:{offerId:randomUUID(),secret:cipher(owners[0].keyId)}})).status,200);
+ assert.equal((await request(`/v1/spaces/${owners[0].roomId}/pair-code`,{method:'POST',token:owners[0].token,keyId:owners[0].keyId,json:{offerId:randomUUID(),secret:cipher(owners[0].keyId),reopen:true,revision:closed.body.revision}})).status,200);
  assert.equal((await request('/v1/pair/offers')).body.offers.length,30);
  await registry.exec('DELETE FROM offers');
 });

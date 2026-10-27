@@ -87,7 +87,7 @@ const startSite = async (apiBase, beforeServe = () => {}) => {
         try {
             const pathname = new URL(request.url, 'http://localhost').pathname;
             await beforeServe(pathname);
-            if (pathname === '/portfolio/sync-config.json') {
+            if (['/portfolio/sync-config.json', '/chat/sync-config.json'].includes(pathname)) {
                 response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ apiBase })); return;
             }
             if (pathname === '/shell') {

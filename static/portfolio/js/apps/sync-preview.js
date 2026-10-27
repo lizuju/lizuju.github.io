@@ -1,5 +1,6 @@
 import { PreviewZoom } from './preview-zoom.js';
 import { createImageResource } from './sync-image-resource.js';
+import { stickerById } from './sync-stickers.js';
 
 (() => {
     const desktopApi = window.GavinDesktop;
@@ -97,7 +98,7 @@ import { createImageResource } from './sync-image-resource.js';
             if (!current) return;
             const width = Math.max(1, body.clientWidth - 24) * zoom.value;
             const image = body.querySelector('img');
-            if (image) image.style.width = `${Math.min(width, image.naturalWidth * zoom.value)}px`;
+            if (image) image.style.width = `${Math.min(width, (current.kind === 'sticker' ? 192 : image.naturalWidth) * zoom.value)}px`;
             if (current.pages && current.width !== width) {
                 current.width = width;
                 body.style.setProperty('--sync-preview-width', `${width}px`);
@@ -155,7 +156,7 @@ import { createImageResource } from './sync-image-resource.js';
             zoom.reset();
             find('title').textContent = file.name;
             document.querySelector('[data-sync-preview-task-title]').textContent = file.name;
-            find('toolbar').hidden = !['image', 'heic', 'pdf'].includes(file.kind);
+            find('toolbar').hidden = !['image', 'heic', 'pdf', 'sticker'].includes(file.kind);
             body.className = 'sync-preview-body';
             body.scrollTop = 0;
             body.scrollLeft = 0;
@@ -169,7 +170,17 @@ import { createImageResource } from './sync-image-resource.js';
                     state.url = capability.url;
                     state.release = capability.dispose;
                 }
-                if (file.kind === 'pdf') await loadPdf(state);
+                if (file.kind === 'sticker') {
+                    const image = document.createElement('img');
+                    image.alt = file.name;
+                    image.src = file.url;
+                    body.classList.add('is-sticker');
+                    body.append(image);
+                    await image.decode();
+                    if (current !== state) return;
+                    layout();
+                    setStatus('syncStickerPreview');
+                } else if (file.kind === 'pdf') await loadPdf(state);
                 else if (['image', 'heic'].includes(file.kind)) {
                     const image = document.createElement('img');
                     image.alt = file.name;
@@ -224,6 +235,10 @@ import { createImageResource } from './sync-image-resource.js';
         window.addEventListener('portfolio-language-change', () => {
             app.querySelectorAll('[data-i18n-aria]').forEach((element) => element.setAttribute('aria-label', translate(element.dataset.i18nAria)));
             if (current) {
+                if (current.stickerId) {
+                    current.name = stickerById(current.stickerId)[desktopApi.getLanguage() === 'en' ? 'en' : 'zh'];
+                    body.querySelector('img').alt = current.name;
+                }
                 find('title').textContent = current.name;
                 document.querySelector('[data-sync-preview-task-title]').textContent = current.name;
                 if (current.status) setStatus(current.status.key, current.status.values);

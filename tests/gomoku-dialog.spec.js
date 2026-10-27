@@ -5,6 +5,7 @@ test.beforeEach(async ({ page, isMobile }) => {
     await page.goto(isMobile ? '/portfolio/?view=mobile-homepage' : '/portfolio/');
     await page.evaluate(() => window.GomokuGame.open());
     await expect(page.locator('[data-gomoku-launcher]')).toBeHidden();
+    await page.locator('[data-gomoku-mode="computer"]').click();
 });
 
 test('keeps Gomoku help focus inside the dialog and blocks game shortcuts', async ({ page }) => {

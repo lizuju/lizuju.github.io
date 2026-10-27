@@ -204,6 +204,50 @@ test('keeps a simultaneous manual preview alive when its oversized automatic pre
     })).toEqual({ loads: 1, decodes: 1, failure: 'image_preview_deferred', alive: true, remaining: 0 });
 });
 
+test('reuses a deferred high-resolution image without downloading or decoding it before a manual preview', async ({ page }) => {
+    expect(await page.evaluate(async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 4000;
+        canvas.height = 3000;
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        canvas.width = canvas.height = 0;
+        let downloads = 0;
+        window.fetch = async () => { downloads++; return new Response(blob); };
+        const resource = window.createImageResource({ load: async () => ({ url: '/photo' }) });
+        const deferred = await resource.acquire({ automatic: true }).then(() => '', error => error.code);
+        const beforeManual = { downloads, urls: window.created.length };
+        const lease = await resource.acquire();
+        const image = new Image();
+        image.src = lease.url;
+        await image.decode();
+        const dimensions = [image.naturalWidth, image.naturalHeight];
+        image.removeAttribute('src');
+        lease.release();
+        resource.dispose();
+        return { deferred, beforeManual, downloads, dimensions, remaining: window.created.length - window.revoked.length };
+    })).toEqual({ deferred: 'image_preview_deferred', beforeManual: { downloads: 1, urls: 0 }, downloads: 1,
+        dimensions: [4000, 3000], remaining: 0 });
+});
+
+test('counts deferred compressed Blobs against the shared cache limit', async ({ page }) => {
+    expect(await page.evaluate(async () => {
+        const header = new Uint8Array(33);
+        header.set([137, 80, 78, 71, 13, 10, 26, 10]);
+        const view = new DataView(header.buffer);
+        view.setUint32(16, 8192);
+        view.setUint32(20, 8192);
+        const blob = new Blob([header, new Uint8Array(17 * 1024 * 1024)]);
+        let downloads = 0;
+        window.fetch = async () => { downloads++; return new Response(blob); };
+        const resources = Array.from({ length: 2 }, () => window.createImageResource({ load: async () => ({ url: '/photo' }) }));
+        for (const resource of resources) await resource.acquire({ automatic: true }).catch(() => {});
+        const afterTwo = downloads;
+        await resources[0].acquire({ automatic: true }).catch(() => {});
+        resources.forEach(resource => resource.dispose());
+        return { afterTwo, downloads, decoded: window.created.length };
+    })).toEqual({ afterTwo: 2, downloads: 3, decoded: 0 });
+});
+
 test('permits ordinary HEIC dimensions through the automatic gate', async ({ page }) => {
     expect(await page.evaluate(async bytes => {
         let decodes = 0;

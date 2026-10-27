@@ -1,17 +1,20 @@
 import { createKeyring, createDeviceIdentity, encryptPayload, decryptPayload, createFileMetadata, encryptFileChunk,
-    keyedFingerprint, FILE_PLAIN_CHUNK_SIZE, FILE_CIPHER_CHUNK_SIZE, saveLocalSession, loadLocalSession,
-    deleteLocalSession, createKeyRotation, acceptKeyRotation } from './sync-crypto.js';
+    keyedFingerprint, FILE_PLAIN_CHUNK_SIZE, FILE_CIPHER_CHUNK_SIZE, loadLocalSession,
+    createKeyRotation, acceptKeyRotation } from './sync-crypto.js';
 import { EncryptedPairing } from './sync-pairing.js';
+import { SavedSpaces, CREDENTIAL_KEY, CATALOG_KEY } from './sync-spaces.js';
 import { openEncryptedFile, prepareEncryptedFiles } from './sync-e2ee-files.js';
 import { createInlineImage } from './sync-inline-image.js';
 import { createImageResource } from './sync-image-resource.js';
 import { VoiceRecorder } from './sync-voice-recorder.js';
 import { createVoicePlayer } from './sync-voice-player.js';
+import { STICKERS, stickerById } from './sync-stickers.js';
+import { createGomokuWindow } from './sync-gomoku.js';
 
 (() => {
     const desktopApi = window.GavinDesktop;
     const assetRoot = new URL(document.body.dataset.assetRoot || '.', document.baseURI);
-    const CREDENTIAL_KEY = 'portfolio-sync-space-e2ee1';
+    const ADD_SPACE_KEY = 'portfolio-sync-add-space';
     const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
     try {
         const old = JSON.parse(localStorage.getItem('portfolio-sync-space') || 'null');
@@ -31,14 +34,35 @@ import { createVoicePlayer } from './sync-voice-player.js';
         const notice = find('notice');
         const confirmation = find('confirm-dialog');
         const devicesDialog = find('devices-dialog');
+        const spaceNameDialog = find('space-name-dialog');
+        const stickerDialog = find('sticker-dialog');
         const messageNodes = new Map();
         const inlineImages = new Map();
         const imageResources = new Map();
         const voicePlayers = new Map();
         const readReceipts = new Map();
         const outbox = new Map();
+        const games = new Map();
+        const gameCommands = new Set();
+        let gameWindow = null;
+        let restoringGame = false;
         const unread = new Set();
         const cooldowns = { create: 0, join: 0, pair: 0 };
+        const savedSpaces = new SavedSpaces();
+        const spacesReady = savedSpaces.importActive();
+        spacesReady.catch(() => {});
+        const spaceFiles = new Map();
+        const downloads = new Set();
+        let switchingSpace = false;
+        let forgettingSpace = null;
+        let reconcileTask = null;
+        let reconcileNeeded = false;
+        let addingSpace = false;
+        let spacesPreference = null;
+        try {
+            addingSpace = sessionStorage.getItem(ADD_SPACE_KEY) === 'true';
+            spacesPreference = localStorage.getItem('portfolio-sync-spaces-collapsed');
+        } catch { /* Opening a space reports unavailable storage. */ }
         let credentials = null;
         let deviceId = null;
         let devices = [];
@@ -56,6 +80,10 @@ import { createVoicePlayer } from './sync-voice-player.js';
         let pingTimer = null;
         let countdownTimer = null;
         let pairExpiresAt = 0;
+        let pairLocked = false;
+        let pairEnabled = true;
+        let pairPolicyRevision = 0;
+        let offerRenewal = null;
         let displayedOfferId = null;
         let pairingRevision = 0;
         let retryDelay = 1000;
@@ -122,6 +150,42 @@ import { createVoicePlayer } from './sync-voice-player.js';
             return configPromise;
         };
         const translate = (key, values = {}) => Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, value), desktopApi.t()[key]);
+        const spaceSwitchBlocked = () => busy || sending || recording() || downloads.size > 0 || switchingSpace;
+        const renderSpaces = () => {
+            let spaces;
+            try { spaces = savedSpaces.list(); } catch { return; }
+            const list = find('space-list');
+            const ids = new Set(spaces.map(space => space.roomId));
+            for (const button of [...list.children]) if (!ids.has(button.dataset.syncSpaceId)) button.remove();
+            for (const space of spaces) {
+                let button = [...list.children].find(button => button.dataset.syncSpaceId === space.roomId);
+                if (!button) {
+                    button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'sync-button';
+                    button.dataset.syncSpaceId = space.roomId;
+                    button.addEventListener('click', () => switchSpace(space.roomId));
+                    list.append(button);
+                }
+                const label = space.name || translate('syncSpaceName', { number: space.number });
+                button.textContent = label;
+                button.title = label;
+                button.setAttribute('aria-current', String(space.roomId === credentials?.roomId && !addingSpace));
+                button.disabled = spaceSwitchBlocked();
+            }
+            const current = spaces.find(space => space.roomId === credentials?.roomId);
+            find('space-title').textContent = current ? current.name || translate('syncSpaceName', { number: current.number }) : '';
+            find('space-rename').disabled = !current || switchingSpace;
+            find('space-rename').title = translate('syncSpaceRename');
+            find('add-space').disabled = spaceSwitchBlocked();
+            find('back-space').hidden = !addingSpace || !credentials;
+            find('back-space').disabled = busy || switchingSpace;
+            const collapsed = app.classList.contains('is-spaces-collapsed');
+            const toggle = find('spaces-toggle');
+            toggle.setAttribute('aria-expanded', String(!collapsed));
+            toggle.setAttribute('aria-label', translate(collapsed ? 'syncSpacesExpand' : 'syncSpacesCollapse'));
+            toggle.title = toggle.getAttribute('aria-label');
+        };
         const updateSoundToggle = () => {
             const label = translate(soundEnabled ? 'syncSoundMute' : 'syncSoundUnmute');
             find('sound').setAttribute('aria-pressed', String(soundEnabled));
@@ -211,9 +275,14 @@ import { createVoicePlayer } from './sync-voice-player.js';
         const secondsLeft = (until) => Math.max(0, Math.ceil((until - Date.now()) / 1000));
         const voiceTime = (duration) => `${String(Math.floor(duration / 60000)).padStart(2, '0')}:${String(Math.floor(duration / 1000) % 60).padStart(2, '0')}`;
         const recording = () => ['starting', 'recording', 'stopping'].includes(recorder.state);
-        const voiceVisible = () => active && viewingDesktop && !document.hidden && !app.closest('[inert]')
+        const stickerName = (id) => stickerById(id)?.[desktopApi.getLanguage() === 'en' ? 'en' : 'zh'] || '';
+        const isGamePlayer = game => game && [game.hostDeviceId, game.guestDeviceId].includes(deviceId);
+        const isGameActive = game => game && ['waiting', 'playing'].includes(game.status);
+        const ownGame = () => [...games.values()].find(game => isGamePlayer(game) && isGameActive(game));
+        const needsGameConnection = () => Boolean(restoringGame || ownGame() || gameWindow?.currentId);
+        const voiceVisible = () => !room.hidden && active && viewingDesktop && !document.hidden && !app.closest('[inert]')
             && app.classList.contains('is-active') && !app.classList.contains('is-closed')
-            && !app.classList.contains('is-minimized') && !confirmation.open && !devicesDialog.open;
+            && !app.classList.contains('is-minimized') && !confirmation.open && !devicesDialog.open && !stickerDialog.open;
         const releaseVoicePreview = () => {
             const preview = find('voice-preview');
             preview.pause();
@@ -264,50 +333,68 @@ import { createVoicePlayer } from './sync-voice-player.js';
             pauseVoiceMedia();
         };
         const updateControls = () => {
-            find('create').disabled = busy || sending || secondsLeft(cooldowns.create) > 0;
-            find('join').disabled = busy || sending || secondsLeft(cooldowns.join) > 0;
-            find('code').disabled = busy || sending;
-            find('pair').disabled = busy || sending || !online || secondsLeft(cooldowns.pair) > 0;
-            find('devices').disabled = busy || sending || !online;
-            find('clear').disabled = busy || sending || !online || !history.length;
-            find('leave').disabled = busy || sending;
-            find('send').disabled = busy || sendingText || recording() || !online || (!(selectedFile && !uploadController) && !input.value.trim());
-            find('attach').disabled = busy || sending || recording() || !online;
-            find('file-input').disabled = busy || sending || recording() || !online;
-            find('voice-record').disabled = busy || sending || recording() || !online || !!selectedFile || !!pendingUpload;
+            const working = busy || switchingSpace;
+            input.disabled = switchingSpace;
+            find('create').disabled = working || sending || secondsLeft(cooldowns.create) > 0;
+            find('join').disabled = working || sending || secondsLeft(cooldowns.join) > 0;
+            find('code').disabled = working || sending;
+            find('pair').disabled = working || sending || !online || secondsLeft(cooldowns.pair) > 0;
+            find('devices').disabled = working || sending || !online;
+            find('clear').disabled = working || sending || !online || !history.length;
+            find('leave').disabled = working || sending;
+            find('send').disabled = working || sendingText || recording() || !online || (!(selectedFile && !uploadController) && !input.value.trim());
+            find('attach').disabled = working || sending || recording() || !online;
+            find('file-input').disabled = working || sending || recording() || !online;
+            find('voice-record').disabled = working || sending || recording() || !online || !!selectedFile || !!pendingUpload;
+            find('stickers').disabled = working || sendingText || recording() || !online;
+            find('game-share').disabled = working || sendingText || recording() || !online || !!ownGame();
+            find('sticker-grid').querySelectorAll('button').forEach(button => { button.disabled = find('stickers').disabled; });
             find('voice-recording').hidden = !recording();
             find('voice-stop').disabled = recorder.state !== 'recording';
             setText(find('voice-status'), recorder.state === 'starting' ? 'syncVoiceStarting' : 'syncVoiceRecording');
-            find('remove-file').disabled = busy || sending;
+            find('remove-file').disabled = working || sending;
             find('cancel-upload').hidden = !uploadController || !pendingUpload;
-            find('cancel-upload').disabled = busy || !uploadController || pendingUpload?.completing || uploadController.signal.aborted;
-            find('copy-code').disabled = secondsLeft(pairExpiresAt) === 0;
+            find('cancel-upload').disabled = working || !uploadController || pendingUpload?.completing || uploadController.signal.aborted;
+            find('copy-code').disabled = !pairing.offer || !pairEnabled || (!pairLocked && !secondsLeft(pairExpiresAt));
+            find('pair-lock').disabled = working || !online || !pairing.offer || !pairEnabled;
+            find('pair-close').disabled = working || !online || !pairEnabled;
             find('history-more').hidden = !historyState || !history.length || history[0].id <= historyState.oldestId;
             find('history-more').disabled = !online || loadingOlder;
             setText(find('history-more'), loadingOlder ? 'syncLoadingOlder' : 'syncLoadOlder');
             devicesDialog.querySelectorAll('[data-sync-device-save], [data-sync-device-remove]').forEach((button) => {
-                button.disabled = busy || sending || !online;
+                button.disabled = working || sending || !online;
             });
             for (const message of outbox.values()) {
                 const retry = messageNodes.get(message.id)?.querySelector('[data-sync-retry-message]');
-                if (retry) retry.disabled = busy || !online || (message.attachment ? !!uploadController || !(pendingUpload?.clientId === message.clientId && pendingUpload.file instanceof File) : sendingText);
+                if (retry) retry.disabled = working || !online || (message.attachment ? !!uploadController || !(pendingUpload?.clientId === message.clientId && pendingUpload.file instanceof File) : sendingText);
             }
+            renderSpaces();
+            if (reconcileNeeded && !spaceSwitchBlocked()) { reconcileNeeded = false; queueMicrotask(reconcileSession); }
         };
         const updateCountdowns = () => {
             for (const [action, key] of [['create', 'syncCreate'], ['join', 'syncJoin'], ['pair', 'syncPair']]) {
                 const seconds = secondsLeft(cooldowns[action]);
                 const button = find(action);
-                button.dataset.i18n = seconds ? '' : key;
-                button.textContent = translate(seconds ? (action === 'pair' ? 'syncPairCooldown' : 'syncRetryAfter') : key, { seconds });
+                const label = action === 'pair' && !pairEnabled ? 'syncPairOpen' : key;
+                button.dataset.i18n = seconds ? '' : label;
+                button.textContent = translate(seconds ? (action === 'pair' ? 'syncPairCooldown' : 'syncRetryAfter') : label, { seconds });
             }
             const seconds = secondsLeft(pairExpiresAt);
-            if (pairExpiresAt && !seconds) {
+            if (!pairLocked && pairExpiresAt && !seconds) {
                 pairExpiresAt = 0;
                 find('pairing').hidden = true;
                 find('pair-code').textContent = '';
                 setNotice('syncCodeExpired');
             }
-            find('pair-expiry').textContent = seconds ? translate('syncPairExpires', { minutes: Math.floor(seconds / 60), seconds: String(seconds % 60).padStart(2, '0') }) : '';
+            find('pair-expiry').textContent = !pairEnabled ? translate('syncPairClosed') : pairLocked ? translate('syncPairLocked')
+                : seconds ? translate('syncPairExpires', { minutes: Math.floor(seconds / 60), seconds: String(seconds % 60).padStart(2, '0') }) : '';
+            setText(find('pair-hint'), !pairEnabled ? 'syncPairClosedHint' : pairLocked ? 'syncPairLockedHint' : 'syncPairOnline');
+            const lockButton = find('pair-lock');
+            lockButton.setAttribute('aria-pressed', String(pairLocked));
+            lockButton.setAttribute('aria-label', translate(pairLocked ? 'syncPairUnlock' : 'syncPairLock'));
+            lockButton.title = lockButton.getAttribute('aria-label');
+            find('pair-locked-icon').toggleAttribute('hidden', !pairLocked);
+            find('pair-unlocked-icon').toggleAttribute('hidden', pairLocked);
             updateControls();
             if (!seconds && !Object.values(cooldowns).some((until) => secondsLeft(until))) {
                 clearInterval(countdownTimer);
@@ -320,6 +407,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
         };
         const setConnection = (value) => {
             online = value;
+            gameWindow?.setOnline(value);
             if (!value && recording()) cancelRecording();
             setText(status, value ? 'syncOnline' : 'syncOffline', value ? 'online' : 'offline');
             updateControls();
@@ -338,6 +426,9 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 upload_conflict: 'syncUploadConflict',
                 invalid_ciphertext: 'syncDecryptFailed', key_unavailable: 'syncKeyUnavailable', key_changed: 'syncKeyChanged', rekey_required: 'syncKeyChanged',
                 pairing_limited: 'syncPairLimited', pairing_ambiguous: 'syncPairAmbiguous', pairing_busy: 'syncPairBusy', pairing_timeout: 'syncPairTimeout',
+                pairing_conflict: 'syncPairChanged', pairing_closed: 'syncPairClosed',
+                game_not_found: 'syncGameUnavailable', game_busy: 'syncGameBusy', game_conflict: 'syncGameChanged',
+                game_not_player: 'syncGameSpectating', game_not_turn: 'syncGameChanged', game_invalid_move: 'syncGameInvalidMove',
                 encryption_unavailable: 'syncEncryptionUnavailable',
                 network_error: 'syncNetworkError', encryption_load_failed: 'syncEncryptionLoadFailed'
             };
@@ -351,16 +442,20 @@ import { createVoicePlayer } from './sync-voice-player.js';
             try {
                 const payload = await decryptPayload(session.keyring, session.roomId, `message:${message.deviceId}:${message.clientId}`, message.text);
                 if (typeof payload.text !== 'string' || payload.text.length > 10000) throw new Error('invalid_message');
+                if (payload.sticker !== undefined && (!stickerById(payload.sticker) || payload.attachment)) throw new Error('invalid_sticker');
+                if (payload.gomoku !== undefined && (payload.gomoku !== message.clientId || payload.attachment || payload.sticker
+                    || !message.game || message.game.id !== payload.gomoku)) throw new Error('invalid_game');
                 if (payload.reply && (!Number.isSafeInteger(payload.reply.id) || payload.reply.id < 1
                     || typeof payload.reply.deviceId !== 'string' || !/^[0-9a-f-]{36}$/i.test(payload.reply.deviceId)
                     || typeof payload.reply.text !== 'string' || Array.from(payload.reply.text).length > 300
+                    || (payload.reply.sticker !== undefined && !stickerById(payload.reply.sticker))
                     || typeof payload.reply.attachmentName !== 'string' || Array.from(payload.reply.attachmentName).length > 256)) throw new Error('invalid_reply');
                 if (payload.attachment && (typeof payload.attachment.name !== 'string' || typeof payload.attachment.key !== 'string'
                     || !Number.isSafeInteger(payload.attachment.size) || payload.attachment.size < 0 || payload.attachment.size > MAX_FILE_BYTES)) throw new Error('invalid_attachment');
-                if (payload.attachment?.kind === 'voice' && (payload.attachment.type !== 'audio/wav'
+                if (payload.attachment?.kind === 'voice' && (!['audio/wav', 'audio/webm'].includes(payload.attachment.type)
                     || !Number.isSafeInteger(payload.attachment.durationMs) || payload.attachment.durationMs < 1 || payload.attachment.durationMs > 60000
                     || payload.attachment.size <= 44 || payload.attachment.size > 44 + 16000 * 2 * 60)) throw new Error('invalid_voice');
-                return { ...message, text: payload.text, attachment: payload.attachment || null, reply: payload.reply || null };
+                return { ...message, text: payload.text, sticker: payload.sticker, gomoku: payload.gomoku, attachment: payload.attachment || null, reply: payload.reply || null };
             } catch {
                 setNotice('syncDecryptFailed', true);
                 return { ...message, text: '', attachment: null, reply: null, decryptionFailed: true };
@@ -409,9 +504,11 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 throw Object.assign(new Error(result.error), {
                     code: result.error,
                     status: response.status,
+                    game: result.game,
                     retryAfter: Number.isFinite(seconds) ? seconds : Math.max(0, (Date.parse(retryAfter) - Date.now()) / 1000)
                 });
             }
+            if (result === null) return null;
             if (session?.keyring) {
                 if (result.messages) result.messages = await Promise.all(result.messages.map(message => decodeMessage(message, session)));
                 if (result.message) result.message = await decodeMessage(result.message, session);
@@ -425,15 +522,16 @@ import { createVoicePlayer } from './sync-voice-player.js';
             if (session === credentials && result.readReceipts) mergeReadReceipts(result.readReceipts);
             return result;
         };
-        const persistSession = async (session) => {
-            const descriptor = await saveLocalSession(session);
-            session.vaultId = descriptor.vaultId;
-            session.revision = crypto.randomUUID();
-            localStorage.setItem(CREDENTIAL_KEY, JSON.stringify({ ...descriptor, revision: session.revision }));
+        const persistSession = async (session, activate = false) => {
+            await spacesReady;
+            await savedSpaces.save(session, { activate });
+            renderSpaces();
         };
-        const pairing = new EncryptedPairing({ api, getSession: () => credentials, getSavedSession: () => savedSession(), onAccepted: async (session) => {
+        const pairing = new EncryptedPairing({ api, getSession: () => credentials,
+            getSavedSession: session => session ? savedSpaces.find(session) : addingSpace ? null : savedSession(), onAccepted: async (session) => {
             if (credentials !== session) return;
             await refreshKeys(session);
+            if (credentials === session) await refreshPairing(session);
         }, onExpired: () => {
             if (!credentials) return;
             api(roomPath('/pair-code'), { method: 'DELETE' }).catch(() => {});
@@ -451,6 +549,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     if (credentials !== session) return;
                     for (const grant of result.grants) {
                         const next = await acceptKeyRotation(session, grant);
+                        if (credentials !== session) return;
                         session.keyring = next.keyring;
                         session.trustedDevices = next.trustedDevices;
                         session.revokedDevices = next.revokedDevices;
@@ -463,7 +562,8 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     if (result.grants.length) {
                         await persistSession(session);
                         await api(`/v1/spaces/${session.roomId}/key-grants`, { method: 'DELETE', body: JSON.stringify({ through: result.grants.at(-1).id }) }, session);
-                        pairing.reset();
+                        if (credentials !== session) return;
+                        pairing.resetHost();
                     }
                     if (!result.hasMore) break;
                 }
@@ -474,7 +574,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
         const roomPath = (suffix = '') => `/v1/spaces/${credentials.roomId}${suffix}`;
         const draftKey = () => `portfolio-sync-draft:${credentials.roomId}`;
         const saveDraft = () => {
-            if (!credentials) return;
+            if (!credentials) return Promise.resolve(true);
             const session = credentials;
             const revision = ++draftRevision;
             const upload = pendingUpload && {
@@ -484,8 +584,12 @@ import { createVoicePlayer } from './sync-voice-player.js';
             };
             const key = draftKey();
             return encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, { text: input.value, reply: selectedReply, outbox: [...outbox.values()], upload })
-                .then(encrypted => { if (revision === draftRevision) sessionStorage.setItem(key, encrypted); })
-                .catch(() => { if (credentials === session) setNotice('syncStorageError', true); });
+                .then(encrypted => {
+                    if (revision !== draftRevision) return false;
+                    sessionStorage.setItem(key, encrypted);
+                    return true;
+                })
+                .catch(() => { if (credentials === session) setNotice('syncStorageError', true); return false; });
         };
         const formatSize = (bytes) => bytes < 1024 ? `${bytes} B` : bytes < 1024 ** 2 ? `${(bytes / 1024).toFixed(1)} KB` : bytes < 1024 ** 3 ? `${(bytes / 1024 ** 2).toFixed(1)} MB` : `${(bytes / 1024 ** 3).toFixed(1)} GB`;
         const updateSelectedFile = () => {
@@ -600,12 +704,17 @@ import { createVoicePlayer } from './sync-voice-player.js';
         };
         const downloadAttachment = async (message, button) => {
             const session = credentials;
+            const downloading = {};
+            downloads.add(downloading);
+            updateControls();
             button.disabled = true;
             button.dataset.loading = 'true';
             button.textContent = translate('syncDownloading');
             try {
                 const capability = await encryptedFile(message, session, true);
-                if (credentials !== session || !messageNodes.has(message.id)) { capability.dispose(); return; }
+                if (credentials !== session || !messageNodes.has(message.id)) {
+                    capability.dispose(); downloads.delete(downloading); updateControls(); return;
+                }
                 const frame = document.createElement('iframe');
                 frame.hidden = true;
                 frame.src = capability.url;
@@ -613,8 +722,13 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 capability.closed.then(() => frame.remove());
                 capability.result.then(result => {
                     if (result.status === 'failed' && credentials === session && messageNodes.has(message.id)) showAttachmentError(new Error('encrypted_file_unavailable'));
+                }).finally(() => {
+                    downloads.delete(downloading);
+                    updateControls();
                 });
             } catch (error) {
+                downloads.delete(downloading);
+                updateControls();
                 if (credentials === session && messageNodes.has(message.id) && error.name !== 'AbortError') showAttachmentError(error);
             } finally {
                 button.disabled = false;
@@ -648,15 +762,15 @@ import { createVoicePlayer } from './sync-voice-player.js';
         };
         const atBottom = () => feed.scrollHeight - feed.scrollTop - feed.clientHeight < 60;
         const updateInlineImages = () => {
-            const visible = active && viewingDesktop && !document.hidden && !app.closest('[inert]')
+            const visible = !room.hidden && active && viewingDesktop && !document.hidden && !app.closest('[inert]')
                 && !app.classList.contains('is-closed') && !app.classList.contains('is-minimized');
             inlineImages.forEach((image, id) => visible && !messageNodes.get(id)?.hidden ? image.start() : image.pause());
             if (!visible) imageResources.forEach(resource => resource.clear());
         };
-        const isReading = () => active && browserFocused && document.hasFocus() && !document.hidden
+        const isReading = () => !room.hidden && active && browserFocused && document.hasFocus() && !document.hidden
             && performance.now() - lastInteraction < 60000 && app.classList.contains('is-active')
             && !app.classList.contains('is-minimized') && !find('search').value.trim()
-            && !app.closest('[inert]') && !devicesDialog.open && !confirmation.open;
+            && !app.closest('[inert]') && !devicesDialog.open && !confirmation.open && !stickerDialog.open;
         const updateReadReceipts = () => {
             const otherReadId = Math.max(0, ...[...readReceipts].filter(([id]) => id !== deviceId
                 && credentials?.trustedDevices[id] && !credentials.revokedDevices.includes(id)).map(([, id]) => id));
@@ -727,7 +841,115 @@ import { createVoicePlayer } from './sync-voice-player.js';
             const index = devices.findIndex((device) => device.deviceId === id);
             return devices[index]?.name || translate('syncDeviceDefault', { id: index >= 0 ? index + 1 : id.slice(0, 8) });
         };
-        const replySummary = (reply) => [reply.text, reply.attachmentName && `${translate('syncReplyAttachment')} ${reply.attachmentName}`].filter(Boolean).join('\n');
+        const rememberGame = (game) => {
+            const previous = games.get(game.id);
+            if (previous?.revision > game.revision) return previous;
+            const next = previous?.revision === game.revision ? { ...previous, ...game } : { ...game };
+            if (previous?.revision === game.revision && previous.board && !game.board) next.lastMove = previous.lastMove;
+            if (!isGameActive(next)) { delete next.board; next.lastMove = null; }
+            games.set(game.id, next);
+            return next;
+        };
+        const acceptGame = (game, open = false) => {
+            const previous = games.get(game.id);
+            const next = rememberGame(game);
+            if (!isGameActive(next)) {
+                if (gameWindow.currentId === next.id) {
+                    gameWindow.close();
+                    entry.show();
+                    setNotice(next.status === 'finished' ? 'syncGameFinished' : 'syncGameCancelled');
+                }
+            } else if (next.board) {
+                if (open || (isGamePlayer(next) && next.status === 'playing' && previous?.status === 'waiting')) gameWindow.show(next);
+                else if (gameWindow.currentId === next.id) gameWindow.update(next);
+            }
+            render();
+            return next;
+        };
+        const readGame = async (id, open = false) => {
+            const session = credentials;
+            try {
+                const { game } = await api(roomPath(`/gomoku/${id}`));
+                if (credentials === session) return acceptGame(game, open);
+            } catch (error) {
+                if (credentials !== session) return;
+                if (error.code === 'game_not_found') {
+                    const previous = games.get(id);
+                    if (previous) acceptGame({ ...previous, status: 'cancelled', revision: previous.revision + 1 });
+                }
+                throw error;
+            }
+        };
+        const synchronizeGames = async (activeGames, restore = false) => {
+            if (!activeGames) return;
+            const ids = new Set(activeGames.map(game => game.id));
+            const missing = [...games.values()].filter(game => isGameActive(game) && !ids.has(game.id));
+            for (const game of activeGames) acceptGame(game, restore && isGamePlayer(game) && !gameWindow.currentId);
+            await Promise.all(missing.map(game => readGame(game.id).catch(error => {
+                if (error.code !== 'game_not_found') showError(error);
+            })));
+        };
+        const gameAction = async (id, action, body = {}) => {
+            if (!online || gameCommands.has(id)) throw Object.assign(new Error('game_unavailable'), { code: online ? 'game_conflict' : 'network_error' });
+            const session = credentials;
+            gameCommands.add(id);
+            render();
+            try {
+                const { game } = await api(roomPath(`/gomoku/${id}/${action}`), { method: 'POST', body: JSON.stringify(body) });
+                if (credentials === session) return acceptGame(game, action === 'join');
+            } catch (error) {
+                if (credentials === session) {
+                    if (error.game) acceptGame(error.game);
+                    else await readGame(id).catch(() => {});
+                    showError(error);
+                }
+                throw error;
+            } finally {
+                gameCommands.delete(id);
+                if (credentials === session) render();
+            }
+        };
+        const renderGameCard = (card, message) => {
+            if (message.game) rememberGame(message.game);
+            const game = games.get(message.gomoku);
+            card.dataset.syncGameCard = message.gomoku;
+            card.querySelector('[data-sync-game-title]').textContent = translate('syncGameTitle');
+            const players = card.querySelector('[data-sync-game-players]');
+            players.textContent = game ? `${deviceLabel(game.hostDeviceId)} ${translate('syncGameVersus')} ${game.guestDeviceId ? deviceLabel(game.guestDeviceId) : translate('syncGameWaitingPlayer')}` : deviceLabel(message.deviceId);
+            const state = card.querySelector('[data-sync-game-state]');
+            state.textContent = translate(game?.status === 'playing' ? 'syncGameInProgress' : game?.status === 'finished' ? 'syncGameFinished'
+                : game?.status === 'cancelled' ? 'syncGameCancelled' : 'syncGameWaiting');
+            const result = card.querySelector('[data-sync-game-result]');
+            result.hidden = game?.status !== 'finished';
+            players.hidden = !result.hidden;
+            card.classList.toggle('is-finished', !result.hidden);
+            if (!result.hidden) {
+                const score = game.result;
+                for (const side of ['host', 'guest']) {
+                    const seat = result.querySelector(`[data-sync-game-side="${side}"]`);
+                    const won = score.winnerDeviceId === game[`${side}DeviceId`];
+                    seat.classList.toggle('is-winner', won);
+                    seat.querySelector('[data-sync-game-name]').textContent = deviceLabel(game[`${side}DeviceId`]);
+                    seat.querySelector('[data-sync-game-outcome]').textContent = translate(!score.winnerDeviceId ? 'syncGameDraw' : won ? 'syncGameWon' : 'syncGameLost');
+                    seat.querySelector('[data-sync-game-moves]').textContent = translate('syncGameMoves', { moves: score[`${side}Moves`] });
+                    const stone = seat.querySelector('.sync-game-piece');
+                    stone.title = translate(side === 'host' ? 'syncGameBlack' : 'syncGameWhite');
+                }
+                result.querySelector('[data-sync-game-score-label]').textContent = translate('syncGameScore');
+                result.querySelector('[data-sync-game-score]').textContent = `${score.hostScore} : ${score.guestScore}`;
+            }
+            const player = isGamePlayer(game);
+            const waiting = game?.status === 'waiting';
+            const playing = game?.status === 'playing';
+            for (const [name, key, visible] of [['join', 'syncGameJoin', waiting && !player], ['watch', 'syncGameWatch', playing && !player], ['open', 'syncGameOpen', (waiting || playing) && player]]) {
+                const button = card.querySelector(`[data-sync-game-${name}]`);
+                button.textContent = translate(key);
+                button.hidden = !visible;
+                button.disabled = !online || !!message.sendState || gameCommands.has(message.gomoku)
+                    || (name === 'join' && !!ownGame());
+            }
+        };
+        const replySummary = (reply) => [reply.text, reply.sticker && `[${stickerName(reply.sticker)}]`, reply.attachmentName && `${translate('syncReplyAttachment')} ${reply.attachmentName}`].filter(Boolean).join('\n');
         const renderReply = () => {
             find('reply').hidden = !selectedReply;
             find('reply-author').textContent = selectedReply ? deviceLabel(selectedReply.deviceId) : '';
@@ -739,7 +961,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             let count = 0;
             for (const message of [...history, ...outbox.values()]) {
                 const text = message.decryptionFailed ? translate('syncDecryptFailed') : message.text;
-                const match = !query || [text, message.attachment?.name || '', deviceLabel(message.deviceId)]
+                const match = !query || [text, stickerName(message.sticker), message.gomoku ? translate('syncGameTitle') : '', message.attachment?.name || '', deviceLabel(message.deviceId)]
                     .some((value) => value.toLocaleLowerCase().includes(query));
                 messageNodes.get(message.id).hidden = !match;
                 if (!match) voicePlayers.get(message.id)?.pause();
@@ -784,7 +1006,8 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     reply.addEventListener('click', () => {
                         selectedReply = {
                             id: message.id, deviceId: message.deviceId,
-                            text: Array.from(message.text).slice(0, 300).join(''),
+                            text: Array.from(message.text || (message.gomoku ? translate('syncGameTitle') : '')).slice(0, 300).join(''),
+                            ...(message.sticker ? { sticker: message.sticker } : {}),
                             attachmentName: Array.from(message.attachment?.name || '').slice(0, 256).join('')
                         };
                         renderReply();
@@ -834,6 +1057,43 @@ import { createVoicePlayer } from './sync-voice-player.js';
                         item.append(quote);
                     }
                     item.append(text);
+                    if (message.gomoku) {
+                        const card = document.createElement('section');
+                        card.className = 'sync-game-card';
+                        card.innerHTML = `<div class="sync-game-card-heading"><strong data-sync-game-title></strong><span data-sync-game-state></span></div>
+                            <p data-sync-game-players></p>
+                            <div class="sync-game-scoreboard" data-sync-game-result hidden>
+                                <div class="sync-game-side" data-sync-game-side="host">
+                                    <span class="sync-game-piece sync-game-piece--black" aria-hidden="true"></span>
+                                    <strong data-sync-game-name></strong><span class="sync-game-outcome" data-sync-game-outcome></span><span class="sync-game-moves" data-sync-game-moves></span>
+                                </div>
+                                <div class="sync-game-score"><span data-sync-game-score-label></span><strong data-sync-game-score></strong></div>
+                                <div class="sync-game-side" data-sync-game-side="guest">
+                                    <span class="sync-game-piece sync-game-piece--white" aria-hidden="true"></span>
+                                    <strong data-sync-game-name></strong><span class="sync-game-outcome" data-sync-game-outcome></span><span class="sync-game-moves" data-sync-game-moves></span>
+                                </div>
+                            </div>
+                            <div class="sync-game-card-actions"><button type="button" class="sync-button" data-sync-game-join></button><button type="button" class="sync-button" data-sync-game-watch></button><button type="button" class="sync-button" data-sync-game-open></button></div>`;
+                        card.querySelector('[data-sync-game-join]').addEventListener('click', () => gameAction(message.gomoku, 'join').catch(() => {}));
+                        for (const action of ['watch', 'open']) card.querySelector(`[data-sync-game-${action}]`).addEventListener('click', () => readGame(message.gomoku, true).catch(showError));
+                        item.append(card);
+                    }
+                    if (message.sticker) {
+                        const sticker = stickerById(message.sticker);
+                        const button = document.createElement('button');
+                        button.type = 'button';
+                        button.className = 'sync-message-sticker';
+                        button.dataset.syncSticker = sticker.id;
+                        const image = document.createElement('img');
+                        image.src = sticker.url;
+                        image.width = 112;
+                        image.height = 112;
+                        button.append(image);
+                        button.addEventListener('click', () => attachmentPreview.open({
+                            id: `sticker:${sticker.id}`, name: stickerName(sticker.id), kind: 'sticker', stickerId: sticker.id, url: sticker.url
+                        }));
+                        item.append(button);
+                    }
                     if (message.attachment) {
                         const attachment = document.createElement('div');
                         attachment.className = 'sync-attachment';
@@ -927,6 +1187,13 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 const reply = item.querySelector('[data-sync-reply-message]');
                 reply.textContent = translate('syncReply');
                 reply.hidden = !!message.sendState || !!message.decryptionFailed;
+                const gameCard = item.querySelector('.sync-game-card');
+                if (gameCard) renderGameCard(gameCard, message);
+                const sticker = item.querySelector('[data-sync-sticker]');
+                if (sticker) {
+                    sticker.setAttribute('aria-label', `${translate('syncStickerPreview')} ${stickerName(message.sticker)}`);
+                    sticker.querySelector('img').alt = stickerName(message.sticker);
+                }
                 if (message.reply) {
                     item.querySelector('.sync-message-quote-author').textContent = deviceLabel(message.reply.deviceId);
                     item.querySelector('.sync-message-quote-text').textContent = replySummary(message.reply);
@@ -1086,6 +1353,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             }
         };
         const addMessage = (message, metadata = null, advanceCursor = true, notify = false) => {
+            const openInvitation = !!message.gomoku && outbox.has(message.clientId);
             reconcileUpload([message]);
             const known = history.some((item) => item.id === message.id);
             const trimming = metadata?.oldestId > history[0]?.id || !known && history.length >= 500;
@@ -1114,6 +1382,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 history = [...history, message].sort((a, b) => a.id - b.id).slice(-500);
             }
             render();
+            if (openInvitation) readGame(message.gomoku, true).catch(showError);
             const node = anchor && messageNodes.get(anchor.id);
             if (node) {
                 feed.scrollTop += node.getBoundingClientRect().top - feed.getBoundingClientRect().top - offset;
@@ -1136,17 +1405,17 @@ import { createVoicePlayer } from './sync-voice-player.js';
             setConnection(false);
         };
         const retry = () => {
-            if (!active || !credentials) return;
+            if ((!active && !needsGameConnection()) || !credentials) return;
             clearTimeout(retryTimer);
             retryTimer = setTimeout(connect, retryDelay + Math.random() * retryDelay * 0.25);
             retryDelay = Math.min(retryDelay * 2, 30000);
         };
         const connect = async () => {
-            if (!active || !credentials || socket) return;
+            if ((!active && !needsGameConnection()) || !credentials || socket) return;
             const session = credentials;
             setText(status, 'syncConnecting', 'connecting');
             const base = await loadConfig();
-            if (!active || credentials !== session || socket) return;
+            if ((!active && !needsGameConnection()) || credentials !== session || socket) return;
             if (!base) {
                 setConnection(false);
                 setNotice('syncUnavailable', true);
@@ -1180,6 +1449,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 let data;
                 try { data = JSON.parse(event.data); } catch { return; }
                 if (data.type === 'ready') {
+                    const pairingAtReady = pairingRevision;
                     authenticated = true;
                     const initial = deviceId === null;
                     deviceId = data.deviceId;
@@ -1188,11 +1458,17 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     if (socket !== connection || credentials !== session) return;
                     if (data.rekeyRequired) await rotateKeys(null);
                     if (socket !== connection || credentials !== session) return;
-                    await showPairing(data.pairing);
+                    if (pairingRevision === pairingAtReady) await showPairing(data.pairing);
                     if (socket !== connection || credentials !== session) return;
                     const incomingMessages = await Promise.all(data.messages.map(message => decodeMessage(message, session)));
                     if (socket !== connection || credentials !== session) return;
                     receiveHistory(incomingMessages, initial, data.historyMode, data.history);
+                    await synchronizeGames(data.activeGames, true);
+                    if (socket !== connection || credentials !== session) return;
+                    if (restoringGame) {
+                        restoringGame = false;
+                        if (!active && !gameWindow.currentId) entry.show();
+                    }
                     catchUp(data.history);
                     if (find('search').value.trim()) {
                         clearTimeout(searchTimer);
@@ -1200,7 +1476,6 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     }
                     if (notice.dataset.i18n === 'syncUnavailable') setNotice('syncJoined');
                     loadDevices();
-                    pairing.resume().catch(error => { if (credentials === session && error.code !== 'invalid_code') showError(error); });
                     clearInterval(pingTimer);
                     pingTimer = setInterval(() => {
                         if (awaitingPong) connection.close();
@@ -1217,8 +1492,12 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     markRead();
                 } else if (data.type === 'message') {
                     const message = await decodeMessage(data.message, session);
-                    if (socket === connection && credentials === session) addMessage(message, data.history, true, initialized);
+                    if (socket === connection && credentials === session) {
+                        addMessage(message, data.history, true, initialized);
+                        await synchronizeGames(data.activeGames);
+                    }
                 }
+                else if (data.type === 'gomoku') acceptGame(data.game);
                 else if (data.type === 'read') { mergeReadReceipts([data]); }
                 else if (data.type === 'pairing') await showPairing(data.pairing);
                 else if (data.type === 'pair-request' || data.type === 'pair-finish') {
@@ -1230,16 +1509,21 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 }
                 else if (data.type === 'key-rotation') {
                     await refreshKeys(session);
-                    if (socket === connection && credentials === session) await loadDevices();
+                    if (socket === connection && credentials === session) { await refreshPairing(session); await loadDevices(); }
                 }
                 else if (data.type === 'rekey-required') await rotateKeys(null);
                 else if (data.type === 'history') {
                     mergeReadReceipts(data.readReceipts || []);
                     const incomingMessages = await Promise.all(data.messages.map(message => decodeMessage(message, session)));
-                    if (socket === connection && credentials === session) receiveHistory(incomingMessages, false, data.historyMode, data.history);
+                    if (socket === connection && credentials === session) {
+                        receiveHistory(incomingMessages, false, data.historyMode, data.history);
+                        await synchronizeGames(data.activeGames);
+                    }
                 }
                 else if (data.type === 'devices') loadDevices();
                 else if (data.type === 'cleared') {
+                    games.clear();
+                    gameWindow.close();
                     uploadController?.abort(Object.assign(new Error('history_cleared'), { code: 'history_cleared' }));
                     pendingUpload = null;
                     outbox.clear();
@@ -1289,6 +1573,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             });
         };
         const showPairing = async (value) => {
+            if (value?.revision && value.revision < Math.max(pairPolicyRevision, pairing.policy?.revision || 0)) return;
             const revision = ++pairingRevision;
             const session = credentials;
             const offer = await pairing.readOffer(value, session);
@@ -1296,16 +1581,54 @@ import { createVoicePlayer } from './sync-voice-player.js';
             if (offer?.offerId !== displayedOfferId) find('pairing').open = !!offer;
             displayedOfferId = offer?.offerId || null;
             pairExpiresAt = offer?.expiresAt || 0;
-            find('pairing').hidden = !offer;
+            pairLocked = value?.locked === true;
+            pairEnabled = value?.enabled !== false;
+            pairPolicyRevision = value?.revision || 0;
+            find('pairing').hidden = !offer && pairEnabled && !pairLocked;
+            find('pair-code').closest('.sync-pairing-heading').hidden = !offer;
             find('pair-code').textContent = offer?.code || '';
             startCountdowns();
+            if (offer?.ownerDeviceId === session?.deviceId) {
+                pairing.resume().catch(error => { if (credentials === session && error.code !== 'invalid_code') showError(error); });
+            }
+            if (!offer && pairLocked && pairEnabled && session && !offerRenewal) {
+                const renewal = { session };
+                offerRenewal = renewal;
+                try {
+                    await refreshKeys(session);
+                    if (credentials !== session || pairingRevision !== revision) return;
+                    // Key refresh resets the PAKE state; restore the encrypted fixed-code policy.
+                    pairing.policy = value;
+                    const next = await pairing.createOffer({ reopen: false });
+                    if (credentials === session) await showPairing(next);
+                } catch (error) {
+                    if (credentials === session) {
+                        if (['pairing_closed', 'pairing_conflict', 'key_changed'].includes(error.code)) await refreshPairing(session);
+                        else showError(error);
+                    }
+                } finally {
+                    if (offerRenewal === renewal) {
+                        offerRenewal = null;
+                        if (credentials === session && pairingRevision !== revision && pairLocked && pairEnabled && !pairing.offer) {
+                            queueMicrotask(() => showPairing(pairing.policy).catch(showError));
+                        }
+                    }
+                }
+            }
         };
-        const savedSession = () => {
-            const saved = JSON.parse(localStorage.getItem(CREDENTIAL_KEY) || 'null');
-            return typeof saved?.roomId === 'string' && typeof saved?.token === 'string' && typeof saved?.vaultId === 'string' ? saved : null;
+        const refreshPairing = async (session = credentials) => {
+            const revision = pairingRevision;
+            const value = await api(`/v1/spaces/${session.roomId}/pair-code`, {}, session);
+            if (credentials === session && pairingRevision === revision) await showPairing(value);
         };
+        const savedSession = () => savedSpaces.active();
         const sameSession = (a, b) => a?.roomId === b?.roomId && a?.token === b?.token && a?.revision === b?.revision;
         const reset = (forget = true) => {
+            if (forget) restoringGame = false;
+            games.clear();
+            gameCommands.clear();
+            gameWindow?.close();
+            stickerDialog.close();
             cancelRecording();
             releaseVoicePreview();
             voicePlayers.forEach(player => player.dispose());
@@ -1327,18 +1650,34 @@ import { createVoicePlayer } from './sync-voice-player.js';
             downloadTickets.clear();
             fileCapabilities.forEach(promise => promise.then(capability => capability.dispose()).catch(() => {}));
             fileCapabilities.clear();
+            downloads.clear();
             pairing.reset();
             attachmentPreview.close();
             if (confirmation.open) confirmation.close();
             if (devicesDialog.open) devicesDialog.close();
+            if (spaceNameDialog.open) spaceNameDialog.close();
             disconnect();
             uploadController?.abort();
             uploadController = null;
-            if (forget) {
-                try { if (sameSession(savedSession(), credentials)) localStorage.removeItem(CREDENTIAL_KEY); }
-                catch { /* Storage may be blocked. */ }
-                if (credentials?.vaultId) deleteLocalSession(credentials.vaultId).catch(() => {});
+            if (forget && credentials) {
+                addingSpace = false;
+                sessionStorage.removeItem(ADD_SPACE_KEY);
+                const forgotten = credentials;
+                spaceFiles.delete(forgotten.roomId);
+                sessionStorage.removeItem(`portfolio-sync-draft:${forgotten.roomId}`);
+                const removal = savedSpaces.remove(forgotten);
+                forgettingSpace = removal;
+                removal.then(() => {
+                    if (forgettingSpace !== removal) return;
+                    forgettingSpace = null;
+                    renderSpaces();
+                    reconcileSession();
+                }).catch(() => {
+                    if (forgettingSpace === removal) forgettingSpace = null;
+                    setNotice('syncStorageError', true);
+                });
             }
+            draftRevision++;
             sessionVersion++;
             credentials = null;
             deviceId = null;
@@ -1370,6 +1709,10 @@ import { createVoicePlayer } from './sync-voice-player.js';
             followOnRestore = true;
             followLatest = true;
             pairExpiresAt = 0;
+            pairLocked = false;
+            pairEnabled = true;
+            pairPolicyRevision = 0;
+            offerRenewal = null;
             displayedOfferId = null;
             pairingRevision++;
             cooldowns.pair = 0;
@@ -1383,33 +1726,65 @@ import { createVoicePlayer } from './sync-voice-player.js';
             updateCountdowns();
         };
         const enter = async (session) => {
-            saveDraft();
-            reset(false);
-            credentials = session;
-            setup.hidden = true;
-            room.hidden = false;
-            if (active) prepareEncryptedFiles().catch(() => {});
+            const wasSwitching = switchingSpace;
+            switchingSpace = true;
+            updateControls();
             try {
-                const encrypted = sessionStorage.getItem(draftKey());
-                const draft = encrypted ? await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted) : null;
-                if (credentials !== session) return;
-                input.value = draft?.text || '';
-                selectedReply = draft?.reply || null;
-                pendingUpload = draft?.upload || null;
-                for (const message of draft?.outbox || []) {
-                    if (!message.attachment || pendingUpload?.clientId === message.clientId) outbox.set(message.clientId, { ...message, sendState: 'failed' });
+                const version = sessionVersion;
+                if (!await saveDraft() || version !== sessionVersion) return false;
+                if (credentials) {
+                    if (selectedFile || pendingUpload) spaceFiles.set(credentials.roomId, {
+                        token: credentials.token, selectedFile, selectedVoice, pendingFile: pendingUpload?.file,
+                        clientId: pendingUpload?.clientId
+                    });
+                    else spaceFiles.delete(credentials.roomId);
                 }
-                if (pendingUpload && session.revokedDevices.some(id => !(pendingUpload.revokedDevices || []).includes(id))) discardUpload(true);
-            } catch { input.value = ''; outbox.clear(); pendingUpload = null; selectedReply = null; }
-            showPairing(session.pairing);
-            render();
-            updateSelectedFile();
-            connect();
+                reset(false);
+                credentials = session;
+                setup.hidden = !addingSpace;
+                room.hidden = addingSpace;
+                if (active) prepareEncryptedFiles().catch(() => {});
+                try {
+                    const encrypted = sessionStorage.getItem(draftKey());
+                    const draft = encrypted ? await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted) : null;
+                    if (credentials !== session) return;
+                    input.value = draft?.text || '';
+                    selectedReply = draft?.reply || null;
+                    pendingUpload = draft?.upload || null;
+                    for (const message of draft?.outbox || []) {
+                        if (!message.attachment || pendingUpload?.clientId === message.clientId) outbox.set(message.clientId, { ...message, sendState: 'failed' });
+                    }
+                    const files = spaceFiles.get(session.roomId);
+                    if (files?.token === session.token) {
+                        selectedFile = files.selectedFile;
+                        selectedVoice = files.selectedVoice;
+                        if (pendingUpload?.clientId === files.clientId && files.pendingFile instanceof File) pendingUpload.file = files.pendingFile;
+                    }
+                    if (pendingUpload && session.revokedDevices.some(id => !(pendingUpload.revokedDevices || []).includes(id))) discardUpload(true);
+                } catch { input.value = ''; outbox.clear(); pendingUpload = null; selectedReply = null; }
+                showPairing(session.pairing);
+                render();
+                updateSelectedFile();
+                connect();
+                return true;
+            } finally {
+                switchingSpace = wasSwitching;
+                updateControls();
+            }
         };
-        const reconcileSession = async () => {
-            try {
+        const reconcileSession = () => {
+            if (forgettingSpace) return forgettingSpace;
+            if (reconcileTask) { reconcileNeeded = true; return reconcileTask; }
+            reconcileTask = (async () => {
+              try {
+                await spacesReady;
+                renderSpaces();
                 const saved = savedSession();
                 if (!sameSession(saved, credentials)) {
+                    if (saved && saved.roomId !== credentials?.roomId && spaceSwitchBlocked()) {
+                        reconcileNeeded = true;
+                        return;
+                    }
                     if (saved) {
                         const version = sessionVersion;
                         const session = await loadLocalSession(saved);
@@ -1425,18 +1800,108 @@ import { createVoicePlayer } from './sync-voice-player.js';
                                 uploadController?.abort(Object.assign(new Error('key_changed'), { code: 'key_changed' }));
                                 discardUpload(true);
                             }
-                            if (keyChanged) { pairing.reset(); await showPairing(null); }
+                            if (keyChanged) { pairing.resetHost(); await showPairing(null); }
                             saveDraft();
                             await loadDevices();
                             return;
                         }
-                        await enter({ ...session, revision: saved.revision });
+                        if (!await enter({ ...session, revision: saved.revision })) {
+                            if (credentials && savedSpaces.find(credentials)) await savedSpaces.select(credentials.roomId);
+                            return;
+                        }
                         setNotice(pendingUpload ? 'syncUploadRestored' : 'syncJoined');
                     }
-                    else { saveDraft(); reset(false); setNotice('syncReady'); }
+                    else { await saveDraft(); reset(false); setNotice('syncReady'); }
                 }
-            } catch { setNotice('syncStorageError', true); }
+              } catch { setNotice('syncStorageError', true); }
+            })().finally(() => {
+                reconcileTask = null;
+                if (reconcileNeeded && !spaceSwitchBlocked()) { reconcileNeeded = false; queueMicrotask(reconcileSession); }
+            });
+            return reconcileTask;
         };
+        const setAddingSpace = (value) => {
+            try {
+                if (value) sessionStorage.setItem(ADD_SPACE_KEY, 'true');
+                else sessionStorage.removeItem(ADD_SPACE_KEY);
+            } catch { setNotice('syncStorageError', true); return false; }
+            addingSpace = value;
+            setup.hidden = !!credentials && !value;
+            room.hidden = !credentials || value;
+            if (value) { pauseVoiceMedia(); attachmentPreview.close(); stickerDialog.close(); }
+            updateInlineImages();
+            markRead();
+            renderSpaces();
+            return true;
+        };
+        const switchSpace = async (roomId) => {
+            if (spaceSwitchBlocked()) { setNotice('syncSwitchBusy'); return; }
+            if (credentials?.roomId === roomId) { setAddingSpace(false); return; }
+            switchingSpace = true;
+            busy = true;
+            updateControls();
+            try {
+                await spacesReady;
+                if (!savedSpaces.list().some(space => space.roomId === roomId)) { setNotice('syncSpaceMissing', true); return; }
+                if (!await saveDraft()) return;
+                const descriptor = await savedSpaces.select(roomId);
+                const session = await loadLocalSession(descriptor);
+                if (!sameSession(descriptor, savedSession())) { reconcileNeeded = true; return; }
+                setAddingSpace(false);
+                if (!await enter({ ...session, revision: descriptor.revision })) {
+                    if (credentials && savedSpaces.find(credentials)) await savedSpaces.select(credentials.roomId);
+                    return;
+                }
+                if (!sameSession(descriptor, savedSession())) reconcileNeeded = true;
+                if (app.clientWidth <= 640) app.classList.add('is-spaces-collapsed');
+                setNotice(pendingUpload ? 'syncUploadRestored' : 'syncJoined');
+            } catch { setNotice('syncStorageError', true); }
+            finally { switchingSpace = false; busy = false; updateControls(); }
+        };
+        find('add-space').addEventListener('click', () => {
+            if (spaceSwitchBlocked()) { setNotice('syncSwitchBusy'); return; }
+            if (!setAddingSpace(true)) return;
+            if (app.clientWidth <= 640) app.classList.add('is-spaces-collapsed');
+            renderSpaces();
+            find('code').focus({ preventScroll: true });
+        });
+        find('back-space').addEventListener('click', () => { if (!busy && !switchingSpace) setAddingSpace(false); });
+        find('space-rename').addEventListener('click', () => {
+            const current = savedSpaces.list().find(space => space.roomId === credentials?.roomId);
+            if (!current) return;
+            spaceNameDialog.dataset.roomId = current.roomId;
+            find('space-name').value = current.name || '';
+            find('space-name').placeholder = translate('syncSpaceName', { number: current.number });
+            find('space-name-status').textContent = '';
+            spaceNameDialog.showModal();
+            find('space-name').focus();
+        });
+        const limitSpaceName = event => {
+            if (!event.isComposing) find('space-name').value = Array.from(find('space-name').value).slice(0, 8).join('');
+        };
+        find('space-name').addEventListener('input', limitSpaceName);
+        find('space-name').addEventListener('compositionend', limitSpaceName);
+        find('space-name-form').addEventListener('submit', async event => {
+            event.preventDefault();
+            try {
+                await savedSpaces.rename(spaceNameDialog.dataset.roomId, find('space-name').value);
+                spaceNameDialog.close();
+                renderSpaces();
+                setNotice('syncSpaceNamed');
+            } catch { find('space-name-status').textContent = translate('syncStorageError'); }
+        });
+        for (const name of ['space-name-close', 'space-name-cancel']) find(name).addEventListener('click', () => spaceNameDialog.close());
+        find('spaces-toggle').addEventListener('click', () => {
+            const collapsed = app.classList.toggle('is-spaces-collapsed');
+            spacesPreference = String(collapsed);
+            try { localStorage.setItem('portfolio-sync-spaces-collapsed', spacesPreference); } catch { /* Keep the current layout. */ }
+            renderSpaces();
+        });
+        new ResizeObserver(() => {
+            if (spacesPreference === null) app.classList.toggle('is-spaces-collapsed', app.clientWidth <= 640);
+            renderSpaces();
+        }).observe(app);
+        app.classList.toggle('is-spaces-collapsed', spacesPreference === 'true' || spacesPreference === null && app.clientWidth <= 640);
         const copyText = async (text) => {
             const session = credentials;
             try { await navigator.clipboard.writeText(text); if (credentials === session) setNotice('syncCopied'); }
@@ -1508,6 +1973,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 deviceId = result.deviceId;
                 renderDevices();
                 render();
+                if (gameWindow.currentId) gameWindow.update(games.get(gameWindow.currentId));
                 if (showStatus) {
                     find('devices-status').textContent = '';
                     find('devices-status').dataset.i18n = '';
@@ -1518,6 +1984,15 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 return false;
             }
         };
+        gameWindow = createGomokuWindow({
+            manager, translate, deviceLabel, getDeviceId: () => deviceId,
+            onMove: (row, col) => {
+                const game = games.get(gameWindow.currentId);
+                return gameAction(game.id, 'move', { revision: game.revision, commandId: crypto.randomUUID(), row, col });
+            },
+            onLeave: () => gameAction(gameWindow.currentId, 'leave'),
+            onClosed: () => { if (!active && !needsGameConnection()) disconnect(); }
+        });
         const entry = manager.registerWindow({
             id: 'sync-space', element: app, task: document.querySelector('[data-sync-task]'),
             titlebar: find('titlebar'), resizeHandle: find('resize'),
@@ -1543,6 +2018,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 followOnRestore = !find('search').value.trim() && atBottom();
                 if (confirmation.open) confirmation.close();
                 if (devicesDialog.open) devicesDialog.close();
+                if (stickerDialog.open) stickerDialog.close();
                 manager.hideWindow(app, entry.task, state, { hideTask: state === 'is-closed' });
                 if (state === 'is-closed') {
                     clearTimeout(searchTimer);
@@ -1550,20 +2026,44 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     active = false;
                     fileDragDepth = 0;
                     app.classList.remove('is-dragging-files');
-                    disconnect();
+                    if (!needsGameConnection()) disconnect();
                     attachmentPreview.close();
                 }
                 updateInlineImages();
             }
         });
         document.querySelectorAll('[data-open-sync-space]').forEach((button) => button.addEventListener('click', entry.show));
+        const storeJoinedSpace = async (session) => {
+            await spacesReady;
+            const descriptor = savedSpaces.list().find(space => space.roomId === session.roomId);
+            if (descriptor && descriptor.deviceId !== session.deviceId) {
+                const existing = await loadLocalSession(descriptor);
+                try {
+                    await api(`/v1/spaces/${existing.roomId}/pair-code`, {}, existing);
+                } catch (error) {
+                    if (error.status !== 401 && error.status !== 404) throw error;
+                    await persistSession(session, true);
+                    pairing.acknowledgeJoin(session);
+                    return session;
+                }
+                await pairing.abandonJoin(session);
+                const selected = await savedSpaces.select(existing.roomId);
+                return { ...await loadLocalSession(selected), revision: selected.revision };
+            }
+            await persistSession(session, true);
+            pairing.acknowledgeJoin(session);
+            return session;
+        };
         const pair = async (path, body, action) => {
             if (busy || sending || secondsLeft(cooldowns[action])) return;
+            await reconcileSession();
+            if (busy || sending || setup.hidden) return;
             let version = sessionVersion;
             busy = true;
             updateControls();
             setNotice(action === 'create' ? 'syncCreating' : 'syncJoining');
             try {
+                if (!await saveDraft()) return;
                 // Check persistence without replacing another tab's paired session.
                 const previous = localStorage.getItem(CREDENTIAL_KEY);
                 if (previous !== null) localStorage.setItem(CREDENTIAL_KEY, previous);
@@ -1580,18 +2080,28 @@ import { createVoicePlayer } from './sync-voice-player.js';
                     if (action === 'join') await pairing.abandonJoin(session);
                     return;
                 }
-                try { await persistSession(session); }
+                let alreadyJoined = false;
+                try {
+                    if (action === 'join') {
+                        const joined = await storeJoinedSpace(session);
+                        alreadyJoined = joined.deviceId !== session.deviceId;
+                        session = joined;
+                    } else await persistSession(session, true);
+                }
                 catch (error) {
                     if (action === 'join') await pairing.abandonJoin(session);
                     throw error;
                 }
-                if (action === 'join') pairing.acknowledgeJoin(session);
-                await enter(session);
+                setAddingSpace(false);
+                if (!await enter(session)) {
+                    if (credentials && savedSpaces.find(credentials)) await savedSpaces.select(credentials.roomId);
+                    return;
+                }
                 version = sessionVersion;
                 busy = true;
                 updateControls();
                 if (action === 'create') await showPairing(await pairing.createOffer());
-                setNotice(action === 'create' ? 'syncPaired' : 'syncJoined');
+                setNotice(alreadyJoined ? 'syncSpaceAlreadyJoined' : action === 'create' ? 'syncPaired' : 'syncJoined');
                 input.focus({ preventScroll: true });
             } catch (error) {
                 if (version !== sessionVersion) return;
@@ -1609,16 +2119,20 @@ import { createVoicePlayer } from './sync-voice-player.js';
             busy = true;
             updateControls();
             try {
-                const session = await pairing.recoverJoin();
+                if (!await saveDraft()) return;
+                let session = await pairing.recoverJoin();
                 if (!session) return;
-                if (version !== sessionVersion || savedSession()) {
+                if (version !== sessionVersion || (!addingSpace && savedSession())) {
                     await pairing.abandonJoin(session);
                     return;
                 }
-                try { await persistSession(session); }
+                try { session = await storeJoinedSpace(session); }
                 catch (error) { await pairing.abandonJoin(session); throw error; }
-                pairing.acknowledgeJoin(session);
-                await enter(session);
+                setAddingSpace(false);
+                if (!await enter(session)) {
+                    if (credentials && savedSpaces.find(credentials)) await savedSpaces.select(credentials.roomId);
+                    return;
+                }
                 version = sessionVersion;
                 setNotice('syncJoined');
             } catch (error) {
@@ -1636,18 +2150,41 @@ import { createVoicePlayer } from './sync-voice-player.js';
         find('pair').addEventListener('click', async () => {
             if (busy || sending || !online || secondsLeft(cooldowns.pair)) return;
             const session = credentials;
-            const revision = pairingRevision;
+            pairingRevision++;
             busy = true;
             updateControls();
             try {
                 const offer = await pairing.createOffer();
                 if (credentials !== session) return;
-                if (pairingRevision === revision) await showPairing(offer);
-                if (secondsLeft(pairExpiresAt)) {
+                await showPairing(offer);
+                if (pairLocked || secondsLeft(pairExpiresAt)) {
                     find('pairing').open = true;
-                    setNotice('syncPaired');
+                    setNotice(pairLocked ? 'syncPairLocked' : 'syncPaired');
                 }
-            } catch (error) { if (credentials === session) showError(error, 'pair'); }
+            } catch (error) { if (credentials === session) { await refreshPairing(session).catch(() => {}); showError(error, 'pair'); } }
+            finally { if (credentials === session) { busy = false; updateControls(); } }
+        });
+        find('pair-lock').addEventListener('click', async () => {
+            if (busy || !online || !pairing.offer || !pairEnabled) return;
+            const session = credentials;
+            const locked = !pairLocked;
+            busy = true;
+            updateControls();
+            try {
+                const result = await pairing.setLocked(locked);
+                if (credentials === session) { await showPairing(result); setNotice(locked ? 'syncPairLocked' : 'syncPairUnlocked'); }
+            } catch (error) { if (credentials === session) { await refreshPairing(session).catch(() => {}); showError(error); } }
+            finally { if (credentials === session) { busy = false; updateControls(); } }
+        });
+        find('pair-close').addEventListener('click', async () => {
+            if (busy || !online || !pairEnabled) return;
+            const session = credentials;
+            busy = true;
+            updateControls();
+            try {
+                const result = await api(roomPath('/pair-code'), { method: 'DELETE' }, session);
+                if (credentials === session) { await showPairing(result); setNotice('syncPairClosed'); }
+            } catch (error) { if (credentials === session) showError(error); }
             finally { if (credentials === session) { busy = false; updateControls(); } }
         });
         const discardUpload = (restart = false) => {
@@ -1917,12 +2454,14 @@ import { createVoicePlayer } from './sync-voice-player.js';
                 } else {
                     if (!outgoing.encrypted || outgoing.keyId !== session.keyring.currentKeyId) {
                         const keyring = session.keyring;
-                        outgoing.encrypted = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${outgoing.clientId}`, { text, reply: outgoing.reply });
+                        outgoing.encrypted = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${outgoing.clientId}`, { text, reply: outgoing.reply,
+                            ...(outgoing.sticker ? { sticker: outgoing.sticker } : {}), ...(outgoing.gomoku ? { gomoku: outgoing.gomoku } : {}) });
                         outgoing.keyId = keyring.currentKeyId;
                         saveDraft();
                     }
                     if (credentials !== session || outgoing.confirmed || !outbox.has(outgoing.clientId)) return;
-                    const message = await api(roomPath('/messages'), { method: 'POST', headers: { 'X-Sync-Key-Id': outgoing.keyId }, body: JSON.stringify({ clientId: outgoing.clientId, text: outgoing.encrypted }) });
+                    const message = await api(roomPath('/messages'), { method: 'POST', headers: { 'X-Sync-Key-Id': outgoing.keyId }, body: JSON.stringify({ clientId: outgoing.clientId, text: outgoing.encrypted,
+                        ...(outgoing.gomoku ? { game: 'gomoku' } : {}) }) });
                     if (credentials !== session || outbox.get(outgoing.clientId) !== outgoing) return;
                     addMessage(message, null, false);
                 }
@@ -1976,6 +2515,58 @@ import { createVoicePlayer } from './sync-voice-player.js';
             if (!resuming) { input.value = ''; selectedReply = null; }
             sendOutgoing(outgoing);
         });
+        const updateStickerLabels = () => {
+            find('sticker-close').setAttribute('aria-label', translate('syncStickerClose'));
+            for (const button of find('sticker-grid').querySelectorAll('[data-sync-sticker-choice]')) {
+                const name = stickerName(button.dataset.syncStickerChoice);
+                button.querySelector('span').textContent = name;
+                button.setAttribute('aria-label', name);
+            }
+        };
+        find('game-share').addEventListener('click', () => {
+            if (find('game-share').disabled) return;
+            const clientId = crypto.randomUUID();
+            const outgoing = { id: `pending:${clientId}`, clientId, deviceId, text: '', gomoku: clientId,
+                createdAt: Date.now(), attachment: null, sendState: 'sending' };
+            outbox.set(clientId, outgoing);
+            sendOutgoing(outgoing);
+        });
+        for (const sticker of STICKERS) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'sync-sticker-choice';
+            button.dataset.syncStickerChoice = sticker.id;
+            const image = document.createElement('img');
+            image.src = sticker.url;
+            image.alt = '';
+            image.width = 64;
+            image.height = 64;
+            image.loading = 'lazy';
+            button.append(image, document.createElement('span'));
+            button.addEventListener('click', () => {
+                if (busy || sendingText || recording() || !online) return;
+                const clientId = crypto.randomUUID();
+                const outgoing = { id: `pending:${clientId}`, clientId, deviceId, text: '', sticker: sticker.id,
+                    reply: selectedReply, createdAt: Date.now(), attachment: null, sendState: 'sending' };
+                outbox.set(clientId, outgoing);
+                selectedReply = null;
+                stickerDialog.close();
+                sendOutgoing(outgoing);
+            });
+            find('sticker-grid').append(button);
+        }
+        updateStickerLabels();
+        find('stickers').addEventListener('click', () => {
+            if (find('stickers').disabled) return;
+            pauseVoiceMedia();
+            stickerDialog.showModal();
+            markRead();
+        });
+        find('sticker-close').addEventListener('click', () => stickerDialog.close());
+        stickerDialog.addEventListener('close', () => {
+            if (active && !find('stickers').disabled) find('stickers').focus({ preventScroll: true });
+            markRead();
+        });
         find('reply-cancel').addEventListener('click', () => {
             selectedReply = null;
             renderReply();
@@ -1990,7 +2581,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
             if (!event.repeat) find('send-form').requestSubmit();
         });
         find('copy-code').addEventListener('click', () => {
-            if (secondsLeft(pairExpiresAt)) copyText(find('pair-code').textContent);
+            if (pairEnabled && (pairLocked || secondsLeft(pairExpiresAt))) copyText(find('pair-code').textContent);
             else updateCountdowns();
         });
         find('search').addEventListener('input', () => {
@@ -2180,7 +2771,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
         window.addEventListener('online', () => { clearTimeout(retryTimer); connect(); recoverPendingPairing(); });
         window.addEventListener('storage', (event) => {
             if (event.key === 'portfolio-sync-notification-sound' || event.key === null) setSoundEnabled(event.newValue !== 'off');
-            if (event.key === CREDENTIAL_KEY || event.key === null) reconcileSession();
+            if (event.key === CREDENTIAL_KEY || event.key === CATALOG_KEY || event.key === null) reconcileSession();
         });
         window.addEventListener('pagehide', () => {
             cancelRecording();
@@ -2208,6 +2799,8 @@ import { createVoicePlayer } from './sync-voice-player.js';
             if (!document.hidden) { updateCountdowns(); connect(); }
         });
         window.addEventListener('portfolio-language-change', () => {
+            renderSpaces();
+            updateStickerLabels();
             updateSoundToggle();
             render();
             renderDevices();
@@ -2232,10 +2825,11 @@ import { createVoicePlayer } from './sync-voice-player.js';
             updateVoiceVisibility();
             updateInlineImages();
         });
-        manager.onSession({ restore: () => {
+        manager.onSession({ restore: (savedState) => {
+            restoringGame = !!savedState.windows?.['sync-gomoku'] && !savedState.windows['sync-gomoku'].closed;
             active = !app.classList.contains('is-closed');
             reconcileSession();
-            if (active) connect();
+            if (active || needsGameConnection()) connect();
         } });
         reconcileSession().then(recoverPendingPairing);
         updateSoundToggle();

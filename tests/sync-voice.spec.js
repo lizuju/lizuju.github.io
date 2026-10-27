@@ -106,6 +106,7 @@ test.beforeEach(async ({ page }) => {
     apiBase = `http://127.0.0.1:${api.address().port}`;
     site = await startSite(apiBase);
     await page.addInitScript(() => {
+        window.nativeVoiceAPIs = { Context: window.AudioContext || window.webkitAudioContext, Recorder: window.MediaRecorder, Node: window.AudioWorkletNode };
         const state = window.voiceMock = { mode: 'allow', sampleCount: 8000, tracks: [], contexts: [], nodes: [], modules: [], created: [], revoked: [], closes: 0 };
         const stream = () => {
             const track = new EventTarget();
@@ -148,6 +149,7 @@ test.beforeEach(async ({ page }) => {
             connect() {}
             disconnect() {}
         };
+        window.MediaRecorder = undefined;
         const create = URL.createObjectURL.bind(URL);
         URL.createObjectURL = blob => { const url = create(blob); state.created.push({ url, blob }); return url; };
         const revoke = URL.revokeObjectURL.bind(URL);
@@ -179,7 +181,7 @@ test.afterEach(async () => {
 
 const openChat = async (page, desktop = false) => {
     await authorize(page, `${site.origin}/portfolio/`);
-    await page.goto(`${site.origin}/portfolio/${desktop ? '' : 'chat/'}`);
+    await page.goto(`${site.origin}/${desktop ? 'portfolio/' : 'chat/'}`);
     if (desktop) {
         if (await page.locator('[data-window-action="minimize"]').isVisible()) await page.locator('[data-window-action="minimize"]').click();
         await page.locator('.desktop-shortcut[data-open-sync-space]').click();
@@ -231,6 +233,52 @@ test('records a real WAV for local review and sends only encrypted bytes and voi
     expect(upload.bytes).not.toEqual(recorded);
     await expect(preview).toBeHidden();
     await expect(page.locator('.sync-voice-message')).toHaveCount(1);
+});
+
+test('encrypts a native Opus recording and plays the decrypted voice message', async ({ page }) => {
+    await openChat(page);
+    await page.evaluate(() => {
+        const { Context, Recorder, Node } = window.nativeVoiceAPIs;
+        window.AudioContext = Context;
+        window.AudioWorkletNode = Node;
+        window.MediaRecorder = Recorder;
+        navigator.mediaDevices.getUserMedia = async () => {
+            const context = window.syntheticMicrophone = new Context();
+            await context.resume();
+            const oscillator = context.createOscillator();
+            oscillator.frequency.value = 440;
+            const destination = context.createMediaStreamDestination();
+            oscillator.connect(destination);
+            oscillator.start();
+            return destination.stream;
+        };
+    });
+    try {
+        await startRecording(page);
+        await page.waitForTimeout(600);
+        await page.locator('[data-sync-voice-stop]').click();
+        const preview = page.locator('[data-sync-voice-preview]');
+        await expect(preview).toBeVisible();
+        const recorded = Buffer.from(await preview.evaluate(async audio => Array.from(new Uint8Array(await window.voiceMock.created.find(entry => entry.url === audio.src).blob.arrayBuffer()))));
+        await page.locator('[data-sync-send]').click();
+        await expect(page.locator('.sync-message.is-own[data-state="sent"]')).toHaveCount(1);
+        const upload = uploads[0];
+        const clear = payload(upload.body);
+        expect(clear.attachment).toMatchObject({ type: 'audio/webm', kind: 'voice', size: recorded.length });
+        expect(clear.attachment.durationMs).toBeGreaterThan(300);
+        expect(clear.attachment.durationMs).toBeLessThan(2000);
+        expect(recorded.length).toBeLessThan(clear.attachment.durationMs * 16);
+        expect(upload.body.type).toBe('application/octet-stream');
+        expect(JSON.stringify(upload.body)).not.toContain('audio/webm');
+        const nonce = Buffer.concat([Buffer.from(clear.attachment.noncePrefix, 'base64url'), Buffer.alloc(4)]);
+        expect(openCipher(Buffer.from(clear.attachment.key, 'base64url'), nonce, `gavin-sync-file-v1:${clear.attachment.fileId}:0`, upload.bytes)).toEqual(recorded);
+        attachments[0] = { metadata: clear.attachment, bytes: upload.bytes };
+        await page.locator('[data-sync-voice-play]').click();
+        const player = page.locator('.sync-voice-message audio');
+        await expect.poll(() => player.evaluate(audio => audio.readyState >= 2 && !audio.error)).toBe(true);
+        await expect.poll(() => player.evaluate(audio => audio.currentTime)).toBeGreaterThan(0);
+        expect(downloads).toEqual([1]);
+    } finally { await page.evaluate(() => window.syntheticMicrophone?.close()).catch(() => {}); }
 });
 
 test('handles denied microphone access and cancels a delayed permission result without losing the text draft', async ({ page }) => {

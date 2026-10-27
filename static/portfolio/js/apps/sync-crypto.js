@@ -124,7 +124,7 @@ export async function startPairingClient(code, offerId, signal) {
 }
 
 export async function startPairingHost(secret, offerId, requestId, startLoginRequest) {
-    if (secret.expiresAt <= Date.now()) throw failure('invalid_code');
+    if (secret.expiresAt !== null && secret.expiresAt <= Date.now()) throw failure('invalid_code');
     const opaque = await loadOpaque();
     try {
         const result = opaque.server.startLogin({ serverSetup: secret.serverSetup, registrationRecord: secret.registrationRecord, userIdentifier: offerId, startLoginRequest, identifiers: pairingIdentifiers(offerId) });

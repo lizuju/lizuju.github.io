@@ -21,7 +21,7 @@ test('release verification matches the Worker revision and actual frontend conte
   });
   assert.deepEqual(result, health);
   assert.deepEqual(requests, ['/health', '/portfolio/index.html', '/portfolio/sync-config.json', '/portfolio/js/main.js', '/portfolio/css/main.css', '/portfolio/sync-e2ee-worker.js',
-    '/portfolio/chat/index.html', '/portfolio/js/chat.js', '/portfolio/css/chat.css']);
+    '/chat/index.html', '/chat/sync-config.json', '/chat/sync-e2ee-worker.js', '/portfolio/js/chat.js', '/portfolio/css/chat.css']);
 });
 
 test('HTTP 200 and ok true cannot hide an old Worker, another service or missing Cloudflare deployment metadata', async () => {

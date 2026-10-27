@@ -85,13 +85,14 @@ test('opens the standalone chat at every viewport with only its own assets and t
     page.on('pageerror', error => errors.push(error.message));
     page.on('response', response => { if (response.status() === 404) missing.push(response.url()); });
     page.on('request', request => { if (request.resourceType() === 'script') scripts.push(new URL(request.url()).pathname); });
-    await page.goto(`${site.origin}/portfolio/chat/`);
+    await page.goto(`${site.origin}/chat/`);
     const chat = page.locator('[data-sync-window]');
     await expect(chat).toBeVisible();
     await expect(page.locator('[data-sync-setup]')).toBeVisible();
     await expect(page.locator('body')).toHaveClass(/standalone-sync/);
-    await expect(page.locator('body')).toHaveAttribute('data-asset-root', '../');
-    await expect(page.locator('.app-window')).toHaveCount(2);
+    await expect(page.locator('body')).toHaveAttribute('data-asset-root', '../portfolio/');
+    await expect(page.locator('.app-window')).toHaveCount(3);
+    await expect(page.locator('[data-sync-gomoku-window]')).toHaveClass(/is-closed/);
     await expect(page.locator('[data-app-window], [data-project-window], [data-robot-pet]')).toHaveCount(0);
     await expect(page.locator('[data-start-menu]')).toBeHidden();
     await expect(chat.locator(':scope > .window-titlebar > .window-controls')).toBeHidden();
@@ -122,7 +123,7 @@ test('reuses a portfolio session, exchanges encrypted messages and previews and 
     page.on('pageerror', error => errors.push(error.message));
     page.on('response', response => { if (response.status() === 404) missing.push(response.url()); });
     page.on('request', request => scripts.push(new URL(request.url()).pathname));
-    await page.goto(`${site.origin}/portfolio/chat/`);
+    await page.goto(`${site.origin}/chat/`);
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
     await expect(page.locator('.sync-message')).toHaveCount(2);
     expect(await page.evaluate(() => localStorage.getItem('portfolio-sync-space-e2ee1'))).toBe(descriptor);
@@ -159,10 +160,9 @@ test('reuses a portfolio session, exchanges encrypted messages and previews and 
     const download = await downloading;
     expect(download.suggestedFilename()).toBe('notes.txt');
     expect(await readFile(await download.path())).toEqual(text);
-    expect(await page.evaluate(() => navigator.serviceWorker.controller.scriptURL)).toBe(`${site.origin}/portfolio/sync-e2ee-worker.js`);
+    expect(await page.evaluate(() => navigator.serviceWorker.controller.scriptURL)).toBe(`${site.origin}/chat/sync-e2ee-worker.js`);
     const registrations = await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).map(entry => entry.scope));
-    expect(registrations).toContain(`${site.origin}/portfolio/`);
-    expect(registrations).not.toContain(`${site.origin}/portfolio/chat/`);
+    expect(registrations).toContain(`${site.origin}/chat/`);
     await page.reload();
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
     await expect(page.locator('.sync-message')).toHaveCount(4);
@@ -179,6 +179,8 @@ test('keeps the existing portfolio and immersive iframe chat inside their curren
         if (await frame.locator('[data-window-action="minimize"]').isVisible()) await frame.locator('[data-window-action="minimize"]').click();
         await frame.locator('.desktop-shortcut[data-open-sync-space]').click();
         await expect(frame.locator('[data-sync-window]')).toBeVisible();
+        await expect(frame.locator('.sync-open-chat')).toHaveAttribute('href', '/chat/');
+        await expect(frame.locator('.sync-open-chat')).toHaveAttribute('target', '_blank');
         expect(page.url()).toBe(`${site.origin}${path}`);
         expect(path === '/shell' ? await page.locator('#computer-screen').getAttribute('src') : new URL(page.url()).pathname).toBe('/portfolio/');
         await expect(frame.locator('body')).not.toHaveClass(/standalone-sync/);

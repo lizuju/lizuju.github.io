@@ -26,7 +26,7 @@ module.exports = merge(
                         stage: webpack.Compilation.PROCESS_ASSETS_STAGE_SUMMARIZE
                     }, () => {
                         compilation.emitAsset('dev-reload.js', new webpack.sources.RawSource(reloadScript));
-                        for (const name of ['index.html', 'portfolio/index.html', 'portfolio/chat/index.html']) {
+                        for (const name of ['index.html', 'portfolio/index.html', 'chat/index.html']) {
                             const html = compilation.getAsset(name).source.source().toString();
                             compilation.updateAsset(name, new webpack.sources.RawSource(
                                 html.replace('</body>', '<script src="/dev-reload.js"></script></body>')

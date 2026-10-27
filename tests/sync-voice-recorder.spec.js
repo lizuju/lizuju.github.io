@@ -8,6 +8,10 @@ test.use({ serviceWorkers: 'block' });
 
 test.beforeEach(async ({ page }) => {
     await page.route('**/__voice-recorder-test__/**', async route => {
+        if (route.request().url().endsWith('/sync-voice-worklet.js')) return route.fulfill({
+            contentType: 'application/javascript',
+            body: await readFile(path.join(__dirname, '../static/portfolio/js/apps/sync-voice-worklet.js'), 'utf8')
+        });
         if (route.request().url().endsWith('/recorder.js')) return route.fulfill({
             contentType: 'application/javascript',
             body: await readFile(path.join(__dirname, '../static/portfolio/js/apps/sync-voice-recorder.js'), 'utf8')
@@ -17,6 +21,8 @@ test.beforeEach(async ({ page }) => {
     await page.goto('/__voice-recorder-test__/');
     await page.evaluate(async () => {
         const nativeContext = window.AudioContext || window.webkitAudioContext;
+        const nativeRecorder = window.MediaRecorder;
+        const nativeNode = window.AudioWorkletNode;
         const h = window.voiceHarness = { contexts: [], nodes: [], tracks: [], events: [], times: [], results: [], errors: [], holdPermission: false, holdClose: false, flush: true };
         class Context {
             constructor() {
@@ -29,6 +35,10 @@ test.beforeEach(async ({ page }) => {
             }
             resume() { h.events.push('resume'); this.state = 'running'; return Promise.resolve(); }
             createMediaStreamSource() { return this.source = { connect() {}, disconnect() { this.disconnected = true; } }; }
+            createMediaStreamDestination() {
+                const track = { stopped: false, stop() { this.stopped = true; } };
+                return this.encoderDestination = { stream: { getTracks: () => [track] }, disconnect() { this.disconnected = true; } };
+            }
             close() {
                 this.closeCalls++;
                 this.state = 'closed';
@@ -52,6 +62,18 @@ test.beforeEach(async ({ page }) => {
         }
         Object.defineProperty(window, 'AudioContext', { configurable: true, value: Context });
         Object.defineProperty(window, 'AudioWorkletNode', { configurable: true, value: Node });
+        Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: class {
+            static isTypeSupported() { return h.compressed === true; }
+            constructor(stream, options) { this.stream = stream; this.options = options; this.state = 'inactive'; h.encoder = this; }
+            start() { this.state = 'recording'; }
+            stop() {
+                this.state = 'inactive';
+                if (!h.holdEncoder) queueMicrotask(() => {
+                    this.ondataavailable?.({ data: new Blob(['compressed-audio']) });
+                    this.onstop?.();
+                });
+            }
+        } });
         Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: {
             getUserMedia() {
                 h.events.push('permission');
@@ -69,6 +91,8 @@ test.beforeEach(async ({ page }) => {
         h.make = () => new VoiceRecorder({ onTime: ms => h.times.push(ms), onStop: result => h.results.push(result), onError: error => h.errors.push(error.name) });
         h.recorder = h.make();
         h.nativeContext = nativeContext;
+        h.nativeRecorder = nativeRecorder;
+        h.nativeNode = nativeNode;
     });
 });
 
@@ -119,6 +143,50 @@ test('cancel during permission resolves start promptly and stops a late micropho
         return { started, state: h.recorder.state, stopped: h.tracks[0].stopCalls, closeCalls: h.contexts[0].closeCalls, nodes: h.nodes.length, results: h.results.length, errors: h.errors };
     });
     expect(result).toEqual({ started: false, state: 'idle', stopped: 1, closeCalls: 1, nodes: 0, results: 0, errors: [] });
+});
+
+test('uses a 24 kbps Opus encoder and stops at the worklet sixty-second limit without retaining PCM chunks', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const h = window.voiceHarness;
+        h.compressed = true;
+        await h.recorder.start();
+        h.nodes[0].emit({ type: 'limit', sampleCount: 960000 });
+        const voice = await h.recorder.run.result;
+        return { type: voice.file.type, name: voice.file.name, durationMs: voice.durationMs,
+            bitrate: h.encoder.options.audioBitsPerSecond, state: h.recorder.state, closeCalls: h.contexts[0].closeCalls,
+            stopped: h.tracks[0].stopCalls > 0, encoderStopped: h.encoder.state === 'inactive',
+            destinationStopped: h.contexts[0].encoderDestination.stream.getTracks()[0].stopped, results: h.results.length, errors: h.errors };
+    });
+    expect(result).toEqual({ type: 'audio/webm', name: expect.stringMatching(/^voice-\d+\.webm$/), durationMs: 60000,
+        bitrate: 24000, state: 'idle', closeCalls: 1, stopped: true, encoderStopped: true,
+        destinationStopped: true, results: 1, errors: [] });
+});
+
+test('cancels a pending Opus flush and bounds an unresponsive encoder without retaining a microphone', async ({ page }) => {
+    await page.clock.install();
+    await page.evaluate(async () => {
+        const h = window.voiceHarness;
+        h.compressed = true;
+        h.holdEncoder = true;
+        await h.recorder.start();
+        h.nodes[0].emit({ type: 'stopped', sampleCount: 16000 });
+        h.pending = h.recorder.run.result;
+        await h.recorder.cancel();
+    });
+    expect(await page.evaluate(async () => ({ result: await window.voiceHarness.pending, results: window.voiceHarness.results.length })))
+        .toEqual({ result: null, results: 0 });
+    await page.evaluate(async () => {
+        const h = window.voiceHarness;
+        await h.recorder.start();
+        h.nodes[1].emit({ type: 'stopped', sampleCount: 16000 });
+        h.pending = h.recorder.run.result;
+    });
+    await page.clock.fastForward(2100);
+    expect(await page.evaluate(async () => {
+        const h = window.voiceHarness;
+        return { result: await h.pending, state: h.recorder.state, stopped: h.tracks.every(track => track.stopCalls > 0),
+            closed: h.contexts.every(context => context.closeCalls === 1), errors: h.errors };
+    })).toEqual({ result: null, state: 'idle', stopped: true, closed: true, errors: ['NotReadableError'] });
 });
 
 test('permission and worklet errors preserve their names and release recording resources', async ({ page }) => {
@@ -263,7 +331,33 @@ test('the real worklet downsamples stereo at common device rates and hard stops 
     }
 });
 
-test('built chat records a silent synthetic microphone through the native AudioWorklet under its real CSP', async ({ page }) => {
+test('the compressed worklet sends mono audio to the encoder without buffering PCM and hard stops at sixty seconds', async () => {
+    const source = await readFile(path.join(__dirname, '../static/portfolio/js/apps/sync-voice-worklet.js'), 'utf8');
+    for (const rate of [16000, 44100, 48000]) {
+        let Processor;
+        const messages = [];
+        vm.runInNewContext(source, {
+            sampleRate: rate, Float32Array,
+            AudioWorkletProcessor: class { constructor() { this.port = { postMessage: message => messages.push(message) }; } },
+            registerProcessor: (_name, constructor) => { Processor = constructor; }
+        });
+        const processor = new Processor({ processorOptions: { compressed: true } });
+        let active = true;
+        let outputSamples = 0;
+        while (active) {
+            const output = new Float32Array(128);
+            active = processor.process([[new Float32Array(128).fill(0.5), new Float32Array(128).fill(-0.25)]], [[output]]);
+            outputSamples += output.filter(sample => sample === 0.125).length;
+        }
+        expect(outputSamples).toBe(rate * 60);
+        expect(messages).toEqual([{ type: 'limit', sampleCount: 960000 }]);
+        const stoppedOutput = new Float32Array(128);
+        expect(processor.process([[new Float32Array(128).fill(1)]], [[stoppedOutput]])).toBe(false);
+        expect(stoppedOutput.every(sample => sample === 0)).toBe(true);
+    }
+});
+
+test('built chat records compressed voice through the native AudioWorklet under its real CSP', async ({ page }) => {
     const processors = [];
     const site = await startSite('https://sync.test', async pathname => {
         if (!pathname.endsWith('.js')) return;
@@ -305,7 +399,7 @@ test('built chat records a silent synthetic microphone through the native AudioW
         if (JSON.parse(raw).type === 'auth') socket.send(JSON.stringify({ type: 'ready', deviceId, pairing: null, messages: [] }));
     }));
     try {
-        await authorize(page, `${site.origin}/portfolio/chat/`);
+        await authorize(page, `${site.origin}/chat/`);
         await page.reload();
         await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
         await page.locator('[data-sync-voice-record]').click();
@@ -315,19 +409,19 @@ test('built chat records a silent synthetic microphone through the native AudioW
         const preview = page.locator('[data-sync-voice-preview]');
         await expect(preview).toBeVisible();
         const result = await preview.evaluate(async audio => {
-            const bytes = await window.voiceBlobs.get(audio.src).arrayBuffer();
-            const header = new DataView(bytes);
+            const blob = window.voiceBlobs.get(audio.src);
+            const bytes = await blob.arrayBuffer();
             const context = new (window.AudioContext || window.webkitAudioContext)();
             const decoded = await context.decodeAudioData(bytes.slice(0));
             await context.close();
             return {
-                sampleRate: header.getUint32(24, true), channels: header.getUint16(22, true), bits: header.getUint16(34, true),
+                type: blob.type, size: blob.size, channels: decoded.numberOfChannels,
                 duration: decoded.duration, nonzero: decoded.getChannelData(0).some(sample => Math.abs(sample) > 0.001)
             };
         });
-        expect(result.sampleRate).toBe(16000);
+        expect(result.type).toBe('audio/webm');
         expect(result.channels).toBe(1);
-        expect(result.bits).toBe(16);
+        expect(result.size).toBeLessThan(result.duration * 16000);
         expect(result.duration).toBeGreaterThan(0.25);
         expect(result.duration).toBeLessThan(2);
         expect(result.nonzero).toBe(true);

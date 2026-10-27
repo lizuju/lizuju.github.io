@@ -41,10 +41,13 @@ export function encryptedClient(runtime, { origin = 'https://lizuju.github.io', 
   };
   const offer = async session => {
     await update(session);
+    const pairing = (await raw(`/v1/spaces/${session.roomId}/pair-code`, { token: session.token })).body;
     const offerId = randomUUID();
-    const secret = { ...await cryptoClient.createPairingSecret(String(Math.floor(Math.random() * 10000)).padStart(4, '0'), offerId), ownerDeviceId: session.deviceId };
+    const code = pairing?.locked ? (await cryptoClient.decryptPayload(session.keyring, session.roomId, 'pairing-code', pairing.fixedSecret)).code : String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+    const secret = { ...await cryptoClient.createPairingSecret(code, offerId), ownerDeviceId: session.deviceId };
+    if (pairing?.locked) secret.expiresAt = null;
     const encrypted = await cryptoClient.encryptPayload(session.keyring, session.roomId, `offer:${offerId}`, secret);
-    const result = await raw(`/v1/spaces/${session.roomId}/pair-code`, { method: 'POST', token: session.token, headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: { offerId, secret: encrypted } });
+    const result = await raw(`/v1/spaces/${session.roomId}/pair-code`, { method: 'POST', token: session.token, headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: { offerId, secret: encrypted, revision: pairing?.revision, reopen: true } });
     if (result.status !== 200) return result;
     const wire = result.body;
     const opened = await cryptoClient.decryptPayload(session.keyring, session.roomId, `offer:${wire.offerId}`, wire.secret);
@@ -65,7 +68,7 @@ export function encryptedClient(runtime, { origin = 'https://lizuju.github.io', 
     return { ...result, body: { ...result.body, ...(invitation.status === 200 ? { code, expiresAt: pairing.expiresAt, pairing } : {}) } };
   };
   const join = async code => {
-    const entry = [...state.offers.values()].find(value => value.secret.code === code && value.expiresAt > Date.now());
+    const entry = [...state.offers.values()].reverse().find(value => value.secret.code === code && (value.locked || value.expiresAt > Date.now()));
     if (!entry) return raw('/v1/pair', { method: 'POST', json: { code } });
     const host = entry.session;
     await update(host);

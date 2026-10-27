@@ -1,6 +1,10 @@
 const { test, expect } = require('@playwright/test');
 const { readFile } = require('node:fs/promises');
+const { createServer } = require('node:http');
 const path = require('node:path');
+const { authorize, startSite, deviceId, keyId } = require('./fixtures/sync-e2ee.cjs');
+
+test.use({ serviceWorkers: 'block' });
 
 test.beforeEach(async ({ page }) => {
     const root = path.resolve(__dirname, '..');
@@ -16,6 +20,90 @@ test.beforeEach(async ({ page }) => {
     });
     await page.goto('/__sync-pairing-test__/');
 });
+
+for (const responseOrder of ['empty-read-first', 'new-offer-first', 'empty-read-started-after-create', 'closed-while-generating']) {
+    test(`keeps the latest pairing state with ${responseOrder}`, async ({ page }) => {
+        const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' };
+        let connection;
+        let emptyRead;
+        let newOffer;
+        let postedOffer;
+        let deviceReads = 0;
+        const api = createServer(async (request, response) => {
+            const pathname = new URL(request.url, 'http://localhost').pathname;
+            const send = value => { response.writeHead(200, { ...headers, 'Content-Type': 'application/json' }); response.end(JSON.stringify(value)); };
+            if (request.method === 'OPTIONS') { response.writeHead(204, headers); response.end(); return; }
+            if (pathname.endsWith('/devices')) deviceReads++;
+            if (pathname.endsWith('/pair-code')) {
+                if (request.method === 'GET') { emptyRead = send; return; }
+                if (request.method === 'POST') {
+                    const chunks = [];
+                    for await (const chunk of request) chunks.push(chunk);
+                    postedOffer = { ...JSON.parse(Buffer.concat(chunks)), ownerDeviceId: deviceId, enabled: true, locked: false, expiresAt: Date.now() + 600000, revision: 10 };
+                    newOffer = send;
+                    return;
+                }
+            }
+            send({ deviceId, devices: [], grants: [], hasMore: false, keyId, requests: [] });
+        });
+        await new Promise(resolve => api.listen(0, '127.0.0.1', resolve));
+        const apiBase = `http://127.0.0.1:${api.address().port}`;
+        const site = await startSite(apiBase);
+        if (page.context().browser().browserType().name() === 'chromium') await page.context().grantPermissions(['local-network-access']);
+        await page.routeWebSocket(`${apiBase.replace('http:', 'ws:')}/**`, socket => {
+            connection = socket;
+            socket.onMessage(data => {
+                if (data === 'ping') return socket.send('pong');
+                if (JSON.parse(data).type === 'auth') socket.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null }));
+            });
+        });
+        try {
+            await authorize(page, `${site.origin}/chat/`);
+            await page.reload();
+            await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+            await expect.poll(() => deviceReads).toBeGreaterThan(0);
+            const initialDeviceReads = deviceReads;
+            if (responseOrder === 'empty-read-started-after-create') {
+                await page.locator('[data-sync-pair]').click();
+                await expect.poll(() => Boolean(newOffer)).toBe(true);
+                connection.send(JSON.stringify({ type: 'key-rotation' }));
+                await expect.poll(() => Boolean(emptyRead)).toBe(true);
+            } else {
+                connection.send(JSON.stringify({ type: 'key-rotation' }));
+                await expect.poll(() => Boolean(emptyRead)).toBe(true);
+                await page.locator('[data-sync-pair]').click();
+                await expect.poll(() => Boolean(newOffer)).toBe(true);
+            }
+            if (responseOrder === 'new-offer-first') {
+                newOffer(postedOffer);
+                await expect(page.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/);
+                emptyRead(null);
+                await expect.poll(() => deviceReads).toBeGreaterThan(initialDeviceReads);
+            } else {
+                emptyRead(null);
+                await expect.poll(() => deviceReads).toBeGreaterThan(initialDeviceReads);
+                if (responseOrder === 'closed-while-generating') {
+                    connection.send(JSON.stringify({ type: 'pairing', pairing: { enabled: false, locked: false, revision: 11 } }));
+                    await expect(page.locator('[data-sync-pair-hint]')).toHaveAttribute('data-i18n', 'syncPairClosedHint');
+                }
+                newOffer(postedOffer);
+            }
+            await expect(page.locator('[data-sync-pair]')).toBeEnabled();
+            if (responseOrder === 'closed-while-generating') {
+                await expect(page.locator('[data-sync-pair-code]')).toHaveText('');
+                await expect(page.locator('[data-sync-pairing]')).toBeVisible();
+            } else {
+                await expect(page.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/);
+                await expect(page.locator('[data-sync-pairing]')).toBeVisible();
+            }
+        } finally {
+            await page.close();
+            await site.close();
+            api.closeAllConnections();
+            await new Promise(resolve => api.close(resolve));
+        }
+    });
+}
 
 test('bounds a stalled encryption module by the join deadline without submitting a request', async ({ page }) => {
     await page.route('**/__sync-pairing-test__/opaque.js', route => route.fulfill({
@@ -89,6 +177,42 @@ test('cancels a join while encryption loads without waiting for that module', as
     expect(result).toEqual({ name: 'AbortError', requests: ['/v1/pair/offers'], recovery: false });
 });
 
+test('resets host invitations after a key change without cancelling a separate join', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const c = await import('/__sync-pairing-test__/crypto.js');
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const session = { roomId: crypto.randomUUID(), deviceId: crypto.randomUUID(), keyring: await c.createKeyring() };
+        const pairing = new EncryptedPairing({ getSession: () => session });
+        const wireOffer = async revision => {
+            const offerId = crypto.randomUUID();
+            const secret = { code: '1234', ownerDeviceId: session.deviceId, expiresAt: Date.now() + 600000 };
+            return { offerId, revision, ownerDeviceId: session.deviceId, expiresAt: secret.expiresAt,
+                secret: await c.encryptPayload(session.keyring, session.roomId, `offer:${offerId}`, secret) };
+        };
+        await pairing.readOffer(await wireOffer(1));
+        const oldOffer = pairing.offer;
+        const guest = new AbortController();
+        pairing.joinController = guest;
+        sessionStorage.setItem('gavin-sync-pair-recovery', 'joining-another-space');
+        session.keyring = await c.createKeyring();
+        await pairing.readOffer(await wireOffer(2));
+        const afterRotation = { oldOfferAborted: oldOffer.controller.signal.aborted,
+            guestAborted: guest.signal.aborted, cancelled: sessionStorage.getItem('gavin-sync-pair-cancelled'),
+            currentCode: pairing.offer.code };
+        pairing.resetHost();
+        const afterHostReset = { guestAborted: guest.signal.aborted,
+            cancelled: sessionStorage.getItem('gavin-sync-pair-cancelled'), offer: pairing.offer };
+        pairing.reset();
+        return { afterRotation, afterHostReset, afterReset: { guestAborted: guest.signal.aborted,
+            cancelled: sessionStorage.getItem('gavin-sync-pair-cancelled') } };
+    });
+    expect(result).toEqual({
+        afterRotation: { oldOfferAborted: true, guestAborted: false, cancelled: null, currentCode: '1234' },
+        afterHostReset: { guestAborted: false, cancelled: null, offer: null },
+        afterReset: { guestAborted: true, cancelled: 'joining-another-space' }
+    });
+});
+
 test('refuses old-epoch offers and never reuses a cached offer after key rotation', async ({ page }) => {
     const result = await page.evaluate(async () => {
         const c = await import('/__sync-pairing-test__/crypto.js');
@@ -112,6 +236,65 @@ test('refuses old-epoch offers and never reuses a cached offer after key rotatio
         return { oldRejected, currentAccepted: accepted.code === secret.code, cachedRejected, cacheCleared: pairing.offer === null };
     });
     expect(result).toEqual({ oldRejected: true, currentAccepted: true, cachedRejected: true, cacheCleared: true });
+});
+
+test('accepts identical offer snapshots delivered concurrently by HTTP and websocket', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const c = await import('/__sync-pairing-test__/crypto.js');
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const session = { roomId: crypto.randomUUID(), deviceId: crypto.randomUUID(), keyring: await c.createKeyring() };
+        const pairing = new EncryptedPairing({ getSession: () => session });
+        const offerId = crypto.randomUUID();
+        const secret = { code: '1234', ownerDeviceId: session.deviceId, expiresAt: Date.now() + 600000 };
+        const wire = { offerId, ownerDeviceId: session.deviceId, expiresAt: secret.expiresAt, enabled: true, locked: false, revision: 10,
+            secret: await c.encryptPayload(session.keyring, session.roomId, `offer:${offerId}`, secret) };
+        const fromWebsocket = pairing.readOffer(wire);
+        const fromHttp = pairing.readOffer(JSON.parse(JSON.stringify(wire)));
+        const opened = await Promise.all([fromWebsocket, fromHttp]);
+        return { codes: opened.map(offer => offer?.code ?? null), cachedCode: pairing.offer?.code,
+            sameOffer: opened.every(offer => offer?.offerId === offerId) };
+    });
+    expect(result).toEqual({ codes: ['1234', '1234'], cachedCode: '1234', sameOffer: true });
+});
+
+test('keeps pairing closed when old offer decryption or an automatic renewal finishes later', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const c = await import('/__sync-pairing-test__/crypto.js');
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const session = { roomId: crypto.randomUUID(), deviceId: crypto.randomUUID(), keyring: await c.createKeyring() };
+        let release;
+        let announce;
+        const requested = new Promise(resolve => { announce = resolve; });
+        const pairing = new EncryptedPairing({ getSession: () => session, api: async (_path, options) => {
+            const body = JSON.parse(options.body);
+            announce();
+            await new Promise(resolve => { release = resolve; });
+            return { ...body, ownerDeviceId: session.deviceId, enabled: true, locked: true, expiresAt: null, revision: 13 };
+        } });
+        const offerId = crypto.randomUUID();
+        const secret = { code: '1234', ownerDeviceId: session.deviceId, expiresAt: null };
+        const fixedSecret = await c.encryptPayload(session.keyring, session.roomId, 'pairing-code', { code: secret.code });
+        const wire = { offerId, ownerDeviceId: session.deviceId, expiresAt: null, locked: true, enabled: true, revision: 10,
+            secret: await c.encryptPayload(session.keyring, session.roomId, `offer:${offerId}`, secret), fixedSecret };
+        const pending = pairing.readOffer(wire);
+        await pairing.readOffer({ enabled: false, locked: false, fixedSecret: null, revision: 11 });
+        const decrypted = await pending;
+        const afterDecryption = { offer: pairing.offer, enabled: pairing.policy.enabled, revision: pairing.policy.revision };
+        await pairing.readOffer(wire);
+        const afterLateSnapshot = { offer: pairing.offer, enabled: pairing.policy.enabled, revision: pairing.policy.revision };
+        await pairing.readOffer({ enabled: true, locked: true, fixedSecret, revision: 12 });
+        const renewal = pairing.createOffer({ reopen: false });
+        await requested;
+        await pairing.readOffer({ enabled: false, locked: false, fixedSecret: null, revision: 14 });
+        release();
+        await renewal;
+        return { decrypted, afterDecryption, afterLateSnapshot,
+            afterRenewal: { offer: pairing.offer, enabled: pairing.policy.enabled, revision: pairing.policy.revision } };
+    });
+    expect(result).toEqual({ decrypted: null,
+        afterDecryption: { offer: null, enabled: false, revision: 11 },
+        afterLateSnapshot: { offer: null, enabled: false, revision: 11 },
+        afterRenewal: { offer: null, enabled: false, revision: 14 } });
 });
 
 test('an epoch change during PAKE admission cannot release new room keys using the old code', async ({ page }) => {
@@ -307,6 +490,92 @@ test('isolates hosting attempts by trusted source while retaining a bounded aggr
         return { sameSource, independentSources, challenges, expired, code };
     });
     expect(result).toEqual({ sameSource: 20, independentSources: 49, challenges: 49, expired: 1, code: 'pairing_limited' });
+});
+
+test('an old room hitting its pairing budget cannot close invitations after a space switch', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        let session = { deviceId: 'old-device', keyring: { currentKeyId: 'old-key' } };
+        let expired = 0;
+        const pairing = new EncryptedPairing({ getSession: () => session, onExpired: () => { expired++; } });
+        pairing.offer = { offerId: 'old-offer', ownerDeviceId: session.deviceId, keyId: 'old-key', locked: true, controller: new AbortController() };
+        localStorage.setItem('gavin-sync-pair-attempts:host:old-offer', JSON.stringify({
+            ids: Array.from({ length: 600 }, () => crypto.randomUUID()), expiresAt: Date.now() + 600000
+        }));
+        const lockName = 'gavin-sync-pair:host:old-offer';
+        let release, acquired;
+        const ready = new Promise(resolve => { acquired = resolve; });
+        const held = navigator.locks.request(lockName, () => new Promise(resolve => { release = resolve; acquired(); }));
+        await ready;
+        const request = pairing.handle({ type: 'pair-request', offerId: 'old-offer', requestId: crypto.randomUUID(), sourceId: 'source' })
+            .catch(error => error.code);
+        while (!(await navigator.locks.query()).pending.some(lock => lock.name === lockName)) await new Promise(resolve => setTimeout(resolve, 0));
+        pairing.reset();
+        session = { deviceId: 'new-device', keyring: { currentKeyId: 'new-key' } };
+        release();
+        await held;
+        return { code: await request, expired };
+    });
+    expect(result).toEqual({ code: 'pairing_limited', expired: 0 });
+});
+
+test('expires abandoned handshakes while a locked pairing code stays open for days', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const c = await import('/__sync-pairing-test__/crypto.js');
+        const { EncryptedPairing } = await import('/__sync-pairing-test__/pairing.js');
+        const session = { roomId: crypto.randomUUID(), deviceId: crypto.randomUUID(), keyring: await c.createKeyring() };
+        const clock = Date.now;
+        let now = clock();
+        Date.now = () => now;
+        let challenges = 0;
+        let accepted = 0;
+        const pairing = new EncryptedPairing({ getSession: () => session, onExpired: () => { throw new Error('locked offer expired'); }, api: async (path, options) => {
+            const body = JSON.parse(options.body);
+            if (path.endsWith('/pair-code')) return {
+                ...body, enabled: true, revision: now, ownerDeviceId: session.deviceId,
+                expiresAt: body.locked ? null : now + 600000
+            };
+            if (path.endsWith('/pair-accept')) accepted++;
+            else challenges++;
+            return { accepted: true };
+        } });
+        try {
+            await pairing.createOffer();
+            const initialCode = pairing.offer.code;
+            const offerId = pairing.offer.offerId;
+            await pairing.setLocked(true);
+            const request = async () => {
+                const client = await c.startPairingClient('9999', offerId);
+                const requestId = crypto.randomUUID();
+                await pairing.handle({ type: 'pair-request', offerId, requestId,
+                    sourceId: 'a'.repeat(64), startLoginRequest: client.startLoginRequest });
+                return requestId;
+            };
+            const first = await request();
+            now += 5 * 60000;
+            const second = await request();
+            const secondHost = pairing.hosts.get(second);
+            const beforeExpiry = pairing.hosts.size;
+            now += 5 * 60000 + 1;
+            const third = await request();
+            const afterExpiry = {
+                size: pairing.hosts.size, firstRemoved: !pairing.hosts.has(first),
+                recentRetained: pairing.hosts.get(second) === secondHost, latestPresent: pairing.hosts.has(third)
+            };
+            await pairing.handle({ type: 'pair-finish', offerId, requestId: first,
+                finishLoginRequest: 'expired', clientData: 'expired' });
+            now += 3 * 24 * 60 * 60000;
+            const latest = await request();
+            return { beforeExpiry, afterExpiry, afterDays: pairing.hosts.size,
+                latestPresent: pairing.hosts.has(latest), challenges, accepted,
+                locked: pairing.offer.locked, expiresAt: pairing.offer.expiresAt,
+                sameOffer: pairing.offer.offerId === offerId, sameCode: pairing.offer.code === initialCode };
+        } finally { Date.now = clock; pairing.reset(); }
+    });
+    expect(result).toEqual({ beforeExpiry: 2,
+        afterExpiry: { size: 2, firstRemoved: true, recentRetained: true, latestPresent: true },
+        afterDays: 1, latestPresent: true, challenges: 4, accepted: 0,
+        locked: true, expiresAt: null, sameOffer: true, sameCode: true });
 });
 
 test('counts each join once when five spaces are waiting for pairing', async ({ page }) => {

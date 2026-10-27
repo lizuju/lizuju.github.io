@@ -56,26 +56,43 @@ export class EncryptedPairing {
         this.hosts = new Map();
     }
 
-    reset() {
+    resetHost() {
         this.offer?.controller.abort();
         this.offer = null;
+        this.policy = null;
         this.hosts.clear();
+    }
+
+    reset() {
+        this.resetHost();
         if (this.joinController && sessionStorage.getItem(RECOVERY_KEY)) sessionStorage.setItem(CANCEL_KEY, sessionStorage.getItem(RECOVERY_KEY));
         this.joinController?.abort();
     }
 
     async readOffer(pairing, session = this.getSession()) {
-        if (!pairing || !session) { this.offer?.controller.abort(); this.offer = null; this.hosts.clear(); return null; }
+        if (pairing?.revision && this.policy?.revision > pairing.revision) return this.offer;
+        this.policy = pairing;
+        if (!pairing?.offerId || pairing.enabled === false || !session) { this.offer?.controller.abort(); this.offer = null; this.hosts.clear(); return null; }
         const keyId = session.keyring.currentKeyId;
-        if (this.offer && this.offer.keyId !== keyId) this.reset();
+        if (this.offer && this.offer.keyId !== keyId) { this.resetHost(); this.policy = pairing; }
         if (this.offer?.offerId === pairing.offerId && this.offer.wireSecret === pairing.secret
-            && this.offer.ownerDeviceId === pairing.ownerDeviceId && this.offer.expiresAt > Date.now()) return this.offer;
+            && this.offer.ownerDeviceId === pairing.ownerDeviceId && this.offer.revision === pairing.revision
+            && (this.offer.locked || this.offer.expiresAt > Date.now())) return this.offer;
         const keyring = { keys: { [keyId]: session.keyring.keys[keyId] } };
         const secret = await decryptPayload(keyring, session.roomId, `offer:${pairing.offerId}`, pairing.secret);
-        if (session.keyring.currentKeyId !== keyId) return null;
-        if (!/^\d{4}$/.test(secret.code) || secret.ownerDeviceId !== pairing.ownerDeviceId || secret.expiresAt <= Date.now()) { this.offer?.controller.abort(); this.offer = null; this.hosts.clear(); return null; }
-        const offer = { ...pairing, controller: new AbortController(), keyId, wireSecret: pairing.secret, expiresAt: Math.min(pairing.expiresAt, secret.expiresAt), secret, code: secret.code };
+        if (session.keyring.currentKeyId !== keyId || this.policy?.offerId !== pairing.offerId
+            || this.policy.secret !== pairing.secret || this.policy.revision !== pairing.revision) return null;
+        if (!/^\d{4}$/.test(secret.code) || secret.ownerDeviceId !== pairing.ownerDeviceId
+            || (pairing.locked ? secret.expiresAt !== null : secret.expiresAt <= Date.now())) { this.offer?.controller.abort(); this.offer = null; this.hosts.clear(); return null; }
+        const offer = { ...pairing, controller: new AbortController(), keyId, wireSecret: pairing.secret,
+            expiresAt: pairing.locked ? null : Math.min(pairing.expiresAt, secret.expiresAt), secret, code: secret.code };
         if (this.getSession() === session) {
+            if (this.offer?.offerId === offer.offerId && this.offer.keyId === keyId
+                && this.offer.ownerDeviceId === offer.ownerDeviceId && this.offer.secret.serverSetup === secret.serverSetup
+                && this.offer.secret.registrationRecord === secret.registrationRecord) {
+                Object.assign(this.offer, offer, { controller: this.offer.controller });
+                return this.offer;
+            }
             this.offer?.controller.abort();
             this.hosts.clear();
             this.offer = offer;
@@ -83,16 +100,41 @@ export class EncryptedPairing {
         return offer;
     }
 
-    async createOffer() {
+    async createOffer({ reopen = true } = {}) {
         const session = this.getSession();
         const keyring = session.keyring;
+        const policy = this.policy;
         const offerId = crypto.randomUUID();
-        let random;
-        do { random = crypto.getRandomValues(new Uint16Array(1))[0]; } while (random >= 60000);
-        const secret = { ...await createPairingSecret(String(random % 10000).padStart(4, '0'), offerId), ownerDeviceId: session.deviceId };
+        let code;
+        if (policy?.locked && policy.fixedSecret) {
+            ({ code } = await decryptPayload(keyring, session.roomId, 'pairing-code', policy.fixedSecret));
+            if (!/^\d{4}$/.test(code)) throw failure('invalid_ciphertext');
+        } else {
+            let random;
+            do { random = crypto.getRandomValues(new Uint16Array(1))[0]; } while (random >= 60000);
+            code = String(random % 10000).padStart(4, '0');
+        }
+        const secret = { ...await createPairingSecret(code, offerId), ownerDeviceId: session.deviceId };
+        if (policy?.locked) secret.expiresAt = null;
         const encrypted = await encryptPayload(keyring, session.roomId, `offer:${offerId}`, secret);
         const result = await this.api(`/v1/spaces/${session.roomId}/pair-code`, {
-            method: 'POST', headers: { 'X-Sync-Key-Id': keyring.currentKeyId }, body: JSON.stringify({ offerId, secret: encrypted })
+            method: 'POST', headers: { 'X-Sync-Key-Id': keyring.currentKeyId },
+            body: JSON.stringify({ offerId, secret: encrypted, revision: policy?.revision, reopen })
+        }, session);
+        await this.readOffer(result, session);
+        return result;
+    }
+
+    async setLocked(locked) {
+        const session = this.getSession();
+        const offer = this.offer;
+        if (!offer) throw failure('code_expired');
+        const secret = { ...offer.secret, expiresAt: locked ? null : Date.now() + 10 * 60 * 1000 };
+        const result = await this.api(`/v1/spaces/${session.roomId}/pair-code`, {
+            method: 'PATCH', headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId },
+            body: JSON.stringify({ offerId: offer.offerId, revision: offer.revision, locked,
+                secret: await encryptPayload(session.keyring, session.roomId, `offer:${offer.offerId}`, secret),
+                fixedSecret: locked ? await encryptPayload(session.keyring, session.roomId, 'pairing-code', { code: offer.code }) : null })
         }, session);
         await this.readOffer(result, session);
         return result;
@@ -101,7 +143,8 @@ export class EncryptedPairing {
     async handle(event) {
         const session = this.getSession();
         const offer = this.offer;
-        if (!session || !offer || offer.keyId !== session.keyring.currentKeyId || offer.ownerDeviceId !== session.deviceId || event.offerId !== offer.offerId || offer.expiresAt <= Date.now()) return;
+        if (!session || !offer || offer.keyId !== session.keyring.currentKeyId || offer.ownerDeviceId !== session.deviceId || event.offerId !== offer.offerId || (!offer.locked && offer.expiresAt <= Date.now())) return;
+        for (const [id, host] of this.hosts) if (host.expiresAt <= Date.now()) this.hosts.delete(id);
         const path = `/v1/spaces/${session.roomId}`;
         if (event.type === 'pair-request') {
             let host = this.hosts.get(event.requestId);
@@ -115,10 +158,11 @@ export class EncryptedPairing {
                 try {
                     if (!await useAttempts(`host:${offer.offerId}`, event.requestId, 600)) return;
                 } catch (error) {
-                    if (error.code === 'pairing_limited') this.onExpired();
+                    if (error.code === 'pairing_limited' && this.getSession() === session && this.offer === offer) this.onExpired();
                     throw error;
                 }
-                host = { ...await startPairingHost(offer.secret, offer.offerId, event.requestId, event.startLoginRequest), session, offerId: offer.offerId };
+                host = { ...await startPairingHost(offer.secret, offer.offerId, event.requestId, event.startLoginRequest),
+                    session, offerId: offer.offerId, expiresAt: Date.now() + 10 * 60 * 1000 };
                 if (this.getSession() !== session || this.offer !== offer || offer.keyId !== session.keyring.currentKeyId) return;
                 this.hosts.set(event.requestId, host);
             }
@@ -126,8 +170,8 @@ export class EncryptedPairing {
             if (host.sending) return host.sending;
             host.sending = (async () => {
                 const active = () => this.getSession() === session && this.offer === offer && offer.keyId === session.keyring.currentKeyId
-                    && offer.expiresAt > Date.now() && this.hosts.get(event.requestId) === host;
-                const signal = AbortSignal.any([offer.controller.signal, AbortSignal.timeout(Math.max(1, offer.expiresAt - Date.now()))]);
+                    && (offer.locked || offer.expiresAt > Date.now()) && this.hosts.get(event.requestId) === host;
+                const signal = AbortSignal.any([offer.controller.signal, AbortSignal.timeout(offer.locked ? 10 * 60 * 1000 : Math.max(1, offer.expiresAt - Date.now()))]);
                 for (let attempt = 0; attempt < 3 && active(); attempt++) {
                     try {
                         const result = await this.api(`${path}/pair-challenge`, {
@@ -207,7 +251,7 @@ export class EncryptedPairing {
     }
 
     isSaved(session) {
-        const saved = this.getSavedSession();
+        const saved = this.getSavedSession(session);
         return Boolean(session && saved?.roomId === session.roomId && saved?.deviceId === session.deviceId && saved?.token === session.token);
     }
 

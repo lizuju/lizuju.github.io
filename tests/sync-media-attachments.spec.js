@@ -53,7 +53,7 @@ test.beforeEach(async ({ page, isMobile }) => {
             messages: attachments.map((attachment, index) => message(index + 1, '', deviceId, attachment.metadata))
         }));
     }));
-    await page.goto(`${site.origin}/portfolio/${isMobile ? 'chat/' : ''}`);
+    await page.goto(`${site.origin}/${isMobile ? 'chat/' : 'portfolio/'}`);
     if (!isMobile) {
         await page.locator('[data-window-action="minimize"]').click();
         await page.locator('.desktop-shortcut[data-open-sync-space]').click();
