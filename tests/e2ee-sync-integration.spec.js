@@ -886,6 +886,7 @@ test('pairs the standalone chat with the desktop, restores its session and trans
     const chatScripts = [];
     const chatWorkerUrls = [];
     await chat.addInitScript(() => {
+        Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: undefined });
         const createUrl = URL.createObjectURL.bind(URL);
         URL.createObjectURL = blob => {
             if (blob.type === 'audio/wav') window.recordedVoice = blob;

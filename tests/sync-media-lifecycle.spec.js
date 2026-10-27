@@ -85,6 +85,8 @@ test.afterEach(async () => {
 });
 
 test('loads nearby encrypted GIFs with bounded concurrency, retries a failed GIF and releases them on close', async ({ page }) => {
+    const lastGif = page.locator('.sync-message').filter({ has: page.locator('.sync-attachment-name', { hasText: 'reaction-20.gif' }) });
+    await lastGif.locator('.sync-message-image').scrollIntoViewIfNeeded();
     const failed = page.locator('.sync-message-image[data-state="failed"]');
     await expect(failed).toBeVisible();
     expect(gets.get(20)).toBe(3);
@@ -92,7 +94,6 @@ test('loads nearby encrypted GIFs with bounded concurrency, retries a failed GIF
     expect(maxConcurrent).toBeLessThanOrEqual(3);
     expect(await page.locator('.sync-message-image img[src]').count()).toBeLessThan(10);
     await failed.click();
-    const lastGif = page.locator('.sync-message').filter({ has: page.locator('.sync-attachment-name', { hasText: 'reaction-20.gif' }) });
     await expect(lastGif.locator('.sync-message-image img')).toHaveJSProperty('naturalWidth', 1);
     expect(gets.get(20)).toBe(4);
     await page.locator('[data-sync-feed]').evaluate(feed => feed.scrollBy({ top: -200, behavior: 'instant' }));

@@ -235,13 +235,13 @@ test('records a real WAV for local review and sends only encrypted bytes and voi
     await expect(page.locator('.sync-voice-message')).toHaveCount(1);
 });
 
-test('encrypts a native Opus recording and plays the decrypted voice message', async ({ page }) => {
+for (const forceWav of [false, true]) test(`encrypts ${forceWav ? 'a native WAV recording without MediaRecorder' : 'the supported native voice recording'} and plays the decrypted voice message`, async ({ page }) => {
     await openChat(page);
-    await page.evaluate(() => {
+    const compressed = await page.evaluate(forceWav => {
         const { Context, Recorder, Node } = window.nativeVoiceAPIs;
         window.AudioContext = Context;
         window.AudioWorkletNode = Node;
-        window.MediaRecorder = Recorder;
+        window.MediaRecorder = forceWav ? undefined : Recorder;
         navigator.mediaDevices.getUserMedia = async () => {
             const context = window.syntheticMicrophone = new Context();
             await context.resume();
@@ -252,7 +252,8 @@ test('encrypts a native Opus recording and plays the decrypted voice message', a
             oscillator.start();
             return destination.stream;
         };
-    });
+        return window.MediaRecorder?.isTypeSupported('audio/webm;codecs=opus') === true;
+    }, forceWav);
     try {
         await startRecording(page);
         await page.waitForTimeout(600);
@@ -264,12 +265,21 @@ test('encrypts a native Opus recording and plays the decrypted voice message', a
         await expect(page.locator('.sync-message.is-own[data-state="sent"]')).toHaveCount(1);
         const upload = uploads[0];
         const clear = payload(upload.body);
-        expect(clear.attachment).toMatchObject({ type: 'audio/webm', kind: 'voice', size: recorded.length });
+        const type = compressed ? 'audio/webm' : 'audio/wav';
+        expect(clear.attachment).toMatchObject({ type, kind: 'voice', size: recorded.length });
         expect(clear.attachment.durationMs).toBeGreaterThan(300);
         expect(clear.attachment.durationMs).toBeLessThan(2000);
-        expect(recorded.length).toBeLessThan(clear.attachment.durationMs * 16);
+        if (compressed) {
+            expect(recorded.length).toBeLessThan(clear.attachment.durationMs * 16);
+        } else {
+            expect(recorded.toString('ascii', 0, 4)).toBe('RIFF');
+            expect(recorded.toString('ascii', 8, 16)).toBe('WAVEfmt ');
+            expect([recorded.readUInt16LE(20), recorded.readUInt16LE(22), recorded.readUInt32LE(24), recorded.readUInt16LE(34)]).toEqual([1, 1, 16000, 16]);
+            expect(recorded.length).toBe(44 + recorded.readUInt32LE(40));
+            expect(Math.round((recorded.length - 44) / 32)).toBe(clear.attachment.durationMs);
+        }
         expect(upload.body.type).toBe('application/octet-stream');
-        expect(JSON.stringify(upload.body)).not.toContain('audio/webm');
+        expect(JSON.stringify(upload.body)).not.toContain(type);
         const nonce = Buffer.concat([Buffer.from(clear.attachment.noncePrefix, 'base64url'), Buffer.alloc(4)]);
         expect(openCipher(Buffer.from(clear.attachment.key, 'base64url'), nonce, `gavin-sync-file-v1:${clear.attachment.fileId}:0`, upload.bytes)).toEqual(recorded);
         attachments[0] = { metadata: clear.attachment, bytes: upload.bytes };

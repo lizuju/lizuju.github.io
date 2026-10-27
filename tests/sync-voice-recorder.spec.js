@@ -357,14 +357,15 @@ test('the compressed worklet sends mono audio to the encoder without buffering P
     }
 });
 
-test('built chat records compressed voice through the native AudioWorklet under its real CSP', async ({ page }) => {
+for (const forceWav of [false, true]) test(`built chat records ${forceWav ? 'WAV without MediaRecorder' : 'the supported native voice format'} through the AudioWorklet under its real CSP`, async ({ page }) => {
     const processors = [];
     const site = await startSite('https://sync.test', async pathname => {
         if (!pathname.endsWith('.js')) return;
         const source = await readFile(path.join(__dirname, '../docs', pathname), 'utf8').catch(() => '');
         if (/registerProcessor\(["']gavin-sync-voice["']/.test(source)) processors.push(pathname);
     });
-    await page.addInitScript(() => {
+    await page.addInitScript(forceWav => {
+        if (forceWav) window.MediaRecorder = undefined;
         const Context = window.AudioContext || window.webkitAudioContext;
         const createObjectURL = URL.createObjectURL.bind(URL);
         window.voiceBlobs = new Map();
@@ -386,7 +387,7 @@ test('built chat records compressed voice through the native AudioWorklet under 
                 return ready.then(() => destination.stream);
             }
         } });
-    });
+    }, forceWav);
     await page.route('https://sync.test/**', route => {
         const pathname = new URL(route.request().url()).pathname;
         const body = pathname.endsWith('/key-grants') ? { grants: [], hasMore: false, keyId }
@@ -402,6 +403,7 @@ test('built chat records compressed voice through the native AudioWorklet under 
         await authorize(page, `${site.origin}/chat/`);
         await page.reload();
         await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+        const compressed = await page.evaluate(() => window.MediaRecorder?.isTypeSupported('audio/webm;codecs=opus') === true);
         await page.locator('[data-sync-voice-record]').click();
         await expect(page.locator('[data-sync-voice-stop]')).toBeEnabled();
         await page.waitForTimeout(450);
@@ -416,12 +418,21 @@ test('built chat records compressed voice through the native AudioWorklet under 
             await context.close();
             return {
                 type: blob.type, size: blob.size, channels: decoded.numberOfChannels,
+                header: Array.from(new Uint8Array(bytes.slice(0, 44))),
                 duration: decoded.duration, nonzero: decoded.getChannelData(0).some(sample => Math.abs(sample) > 0.001)
             };
         });
-        expect(result.type).toBe('audio/webm');
+        expect(result.type).toBe(compressed ? 'audio/webm' : 'audio/wav');
         expect(result.channels).toBe(1);
-        expect(result.size).toBeLessThan(result.duration * 16000);
+        if (compressed) {
+            expect(result.size).toBeLessThan(result.duration * 16000);
+        } else {
+            const header = Buffer.from(result.header);
+            expect(header.toString('ascii', 0, 4)).toBe('RIFF');
+            expect(header.toString('ascii', 8, 16)).toBe('WAVEfmt ');
+            expect([header.readUInt16LE(20), header.readUInt16LE(22), header.readUInt32LE(24), header.readUInt16LE(34)]).toEqual([1, 1, 16000, 16]);
+            expect(result.size).toBe(44 + header.readUInt32LE(40));
+        }
         expect(result.duration).toBeGreaterThan(0.25);
         expect(result.duration).toBeLessThan(2);
         expect(result.nonzero).toBe(true);
