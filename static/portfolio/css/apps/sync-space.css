@@ -116,7 +116,20 @@
 }
 
 .sync-spaces .sync-spaces-toggle {
+    position: relative;
     margin: 6px;
+}
+
+.sync-spaces-toggle.has-unread::after {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 7px;
+    height: 7px;
+    border: 1px solid #2e6639;
+    border-radius: 50%;
+    background: #519b55;
+    content: "";
 }
 
 .sync-spaces-panel {
@@ -144,8 +157,12 @@
 }
 
 .sync-space-list [data-sync-space-id] {
+    display: flex;
     width: 100%;
     min-height: 32px;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
     padding: 6px 8px;
     overflow: hidden;
     border: 1px solid transparent;
@@ -154,9 +171,27 @@
     background: transparent;
     font: inherit;
     text-align: left;
-    text-overflow: ellipsis;
     white-space: nowrap;
     cursor: pointer;
+}
+
+.sync-space-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sync-space-unread {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 7px;
+    border: 1px solid #2e6639;
+    border-radius: 50%;
+    background: #519b55;
+}
+
+.sync-space-unread[hidden] {
+    display: none;
 }
 
 .sync-space-list [data-sync-space-id]:hover {
