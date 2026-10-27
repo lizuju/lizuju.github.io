@@ -34,6 +34,7 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
     let margin = 30;
     let step = 30;
     let priorRenderGame;
+    let resizeFrame = null;
 
     const player = () => current && (current.hostDeviceId === getDeviceId() ? 1
         : current.guestDeviceId === getDeviceId() ? 2 : 0);
@@ -126,6 +127,10 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
             canvas.height = Math.round(size * ratio);
         }
         draw();
+    };
+    const scheduleResize = () => {
+        if (resizeFrame !== null) return;
+        resizeFrame = requestAnimationFrame(() => { resizeFrame = null; resize(); });
     };
 
     const statusText = () => {
@@ -272,8 +277,8 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
         render();
     };
     window.addEventListener('portfolio-language-change', applyLanguage);
-    window.addEventListener('resize', resize);
-    new ResizeObserver(resize).observe(frame);
+    window.addEventListener('resize', scheduleResize);
+    new ResizeObserver(scheduleResize).observe(frame);
     manager.onSession({ restore: () => { if (!current) close(); } });
 
     const renderGame = () => {

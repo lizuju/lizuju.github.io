@@ -283,6 +283,7 @@ test('keeps an encrypted invitation and one opponent through concurrent joins, r
                 });
                 await expect(guest.locator('[data-sync-status]')).not.toHaveAttribute('data-state', 'online');
                 await contexts[guestIndex].setOffline(false);
+                await awaitOnline(guest);
                 await guest.reload();
                 await awaitOnline(guest);
                 if (!await guest.locator('[data-sync-gomoku-window]').isVisible()) {
