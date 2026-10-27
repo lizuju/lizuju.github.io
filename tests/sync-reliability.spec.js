@@ -307,7 +307,7 @@ test('reports in-flight chunk progress and cancels the active XHR without retryi
         const send = XMLHttpRequest.prototype.send;
         XMLHttpRequest.prototype.send = function (body) {
             send.call(this, body);
-            if (body instanceof ArrayBuffer) setTimeout(() => this.upload.dispatchEvent(new ProgressEvent('progress', { loaded: 512, total: body.byteLength, lengthComputable: true })), 200);
+            if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) setTimeout(() => this.upload.dispatchEvent(new ProgressEvent('progress', { loaded: 512, total: body.byteLength, lengthComputable: true })), 200);
         };
     });
     let chunkRequests = 0;
