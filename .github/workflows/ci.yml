@@ -80,6 +80,9 @@ jobs:
   browser-tests:
     name: browser-tests (${{ matrix.project }}, ${{ matrix.shard }})
     needs: build
+    # Pull requests run the browser suite on their merge result; main must be up to date before
+    # merging, so pushes to main only rebuild and deploy what those checks already verified.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
@@ -91,8 +94,10 @@ jobs:
         include:
           - { project: chromium-desktop, browser: chromium, shard: '1/2', artifact: chromium-desktop-1 }
           - { project: chromium-desktop, browser: chromium, shard: '2/2', artifact: chromium-desktop-2 }
-          - { project: webkit-desktop, browser: webkit, shard: '1/2', artifact: webkit-desktop-1 }
-          - { project: webkit-desktop, browser: webkit, shard: '2/2', artifact: webkit-desktop-2 }
+          - { project: webkit-desktop, browser: webkit, shard: '1/4', artifact: webkit-desktop-1 }
+          - { project: webkit-desktop, browser: webkit, shard: '2/4', artifact: webkit-desktop-2 }
+          - { project: webkit-desktop, browser: webkit, shard: '3/4', artifact: webkit-desktop-3 }
+          - { project: webkit-desktop, browser: webkit, shard: '4/4', artifact: webkit-desktop-4 }
           - { project: chromium-mobile, browser: chromium, shard: '1/1', artifact: chromium-mobile }
           - { project: webkit-mobile, browser: webkit, shard: '1/1', artifact: webkit-mobile }
     steps:
@@ -138,7 +143,7 @@ jobs:
 
   deploy:
     name: Deploy verified site
-    needs: [build, sync-backend, browser-tests]
+    needs: [build, sync-backend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
