@@ -2131,10 +2131,15 @@ import { createGomokuWindow } from './sync-gomoku.js';
             toggle.setAttribute('aria-label', translate(collapsed ? 'syncToolsExpand' : 'syncToolsCollapse'));
             toggle.title = toggle.getAttribute('aria-label');
         };
+        // Narrow windows show the tools as an overlay, which always starts closed and never changes the saved wide layout.
+        const isToolsOverlay = () => app.clientWidth <= 640;
+        let toolsOverlay = isToolsOverlay();
         find('tools-toggle').addEventListener('click', () => {
             const collapsed = app.classList.toggle('is-tools-collapsed');
-            toolsPreference = String(collapsed);
-            try { localStorage.setItem('portfolio-sync-tools-collapsed', toolsPreference); } catch { /* Keep the current layout. */ }
+            if (!isToolsOverlay()) {
+                toolsPreference = String(collapsed);
+                try { localStorage.setItem('portfolio-sync-tools-collapsed', toolsPreference); } catch { /* Keep the current layout. */ }
+            }
             renderToolsToggle();
         });
         // In narrow windows the tools overlay the conversation, so an action closes them like switching spaces does.
@@ -2145,12 +2150,15 @@ import { createGomokuWindow } from './sync-gomoku.js';
         });
         new ResizeObserver(() => {
             if (spacesPreference === null) app.classList.toggle('is-spaces-collapsed', app.clientWidth <= 640);
-            if (toolsPreference === null) app.classList.toggle('is-tools-collapsed', app.clientWidth <= 640);
+            if (isToolsOverlay() !== toolsOverlay) {
+                toolsOverlay = !toolsOverlay;
+                app.classList.toggle('is-tools-collapsed', toolsOverlay || toolsPreference === 'true');
+            }
             renderSpaces();
             renderToolsToggle();
         }).observe(app);
         app.classList.toggle('is-spaces-collapsed', spacesPreference === 'true' || spacesPreference === null && app.clientWidth <= 640);
-        app.classList.toggle('is-tools-collapsed', toolsPreference === 'true' || toolsPreference === null && app.clientWidth <= 640);
+        app.classList.toggle('is-tools-collapsed', toolsOverlay || toolsPreference === 'true');
         renderToolsToggle();
         const copyText = async (text) => {
             const session = credentials;
