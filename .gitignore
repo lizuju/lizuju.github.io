@@ -26,3 +26,5 @@ output/
 
 # Production build output (built by CI, not committed)
 docs/
+# Gomoku and satellite bundles, copied into docs/ by the production build
+build/

@@ -74,7 +74,7 @@ node --check static/portfolio/js/gomoku-game.js
 
 `npm run build` first runs `npm run images:check`, which fails if any image under `static/` still carries EXIF, GPS, XMP, IPTC, or comment metadata. Run `npm run images:strip` after adding photos; it removes metadata losslessly and keeps ICC color profiles.
 
-Webpack bundles the desktop modules and styles into `docs/portfolio/js/main.js` and `docs/portfolio/css/main.css`; edit their source files under `static/portfolio/`. `docs/` is ignored by Git: run `npm run build` before previewing or running the browser tests. Run `npm ci --prefix cloudflare/sync` once before the backend tests.
+Webpack bundles the desktop modules and styles into `docs/portfolio/js/main.js` and `docs/portfolio/css/main.css`; edit their source files under `static/portfolio/`. `docs/` and the Gomoku and satellite bundles in `build/` are ignored by Git: run `npm run build` before previewing or running the browser tests. Run `npm ci --prefix cloudflare/sync` once before the backend tests.
 
 ## Release
 

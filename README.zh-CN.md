@@ -74,7 +74,7 @@ node --check static/portfolio/js/gomoku-game.js
 
 `npm run build` 会先执行 `npm run images:check`，如果 `static/` 下任何图片仍带有 EXIF、GPS、XMP、IPTC 或注释元数据，构建会失败。新增照片后运行 `npm run images:strip`，它会无损移除元数据，并保留 ICC 色彩配置。
 
-Webpack 将桌面模块和样式打包为 `docs/portfolio/js/main.js` 和 `docs/portfolio/css/main.css`；请修改 `static/portfolio/` 下对应的源码。`docs/` 不纳入 Git，预览或运行浏览器测试前先执行 `npm run build`。首次运行后端测试前先执行 `npm ci --prefix cloudflare/sync`。
+Webpack 将桌面模块和样式打包为 `docs/portfolio/js/main.js` 和 `docs/portfolio/css/main.css`；请修改 `static/portfolio/` 下对应的源码。`docs/` 和 `build/` 下的五子棋、卫星子包都不纳入 Git，预览或运行浏览器测试前先执行 `npm run build`。首次运行后端测试前先执行 `npm ci --prefix cloudflare/sync`。
 
 ## 发布
 

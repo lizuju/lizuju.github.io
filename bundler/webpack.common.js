@@ -61,6 +61,8 @@ module.exports = {
                     from: path.resolve(rootDirectory, 'static/portfolio', file),
                     to: `chat/${file}`,
                 })),
+                // Gomoku and satellite bundles built by npm run build:gomoku / build:satellite.
+                { from: path.resolve(rootDirectory, 'build') },
                 {
                 from: path.resolve(rootDirectory, 'static'),
                 globOptions: {

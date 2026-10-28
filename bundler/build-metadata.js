@@ -14,12 +14,14 @@ function createBuildMetadata(rootDirectory) {
     const staticDirectory = path.join(rootDirectory, 'static');
     const hash = crypto.createHash('sha256');
 
+    const generatedDirectory = path.join(rootDirectory, 'build');
     collectFiles(staticDirectory)
         .concat(path.join(rootDirectory, 'src/sync-windows.html'))
+        .concat(fs.existsSync(generatedDirectory) ? collectFiles(generatedDirectory) : [])
         .filter((file) => !file.endsWith('sitemap.xml'))
         .sort()
         .forEach((file) => {
-            hash.update(path.relative(staticDirectory, file));
+            hash.update(path.relative(file.startsWith(generatedDirectory) ? generatedDirectory : staticDirectory, file));
             hash.update(fs.readFileSync(file));
         });
 
