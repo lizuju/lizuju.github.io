@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { API_VERSION } from '../src/api-version.js';
 
 export async function verifyRelease({ expectedRevision, apiBase, siteBase = 'https://lizuju.github.io/', docsDirectory = fileURLToPath(new URL('../../../docs/', import.meta.url)), backendOnly = false, fetcher = fetch }) {
   assert.match(expectedRevision || '', /^[0-9a-f]{40}$/, 'Provide the full Git commit SHA expected in production.');
@@ -16,11 +17,14 @@ export async function verifyRelease({ expectedRevision, apiBase, siteBase = 'htt
   const health = await (await get(`${apiBase.replace(/\/$/, '')}/health`)).json();
   assert.equal(health.ok, true, 'Worker is unhealthy.');
   assert.equal(health.service, 'portfolio-sync', 'The API address points to another service.');
-  assert.equal(health.apiVersion, 1, 'Unexpected sync API version.');
+  assert.equal(health.apiVersion, API_VERSION, 'Unexpected sync API version.');
   assert.equal(health.encryptionVersion, 1, 'End-to-end encryption is not active on the backend.');
   assert.equal(health.revision, expectedRevision, 'Production Worker does not match the expected Git commit.');
   assert.ok(typeof health.versionId === 'string' && health.versionId.length, 'Cloudflare deployment version is missing.');
   if (!backendOnly) {
+    await access(docsDirectory).catch(() => {
+      throw new Error(`No production build at ${docsDirectory}. Run npm run build from the repository root first.`);
+    });
     for (const path of ['portfolio/index.html', 'portfolio/sync-config.json', 'portfolio/js/main.js', 'portfolio/css/main.css', 'portfolio/sync-e2ee-worker.js',
       'chat/index.html', 'chat/sync-config.json', 'chat/sync-e2ee-worker.js', 'portfolio/js/chat.js', 'portfolio/css/chat.css']) {
       const local = await readFile(resolve(docsDirectory, path));

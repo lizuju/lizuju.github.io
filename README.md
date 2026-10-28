@@ -26,14 +26,19 @@ src/                       Three.js shell and desktop UI source
 static/portfolio/          Responsive bilingual portfolio source
 static/portfolio/js/content.js  Bilingual resume and portfolio data
 static/portfolio/js/main.js     Desktop bootstrap and bundled JS/CSS entry
-static/portfolio/js/desktop/    Shared window manager, taskbar and scene bridge
-static/portfolio/js/apps/       Portfolio, project folder, mail and satellite windows
+static/portfolio/js/desktop/    Shared window manager, taskbar, Start menu and scene bridge
+static/portfolio/js/apps/       Portfolio, project folder, mail, satellite, Gomoku, control panel
+                                and the end-to-end encrypted sync chat (sync-*.js)
 static/portfolio/css/           Shared styles, per-app styles, responsive and print rules
-static/portfolio/js/gomoku-game.js  Gomoku application behavior
+static/portfolio/sync-config.json  Sync Worker address and the sync API version the frontend needs
+static/portfolio/sync-e2ee-worker.js  Service Worker that streams and decrypts attachments
+static/chat/               Standalone /chat/ page for the sync chat
 static/                    3D models, textures, audio, and public files
+cloudflare/sync/           Cloudflare Worker and Durable Objects backend for the sync chat
 bundler/                   Webpack development and production configuration
-docs/                      Generated GitHub Pages output
-tests/smoke.spec.js        Browser smoke tests
+scripts/                   Development server and image metadata tools
+tests/                     Playwright browser tests (Chromium and WebKit, desktop and mobile)
+docs/                      Production build output (generated, not committed)
 ```
 
 ## Local Development
@@ -61,7 +66,7 @@ Then open `http://127.0.0.1:3090/`. The direct portfolio is also available at `h
 ```bash
 npm run build
 npm run test:smoke
-npm run verify:docs
+npm test --prefix cloudflare/sync
 node --check static/portfolio/js/main.js
 node --check static/portfolio/js/content.js
 node --check static/portfolio/js/gomoku-game.js
@@ -69,7 +74,13 @@ node --check static/portfolio/js/gomoku-game.js
 
 `npm run build` first runs `npm run images:check`, which fails if any image under `static/` still carries EXIF, GPS, XMP, IPTC, or comment metadata. Run `npm run images:strip` after adding photos; it removes metadata losslessly and keeps ICC color profiles.
 
-Webpack bundles the desktop modules and styles into `docs/portfolio/js/main.js` and `docs/portfolio/css/main.css`; edit their source files under `static/portfolio/`.
+Webpack bundles the desktop modules and styles into `docs/portfolio/js/main.js` and `docs/portfolio/css/main.css`; edit their source files under `static/portfolio/`. `docs/` is ignored by Git: run `npm run build` before previewing or running the browser tests. Run `npm ci --prefix cloudflare/sync` once before the backend tests.
+
+## Release
+
+Pushing to `main` runs the backend tests, the production build and the browser tests on GitHub Actions, then publishes the build to GitHub Pages. The sync Worker is deployed by hand with `npm run deploy` in `cloudflare/sync/` (see [`cloudflare/sync/README.md`](cloudflare/sync/README.md)).
+
+When a frontend change needs a new sync protocol, raise `apiVersion` in `static/portfolio/sync-config.json` and `API_VERSION` in `cloudflare/sync/src/api-version.js` together, deploy the Worker, then push to `main`. Before publishing Pages, CI runs `npm run check:sync-api`, which reads the live `/health` and stops the release if the Worker serves an older API than the frontend needs. After Pages is published, `npm run build && npm run verify:release -- <full commit SHA>` confirms that the live site and Worker match that commit.
 
 ## Attribution
 

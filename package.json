@@ -14,8 +14,8 @@
         "dev": "npm run build:gomoku && npm run build:satellite && node scripts/dev-server.cjs",
         "preview": "python3 -m http.server 3090 --protocol HTTP/1.1 --directory docs",
         "test:smoke": "playwright test",
-        "verify:docs": "node scripts/verify-docs.cjs",
         "verify:release": "node cloudflare/sync/scripts/verify-release.mjs",
+        "check:sync-api": "node cloudflare/sync/scripts/check-api-version.mjs",
         "images:check": "node scripts/strip-image-metadata.cjs --check static",
         "images:strip": "node scripts/strip-image-metadata.cjs static"
     },

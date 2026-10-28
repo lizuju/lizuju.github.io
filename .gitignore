@@ -23,3 +23,6 @@ output/
 # Skills with custom endpoints (have their own .git)
 # Add skill names here when they use custom remotes
 # Example: /custom-skill/
+
+# Production build output (built by CI, not committed)
+docs/
