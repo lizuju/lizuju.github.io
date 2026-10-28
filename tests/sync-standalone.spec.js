@@ -95,11 +95,12 @@ test('opens the standalone chat at every viewport with only its own assets and t
     await expect(page.locator('[data-sync-gomoku-window]')).toHaveClass(/is-closed/);
     await expect(page.locator('[data-app-window], [data-project-window], [data-robot-pet]')).toHaveCount(0);
     await expect(page.locator('[data-start-menu]')).toBeHidden();
-    await expect(chat.locator(':scope > .window-titlebar > .window-controls')).toBeHidden();
+    await expect(chat.locator(':scope > .window-titlebar')).toBeHidden();
     await expect(page.locator('[data-sync-task]')).toBeDisabled();
     const geometry = await chat.boundingBox();
     expect(geometry.x).toBeGreaterThanOrEqual(0);
     expect(geometry.y).toBeGreaterThanOrEqual(0);
+    expect((await chat.locator(':scope > .sync-content').boundingBox()).y - geometry.y).toBeLessThan(6);
     expect(geometry.width).toBeGreaterThanOrEqual(page.viewportSize().width - 12);
     expect(geometry.y + geometry.height).toBeLessThanOrEqual(page.viewportSize().height);
     await expect(page.locator('[data-sync-create]')).toHaveText('创建空间');
@@ -185,5 +186,6 @@ test('keeps the existing portfolio and immersive iframe chat inside their curren
         expect(path === '/shell' ? await page.locator('#computer-screen').getAttribute('src') : new URL(page.url()).pathname).toBe('/portfolio/');
         await expect(frame.locator('body')).not.toHaveClass(/standalone-sync/);
         await expect(frame.locator('[data-sync-window] > .window-titlebar > .window-controls')).toBeVisible();
+        await expect(frame.locator('[data-sync-window] > .window-titlebar')).toContainText('联络站');
     }
 });
