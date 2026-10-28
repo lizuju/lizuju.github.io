@@ -5,7 +5,7 @@ module.exports = {
     devtool: false,
     entry: require.resolve('@algorithm.ts/gomoku'),
     output: {
-        path: path.resolve(__dirname, '../static/portfolio/js'),
+        path: path.resolve(__dirname, '../build/portfolio/js'),
         filename: 'gomoku-engine.js',
         library: {
             name: 'GomokuEngine',

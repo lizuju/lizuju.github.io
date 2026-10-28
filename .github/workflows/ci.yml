@@ -30,6 +30,8 @@ jobs:
           cache-dependency-path: cloudflare/sync/package-lock.json
       - name: Install sync dependencies
         run: npm ci
+      - name: Audit sync dependencies
+        run: npm audit --audit-level=moderate
       - name: Install client encryption dependencies
         run: npm ci --prefix ../..
       - name: Validate sync worker

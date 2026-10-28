@@ -8,9 +8,9 @@ module.exports = {
         exportsFields: []
     },
     output: {
-        path: path.resolve(__dirname, '../static/portfolio/js'),
+        path: path.resolve(__dirname, '../build/portfolio/js'),
         filename: 'satellite-tracker.js',
         chunkFilename: '[name].[contenthash].js',
-        clean: false,
+        clean: { keep: /^gomoku-engine\.js$/ },
     },
 };
