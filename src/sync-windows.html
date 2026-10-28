@@ -55,145 +55,157 @@
                         data-i18n="syncBackSpace" hidden>返回当前空间</button>
                 </div>
                 <div class="sync-room" data-sync-room hidden>
-                    <div class="sync-room-toolbar">
-                        <div class="sync-space-heading">
-                            <strong class="sync-space-title" data-sync-space-title></strong>
-                            <button class="sync-button sync-space-rename" type="button" data-sync-space-rename
-                                data-i18n-aria="syncSpaceRename" aria-label="修改空间名称" title="修改空间名称">
-                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
-                                    <path d="m15 4 5 5-11 11H4v-5L15 4zM13 6l5 5" />
-                                </svg>
-                            </button>
-                        </div>
-                        <div class="sync-room-status">
-                            <p class="sync-connection" data-sync-status data-state="connecting" role="status"
-                                data-i18n="syncConnecting">正在连接…</p>
-                            <p class="sync-hint" data-i18n="syncEncrypted">消息与附件已端到端加密</p>
-                        </div>
-                        <div class="sync-room-actions">
-                            <a class="sync-button sync-open-chat" href="/chat/" target="_blank" rel="noopener">
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
-                                    <path d="M14 3h7v7M21 3l-11 11M10 5H4v15h15v-6" />
-                                </svg>
-                                <span class="visually-hidden" data-i18n="syncOpenChat">在新标签页打开联络站</span>
-                            </a>
-                            <button class="sync-button sync-sound-toggle" type="button" data-sync-sound
-                                aria-pressed="true" aria-label="关闭新消息提示音" title="关闭新消息提示音">
-                                <img data-sync-sound-icon alt="">
-                            </button>
-                            <button class="sync-button" type="button" data-sync-pair
-                                data-i18n="syncPair">生成配对码</button>
-                            <button class="sync-button" type="button" data-sync-devices
-                                data-i18n="syncDevices">设备管理</button>
-                            <button class="sync-button" type="button" data-sync-clear
-                                data-i18n="syncClear">清空历史</button>
-                            <button class="sync-button" type="button" data-sync-leave
-                                data-i18n="syncLeave">离开空间</button>
-                        </div>
-                    </div>
-                    <details class="sync-pairing" data-sync-pairing hidden>
-                        <summary class="sync-pairing-toggle" aria-labelledby="sync-pairing-title">
-                            <span id="sync-pairing-title" data-i18n="syncPairingTitle">配对码</span>
-                            <span data-sync-pair-expiry></span>
-                        </summary>
-                        <div class="sync-pairing-heading">
-                            <span data-i18n="syncPairCodeLabel">在另一台设备输入</span>
-                            <code data-sync-pair-code></code>
-                        </div>
-                        <p class="sync-hint" data-i18n="syncPairOnline" data-sync-pair-hint>配对码 10 分钟内有效，请保持原设备在线，仅分享给信任的人。</p>
-                        <div class="sync-pairing-footer">
-                            <button class="sync-button sync-pair-lock" type="button" data-sync-pair-lock
-                                aria-pressed="false" aria-label="锁定配对码" title="锁定配对码">
-                                <svg data-sync-pair-unlocked-icon viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
-                                    <rect x="4" y="10" width="16" height="11" rx="1" />
-                                    <path d="M8 10V7a4 4 0 0 1 8 0M12 14v3" />
-                                </svg>
-                                <svg data-sync-pair-locked-icon viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false" hidden>
-                                    <rect x="4" y="10" width="16" height="11" rx="1" />
-                                    <path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3" />
-                                </svg>
-                            </button>
-                            <button class="sync-button" type="button" data-sync-pair-close
-                                data-i18n="syncPairClose">关闭配对</button>
-                            <button class="sync-button" type="button" data-sync-copy-code
-                                data-i18n="syncCopyCode">复制配对码</button>
-                        </div>
-                    </details>
-                    <div class="sync-message-toolbar">
-                        <label class="visually-hidden" for="sync-search" data-i18n="syncSearchPlaceholder">搜索消息或文件名</label>
-                        <input id="sync-search" type="search" placeholder="搜索消息或文件名"
-                            data-i18n-placeholder="syncSearchPlaceholder" data-sync-search>
-                    </div>
-                    <div class="sync-message-area">
-                        <div class="sync-message-feed" data-sync-feed>
-                            <button class="sync-button sync-history-more" type="button" data-sync-history-more
-                                data-i18n="syncLoadOlder" hidden>加载更早消息</button>
-                            <p class="sync-empty" data-sync-empty data-i18n="syncEmpty">这里还没有消息，发送一条试试。</p>
-                            <p class="sync-empty" data-sync-no-results data-i18n="syncNoResults" hidden>没有找到匹配的消息。</p>
-                            <h2 class="visually-hidden" id="sync-messages-title" data-i18n="syncMessagesLabel">同步消息</h2>
-                            <ol class="sync-messages" data-sync-messages role="log" aria-live="polite"
-                                aria-relevant="additions" aria-labelledby="sync-messages-title"></ol>
-                        </div>
-                        <button class="sync-button sync-latest" type="button" data-sync-latest hidden
-                            data-i18n="syncLatest">回到最新消息</button>
-                    </div>
-                    <form class="sync-compose" data-sync-send-form>
-                        <label class="visually-hidden" for="sync-file" data-i18n="syncAttach">选择文件/图片</label>
-                        <input id="sync-file" type="file" aria-describedby="sync-file-limit" data-sync-file-input hidden>
-                        <div class="sync-attach-controls">
-                            <button class="sync-button" type="button" aria-describedby="sync-file-limit"
-                                data-sync-attach data-i18n="syncAttach">选择文件/图片</button>
-                            <button class="sync-button" type="button" data-sync-voice-record data-i18n="syncVoiceRecord">录音</button>
-                            <button class="sync-button" type="button" data-sync-stickers data-i18n="syncStickers"
-                                aria-haspopup="dialog" aria-controls="sync-sticker-dialog">表情</button>
-                            <button class="sync-button" type="button" data-sync-game-share data-i18n="syncGameShare">约战五子棋</button>
-                            <p class="sync-hint" id="sync-file-limit" data-i18n="syncFileLimit">可选择、拖入文件或粘贴截图，最大 2GB。</p>
-                        </div>
-                        <div class="sync-voice-recording" data-sync-voice-recording hidden>
-                            <span data-sync-voice-status role="status" aria-live="polite"></span>
-                            <span data-sync-voice-time>00:00 / 01:00</span>
-                            <button class="sync-button" type="button" data-sync-voice-stop data-i18n="syncVoiceStop">停止录音</button>
-                            <button class="sync-button" type="button" data-sync-voice-cancel data-i18n="syncCancel">取消</button>
-                        </div>
-                        <audio class="sync-voice-preview" data-sync-voice-preview controls preload="metadata" hidden
-                            data-i18n-aria="syncVoiceListen" aria-label="试听语音"></audio>
-                        <div class="sync-selected-file" data-sync-selected-file hidden>
-                            <span class="sync-selected-file-details">
-                                <strong data-sync-file-name></strong>
-                                <span class="sync-attachment-size" data-sync-file-size></span>
-                            </span>
-                            <button class="sync-button" type="button" data-sync-remove-file data-i18n="syncRemoveFile">移除附件</button>
-                        </div>
-                        <p class="sync-upload-status" id="sync-upload-status" data-sync-upload-status role="status" aria-live="polite" hidden></p>
-                        <progress class="sync-upload-progress" data-sync-upload-progress max="100" value="0"
-                            aria-labelledby="sync-upload-status" hidden></progress>
-                        <button class="sync-button sync-cancel-upload" type="button" data-sync-cancel-upload
-                            data-i18n="syncCancelUpload" hidden disabled>取消上传</button>
-                        <div class="sync-reply" data-sync-reply hidden>
-                            <div class="sync-reply-details">
-                                <div class="sync-reply-heading">
-                                    <span data-i18n="syncReplying">引用回复</span>
-                                    <strong data-sync-reply-author></strong>
-                                </div>
-                                <p class="sync-message-quote-text" data-sync-reply-text></p>
+                    <div class="sync-room-main">
+                        <div class="sync-room-toolbar">
+                            <div class="sync-space-heading">
+                                <strong class="sync-space-title" data-sync-space-title></strong>
+                                <p class="sync-connection" data-sync-status data-state="connecting" role="status"
+                                    data-i18n="syncConnecting">正在连接…</p>
                             </div>
-                            <button class="sync-button sync-reply-cancel" type="button" data-sync-reply-cancel
-                                data-i18n-aria="syncReplyCancel" aria-label="取消引用"><span aria-hidden="true">×</span></button>
                         </div>
-                        <label class="visually-hidden" for="sync-message" data-i18n="syncInputLabel">消息内容</label>
-                        <div class="sync-mention-composer">
-                        <div class="sync-mention-menu" id="sync-mention-menu" data-sync-mention-menu role="listbox"
-                            data-i18n-aria="syncMentionMember" aria-label="提及成员" hidden></div>
-                        <textarea id="sync-message" rows="3" placeholder="写下要同步的内容…"
-                            data-i18n-placeholder="syncInputPlaceholder" aria-describedby="sync-compose-hint"
-                            aria-controls="sync-mention-menu" aria-autocomplete="list" data-sync-input></textarea>
+                        <details class="sync-pairing" data-sync-pairing hidden>
+                            <summary class="sync-pairing-toggle" aria-labelledby="sync-pairing-title">
+                                <span id="sync-pairing-title" data-i18n="syncPairingTitle">配对码</span>
+                                <span data-sync-pair-expiry></span>
+                            </summary>
+                            <div class="sync-pairing-heading">
+                                <span data-i18n="syncPairCodeLabel">在另一台设备输入</span>
+                                <code data-sync-pair-code></code>
+                            </div>
+                            <p class="sync-hint" data-i18n="syncPairOnline" data-sync-pair-hint>配对码 10 分钟内有效，请保持原设备在线，仅分享给信任的人。</p>
+                            <div class="sync-pairing-footer">
+                                <button class="sync-button sync-pair-lock" type="button" data-sync-pair-lock
+                                    aria-pressed="false" aria-label="锁定配对码" title="锁定配对码">
+                                    <svg data-sync-pair-unlocked-icon viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+                                        <rect x="4" y="10" width="16" height="11" rx="1" />
+                                        <path d="M8 10V7a4 4 0 0 1 8 0M12 14v3" />
+                                    </svg>
+                                    <svg data-sync-pair-locked-icon viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false" hidden>
+                                        <rect x="4" y="10" width="16" height="11" rx="1" />
+                                        <path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3" />
+                                    </svg>
+                                </button>
+                                <button class="sync-button" type="button" data-sync-pair-close
+                                    data-i18n="syncPairClose">关闭配对</button>
+                                <button class="sync-button" type="button" data-sync-copy-code
+                                    data-i18n="syncCopyCode">复制配对码</button>
+                            </div>
+                        </details>
+                        <div class="sync-message-area">
+                            <div class="sync-message-feed" data-sync-feed>
+                                <button class="sync-button sync-history-more" type="button" data-sync-history-more
+                                    data-i18n="syncLoadOlder" hidden>加载更早消息</button>
+                                <p class="sync-empty" data-sync-empty data-i18n="syncEmpty">这里还没有消息，发送一条试试。</p>
+                                <p class="sync-empty" data-sync-no-results data-i18n="syncNoResults" hidden>没有找到匹配的消息。</p>
+                                <h2 class="visually-hidden" id="sync-messages-title" data-i18n="syncMessagesLabel">同步消息</h2>
+                                <ol class="sync-messages" data-sync-messages role="log" aria-live="polite"
+                                    aria-relevant="additions" aria-labelledby="sync-messages-title"></ol>
+                            </div>
+                            <button class="sync-button sync-latest" type="button" data-sync-latest hidden
+                                data-i18n="syncLatest">回到最新消息</button>
                         </div>
-                        <p class="visually-hidden" id="sync-compose-hint" data-i18n="syncComposeHint">Enter 发送 · Shift+Enter 换行</p>
-                        <div class="sync-compose-footer">
-                            <p class="sync-hint" data-i18n="syncHistoryLimit">消息和附件最多保留 7 天、500 条；空间不足自动清理，清空同步所有设备。</p>
-                            <button class="sync-button" type="submit" data-sync-send data-i18n="syncSend">发送</button>
+                        <form class="sync-compose" data-sync-send-form>
+                            <label class="visually-hidden" for="sync-file" data-i18n="syncAttach">选择文件/图片</label>
+                            <input id="sync-file" type="file" aria-describedby="sync-file-limit" data-sync-file-input hidden>
+                            <div class="sync-voice-recording" data-sync-voice-recording hidden>
+                                <span data-sync-voice-status role="status" aria-live="polite"></span>
+                                <span data-sync-voice-time>00:00 / 01:00</span>
+                                <button class="sync-button" type="button" data-sync-voice-stop data-i18n="syncVoiceStop">停止录音</button>
+                                <button class="sync-button" type="button" data-sync-voice-cancel data-i18n="syncCancel">取消</button>
+                            </div>
+                            <audio class="sync-voice-preview" data-sync-voice-preview controls preload="metadata" hidden
+                                data-i18n-aria="syncVoiceListen" aria-label="试听语音"></audio>
+                            <div class="sync-selected-file" data-sync-selected-file hidden>
+                                <span class="sync-selected-file-details">
+                                    <strong data-sync-file-name></strong>
+                                    <span class="sync-attachment-size" data-sync-file-size></span>
+                                </span>
+                                <button class="sync-button" type="button" data-sync-remove-file data-i18n="syncRemoveFile">移除附件</button>
+                            </div>
+                            <p class="sync-upload-status" id="sync-upload-status" data-sync-upload-status role="status" aria-live="polite" hidden></p>
+                            <progress class="sync-upload-progress" data-sync-upload-progress max="100" value="0"
+                                aria-labelledby="sync-upload-status" hidden></progress>
+                            <button class="sync-button sync-cancel-upload" type="button" data-sync-cancel-upload
+                                data-i18n="syncCancelUpload" hidden disabled>取消上传</button>
+                            <div class="sync-reply" data-sync-reply hidden>
+                                <div class="sync-reply-details">
+                                    <div class="sync-reply-heading">
+                                        <span data-i18n="syncReplying">引用回复</span>
+                                        <strong data-sync-reply-author></strong>
+                                    </div>
+                                    <p class="sync-message-quote-text" data-sync-reply-text></p>
+                                </div>
+                                <button class="sync-button sync-reply-cancel" type="button" data-sync-reply-cancel
+                                    data-i18n-aria="syncReplyCancel" aria-label="取消引用"><span aria-hidden="true">×</span></button>
+                            </div>
+                            <label class="visually-hidden" for="sync-message" data-i18n="syncInputLabel">消息内容</label>
+                            <div class="sync-mention-composer">
+                            <div class="sync-mention-menu" id="sync-mention-menu" data-sync-mention-menu role="listbox"
+                                data-i18n-aria="syncMentionMember" aria-label="提及成员" hidden></div>
+                            <textarea id="sync-message" rows="3" placeholder="写下要同步的内容…"
+                                data-i18n-placeholder="syncInputPlaceholder" aria-describedby="sync-compose-hint"
+                                aria-controls="sync-mention-menu" aria-autocomplete="list" data-sync-input></textarea>
+                            </div>
+                            <p class="visually-hidden" id="sync-compose-hint" data-i18n="syncComposeHint">Enter 发送 · Shift+Enter 换行</p>
+                            <div class="sync-compose-footer">
+                                <div class="sync-attach-controls">
+                                    <button class="sync-button" type="button" aria-describedby="sync-file-limit"
+                                        data-sync-attach data-i18n="syncAttach">选择文件/图片</button>
+                                    <button class="sync-button" type="button" data-sync-voice-record data-i18n="syncVoiceRecord">录音</button>
+                                    <button class="sync-button" type="button" data-sync-stickers data-i18n="syncStickers"
+                                        aria-haspopup="dialog" aria-controls="sync-sticker-dialog">表情</button>
+                                    <button class="sync-button" type="button" data-sync-game-share data-i18n="syncGameShare">约战五子棋</button>
+                                </div>
+                                <button class="sync-button" type="submit" data-sync-send data-i18n="syncSend">发送</button>
+                            </div>
+                        </form>
+                    </div>
+                    <aside class="sync-tools" data-sync-tools aria-labelledby="sync-tools-title">
+                        <div class="sync-tools-header">
+                            <button class="sync-button sync-tools-toggle" type="button" data-sync-tools-toggle
+                                aria-controls="sync-tools-panel" aria-expanded="true" aria-label="收起工具栏" title="收起工具栏">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+                                    <path d="M3 4h18v16H3zM15 4v16" />
+                                    <path class="sync-tools-chevron" d="m8 9 3 3-3 3" />
+                                </svg>
+                            </button>
+                            <div class="sync-tools-quick">
+                                <a class="sync-button sync-open-chat" href="/chat/" target="_blank" rel="noopener">
+                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+                                        <path d="M14 3h7v7M21 3l-11 11M10 5H4v15h15v-6" />
+                                    </svg>
+                                    <span class="visually-hidden" data-i18n="syncOpenChat">在新标签页打开联络站</span>
+                                </a>
+                                <button class="sync-button sync-sound-toggle" type="button" data-sync-sound
+                                    aria-pressed="true" aria-label="关闭新消息提示音" title="关闭新消息提示音">
+                                    <img data-sync-sound-icon alt="">
+                                </button>
+                            </div>
                         </div>
-                    </form>
+                        <div class="sync-tools-panel" id="sync-tools-panel" data-sync-tools-panel>
+                            <h2 class="visually-hidden" id="sync-tools-title" data-i18n="syncTools">工具栏</h2>
+                            <label class="visually-hidden" for="sync-search" data-i18n="syncSearchPlaceholder">搜索消息或文件名</label>
+                            <input id="sync-search" type="search" placeholder="搜索消息或文件名"
+                                data-i18n-placeholder="syncSearchPlaceholder" data-sync-search>
+                            <div class="sync-tools-actions">
+                                <button class="sync-button" type="button" data-sync-space-rename
+                                    data-i18n="syncSpaceRename">修改空间名称</button>
+                                <button class="sync-button" type="button" data-sync-pair
+                                    data-i18n="syncPair">生成配对码</button>
+                                <button class="sync-button" type="button" data-sync-devices
+                                    data-i18n="syncDevices">设备管理</button>
+                                <button class="sync-button" type="button" data-sync-clear
+                                    data-i18n="syncClear">清空历史</button>
+                                <button class="sync-button" type="button" data-sync-leave
+                                    data-i18n="syncLeave">离开空间</button>
+                            </div>
+                            <div class="sync-tools-notes">
+                                <p class="sync-hint" id="sync-file-limit" data-i18n="syncFileLimit">可选择、拖入文件或粘贴截图，最大 2GB。</p>
+                                <p class="sync-hint" data-i18n="syncHistoryLimit">消息和附件最多保留 7 天、500 条；空间不足自动清理，清空同步所有设备。</p>
+                                <p class="sync-hint" data-i18n="syncEncrypted">消息与附件已端到端加密</p>
+                            </div>
+                        </div>
+                    </aside>
                 </div>
                 </div>
             </div>

@@ -1,4 +1,5 @@
 const { test, expect, roomId, deviceId, otherId, keyId, session, authorize, allowSyncOrigin } = require('./fixtures/sync-e2ee.cjs');
+const { showSyncTools, hideSyncTools } = require('./fixtures/sync-tools.cjs');
 const { createCipheriv, randomBytes } = require('node:crypto');
 const { readFile } = require('node:fs/promises');
 const path = require('node:path');
@@ -69,6 +70,7 @@ const openChat = async (page, seed = true) => {
         if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
         await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
         await expect.poll(() => sockets.size).toBe(3);
+        await hideSyncTools(page);
         await page.locator('[data-sync-input]').click();
         await page.clock.runFor(1000);
     };
@@ -99,11 +101,13 @@ test('connects all saved spaces after reload and sounds for unread live messages
     await chat.flush(rooms[1]);
     await page.clock.runFor(1000);
     expect(await chat.starts()).toBe(2);
+    await showSyncTools(page);
     await page.locator('[data-sync-sound]').click();
     chat.send(rooms[2], 3);
     await page.clock.runFor(1000);
     await chat.flush(rooms[2]);
     expect(await chat.starts()).toBe(2);
+    await showSyncTools(page);
     await page.locator('[data-sync-sound]').click();
     await chat.open();
     expect(await chat.starts()).toBe(0);

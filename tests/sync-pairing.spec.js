@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { showSyncTools } = require('./fixtures/sync-tools.cjs');
 const { readFile } = require('node:fs/promises');
 const { createServer } = require('node:http');
 const path = require('node:path');
@@ -64,6 +65,7 @@ for (const responseOrder of ['empty-read-first', 'new-offer-first', 'empty-read-
             await expect.poll(() => deviceReads).toBeGreaterThan(0);
             const initialDeviceReads = deviceReads;
             if (responseOrder === 'empty-read-started-after-create') {
+                await showSyncTools(page);
                 await page.locator('[data-sync-pair]').click();
                 await expect.poll(() => Boolean(newOffer)).toBe(true);
                 connection.send(JSON.stringify({ type: 'key-rotation' }));
@@ -71,6 +73,7 @@ for (const responseOrder of ['empty-read-first', 'new-offer-first', 'empty-read-
             } else {
                 connection.send(JSON.stringify({ type: 'key-rotation' }));
                 await expect.poll(() => Boolean(emptyRead)).toBe(true);
+                await showSyncTools(page);
                 await page.locator('[data-sync-pair]').click();
                 await expect.poll(() => Boolean(newOffer)).toBe(true);
             }

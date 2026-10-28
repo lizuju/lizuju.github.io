@@ -1,4 +1,5 @@
 const { test, expect } = require('./fixtures/sync-e2ee.cjs');
+const { showSyncTools } = require('./fixtures/sync-tools.cjs');
 const { readFile } = require('node:fs/promises');
 
 test.use({ serviceWorkers: 'block' });
@@ -225,18 +226,22 @@ test('searches retained earlier messages and ignores a cancelled history respons
     const anchor = page.getByText('Message 101', { exact: true });
     const before = await anchor.boundingBox();
     defer = true;
+    await showSyncTools(page);
     await page.locator('[data-sync-search]').fill('needle');
     await expect.poll(() => !!release).toBe(true);
+    await showSyncTools(page);
     await page.locator('[data-sync-search]').fill('');
     release();
     await expect(page.locator('.sync-message')).toHaveCount(50);
     expect(Math.abs((await anchor.boundingBox()).y - before.y)).toBeLessThan(2);
     defer = false;
+    await showSyncTools(page);
     await page.locator('[data-sync-search]').fill('needle');
     await expect(page.locator('.sync-message:visible')).toHaveCount(1);
     await expect(page.locator('.sync-message:visible')).toContainText('Old needle');
     expect(olderRequests).toBe(3);
     await expect(page.locator('[data-sync-history-more]')).toBeHidden();
+    await showSyncTools(page);
     await page.locator('[data-sync-search]').fill('');
     defer = true;
     release = null;
