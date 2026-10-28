@@ -2899,6 +2899,18 @@ import { createGomokuWindow } from './sync-gomoku.js';
             if (followLatest) scrollToLatest();
             else markRead();
         }).observe(feed);
+        // The pairing card sits above the feed, so scroll by its height change before the next paint to keep the messages still
+        // when it opens, closes or appears. Changes while the feed is not rendered have nothing on screen to keep in place.
+        let pairingHeight = null;
+        new ResizeObserver(() => {
+            const height = feed.clientHeight ? find('pairing-dock').offsetHeight : null;
+            const change = pairingHeight === null || height === null ? 0 : height - pairingHeight;
+            pairingHeight = height;
+            if (!change) return;
+            if (followLatest && !find('search').value.trim()) feed.scrollTop = feed.scrollHeight;
+            else feed.scrollTop += change;
+            lastFeedScrollTop = feed.scrollTop;
+        }).observe(find('pairing-dock'));
         const recordInteraction = (event) => {
             if (!event.isTrusted || !browserFocused || !document.hasFocus() || document.hidden || !app.classList.contains('is-active') || app.closest('[inert]')) return;
             lastInteraction = performance.now();

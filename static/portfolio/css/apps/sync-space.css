@@ -538,9 +538,11 @@
     background: #dfdfd8;
 }
 
+/* The toggle stays at the right edge so it does not move when the sidebar collapses to its narrow strip. */
 .sync-tools-header {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 5px;
     padding: 6px;
 }
@@ -561,7 +563,7 @@
 
 .sync-tools-quick {
     display: flex;
-    margin-left: auto;
+    margin-right: auto;
     gap: 5px;
 }
 
@@ -637,12 +639,20 @@
     transform-origin: 9.5px 12px;
 }
 
-.sync-pairing {
+/* The dock matches the conversation so the pairing card reads as floating above it. */
+.sync-pairing-dock {
+    display: flex;
     flex: 0 0 auto;
-    margin: 8px 8px 0;
+    flex-direction: column;
+    background: #fff;
+}
+
+.sync-pairing {
+    margin: 8px 8px 4px;
     padding: 8px 10px;
     border: 1px solid #96b7b5;
     background: #e5f0ec;
+    box-shadow: 0 2px 8px rgba(21, 63, 69, 0.18);
 }
 
 .sync-pairing-toggle {

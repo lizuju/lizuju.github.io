@@ -9,11 +9,8 @@ body.standalone-sync .sync-window {
     min-height: 0;
 }
 
-.standalone-sync .sync-window > .window-titlebar {
-    cursor: default;
-}
-
-.standalone-sync .sync-window > .window-titlebar > .window-controls,
+/* The standalone page has one fixed window, so its title bar only takes space from the conversation. */
+.standalone-sync .sync-window > .window-titlebar,
 .standalone-sync .sync-window > .window-resize-handle,
 .standalone-sync .sync-open-chat {
     display: none;
