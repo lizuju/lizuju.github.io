@@ -1,4 +1,5 @@
 const { test, expect } = require('./fixtures/sync-e2ee.cjs');
+const { showSyncTools } = require('./fixtures/sync-tools.cjs');
 const { createServer } = require('node:http');
 const { readFileSync } = require('node:fs');
 const XLSX = require('xlsx');
@@ -62,6 +63,7 @@ test('loads earlier messages without jumping, searches retained history, and rec
     await page.locator('[data-sync-history-more]').click();
     await expect(page.locator('.sync-message')).toHaveCount(100);
     expect(Math.abs((await anchor.boundingBox()).y - before.y)).toBeLessThan(2);
+    await showSyncTools(page);
     await page.locator('[data-sync-search]').fill('History message 90');
     await expect(page.locator('.sync-message:visible')).toHaveCount(1);
     await page.clock.runFor(200);
@@ -74,6 +76,7 @@ test('loads earlier messages without jumping, searches retained history, and rec
     await expect(page.locator('.sync-message-text').first()).toHaveText('History message 1');
     await expect(page.locator('[data-sync-search]')).toHaveValue('History message 90');
     await expect(page.locator('[data-sync-unread]')).toHaveText('1');
+    await showSyncTools(page);
     await page.locator('[data-sync-search]').fill('');
     expect(Math.abs((await anchor.boundingBox()).y - before.y)).toBeLessThan(2);
     await expect(page.locator('[data-sync-history-more]')).toBeHidden();

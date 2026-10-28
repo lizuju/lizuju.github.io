@@ -1,4 +1,5 @@
 const { test, expect, roomId, deviceId, otherId, keyId, message, authorize, allowSyncOrigin } = require('./fixtures/sync-e2ee.cjs');
+const { showSyncTools, hideSyncTools } = require('./fixtures/sync-tools.cjs');
 
 test.use({ serviceWorkers: 'block' });
 
@@ -59,6 +60,7 @@ const openChat = async (page, initial = [], authorizeSession = true) => {
         if (await page.locator('[data-window-action="minimize"]').isVisible()) await page.locator('[data-window-action="minimize"]').click();
         if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
         await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+        await hideSyncTools(page);
         await page.locator('[data-sync-input]').click();
     };
     await open();
@@ -78,13 +80,14 @@ const openChat = async (page, initial = [], authorizeSession = true) => {
 
 test('places an accessible sound switch before pairing and remembers mute across reloads and languages', async ({ page }) => {
     const chat = await openChat(page);
+    await showSyncTools(page);
     const sound = page.locator('[data-sync-sound]');
     await expect(sound).toHaveAttribute('aria-pressed', 'true');
     await expect(sound.locator('img')).toHaveAttribute('alt', '');
     const position = await page.evaluate(() => {
         const sound = document.querySelector('[data-sync-sound]').getBoundingClientRect();
         const pairing = document.querySelector('[data-sync-pair]').getBoundingClientRect();
-        return { fits: sound.left >= 0 && sound.right <= window.innerWidth, before: sound.right <= pairing.left + 1, compact: sound.width <= 32 };
+        return { fits: sound.left >= 0 && sound.right <= window.innerWidth, before: sound.bottom <= pairing.top + 1, compact: sound.width <= 32 };
     });
     expect(position).toEqual({ fits: true, before: true, compact: true });
     const enabledTitle = await sound.getAttribute('title');
@@ -100,6 +103,7 @@ test('places an accessible sound switch before pairing and remembers mute across
     await expect(sound).toHaveAttribute('aria-pressed', 'false');
     await chat.open();
     await expect(sound).toHaveAttribute('aria-pressed', 'false');
+    await showSyncTools(page);
     await sound.focus();
     await sound.press('Space');
     await expect(sound).toHaveAttribute('aria-pressed', 'true');
@@ -142,11 +146,13 @@ test('mutes notifications immediately and throttles a burst without suppressing 
     await chat.send(4);
     await page.clock.runFor(100);
     expect((await chat.stats()).starts).toBe(2);
+    await showSyncTools(page);
     await page.locator('[data-sync-sound]').click();
     await page.clock.runFor(1000);
     await chat.send(5);
     await page.clock.runFor(1000);
     expect((await chat.stats()).starts).toBe(2);
+    await showSyncTools(page);
     await page.locator('[data-sync-sound]').click();
     await chat.send(6);
     await page.clock.runFor(1000);
@@ -178,12 +184,14 @@ test('synchronizes mute between open tabs and stops an already playing notificat
     const second = await openChat(otherPage, [], false);
     await first.send(1);
     await expect.poll(async () => (await first.stats()).playing).toBe(true);
+    await showSyncTools(otherPage);
     await otherPage.locator('[data-sync-sound]').click();
     await expect(page.locator('[data-sync-sound]')).toHaveAttribute('aria-pressed', 'false');
     await expect.poll(async () => (await first.stats()).playing).toBe(false);
     await second.send(2);
     expect((await second.stats()).starts).toBe(0);
     await page.bringToFront();
+    await showSyncTools(page);
     await page.locator('[data-sync-sound]').click();
     await expect(otherPage.locator('[data-sync-sound]')).toHaveAttribute('aria-pressed', 'true');
     await second.open();

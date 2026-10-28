@@ -1,4 +1,5 @@
 const { createDecipheriv } = require('node:crypto');
+const { showSyncTools } = require('./fixtures/sync-tools.cjs');
 const { test, expect, roomId, deviceId, otherId, keyId, session, encrypt, authorize, message, profile, file } = require('./fixtures/sync-e2ee.cjs');
 
 test.use({ serviceWorkers: 'block' });
@@ -205,6 +206,7 @@ test('opens a quoted original with the keyboard, clears search and keeps newer u
     const original = message(1, 'Original at the start', otherId);
     const quote = quotedMessage(41, 'Searchable answer', { id: 1, deviceId: otherId, text: 'Original at the start', attachmentName: '' });
     const frame = await openChat(page, [original, ...Array.from({ length: 39 }, (_, i) => message(i + 2, `Filler ${i + 2}`, otherId)), quote]);
+    await showSyncTools(page);
     await page.locator('[data-sync-search]').fill('Searchable answer');
     const button = page.locator('[data-sync-jump-reply]');
     await expect(button).toHaveAttribute('title', '跳转到原消息');

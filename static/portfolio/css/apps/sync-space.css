@@ -105,8 +105,7 @@
     background: #dfdfd8;
 }
 
-.sync-spaces .sync-spaces-toggle,
-.sync-space-heading .sync-space-rename {
+.sync-spaces .sync-spaces-toggle {
     display: grid;
     width: 28px;
     height: 28px;
@@ -309,8 +308,24 @@
         width: 100%;
     }
 
-    .sync-space-title {
-        padding-left: 34px;
+    .sync-tools {
+        position: absolute;
+        z-index: 4;
+        inset: 0 0 0 auto;
+        width: min(232px, 88%);
+        box-shadow: -3px 0 0 rgb(0 0 0 / 12%);
+    }
+
+    .sync-window.is-tools-collapsed .sync-tools {
+        bottom: auto;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+    }
+
+    .sync-room-toolbar {
+        padding-right: 42px;
+        padding-left: 42px;
     }
 
     .sync-main > .sync-setup {
@@ -451,18 +466,42 @@
     min-width: 0;
     min-height: 0;
     flex: 1;
+}
+
+.sync-room-main {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex: 1;
     flex-direction: column;
 }
 
 .sync-room-toolbar {
     display: flex;
+    min-height: 41px;
     flex: 0 0 auto;
-    flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
-    gap: 6px 10px;
-    padding: 6px 8px 8px;
+    justify-content: center;
+    padding: 6px 8px;
     border-bottom: 1px solid #aaa;
+}
+
+.sync-room-toolbar .sync-space-heading {
+    width: auto;
+    max-width: 100%;
+    justify-content: center;
+}
+
+.sync-room-toolbar .sync-space-title {
+    display: flex;
+    align-items: center;
+    line-height: 1.2;
+}
+
+.sync-space-heading .sync-connection {
+    margin-left: 6px;
+    font-size: 12px;
+    white-space: nowrap;
 }
 
 .sync-connection {
@@ -472,18 +511,6 @@
     margin: 0;
     color: #555;
     flex-shrink: 0;
-}
-
-.sync-room-status {
-    display: flex;
-    min-width: 0;
-    max-width: 100%;
-    align-items: center;
-    gap: 16px;
-}
-
-.sync-room-status .sync-hint {
-    margin: 0;
 }
 
 .sync-connection::before {
@@ -501,10 +528,113 @@
     background: #519b55;
 }
 
-.sync-room-actions {
+.sync-tools {
     display: flex;
-    flex-wrap: wrap;
+    width: 208px;
+    min-height: 0;
+    flex: 0 0 208px;
+    flex-direction: column;
+    border-left: 1px solid #999;
+    background: #dfdfd8;
+}
+
+.sync-tools-header {
+    display: flex;
+    align-items: center;
     gap: 5px;
+    padding: 6px;
+}
+
+.sync-tools .sync-tools-toggle {
+    display: grid;
+    width: 28px;
+    height: 28px;
+    min-height: 28px;
+    padding: 3px;
+    place-items: center;
+}
+
+.sync-tools-toggle:focus-visible {
+    outline: 2px solid #000080;
+    outline-offset: -3px;
+}
+
+.sync-tools-quick {
+    display: flex;
+    margin-left: auto;
+    gap: 5px;
+}
+
+.sync-tools-quick .sync-sound-toggle,
+.sync-tools-quick .sync-open-chat {
+    width: 28px;
+    height: 28px;
+    min-height: 28px;
+    flex-basis: 28px;
+}
+
+.sync-tools-panel {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 8px;
+    overflow: auto;
+    padding: 0 6px 8px;
+}
+
+.sync-tools-panel input {
+    width: 100%;
+    min-width: 0;
+    min-height: 30px;
+    padding: 4px 6px;
+    border: 2px inset #fff;
+    border-radius: 0;
+    color: #111;
+    background: #fff;
+    font: inherit;
+}
+
+.sync-tools-panel input:focus {
+    outline: 1px dotted #000080;
+    outline-offset: -4px;
+}
+
+.sync-tools-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.sync-tools-actions .sync-button {
+    width: 100%;
+}
+
+.sync-tools-notes {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: auto;
+    padding-top: 6px;
+}
+
+.sync-tools-notes .sync-hint {
+    margin: 0;
+}
+
+.sync-window.is-tools-collapsed .sync-tools {
+    width: 40px;
+    flex-basis: 40px;
+}
+
+.sync-window.is-tools-collapsed .sync-tools-panel,
+.sync-window.is-tools-collapsed .sync-tools-quick {
+    display: none;
+}
+
+.sync-window.is-tools-collapsed .sync-tools-chevron {
+    transform: rotate(180deg);
+    transform-origin: 9.5px 12px;
 }
 
 .sync-pairing {
@@ -586,33 +716,6 @@
     width: 26px;
     padding: 2px;
     place-items: center;
-}
-
-.sync-message-toolbar {
-    display: flex;
-    flex: 0 0 auto;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 8px;
-    border-bottom: 1px solid #aaa;
-}
-
-.sync-message-toolbar input {
-    flex: 1 1 140px;
-    width: 0;
-    min-width: 0;
-    min-height: 30px;
-    padding: 4px 6px;
-    border: 2px inset #fff;
-    border-radius: 0;
-    color: #111;
-    background: #fff;
-    font: inherit;
-}
-
-.sync-message-toolbar input:focus {
-    outline: 1px dotted #000080;
-    outline-offset: -4px;
 }
 
 .sync-message-area {
@@ -997,19 +1100,15 @@ button.sync-attachment-info:focus-visible {
 
 .sync-attach-controls {
     display: flex;
+    min-width: 0;
     flex-wrap: wrap;
     align-items: center;
-    gap: 5px 8px;
-    margin-bottom: 6px;
+    gap: 5px;
 }
 
 .sync-attach-controls .sync-button {
     min-height: 26px;
     padding: 2px 7px;
-}
-
-.sync-attach-controls .sync-hint {
-    margin: 0;
 }
 
 .sync-selected-file {
@@ -1091,10 +1190,6 @@ button.sync-attachment-info:focus-visible {
     justify-content: space-between;
     gap: 10px;
     margin-top: 6px;
-}
-
-.sync-compose-footer .sync-hint {
-    margin: 0;
 }
 
 .sync-notice {
@@ -1453,23 +1548,4 @@ button.sync-attachment-info:focus-visible {
         padding: 18px 14px;
     }
 
-    .sync-room-toolbar {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
-    .sync-room-actions {
-        width: 100%;
-    }
-
-    .sync-room-actions .sync-button {
-        flex: 1;
-        padding-right: 7px;
-        padding-left: 7px;
-    }
-
-    .sync-room-actions .sync-sound-toggle,
-    .sync-room-actions .sync-open-chat {
-        flex: 0 0 30px;
-    }
 }

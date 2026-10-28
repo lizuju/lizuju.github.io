@@ -72,9 +72,11 @@ import { createGomokuWindow } from './sync-gomoku.js';
         let reconcileNeeded = false;
         let addingSpace = false;
         let spacesPreference = null;
+        let toolsPreference = null;
         try {
             addingSpace = sessionStorage.getItem(ADD_SPACE_KEY) === 'true';
             spacesPreference = localStorage.getItem('portfolio-sync-spaces-collapsed');
+            toolsPreference = localStorage.getItem('portfolio-sync-tools-collapsed');
         } catch { /* Opening a space reports unavailable storage. */ }
         let credentials = null;
         let deviceId = null;
@@ -2122,11 +2124,34 @@ import { createGomokuWindow } from './sync-gomoku.js';
             try { localStorage.setItem('portfolio-sync-spaces-collapsed', spacesPreference); } catch { /* Keep the current layout. */ }
             renderSpaces();
         });
+        const renderToolsToggle = () => {
+            const collapsed = app.classList.contains('is-tools-collapsed');
+            const toggle = find('tools-toggle');
+            toggle.setAttribute('aria-expanded', String(!collapsed));
+            toggle.setAttribute('aria-label', translate(collapsed ? 'syncToolsExpand' : 'syncToolsCollapse'));
+            toggle.title = toggle.getAttribute('aria-label');
+        };
+        find('tools-toggle').addEventListener('click', () => {
+            const collapsed = app.classList.toggle('is-tools-collapsed');
+            toolsPreference = String(collapsed);
+            try { localStorage.setItem('portfolio-sync-tools-collapsed', toolsPreference); } catch { /* Keep the current layout. */ }
+            renderToolsToggle();
+        });
+        // In narrow windows the tools overlay the conversation, so an action closes them like switching spaces does.
+        app.querySelector('.sync-tools-actions').addEventListener('click', (event) => {
+            if (!event.target.closest('button') || getComputedStyle(find('tools')).position !== 'absolute') return;
+            app.classList.add('is-tools-collapsed');
+            renderToolsToggle();
+        });
         new ResizeObserver(() => {
             if (spacesPreference === null) app.classList.toggle('is-spaces-collapsed', app.clientWidth <= 640);
+            if (toolsPreference === null) app.classList.toggle('is-tools-collapsed', app.clientWidth <= 640);
             renderSpaces();
+            renderToolsToggle();
         }).observe(app);
         app.classList.toggle('is-spaces-collapsed', spacesPreference === 'true' || spacesPreference === null && app.clientWidth <= 640);
+        app.classList.toggle('is-tools-collapsed', toolsPreference === 'true' || toolsPreference === null && app.clientWidth <= 640);
+        renderToolsToggle();
         const copyText = async (text) => {
             const session = credentials;
             try { await navigator.clipboard.writeText(text); if (credentials === session) setNotice('syncCopied'); }
@@ -3032,6 +3057,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
         window.addEventListener('portfolio-language-change', () => {
             mentionComposer.update();
             renderSpaces();
+            renderToolsToggle();
             updateStickerLabels();
             updateSoundToggle();
             render();

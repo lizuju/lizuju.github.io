@@ -1,4 +1,5 @@
 const { test, expect } = require('./fixtures/sync-e2ee.cjs');
+const { showSyncTools } = require('./fixtures/sync-tools.cjs');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { createServer } = require('node:http');
@@ -175,6 +176,7 @@ test('closing during the HEIC decoder load cannot replace the next image or reta
 });
 
 test('limits device names to eight Unicode characters and keeps the saved name across language changes', async ({ page }) => {
+    await showSyncTools(page);
     await page.locator('[data-sync-devices]').click();
     const row = page.locator(`[data-device-id="${deviceId}"]`);
     const name = row.locator('[data-sync-device-name]');
@@ -192,6 +194,7 @@ test('limits device names to eight Unicode characters and keeps the saved name a
     await page.locator('[data-taskbar-lang]').click();
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
     await expect(page.locator('.sync-message-meta').first()).toContainText('苹果🤖Mac设备');
+    await showSyncTools(page);
     await page.locator('[data-sync-devices]').click();
     await expect(name).toHaveAttribute('placeholder', 'Device name');
     await expect(name).toHaveValue('苹果🤖Mac设备');

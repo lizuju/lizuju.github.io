@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { showSyncTools, hideSyncTools } = require('./fixtures/sync-tools.cjs');
 const { Miniflare } = require('../cloudflare/sync/node_modules/miniflare');
 const { createServer, request: httpRequest } = require('node:http');
 const { readFile, writeFile } = require('node:fs/promises');
@@ -367,6 +368,7 @@ test('keeps background spaces paired and synchronized through key rotation, clea
         await expect(owner.locator('[data-sync-messages]')).not.toContainText('second-space-remains-active');
         await selectSpace(owner, second.roomId);
 
+        await showSyncTools(peer);
         await peer.locator('[data-sync-clear]').click();
         await peer.locator('[data-sync-confirm-accept]').click();
         await expect.poll(() => firstConnection.frames.some(frame => frame.type === 'cleared')).toBe(true);
@@ -419,6 +421,7 @@ test('keeps background spaces paired and synchronized through key rotation, clea
         expect(recovered.socket.isClosed()).toBe(false);
         await selectSpace(owner, second.roomId);
         await expect(owner.locator('[data-sync-input]')).toHaveValue('second-space-unsent-during-background-reconnect');
+        await showSyncTools(peer);
         await peer.locator('[data-sync-devices]').click();
         const ownerDevice = peer.locator(`[data-sync-devices-list] [data-device-id="${first.deviceId}"]`);
         await ownerDevice.locator('[data-sync-device-remove]').click();
@@ -639,6 +642,7 @@ test('adds a paired space without duplicating a saved membership and leaves only
         await selectSpace(member, original.roomId);
         await expect(member.locator('[data-sync-messages]')).toContainText('member-original-space');
         await expect(member.locator('[data-sync-messages]')).not.toContainText('shared-space-message');
+        await showSyncTools(owner);
         await owner.locator('[data-sync-pair]').click();
         await expect(owner.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/, { timeout: 30000 });
         await expandSpaces(member);
@@ -666,6 +670,7 @@ test('adds a paired space without duplicating a saved membership and leaves only
         const sharedConnection = connections.filter(connection => connection.roomId === shared.roomId).at(-1);
         const connected = connections.map(({ roomId, auth, ready }) => ({ roomId, auth, ready }));
         expect(originalConnection.socket.isClosed()).toBe(false);
+        await showSyncTools(member);
         await member.locator('[data-sync-leave]').click();
         await member.locator('[data-sync-confirm-accept]').click();
         await expandSpaces(member);
@@ -912,11 +917,13 @@ test('synchronizes encrypted eight-character space names across devices, reconne
     const secondName = '独立工作空间甲乙';
     const latestName = '后来成员可见房间';
     const rename = async (page, name, expected = name) => {
+        await showSyncTools(page);
         await page.locator('[data-sync-space-rename]').click();
         await page.locator('[data-sync-space-name]').fill(name);
         await expect(page.locator('[data-sync-space-name]')).toHaveValue(expected);
         await page.locator('[data-sync-space-name-form] button[type="submit"]').click();
         await expect(page.locator('[data-sync-space-name-dialog]')).toBeHidden();
+        await hideSyncTools(page);
     };
     try {
         await Promise.all([owner, member, newcomer].map(page => page.goto(`${siteOrigin}/chat/`)));
@@ -1136,6 +1143,7 @@ test('keeps a locked code across reload and key rotation, then closes it for eve
                 return getRandomValues(values);
             };
         }, code);
+        await showSyncTools(member);
         await member.locator('[data-sync-pair]').click();
         const newCode = String((Number(code) + 1) % 10000).padStart(4, '0');
         for (const page of [owner, member]) {
@@ -1503,6 +1511,7 @@ test('reloads during a delayed pairing grant and restores the same request and d
         expect(acknowledged).toEqual([`/v1/pair/${started[0]}/ack`]);
         expect(await joining.evaluate(() => JSON.parse(localStorage.getItem('portfolio-sync-space-e2ee1')).deviceId)).toBe(admissions[0]);
         await expect.poll(() => joining.evaluate(() => sessionStorage.getItem('gavin-sync-pair-recovery'))).toBeNull();
+        await showSyncTools(owner);
         await owner.locator('[data-sync-devices]').click();
         await expect(owner.locator('[data-sync-devices-list] [data-device-id]')).toHaveCount(2);
         await expect(owner.locator(`[data-sync-devices-list] [data-device-id="${admissions[0]}"]`)).toBeVisible();
@@ -1576,6 +1585,7 @@ test(`reloads a saved pairing with an unreceived acknowledgement (${acknowledgem
         expect(removedDevices).toEqual([]);
         expect(await joining.evaluate(() => JSON.parse(localStorage.getItem('portfolio-sync-space-e2ee1')).deviceId)).toBe(saved.deviceId);
         await expect.poll(() => joining.evaluate(() => sessionStorage.getItem('gavin-sync-pair-recovery'))).toBeNull();
+        await showSyncTools(owner);
         await owner.locator('[data-sync-devices]').click();
         await expect(owner.locator('[data-sync-devices-list] [data-device-id]')).toHaveCount(2);
         await expect(owner.locator(`[data-sync-devices-list] [data-device-id="${saved.deviceId}"]`)).toBeVisible();
@@ -1620,6 +1630,7 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
         await expect(first.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/, { timeout: 30000 });
         const pair = async page => {
             if (!await first.locator('[data-sync-pairing]').isVisible()) {
+                await showSyncTools(first);
                 await first.locator('[data-sync-pair]').click();
                 await expect(first.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/, { timeout: 30000 });
             }
@@ -1646,6 +1657,7 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
         const thirdSession = await readSession(third);
         const initialKeyId = oldSession.keyring.currentKeyId;
         await third.close();
+        await showSyncTools(first);
         await first.locator('[data-sync-devices]').click();
         const secondRow = first.locator(`[data-sync-devices-list] [data-device-id="${oldSession.deviceId}"]`);
         await secondRow.locator('input').fill(renamed);
@@ -1703,6 +1715,7 @@ test('pairs real devices, encrypts text and attachments, restores keys and revok
             expect(await readFile(await download.path())).toEqual(file.buffer);
         }
 
+        await showSyncTools(first);
         await first.locator('[data-sync-devices]').click();
         await secondRow.locator('[data-sync-device-remove]').click();
         await first.locator('[data-sync-confirm-accept]').click();

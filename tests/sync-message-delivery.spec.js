@@ -1,4 +1,5 @@
 const { readFile } = require('node:fs/promises');
+const { showSyncTools } = require('./fixtures/sync-tools.cjs');
 const path = require('node:path');
 const { test, expect, deviceId, otherId, keyId, session, profile, message, authorize } = require('./fixtures/sync-e2ee.cjs');
 
@@ -95,10 +96,12 @@ test('updates failed decryption bubbles and their search text when the language 
     await expect(page.locator('[data-sync-copy-message]')).toBeHidden();
     await page.locator('[data-taskbar-lang]').click();
     await expect(bubble).toHaveText('This message could not be decrypted or was altered.');
+    await showSyncTools(page);
     await page.locator('[data-sync-search]').fill('decrypted');
     await expect(bubble).toBeVisible();
     await page.locator('[data-taskbar-lang]').click();
     await expect(bubble).toBeHidden();
+    await showSyncTools(page);
     await page.locator('[data-sync-search]').fill('无法解密');
     await expect(bubble).toBeVisible();
 });
@@ -108,6 +111,7 @@ test('uses the same numbered or custom device names in the device list, message 
     const labels = page.locator('.sync-message-meta > span:first-child');
     await expect(labels.nth(0)).toContainText('设备 1 ·');
     await expect(labels.nth(1)).toContainText('设备 2 ·');
+    await showSyncTools(page);
     await page.locator('[data-sync-devices]').click();
     await expect(page.locator('.sync-device-heading strong')).toHaveText(['设备 1', '设备 2']);
     const name = page.locator('[data-sync-device-name]').nth(1);
@@ -120,8 +124,10 @@ test('uses the same numbered or custom device names in the device list, message 
     await page.locator('[data-taskbar-lang]').click();
     await expect(labels.nth(0)).toContainText('Device 1 ·');
     await expect(labels.nth(1)).toContainText('🚀一二三四五六七 ·');
+    await showSyncTools(page);
     await page.locator('[data-sync-search]').fill('Device 1');
     await expect(page.locator('.sync-message:visible .sync-message-text')).toHaveText('Local text');
+    await showSyncTools(page);
     await page.locator('[data-sync-search]').fill('🚀一二三四五六七');
     await expect(page.locator('.sync-message:visible .sync-message-text')).toHaveText('Remote text');
 });
