@@ -157,6 +157,8 @@ import { createGomokuWindow } from './sync-gomoku.js';
         };
         const translate = (key, values = {}) => Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, value), desktopApi.t()[key]);
         const spaceSwitchBlocked = () => busy || sending || recording() || downloads.size > 0 || switchingSpace;
+        // Background spaces keep their own connection, so their unread set stays current without switching.
+        const spaceHasUnread = roomId => roomId !== credentials?.roomId && !!connections.get(roomId)?.unread.size;
         const renderSpaces = () => {
             let spaces;
             try { spaces = savedSpaces.list(); } catch { return; }
@@ -171,11 +173,20 @@ import { createGomokuWindow } from './sync-gomoku.js';
                     button.className = 'sync-button';
                     button.dataset.syncSpaceId = space.roomId;
                     button.addEventListener('click', () => switchSpace(space.roomId));
+                    const name = document.createElement('span');
+                    name.className = 'sync-space-name';
+                    const dot = document.createElement('span');
+                    dot.className = 'sync-space-unread';
+                    dot.dataset.syncSpaceUnread = '';
+                    dot.hidden = true;
+                    button.append(name, dot);
                     list.append(button);
                 }
                 const label = space.name || translate('syncSpaceName', { number: space.number });
-                button.textContent = label;
-                button.title = label;
+                const hasUnread = spaceHasUnread(space.roomId);
+                button.firstChild.textContent = label;
+                button.lastChild.hidden = !hasUnread;
+                button.title = hasUnread ? translate('syncSpaceUnread', { name: label }) : label;
                 button.setAttribute('aria-current', String(space.roomId === credentials?.roomId && !addingSpace));
                 button.disabled = spaceSwitchBlocked();
             }
@@ -191,6 +202,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             toggle.setAttribute('aria-expanded', String(!collapsed));
             toggle.setAttribute('aria-label', translate(collapsed ? 'syncSpacesExpand' : 'syncSpacesCollapse'));
             toggle.title = toggle.getAttribute('aria-label');
+            toggle.classList.toggle('has-unread', spaces.some(space => spaceHasUnread(space.roomId)));
         };
         const updateSoundToggle = () => {
             const label = translate(soundEnabled ? 'syncSoundMute' : 'syncSoundUnmute');
@@ -1601,7 +1613,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             } else if (data.type === 'gomoku') {
                 record.activeGames = [...record.activeGames.filter(game => game.id !== data.game.id), data.game].filter(isGameActive);
             }
-            if (credentials !== session) return;
+            if (credentials !== session) { renderSpaces(); return; }
             mergeReadReceipts(receipts);
             if (data.type === 'ready') {
                 sentReadId = 0;

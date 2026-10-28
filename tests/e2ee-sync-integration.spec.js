@@ -436,6 +436,50 @@ test('keeps background spaces paired and synchronized through key rotation, clea
     } finally { await Promise.all(contexts.map(context => context.close())); }
 });
 
+test('marks a background space with a green dot when it receives a new message and clears it on switching there', async ({ browser, isMobile }) => {
+    test.setTimeout(90000);
+    const contexts = await Promise.all(Array.from({ length: 2 }, () => browser.newContext({
+        viewport: isMobile ? { width: 320, height: 568 } : { width: 1366, height: 900 }, isMobile, hasTouch: isMobile
+    })));
+    if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
+    const [owner, peer] = await Promise.all(contexts.map(context => context.newPage()));
+    const dot = roomId => owner.locator(`[data-sync-space-id="${roomId}"] [data-sync-space-unread]`);
+    try {
+        await Promise.all([owner, peer].map(page => page.goto(`${siteOrigin}/chat/`)));
+        await owner.locator('[data-sync-create]').click();
+        await awaitOnline(owner);
+        await expect(owner.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/);
+        const code = await owner.locator('[data-sync-pair-code]').textContent();
+        const first = await readSession(owner);
+        await expandSpaces(owner);
+        await owner.locator('[data-sync-add-space]').click();
+        await owner.locator('[data-sync-create]').click();
+        await expect.poll(async () => (await readSession(owner)).roomId).not.toBe(first.roomId);
+        await awaitOnline(owner);
+        const second = await readSession(owner);
+
+        await peer.locator('[data-sync-code]').fill(code);
+        await peer.locator('[data-sync-join]').click();
+        await awaitOnline(peer);
+        await expandSpaces(owner);
+        await expect(dot(first.roomId)).toBeHidden();
+        await expect(owner.locator('[data-sync-spaces-toggle]')).not.toHaveClass(/has-unread/);
+
+        await sendText(peer, 'background-space-unread');
+        await expect(dot(first.roomId)).toBeVisible();
+        await expect(dot(second.roomId)).toBeHidden();
+        await expect(owner.locator(`[data-sync-space-id="${first.roomId}"]`)).toHaveAttribute('title', /新消息|new messages/);
+        await expect(owner.locator('[data-sync-spaces-toggle]')).toHaveClass(/has-unread/);
+
+        await selectSpace(owner, first.roomId);
+        await expect(owner.locator('[data-sync-messages]')).toContainText('background-space-unread');
+        await expandSpaces(owner);
+        await expect(dot(first.roomId)).toBeHidden();
+        await expect(dot(second.roomId)).toBeHidden();
+        await expect(owner.locator('[data-sync-spaces-toggle]')).not.toHaveClass(/has-unread/);
+    } finally { await Promise.all(contexts.map(context => context.close())); }
+});
+
 test('restores every retained space connection after closing and reopening the app without losing the active draft', async ({ browser, isMobile }) => {
     test.setTimeout(60000);
     const contexts = await Promise.all(Array.from({ length: 2 }, () => browser.newContext({
