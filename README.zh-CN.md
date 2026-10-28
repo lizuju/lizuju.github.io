@@ -78,7 +78,7 @@ Webpack 将桌面模块和样式打包为 `docs/portfolio/js/main.js` 和 `docs/
 
 ## 发布
 
-推送到 `main` 后，GitHub Actions 依次运行后端测试、生产构建和浏览器测试，全部通过后把构建结果发布到 GitHub Pages。联络站后端需要在 `cloudflare/sync/` 下手动运行 `npm run deploy` 部署（见 [`cloudflare/sync/README.md`](cloudflare/sync/README.md)）。
+PR 上由 GitHub Actions 运行后端测试、生产构建和浏览器测试，合并前分支必须已包含最新的 `main`。合并到 `main` 后只重跑后端测试和构建，通过后把构建结果发布到 GitHub Pages。联络站后端需要在 `cloudflare/sync/` 下手动运行 `npm run deploy` 部署（见 [`cloudflare/sync/README.md`](cloudflare/sync/README.md)）。
 
 前端改动需要新的同步协议时，同时把 `static/portfolio/sync-config.json` 的 `apiVersion` 和 `cloudflare/sync/src/api-version.js` 的 `API_VERSION` 加 1，先部署 Worker，再推送到 `main`。CI 发布 Pages 前会运行 `npm run check:sync-api` 读取线上 `/health`，如果 Worker 的 API 版本低于前端需要的版本，就停止发布。Pages 发布后，运行 `npm run build && npm run verify:release -- <完整提交SHA>` 核对线上网站和 Worker 是否都对应这次提交。
 
