@@ -681,10 +681,19 @@ test('chunk streams reject bytes beyond 8 MiB even when Content-Length lies or i
   const space = await createSpace(request);
   const started = await initiate(request, space, { size: chunkSize });
   assert.equal(started.status, 201);
+  // The Worker answers 413 and closes as soon as the body passes the limit, which can reset
+  // the connection before the client finishes sending; retry only that transport failure.
+  const putOversized = async (declared) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(chunkSize + 1), { 'X-Test-Content-Length': declared });
+      } catch (error) {
+        if (attempt === 3 || error.message !== 'fetch failed') throw error;
+      }
+    }
+  };
   for (const declared of ['1', 'omit']) {
-    const result = await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(chunkSize + 1), {
-      'X-Test-Content-Length': declared
-    });
+    const result = await putOversized(declared);
     assert.equal(result.status, 413, JSON.stringify(result.body));
   }
   const retry = await initiate(request, space, { clientId: randomUUID(), size: 0 });
