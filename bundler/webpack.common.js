@@ -61,8 +61,9 @@ module.exports = {
                     from: path.resolve(rootDirectory, 'static/portfolio', file),
                     to: `chat/${file}`,
                 })),
-                // Gomoku and satellite bundles built by npm run build:gomoku / build:satellite.
-                { from: path.resolve(rootDirectory, 'build') },
+                // Gomoku and satellite bundles from build:gomoku / build:satellite. build/ is absent when
+                // the browser tests start the dev server without them; the production build always creates it.
+                { from: path.resolve(rootDirectory, 'build'), noErrorOnMissing: true },
                 {
                 from: path.resolve(rootDirectory, 'static'),
                 globOptions: {

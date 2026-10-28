@@ -14,14 +14,16 @@ function createBuildMetadata(rootDirectory) {
     const staticDirectory = path.join(rootDirectory, 'static');
     const hash = crypto.createHash('sha256');
 
-    const generatedDirectory = path.join(rootDirectory, 'build');
+    // The Gomoku and satellite bundles are built into the ignored build/ directory, so hash
+    // their sources and locked dependencies instead; this works before they are built.
     collectFiles(staticDirectory)
         .concat(path.join(rootDirectory, 'src/sync-windows.html'))
-        .concat(fs.existsSync(generatedDirectory) ? collectFiles(generatedDirectory) : [])
+        .concat(collectFiles(path.join(rootDirectory, 'src/SatelliteTracker')))
+        .concat(['bundler/webpack.gomoku.js', 'bundler/webpack.satellite.js', 'package-lock.json'].map((file) => path.join(rootDirectory, file)))
         .filter((file) => !file.endsWith('sitemap.xml'))
         .sort()
         .forEach((file) => {
-            hash.update(path.relative(file.startsWith(generatedDirectory) ? generatedDirectory : staticDirectory, file));
+            hash.update(path.relative(staticDirectory, file));
             hash.update(fs.readFileSync(file));
         });
 
