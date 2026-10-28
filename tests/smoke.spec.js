@@ -1761,7 +1761,7 @@ test('recovers from an immersive resource loading failure', async ({ page, isMob
     const errorPanel = page.locator('[data-resource-error]');
     await expect(errorPanel).toBeVisible({ timeout: 15000 });
     await expect(errorPanel).toContainText('3D 资源加载失败');
-    await expect(errorPanel).toContainText('3D 场景加载失败，请重试。');
+    await expect(errorPanel).not.toContainText('3D 场景加载失败');
     await expect(errorPanel.locator('a')).toHaveCount(0);
     await expect(page.locator('[data-resource-retry]')).toBeVisible();
 
