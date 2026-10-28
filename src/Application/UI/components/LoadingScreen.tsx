@@ -99,9 +99,7 @@ const LoadingScreen: React.FC = () => {
             ? '无法启动 3D 场景 / 3D scene unavailable'
             : '3D 资源加载失败 / Resource loading failed';
     const errorDetail =
-        failure?.kind === 'webgl'
-            ? '请确认浏览器已启用 WebGL 后重试。'
-            : '3D 场景加载失败，请重试。';
+        failure?.kind === 'webgl' ? '请确认浏览器已启用 WebGL 后重试。' : null;
 
     return (
         <div
@@ -207,8 +205,12 @@ const LoadingScreen: React.FC = () => {
                         <p>
                             <b style={styles.error}>{errorTitle}</b>
                         </p>
-                        <div style={styles.spacer} />
-                        <p>{errorDetail}</p>
+                        {errorDetail && (
+                            <>
+                                <div style={styles.spacer} />
+                                <p>{errorDetail}</p>
+                            </>
+                        )}
                         <div className="bios-action-row bios-action-row--error">
                             <button
                                 className="bios-start-button"
