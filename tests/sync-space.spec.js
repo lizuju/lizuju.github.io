@@ -35,7 +35,7 @@ test('shows the remaining pairing cooldown and enables joining when it expires',
 test('caches image previews, renews expired download tickets and authenticates reconnects outside the URL', async ({ page, isMobile, browserName }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
     await page.clock.install();
-    const encrypted = file('pixel.png', 'image/png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1kAAAAASUVORK5CYII=', 'base64'));
+    const encrypted = file('pixel.png', 'image/png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64'));
     const attachmentMessage = message(1, '', deviceId, encrypted.metadata, roomId);
     let tickets = 0;
     const server = createServer((request, response) => {

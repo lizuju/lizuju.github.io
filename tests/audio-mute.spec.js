@@ -1,6 +1,4 @@
 const { test, expect } = require('@playwright/test');
-const { readFileSync } = require('node:fs');
-const { join } = require('node:path');
 
 const sampleRate = 8000;
 const sampleBytes = sampleRate * 20 * 2;
@@ -17,20 +15,6 @@ wav.writeUInt16LE(2, 32);
 wav.writeUInt16LE(16, 34);
 wav.write('data', 36);
 wav.writeUInt32LE(sampleBytes, 40);
-const nativeVideo = readFileSync(join(__dirname, 'fixtures/native-video.mp4'));
-// Linux WebKit reads video in byte ranges and stalls when a range request gets the whole file,
-// so answer ranges the way GitHub Pages does.
-const serveNativeVideo = (route) => {
-    const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
-    const headers = { 'Accept-Ranges': 'bytes' };
-    if (!range) return route.fulfill({ contentType: 'video/mp4', headers, body: nativeVideo });
-    const start = Number(range[1]);
-    const end = Math.min(range[2] ? Number(range[2]) : Infinity, nativeVideo.length - 1);
-    return route.fulfill({
-        status: 206, contentType: 'video/mp4', body: nativeVideo.subarray(start, end + 1),
-        headers: { ...headers, 'Content-Range': `bytes ${start}-${end}/${nativeVideo.length}` },
-    });
-};
 
 test.beforeEach(async ({ page, isMobile }) => {
     test.skip(isMobile, 'the mobile shell does not create the scene audio engine');
@@ -237,7 +221,6 @@ for (const delayedTransition of ['resume', 'suspend']) {
 
 test('keeps native media playback and volume independent of both background mute controls', async ({ page }) => {
     await startScene(page);
-    await page.route('**/test-media/native-video.mp4', serveNativeVideo);
     await page.keyboard.press('Shift');
     const sceneAudio = page.locator('[data-audio-mute-toggle]');
     await expect(sceneAudio).toBeVisible({ timeout: 15000 });
@@ -252,10 +235,11 @@ test('keeps native media playback and volume independent of both background mute
         audio.loop = true;
         const video = document.createElement('video');
         video.dataset.testIndependentVideo = '';
-        video.src = '/test-media/native-video.mp4';
+        video.src = 'assets/music-portfolio/last-christmas-solo.mp4';
         video.volume = 0.65;
         video.loop = true;
-        video.muted = true;
+        // Linux WebKit never advances a muted video while the scene draws the desktop this small,
+        // so the video plays with sound like the audio beside it.
         video.playsInline = true;
         const button = document.createElement('button');
         button.dataset.testMediaStart = '';

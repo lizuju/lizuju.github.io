@@ -30,17 +30,3 @@ require FFmpeg.
 
 Four seconds leave time to seek and verify playback before the media ends,
 without enabling native looping during the preview lifecycle checks.
-
-`native-video.mp4` is a twenty-second, 64 × 48 teal frame at 10 frames per second,
-encoded as H.264 Constrained Baseline in an MP4 container with no audio track. The
-mute-control test loops it beside a twenty-second tone, so both stay well clear of
-their loop point while the test compares playback positions. It was generated with
-FFmpeg 8.0.1:
-
-```sh
-ffmpeg -f lavfi -i color=c=0x157a6e:s=64x48:r=10 -t 20 -c:v libx264 -profile:v baseline \
-  -pix_fmt yuv420p -movflags +faststart -map_metadata -1 -fflags +bitexact -flags:v +bitexact \
-  -an native-video.mp4
-```
-
-Its SHA-256 is `ac27dbb19405fc7d10ed8c61fe4c6e9cbbe7958f80d40b2b6e6219b82fba77ac`.
