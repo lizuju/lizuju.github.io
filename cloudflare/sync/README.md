@@ -153,7 +153,7 @@ Registry 仅在状态接口被访问时按需采集账户额度，合并并发�
 
 后端地址为 `https://portfolio-sync.li2096870763.workers.dev`。更新后端时，先提交本次发布内容，在本目录运行 `npm run deploy`。脚本要求工作区干净，先运行后端测试和打包检查，检查 Cloudflare 登录，再部署并注入当前完整 Git SHA 为 `RELEASE_REVISION`；部署后检查 `/health` 返回的服务名、API 版本、提交 SHA 和 Cloudflare 版本 ID，失败会以非零状态退出。使用兼容 Workers Free 的 `new_sqlite_classes` 迁移，不开通付费计划。仓库内 `static/portfolio/sync-config.json` 的 `apiBase` 指向该 HTTPS 地址，修改前端后仍需构建并发布网站。协议有不兼容改动时，同时把本目录 `src/api-version.js` 的 `API_VERSION` 和 `sync-config.json` 的 `apiVersion` 加 1，先部署后端再推送前端；CI 发布 Pages 前会用 `npm run check:sync-api` 检查线上 Worker 版本，落后则停止发布。
 
-GitHub Pages 发布后，在仓库根目录运行 `npm run verify:release -- <本次完整提交SHA>`。验证器只发 GET 请求，不创建空间或消息；除核对后端版本及加密版本外，还逐字节比较线上个人主页 HTML、后端配置、主 JS、主 CSS 和解密 Service Worker 与本地 `docs/` 构建结果（`docs/` 不纳入 Git，验证前先在仓库根目录运行 `npm run build`），防止后端成功而前端仍是旧版。单独验证后端可在本目录运行 `npm run verify:release -- <本次完整提交SHA> --backend-only`。`/health` 可访问、CI 通过或部署命令成功都不替代这一步。
+GitHub Pages 发布后，在仓库根目录运行 `npm run verify:release -- <本次完整提交SHA>`。验证器只发 GET 请求，不创建空间或消息；除核对后端源码指纹、API 版本及加密版本外，还逐字节比较线上个人主页 HTML、后端配置、主 JS、主 CSS 和解密 Service Worker 与本地 `docs/` 构建结果（`docs/` 不纳入 Git，验证前先在仓库根目录运行 `npm run build`），防止后端成功而前端仍是旧版。仅前端改动或合并提交允许后端报告较早提交号，但后端源码指纹必须与当前代码一致。单独验证后端则严格核对部署提交号，可在本目录运行 `npm run verify:release -- <本次完整提交SHA> --backend-only`。`/health` 可访问、CI 通过或部署命令成功都不替代这一步。
 
 前端只从这个静态配置读取后端地址；不要通过查询参数接受其他 API 地址，避免访问者的设备凭据被发送到陌生服务。Cloudflare 登录由账号持有人完成，不把 API token、设备凭据或 `.dev.vars` 提交到仓库。
 

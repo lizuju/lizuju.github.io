@@ -4,6 +4,8 @@ import { access, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { API_VERSION } from '../src/api-version.js';
+import { workerFingerprint } from './worker-fingerprint.mjs';
+import { checkWorkerSources } from './check-api-version.mjs';
 
 export async function verifyRelease({ expectedRevision, apiBase, siteBase = 'https://lizuju.github.io/', docsDirectory = fileURLToPath(new URL('../../../docs/', import.meta.url)), backendOnly = false, fetcher = fetch }) {
   assert.match(expectedRevision || '', /^[0-9a-f]{40}$/, 'Provide the full Git commit SHA expected in production.');
@@ -19,7 +21,9 @@ export async function verifyRelease({ expectedRevision, apiBase, siteBase = 'htt
   assert.equal(health.service, 'portfolio-sync', 'The API address points to another service.');
   assert.equal(health.apiVersion, API_VERSION, 'Unexpected sync API version.');
   assert.equal(health.encryptionVersion, 1, 'End-to-end encryption is not active on the backend.');
-  assert.equal(health.revision, expectedRevision, 'Production Worker does not match the expected Git commit.');
+  assert.match(health.revision || '', /^[0-9a-f]{40}$/, 'Production Worker does not report a valid Git commit.');
+  if (backendOnly) assert.equal(health.revision, expectedRevision, 'Production Worker does not match the expected Git commit.');
+  checkWorkerSources(health.sourceFingerprint, await workerFingerprint());
   assert.ok(typeof health.versionId === 'string' && health.versionId.length, 'Cloudflare deployment version is missing.');
   if (!backendOnly) {
     await access(docsDirectory).catch(() => {
@@ -43,7 +47,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   try {
     const config = JSON.parse(await readFile(new URL('../../../static/portfolio/sync-config.json', import.meta.url), 'utf8'));
     const health = await verifyRelease({ expectedRevision: process.argv[2], apiBase: config.apiBase, backendOnly: process.argv.includes('--backend-only') });
-    console.log(`Release verified: ${health.revision} (Cloudflare ${health.versionId})`);
+    console.log(`Release verified: ${process.argv[2]}; matching Worker sources at ${health.revision} (Cloudflare ${health.versionId})`);
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;
