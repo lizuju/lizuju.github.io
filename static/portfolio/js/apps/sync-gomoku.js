@@ -1,6 +1,6 @@
 import '../../css/apps/sync-gomoku.css';
 
-export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceId, onMove, onLeave, onClosed }) {
+export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceId, onMove, onLeave, onRematch, onCancelRematch, onClosed }) {
     const app = document.querySelector('[data-sync-gomoku-window]');
     const find = name => app.querySelector(`[data-sync-gomoku-${name}]`);
     const canvas = find('board');
@@ -35,6 +35,8 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
     let step = 30;
     let priorRenderGame;
     let resizeFrame = null;
+    let rematch = null;
+    let arranging = false;
 
     const player = () => current && (current.hostDeviceId === getDeviceId() ? 1
         : current.guestDeviceId === getDeviceId() ? 2 : 0);
@@ -159,6 +161,13 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
             }
         }
         find('result').hidden = current.status !== 'finished';
+        const waitingForRematch = rematch?.status === 'waiting';
+        find('rematch-controls').hidden = current.status !== 'finished' || !player() || (rematch && !['waiting', 'cancelled'].includes(rematch.status));
+        find('rematch').textContent = text(waitingForRematch
+            ? rematch.requestedBy === getDeviceId() ? 'syncGameRematchWaiting' : 'syncGameRematchAccept' : 'syncGameRematch');
+        find('rematch').disabled = !online || arranging || (waitingForRematch && rematch.requestedBy === getDeviceId());
+        find('rematch-cancel').hidden = !waitingForRematch;
+        find('rematch-cancel').disabled = !online || arranging;
         if (current.result) {
             find('result-title').textContent = current.result.winnerDeviceId
                 ? translate('syncGameWinner', { name: deviceLabel(current.result.winnerDeviceId) }) : text('syncGameDraw');
@@ -200,6 +209,18 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
         } else close();
     };
     find('result-close').addEventListener('click', close);
+    for (const [name, action] of [['rematch', onRematch], ['rematch-cancel', onCancelRematch]]) {
+        find(name).addEventListener('click', async () => {
+            if (arranging || !current || !online) return;
+            const id = current.id;
+            arranging = true;
+            errorKey = '';
+            render();
+            try { await action(id, rematch); }
+            catch { if (current?.id === id) errorKey = 'syncGameRematchFailed'; }
+            finally { arranging = false; render(); }
+        });
+    }
 
     const entry = manager.registerWindow({
         id: 'sync-gomoku', element: app, task, titlebar: find('drag'), resizeHandle: find('resize'),
@@ -316,6 +337,7 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
                 window.render_game_to_text = renderGame;
             }
             if (current?.id !== game.id) {
+                rematch = null;
                 pending = null;
                 leaving = false;
                 errorKey = '';
@@ -339,6 +361,7 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
             if (!online) { pending = null; hover = null; }
             render();
         },
+        setRematch(game) { rematch = game; render(); },
         close,
         get currentId() { return current?.id || null; }
     };

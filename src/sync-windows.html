@@ -194,6 +194,7 @@
                             <input id="sync-search" type="search" placeholder="搜索消息或文件名"
                                 data-i18n-placeholder="syncSearchPlaceholder" data-sync-search>
                             <div class="sync-tools-actions">
+                                <button class="sync-button" type="button" data-sync-notifications aria-pressed="false">系统通知：关闭</button>
                                 <button class="sync-button" type="button" data-sync-space-rename
                                     data-i18n="syncSpaceRename">修改空间名称</button>
                                 <button class="sync-button" type="button" data-sync-pair
@@ -364,6 +365,10 @@
                 <div class="sync-gomoku-player sync-gomoku-summary" data-sync-gomoku-result hidden role="status">
                     <div><strong data-sync-gomoku-result-title></strong><span class="sync-gomoku-summary-score" data-sync-gomoku-score></span></div>
                     <button type="button" class="sync-button" data-sync-gomoku-result-close data-i18n="syncGameClose">关闭对局</button>
+                    <div class="sync-gomoku-rematch" data-sync-gomoku-rematch-controls hidden>
+                        <button type="button" class="sync-button" data-sync-gomoku-rematch></button>
+                        <button type="button" class="sync-button" data-sync-gomoku-rematch-cancel hidden data-i18n="syncGameRematchDecline">取消约战</button>
+                    </div>
                 </div>
                 <div class="sync-gomoku-board-frame" data-sync-gomoku-frame>
                     <canvas class="sync-gomoku-board" data-sync-gomoku-board width="480" height="480" tabindex="0"

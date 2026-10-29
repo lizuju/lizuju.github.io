@@ -13,6 +13,7 @@ import { VoiceRecorder } from './sync-voice-recorder.js';
 import { createVoicePlayer } from './sync-voice-player.js';
 import { STICKERS, stickerById } from './sync-stickers.js';
 import { createGomokuWindow } from './sync-gomoku.js';
+import { createSystemNotifications } from './sync-notifications.js';
 
 (() => {
     const desktopApi = window.GavinDesktop;
@@ -134,6 +135,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
         const downloadTickets = new Map();
         const fileCapabilities = new Map();
         let draftRevision = 0;
+        let draftSave = Promise.resolve(true);
         let soundEnabled = true;
         try { soundEnabled = localStorage.getItem('portfolio-sync-notification-sound') !== 'off'; } catch { /* Use the current session preference. */ }
         const messageSound = new Audio(new URL('assets/sync-notification.wav', assetRoot).href);
@@ -168,7 +170,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             const outgoing = roomId === credentials?.roomId ? [...outbox.values()] : [];
             if (outgoing.some(message => message.sendState === 'failed') || roomId !== credentials?.roomId && record?.failedMessages?.size) return { color: 'red', key: 'syncSpaceFailed' };
             if (record?.disconnected) return { color: 'red', key: 'syncSpaceOffline' };
-            if (outgoing.some(message => message.sendState === 'sending')) return { color: 'yellow', key: 'syncSpaceSending' };
+            if (outgoing.some(message => ['sending', 'queued'].includes(message.sendState)) || record?.queuedMessages?.size) return { color: 'yellow', key: 'syncSpaceSending' };
             if (record?.connectionState === 'connecting') return { color: 'yellow', key: 'syncSpaceConnecting' };
             if (spaceHasUnread(roomId)) return { color: 'green', key: 'syncSpaceUnread' };
             return null;
@@ -258,6 +260,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             updateSoundToggle();
         };
         const notifyMessage = (message, session = credentials) => {
+            if (session && !message.decryptionFailed) systemNotifications.show(message, session).catch(() => {});
             if (!soundEnabled || !soundReady || !session || message.decryptionFailed) return;
             const version = soundVersion;
             const key = `portfolio-sync-notification:${session.roomId}:${session.deviceId}`;
@@ -380,7 +383,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             find('devices').disabled = working || sending || !online;
             find('clear').disabled = working || sending || !online || !history.length;
             find('leave').disabled = working || sending;
-            find('send').disabled = working || sendingText || recording() || !online || (!(selectedFile && !uploadController) && !input.value.trim());
+            find('send').disabled = working || sendingText || recording() || !credentials || (!online && !!selectedFile) || (!(selectedFile && !uploadController) && !input.value.trim());
             find('attach').disabled = working || sending || recording() || !online;
             find('file-input').disabled = working || sending || recording() || !online;
             find('voice-record').disabled = working || sending || recording() || !online || !!selectedFile || !!pendingUpload;
@@ -680,7 +683,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 file: { name: pendingUpload.file.name, type: pendingUpload.file.type, size: pendingUpload.file.size, lastModified: pendingUpload.file.lastModified }
             };
             const key = draftKey();
-            return encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, { text: input.value, mentions: mentionComposer.snapshot(), reply: selectedReply, outbox: [...outbox.values()], upload })
+            return draftSave = encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, { text: input.value, mentions: mentionComposer.snapshot(), reply: selectedReply, outbox: [...outbox.values()], upload })
                 .then(encrypted => {
                     if (revision !== draftRevision) return false;
                     sessionStorage.setItem(key, encrypted);
@@ -813,7 +816,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 ? translate('syncDownloadWaiting', { seconds: Math.max(1, Math.ceil((progress.retryAt - Date.now()) / 1000)) })
                 : translate('syncDownloadProgress', { received: formatSize(progress.receivedBytes), total: formatSize(progress.totalBytes),
                     percent: progress.totalBytes ? Math.floor(progress.receivedBytes / progress.totalBytes * 100) : 100,
-                    speed: formatSize(progress.bytesPerSecond) });
+                    speed: formatSize(progress.bytesPerSecond) }) + (progress.bytesPerSecond > 0 ? ` · ${translate('syncDownloadRemaining', { seconds: Math.ceil((progress.totalBytes - progress.receivedBytes) / progress.bytesPerSecond) })}` : '');
         };
         const downloadAttachment = async (message) => {
             if (downloads.has(message.id)) return;
@@ -978,9 +981,17 @@ import { createGomokuWindow } from './sync-gomoku.js';
                     entry.show();
                     setNotice(next.status === 'finished' ? 'syncGameFinished' : 'syncGameCancelled');
                 }
+            } else if (next.status === 'waiting' && next.previousGameId && open && isGamePlayer(next)) {
+                readGame(next.previousGameId, true).catch(showError);
             } else if (next.board) {
                 if (open || (isGamePlayer(next) && next.status === 'playing' && previous?.status === 'waiting')) gameWindow.show(next);
                 else if (gameWindow.currentId === next.id) gameWindow.update(next);
+            }
+            if (next.previousGameId === gameWindow.currentId) gameWindow.setRematch(next);
+            if (next.status === 'finished' && next.nextGameId && gameWindow.currentId === next.id) {
+                const rematch = games.get(next.nextGameId);
+                if (rematch) gameWindow.setRematch(rematch);
+                else readGame(next.nextGameId).catch(showError);
             }
             render();
             return next;
@@ -1302,7 +1313,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 item.dataset.state = message.sendState || 'sent';
                 const sendStatus = item.querySelector('.sync-message-send-status');
                 sendStatus.hidden = !message.sendState;
-                sendStatus.textContent = translate(message.sendState === 'failed' ? 'syncMessageFailed' : 'syncSending');
+                sendStatus.textContent = translate(message.sendState === 'failed' ? 'syncMessageFailed' : message.sendState === 'queued' ? 'syncMessageQueued' : 'syncSending');
                 const retry = item.querySelector('[data-sync-retry-message]');
                 retry.hidden = message.sendState !== 'failed';
                 retry.textContent = translate('syncMessageRetry');
@@ -1537,7 +1548,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             }
         };
         const addMessage = (message, metadata = null, advanceCursor = true, notify = false) => {
-            const openInvitation = !!message.gomoku && outbox.has(message.clientId);
+            const openInvitation = !!message.gomoku && !message.game?.previousGameId && outbox.has(message.clientId);
             reconcileUpload([message]);
             const known = history.some((item) => item.id === message.id);
             const trimming = metadata?.oldestId > history[0]?.id || !known && history.length >= 500;
@@ -1589,6 +1600,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
         };
         const disposeConnection = record => {
             if (!record) return;
+            clearTimeout(record.queueTimer);
             connections.delete(record.session.roomId);
             record.transport?.close();
             record.pairing.reset();
@@ -1689,7 +1701,16 @@ import { createGomokuWindow } from './sync-gomoku.js';
             if (!valid()) return;
             if (data.type === 'message' && credentials !== session && incoming[0].deviceId !== session.deviceId
                 && !record.history.some(message => message.id === incoming[0].id)) notifyMessage(incoming[0], session);
-            for (const message of incoming) if (message.deviceId === session.deviceId) record.failedMessages.delete(message.clientId);
+            for (const message of incoming) if (message.deviceId === session.deviceId) {
+                record.failedMessages.delete(message.clientId);
+                const queued = record.queuedMessages.get(message.clientId);
+                if (queued) {
+                    queued.confirmed = true;
+                    record.queuedMessages.delete(message.clientId);
+                    if (credentials === session) outbox.delete(message.clientId);
+                    persistQueued(record, queued, true);
+                }
+            }
             const receipts = data.type === 'read' ? [data] : data.readReceipts || [];
             for (const receipt of receipts) record.readReceipts.set(receipt.deviceId,
                 Math.max(record.readReceipts.get(receipt.deviceId) || 0, receipt.messageId));
@@ -1698,6 +1719,8 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 record.history = [];
                 record.unread.clear();
                 record.failedMessages.clear();
+                record.queuedMessages.clear();
+                clearTimeout(record.queueTimer);
                 record.historyState = data.history;
                 record.reconnectCursor = null;
                 record.activeGames = [];
@@ -1752,7 +1775,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
         };
         const createConnection = session => {
             const record = { session, history: [], historyState: null, reconnectCursor: null, readReceipts: new Map(),
-                unread: new Set(), failedMessages: new Set(), devices: [], activeGames: [], pairingRevision: 0, pairingData: session.pairing || null };
+                unread: new Set(), failedMessages: new Set(), queuedMessages: new Map(), devices: [], activeGames: [], pairingRevision: 0, pairingData: session.pairing || null };
             connections.set(session.roomId, record);
             record.pairing = createPairing(session);
             return record;
@@ -1792,11 +1815,12 @@ import { createGomokuWindow } from './sync-gomoku.js';
                         record.connectionState = state;
                         if (state === 'online') record.disconnected = false;
                         else if (state === 'offline' && !record.transport?.stopped) record.disconnected = true;
-                        if (credentials !== session) { renderSpaces(); return; }
+                        if (credentials !== session) { renderSpaces(); if (state === 'online') flushQueued(record); return; }
                         socket = record.transport?.socket || null;
                         setConnection(state === 'online');
                         if (state === 'connecting') setText(status, 'syncConnecting', 'connecting');
                         if (state === 'online') markRead();
+                        if (state === 'online') flushQueued(record);
                     },
                     onError: error => {
                         if (credentials === session && error.code !== 'invalid_code') showError(error);
@@ -2026,6 +2050,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 setup.hidden = !addingSpace;
                 room.hidden = addingSpace;
                 if (active) prepareEncryptedFiles().catch(() => {});
+                await record.queueSave;
                 try {
                     const encrypted = sessionStorage.getItem(draftKey());
                     const draft = encrypted ? await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted) : null;
@@ -2035,7 +2060,12 @@ import { createGomokuWindow } from './sync-gomoku.js';
                     selectedReply = draft?.reply || null;
                     pendingUpload = draft?.upload || null;
                     for (const message of draft?.outbox || []) {
-                        if (!message.attachment || pendingUpload?.clientId === message.clientId) outbox.set(message.clientId, { ...message, sendState: 'failed' });
+                        if (record.history.some(sent => sent.deviceId === session.deviceId && sent.clientId === message.clientId)) continue;
+                        if (!message.attachment || pendingUpload?.clientId === message.clientId) {
+                            const restored = record.queuedMessages.get(message.clientId) || { ...message, sendState: message.autoSend ? 'queued' : 'failed' };
+                            outbox.set(message.clientId, restored);
+                            if (restored.autoSend) record.queuedMessages.set(message.clientId, restored);
+                        }
                     }
                     const files = spaceFiles.get(session.roomId);
                     if (files?.token === session.token) {
@@ -2055,6 +2085,8 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 }
                 await showPairing(record.pairingData, session);
                 if (credentials !== session || connections.get(session.roomId) !== record) return false;
+                sendingText = !!record.sendingText;
+                sending = sendingText;
                 restoreConnectionView(record);
                 updateSelectedFile();
                 connect();
@@ -2062,6 +2094,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             } finally {
                 switchingSpace = wasSwitching;
                 updateControls();
+                if (credentials) flushQueued(connections.get(credentials.roomId));
             }
         };
         const reconcileSession = () => {
@@ -2092,7 +2125,8 @@ import { createGomokuWindow } from './sync-gomoku.js';
                             const encrypted = sessionStorage.getItem(`portfolio-sync-draft:${session.roomId}`);
                             if (encrypted) {
                                 const draft = await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted);
-                                record.failedMessages = new Set((draft.outbox || []).map(message => message.clientId));
+                                record.failedMessages = new Set((draft.outbox || []).filter(message => !message.autoSend).map(message => message.clientId));
+                                record.queuedMessages = new Map((draft.outbox || []).filter(message => message.autoSend && !message.attachment).map(message => [message.clientId, { ...message, sendState: 'queued' }]));
                             }
                         } catch { /* Connection recovery does not depend on a saved draft. */ }
                         connect(record);
@@ -2372,6 +2406,24 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 return gameAction(game.id, 'move', { revision: game.revision, commandId: crypto.randomUUID(), row, col });
             },
             onLeave: () => gameAction(gameWindow.currentId, 'leave'),
+            onRematch: async (previousGameId, rematch) => {
+                if (rematch?.status === 'waiting') return gameAction(rematch.id, 'join');
+                const session = credentials;
+                const clientId = crypto.randomUUID();
+                const keyring = session.keyring;
+                const text = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${clientId}`, { text: '', gomoku: clientId });
+                try {
+                    const message = await api(roomPath('/messages'), { method: 'POST', headers: { 'X-Sync-Key-Id': keyring.currentKeyId },
+                        body: JSON.stringify({ clientId, text, game: 'gomoku', previousGameId }) }, session);
+                    if (credentials !== session) return;
+                    addMessage(message, null, false);
+                    await readGame(previousGameId);
+                } catch (error) {
+                    if (credentials === session && error.game) acceptGame(error.game);
+                    throw error;
+                }
+            },
+            onCancelRematch: (id, rematch) => gameAction(rematch.id, 'leave'),
             onClosed: () => { if (!switchingSpace && !active && !needsGameConnection()) disconnect(); }
         });
         const entry = manager.registerWindow({
@@ -2825,21 +2877,58 @@ import { createGomokuWindow } from './sync-gomoku.js';
             } catch (error) { if (credentials === session) showError(error); }
             finally { if (credentials === session) { busy = false; updateSelectedFile(); } }
         });
-        const sendOutgoing = async (outgoing) => {
-            if (busy || !online || !outbox.has(outgoing.clientId) || (outgoing.attachment ? !!uploadController : sendingText)) return;
-            const session = credentials;
+        const persistQueued = (record, outgoing, remove = false) => {
+            if (credentials === record.session && !switchingSpace) return saveDraft();
+            record.queueSave = (record.queueSave || Promise.resolve()).then(async () => {
+                const session = record.session;
+                if (!liveSession(session) || record.cleared) return;
+                if (credentials === session && !switchingSpace) return saveDraft();
+                const key = `portfolio-sync-draft:${session.roomId}`;
+                const encrypted = sessionStorage.getItem(key);
+                const draft = encrypted ? await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted) : {};
+                draft.outbox = (draft.outbox || []).filter(message => message.clientId !== outgoing.clientId);
+                if (!remove) draft.outbox.push(outgoing);
+                const saved = await encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, draft);
+                if (!liveSession(session) || record.cleared) return;
+                if (credentials === session && !switchingSpace) return saveDraft();
+                sessionStorage.setItem(key, saved);
+            }).catch(() => { if (credentials === record.session) setNotice('syncStorageError', true); });
+            return record.queueSave;
+        };
+        const flushQueued = async record => {
+            if (!record || record.flushing || record.connectionState !== 'online' || !liveSession(record.session)) return;
+            if (credentials === record.session && (busy || switchingSpace || sendingText)) return;
+            record.flushing = true;
+            clearTimeout(record.queueTimer);
+            try {
+                for (const outgoing of record.queuedMessages.values()) {
+                    if (record.connectionState !== 'online' || !liveSession(record.session)) break;
+                    await sendOutgoing(outgoing, record);
+                    if (outgoing.sendState === 'queued') {
+                        record.queueTimer = setTimeout(() => flushQueued(record), Math.max(5000, outgoing.retryAfter || 0));
+                        break;
+                    }
+                }
+            } finally { record.flushing = false; }
+        };
+        const sendOutgoing = async (outgoing, queuedRecord = null) => {
+            const session = queuedRecord?.session || credentials;
+            const current = () => credentials === session;
+            const pending = () => queuedRecord ? queuedRecord.queuedMessages.has(outgoing.clientId) : outbox.has(outgoing.clientId);
+            if (!session || (queuedRecord ? queuedRecord.connectionState !== 'online' : !online) || !pending()
+                || (current() && (busy || switchingSpace || (outgoing.attachment ? !!uploadController : sendingText)))) return;
             const upload = outgoing.attachment ? pendingUpload : null;
             if (outgoing.attachment && (upload?.clientId !== outgoing.clientId || !(upload.file instanceof File))) return;
             const text = outgoing.text;
             outgoing.sendState = 'sending';
-            sending = true;
+            if (queuedRecord) queuedRecord.sendingText = true;
+            if (current()) sending = true;
             const controller = upload ? new AbortController() : null;
             if (upload) uploadController = controller;
-            else sendingText = true;
-            saveDraft();
-            render(true);
-            updateSelectedFile();
-            setNotice('syncSending');
+            else if (current()) sendingText = true;
+            if (queuedRecord) await persistQueued(queuedRecord, outgoing);
+            else saveDraft();
+            if (current()) { render(true); updateSelectedFile(); setNotice('syncSending'); }
             try {
                 if (upload) {
                     const message = await uploadAttachment(upload, session, controller);
@@ -2851,13 +2940,21 @@ import { createGomokuWindow } from './sync-gomoku.js';
                             ...(outgoing.mentions?.length ? { mentions: outgoing.mentions } : {}),
                             ...(outgoing.sticker ? { sticker: outgoing.sticker } : {}), ...(outgoing.gomoku ? { gomoku: outgoing.gomoku } : {}) });
                         outgoing.keyId = keyring.currentKeyId;
-                        saveDraft();
+                        if (queuedRecord) await persistQueued(queuedRecord, outgoing);
+                        else saveDraft();
                     }
-                    if (credentials !== session || outgoing.confirmed || !outbox.has(outgoing.clientId)) return;
-                    const message = await api(roomPath('/messages'), { method: 'POST', headers: { 'X-Sync-Key-Id': outgoing.keyId }, body: JSON.stringify({ clientId: outgoing.clientId, text: outgoing.encrypted,
-                        ...(outgoing.gomoku ? { game: 'gomoku' } : {}) }) });
-                    if (credentials !== session || outbox.get(outgoing.clientId) !== outgoing) return;
-                    addMessage(message, null, false);
+                    if (!liveSession(session) || outgoing.confirmed || !pending()) return;
+                    const message = await api(`/v1/spaces/${session.roomId}/messages`, { method: 'POST', headers: { 'X-Sync-Key-Id': outgoing.keyId }, body: JSON.stringify({ clientId: outgoing.clientId, text: outgoing.encrypted,
+                        ...(outgoing.gomoku ? { game: 'gomoku' } : {}) }) }, session);
+                    if (!liveSession(session) || !pending()) return;
+                    if (queuedRecord) {
+                        queuedRecord.queuedMessages.delete(outgoing.clientId);
+                        outgoing.confirmed = true;
+                        if (current()) outbox.delete(outgoing.clientId);
+                        if (current() && !switchingSpace) addMessage(message, null, false);
+                        else rememberHistory(queuedRecord, [message], 'append');
+                        await persistQueued(queuedRecord, outgoing, true);
+                    } else if (current()) addMessage(message, null, false);
                 }
                 if (credentials !== session) return;
                 if (upload?.confirmed || (upload && pendingUpload !== upload)) return;
@@ -2865,33 +2962,54 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 saveDraft();
                 setNotice('syncSent');
             } catch (error) {
+                if (queuedRecord && liveSession(session) && !outgoing.confirmed && pending()) {
+                    const retry = !navigator.onLine || queuedRecord.connectionState !== 'online' || ['network_error', 'rate_limited', 'storage_cleaning'].includes(error.code);
+                    outgoing.sendState = retry ? 'queued' : 'failed';
+                    outgoing.retryAfter = Math.max(0, error.retryAfter || 0) * 1000;
+                    if (!retry) { outgoing.autoSend = false; queuedRecord.queuedMessages.delete(outgoing.clientId); queuedRecord.failedMessages.add(outgoing.clientId); }
+                    await persistQueued(queuedRecord, outgoing);
+                    if (current() && !retry) showError(error);
+                    renderSpaces();
+                    return;
+                }
                 if (credentials === session) {
                     if (outgoing.confirmed || upload?.confirmed || !outbox.has(outgoing.clientId)) return;
                     if (upload && pendingUpload === upload && ['not_found', 'upload_unavailable', 'upload_conflict'].includes(error.code)) {
                         if (error.code === 'upload_conflict') discardUpload(true);
                         else { upload.uploadId = null; upload.receivedBytes = 0; }
                     }
-                    if (outbox.has(outgoing.clientId)) outgoing.sendState = 'failed';
+                    if (outbox.has(outgoing.clientId)) {
+                        outgoing.sendState = 'failed';
+                        if (!upload && !outgoing.gomoku && !outgoing.sticker && error.code === 'network_error') {
+                            outgoing.sendState = 'queued'; outgoing.autoSend = true;
+                            connections.get(session.roomId)?.queuedMessages.set(outgoing.clientId, outgoing);
+                        }
+                    }
                     saveDraft();
-                    if (error.code === 'history_cleared') setNotice('syncCleared');
+                    if (outgoing.sendState === 'queued') setNotice('syncMessageQueued');
+                    else if (error.code === 'history_cleared') setNotice('syncCleared');
                     else if (error.code === 'upload_cancelled') return;
                     else if (upload && !error.code) setNotice('syncUploadFailed', true);
                     else showError(error);
                 }
             } finally {
+                if (queuedRecord) queuedRecord.sendingText = false;
                 if (credentials === session && (!upload || uploadController === controller)) {
                     if (upload) uploadController = null;
                     else sendingText = false;
                     sending = sendingText || !!uploadController;
                     render();
                     updateSelectedFile();
+                    if (!queuedRecord) flushQueued(connections.get(session.roomId));
+                } else {
+                    renderSpaces();
                 }
             }
         };
-        find('send-form').addEventListener('submit', (event) => {
+        find('send-form').addEventListener('submit', async (event) => {
             event.preventDefault();
             const file = uploadController ? null : selectedFile;
-            if (busy || sendingText || recording() || !online || (!file && !input.value.trim()) || !find('send-form').reportValidity()) return;
+            if (busy || sendingText || recording() || !credentials || (!online && file) || (!file && !input.value.trim()) || !find('send-form').reportValidity()) return;
             const resuming = file && pendingUpload?.file === file;
             const text = resuming ? pendingUpload.text : input.value;
             const reply = resuming ? pendingUpload.reply : selectedReply;
@@ -2902,13 +3020,28 @@ import { createGomokuWindow } from './sync-gomoku.js';
             }
             const clientId = file ? pendingUpload.clientId : crypto.randomUUID();
             const outgoing = outbox.get(clientId) || {
-                id: `pending:${clientId}`, clientId, deviceId, text, reply, mentions, createdAt: Date.now(),
+                id: `pending:${clientId}`, clientId, deviceId: credentials.deviceId, text, reply, mentions, createdAt: Date.now(),
                 attachment: file ? { name: file.name, type: file.type, size: file.size, ...pendingUpload.voice } : null,
                 sendState: 'sending'
             };
             outbox.set(clientId, outgoing);
             if (!resuming) { input.value = ''; selectedReply = null; mentionComposer.restore(); }
-            sendOutgoing(outgoing);
+            if (!file && !online) {
+                outgoing.sendState = 'queued';
+                outgoing.autoSend = true;
+                const record = connections.get(credentials.roomId);
+                record.queuedMessages.set(clientId, outgoing);
+                render(true);
+                let saving = saveDraft();
+                let saved = await saving;
+                while (saving !== draftSave) { saving = draftSave; saved = await saving; }
+                if (!saved) {
+                    outgoing.sendState = 'failed'; outgoing.autoSend = false; record.queuedMessages.delete(clientId); render();
+                    return;
+                }
+                setNotice('syncMessageQueued');
+                flushQueued(record);
+            } else sendOutgoing(outgoing);
         });
         const updateStickerLabels = () => {
             find('sticker-close').setAttribute('aria-label', translate('syncStickerClose'));
@@ -3255,6 +3388,10 @@ import { createGomokuWindow } from './sync-gomoku.js';
             reconcileSession();
             if (active || needsGameConnection()) connect();
         } });
+        const systemNotifications = createSystemNotifications({
+            button: find('notifications'), translate, onError: key => setNotice(key, true),
+            onOpen: roomId => { entry.show(); if (credentials?.roomId !== roomId) switchSpace(roomId); }
+        });
         reconcileSession().then(recoverPendingPairing);
         updateSoundToggle();
         updateControls();
