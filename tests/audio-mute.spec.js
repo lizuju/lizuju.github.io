@@ -238,7 +238,8 @@ test('keeps native media playback and volume independent of both background mute
         video.src = 'assets/music-portfolio/last-christmas-solo.mp4';
         video.volume = 0.65;
         video.loop = true;
-        video.muted = true;
+        // Linux WebKit never advances a muted video while the scene draws the desktop this small,
+        // so the video plays with sound like the audio beside it.
         video.playsInline = true;
         const button = document.createElement('button');
         button.dataset.testMediaStart = '';

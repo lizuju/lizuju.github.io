@@ -6,7 +6,7 @@ const { createServer } = require('node:http');
 const { deviceId, keyId, authorize, message, file, profile, startSite } = require('./fixtures/sync-e2ee.cjs');
 
 const heic = readFileSync(join(__dirname, 'fixtures/heic-gradient.heic'));
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1kAAAAASUVORK5CYII=', 'base64');
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64');
 const mp4 = readFileSync(join(__dirname, '../static/textures/monitor/video/static-texture-layer.mp4'));
 let server;
 let site;

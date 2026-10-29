@@ -113,6 +113,8 @@ test('reconnects after a temporary key initialization failure without reopening 
 for (const size of [1024 * 1024, 9 * 1024 * 1024]) {
     test(`keeps upload progress at 100 percent while confirming a ${size}-byte file`, async ({ page, isMobile }) => {
         test.skip(isMobile, 'the sync application is a desktop window');
+        // Playwright 1.64 on Linux CI takes several seconds to pass 9 MB through setInputFiles and the routed upload.
+        test.slow(size > 8 * 1024 * 1024, 'the file crosses the Playwright protocol twice');
         await prepare(page);
         let uploaded;
         let receivedBytes = 0;
@@ -145,7 +147,7 @@ for (const size of [1024 * 1024, 9 * 1024 * 1024]) {
         await page.locator('[data-sync-file-input]').setInputFiles({ name: 'tail.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(size, 7) });
         await page.locator('[data-sync-send]').click();
         try {
-            await expect.poll(() => completing).toBe(true);
+            await expect.poll(() => completing, { timeout: 30000 }).toBe(true);
             expect(receivedBytes).toBe(uploaded.size);
             await expect(page.locator('[data-sync-upload-status]')).toHaveText('正在完成上传…');
             await expect(page.locator('[data-sync-upload-progress]')).toHaveJSProperty('value', 100);
