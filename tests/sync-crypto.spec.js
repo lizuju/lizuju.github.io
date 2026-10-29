@@ -9,6 +9,7 @@ test.beforeEach(async ({ page, context }) => {
         if (!file) return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Crypto tests</title>' });
         let source;
         if (file === 'module.js') source = (await readFile(path.join(root, 'static/portfolio/js/apps/sync-crypto.js'), 'utf8')).replace('@serenity-kit/opaque', './opaque.js');
+        else if (['sync-image-thumbnail.js', 'sync-image-resource.js'].includes(file)) source = await readFile(path.join(root, 'static/portfolio/js/apps', file), 'utf8');
         else if (file === 'pairing.js') source = (await readFile(path.join(root, 'static/portfolio/js/apps/sync-pairing.js'), 'utf8')).replace('./sync-crypto.js', './module.js');
         else if (file === 'opaque.js') source = await readFile(path.join(root, 'node_modules/@serenity-kit/opaque/esm/index.js'), 'utf8');
         else if (file === 'fingerprint-worker.js') source = (await readFile(path.join(root, 'static/portfolio/js/apps/sync-upload-fingerprint-worker.js'), 'utf8')).replace('@noble/hashes/sha2.js', './noble/sha2.js');
@@ -420,4 +421,38 @@ test('encrypts independent media blocks into resumable transport chunks and pres
         expect(item.first && item.tail && item.resumed).toBe(true);
         expect(item.last).toEqual(Array(31).fill(11));
     }
+});
+
+
+test('generates bounded thumbnails inside authenticated encrypted payloads and respects cancellation', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const { createImageThumbnail, validThumbnail } = await import('/__sync-crypto-test__/sync-image-thumbnail.js');
+        const c = await import('/__sync-crypto-test__/module.js');
+        const canvas = document.createElement('canvas');
+        canvas.width = 2400; canvas.height = 1600;
+        const context = canvas.getContext('2d');
+        context.fillStyle = 'red'; context.fillRect(0, 0, 2400, 1600);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        const file = new File([blob], 'photo.png', { type: 'image/png' });
+        const signal = new AbortController().signal;
+        const thumbnail = await createImageThumbnail(file, signal);
+        const keyring = await c.createKeyring();
+        const encrypted = await c.encryptPayload(keyring, 'room', 'message:device:client', { attachment: { thumbnail } });
+        const decrypted = await c.decryptPayload(keyring, 'room', 'message:device:client', encrypted);
+        const cancelled = new AbortController(); cancelled.abort();
+        let aborted = false;
+        try { await createImageThumbnail(file, cancelled.signal); } catch (error) { aborted = error.name === 'AbortError'; }
+        const gif = Uint8Array.from(atob('R0lGODlhAQABAIAAAP8AAAAA/yH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAQABAAACAkQBACH5BAAKAAAALAAAAAABAAEAAAICTAEAOw=='), byte => byte.charCodeAt(0));
+        const animation = await createImageThumbnail(new File([gif], 'reaction.gif', { type: 'image/gif' }), signal);
+        return { valid: await validThumbnail(thumbnail), width: thumbnail.width, height: thumbnail.height,
+            bytes: atob(thumbnail.data.split(',')[1]).length, matches: decrypted.attachment.thumbnail.data === thumbnail.data,
+            hidden: !encrypted.includes(thumbnail.data), aborted, animated: animation.animated,
+            rejectsSVG: await validThumbnail({ ...thumbnail, data: 'data:image/svg+xml;base64,PHN2Zz4=' }),
+            rejectsForgedSize: await validThumbnail({ ...thumbnail, width: 1, height: 1 }) };
+    });
+    expect(result.valid).toBe(true);
+    expect(result.width).toBeLessThanOrEqual(260);
+    expect(result.height).toBeLessThanOrEqual(200);
+    expect(result.bytes).toBeLessThanOrEqual(4096);
+    expect(result).toMatchObject({ matches: true, hidden: true, aborted: true, animated: true, rejectsSVG: false, rejectsForgedSize: false });
 });

@@ -117,7 +117,7 @@ export function createMentions({ input, menu, members, translate }) {
             selected = (selected + (event.key === 'ArrowDown' ? 1 : -1) + candidates.length) % candidates.length;
             update();
             menu.children[selected].scrollIntoView({ block: 'nearest' });
-        } else if (event.key === 'Enter' && !event.shiftKey && candidates.length) {
+        } else if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && candidates.length) {
             event.preventDefault();
             event.stopImmediatePropagation();
             if (!event.repeat) choose(candidates[selected]);

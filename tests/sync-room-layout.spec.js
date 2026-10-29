@@ -154,3 +154,32 @@ test('floats the pairing card over the conversation without moving the messages 
     expect(colors[2][1]).not.toBe('none');
     await expect(dock).toBeVisible();
 });
+
+
+test('keeps search visible after tools collapse and clears it without reopening tools', async ({ page }) => {
+    await openChat(page, [message(1, 'Find this'), message(2, 'Keep the other')]);
+    const toggle = page.locator('[data-sync-tools-toggle]');
+    if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+    await page.locator('[data-sync-search]').fill('Find');
+    await toggle.click();
+    await expect(page.locator('[data-sync-search-state]')).toBeVisible();
+    await expect(page.locator('[data-sync-search-label]')).toHaveText('搜索：Find');
+    await expect(page.locator('.sync-message:visible')).toHaveCount(1);
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(page.locator('[data-sync-search-label]')).toHaveText('Search: Find');
+    await page.locator('[data-sync-search-clear]').click();
+    await expect(page.locator('[data-sync-search-state]')).toBeHidden();
+    await expect(page.locator('.sync-message:visible')).toHaveCount(2);
+    await expect(page.locator('[data-sync-input]')).toBeFocused();
+});
+
+test('restores focus to visible tools toggle when device management closes over a narrow chat', async ({ page }) => {
+    await openChat(page);
+    await page.locator('[data-sync-window]').evaluate(app => { app.style.width = '320px'; });
+    const toggle = page.locator('[data-sync-tools-toggle]');
+    if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+    await page.locator('[data-sync-devices]').click();
+    await expect(page.locator('[data-sync-devices-dialog]')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(toggle).toBeFocused();
+});

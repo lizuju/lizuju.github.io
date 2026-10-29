@@ -336,3 +336,21 @@ test('keeps loaded history and the reading anchor when a live message advances t
     await page.waitForTimeout(800);
     expect(chat.reads).toHaveLength(0);
 });
+
+for (const sidebar of ['tools', 'spaces']) {
+    test(`does not mark covered messages read under the narrow ${sidebar} sidebar`, async ({ page }) => {
+        const chat = await openChat(page, []);
+        await page.locator('[data-sync-window]').evaluate(app => { app.style.width = '320px'; });
+        const toggle = page.locator(`[data-sync-${sidebar}-toggle]`);
+        if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+        await chat.incoming(1);
+        await page.mouse.move(100, 200);
+        await page.clock.runFor(1200);
+        expect(chat.reads).toEqual([]);
+        await expect(page.locator('[data-sync-unread]')).toHaveText('1');
+        await toggle.click();
+        await page.locator('[data-sync-input]').click();
+        await page.clock.runFor(1000);
+        await expect.poll(() => chat.reads.at(-1)).toBe(1);
+    });
+}

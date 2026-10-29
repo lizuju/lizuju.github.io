@@ -13,7 +13,10 @@ const settleNotifications = page => page.evaluate(({ roomId, deviceId }) => navi
     `portfolio-sync-notification:${roomId}:${deviceId}`, () => {}
 ), { roomId, deviceId });
 
+const servers = new WeakMap();
 const openChat = async (page, initial = [], authorizeSession = true) => {
+    if (!servers.has(page.context())) servers.set(page.context(), { history: initial, sockets: 0 });
+    const server = servers.get(page.context());
     if (!authorizeSession) await allowSyncOrigin(page, 'https://sync.test');
     await page.addInitScript(() => {
         window.__syncAudioStats = { attempts: 0, starts: 0, pauses: 0, playing: false };
@@ -43,14 +46,15 @@ const openChat = async (page, initial = [], authorizeSession = true) => {
     await page.route('https://sync.test/**', route => route.request().method() === 'OPTIONS'
         ? route.fulfill({ status: 204, headers })
         : route.fulfill({ headers, json: { deviceId, devices: [], grants: [], hasMore: false, keyId } }));
-    let connection;
     await page.routeWebSocket('wss://sync.test/**', socket => {
-        connection = socket;
+        server.connection = socket;
+        server.owner = page;
+        server.sockets++;
         socket.onMessage(raw => {
             if (raw === 'ping') return socket.send('pong');
             if (JSON.parse(raw).type === 'auth') socket.send(JSON.stringify({
-                type: 'ready', deviceId, messages: initial, pairing: null, readReceipts: [],
-                history: bounds(initial.at(-1)?.id ?? null), historyMode: 'replace'
+                type: 'ready', deviceId, messages: server.history, pairing: null, readReceipts: [],
+                history: bounds(server.history.at(-1)?.id ?? null), historyMode: 'replace'
             }));
         });
     });
@@ -68,12 +72,16 @@ const openChat = async (page, initial = [], authorizeSession = true) => {
         open,
         send: async (id, sender = otherId) => {
             const item = message(id, `Notification message ${id}`, sender);
-            connection.send(JSON.stringify({ type: 'message', message: item, history: bounds(id) }));
+            if (!server.history.some(message => message.id === id)) server.history.push(item);
+            await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+            server.connection.send(JSON.stringify({ type: 'message', message: item, history: bounds(id) }));
             await expect(page.locator('.sync-message-text').filter({ hasText: `Notification message ${id}` })).toHaveCount(1);
             await settleNotifications(page);
             return item;
         },
-        frame: data => connection.send(JSON.stringify(data)),
+        frame: data => server.connection.send(JSON.stringify(data)),
+        sockets: () => server.sockets,
+        ownsSocket: () => server.owner === page,
         stats: () => page.evaluate(() => window.__syncAudioStats)
     };
 };
@@ -183,7 +191,7 @@ test('synchronizes mute between open tabs and stops an already playing notificat
     const otherPage = await context.newPage();
     const second = await openChat(otherPage, [], false);
     await first.send(1);
-    await expect.poll(async () => (await first.stats()).playing).toBe(true);
+    await expect.poll(async () => (await first.stats()).playing || (await second.stats()).playing).toBe(true);
     await showSyncTools(otherPage);
     await otherPage.locator('[data-sync-sound]').click();
     await expect(page.locator('[data-sync-sound]')).toHaveAttribute('aria-pressed', 'false');
@@ -202,6 +210,7 @@ test('coordinates concurrent notifications and burst throttling across tabs with
     const first = await openChat(page);
     const otherPage = await context.newPage();
     const second = await openChat(otherPage, [], false);
+    expect(first.sockets()).toBe(1);
     const starts = async () => (await first.stats()).starts + (await second.stats()).starts;
     await Promise.all([first.send(1), second.send(1)]);
     await settleNotifications(page);
@@ -210,13 +219,17 @@ test('coordinates concurrent notifications and burst throttling across tabs with
     await settleNotifications(page);
     expect(await starts()).toBe(1);
     await page.clock.runFor(1000);
+    await otherPage.clock.runFor(1000);
     await Promise.all([first.send(3), second.send(3)]);
     await expect.poll(starts).toBe(2);
     const firstStarted = (await first.stats()).starts > 0;
     const survivor = firstStarted ? second : first;
     const survivorPage = firstStarted ? otherPage : page;
     const baseline = (await survivor.stats()).starts;
+    const nextSockets = first.sockets() + ((firstStarted ? first : second).ownsSocket() ? 1 : 0);
     await (firstStarted ? page : otherPage).close();
+    await expect.poll(first.sockets).toBe(nextSockets);
+    await expect(survivorPage.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
     await survivorPage.bringToFront();
     await survivorPage.clock.runFor(1000);
     await survivor.send(4);
@@ -229,7 +242,7 @@ test('lets another tab notify after autoplay rejection and preserves deduplicati
     const second = await openChat(otherPage, [], false);
     await page.evaluate(() => { window.__syncAudioBlocked = true; });
     await first.send(1);
-    await expect.poll(async () => (await first.stats()).attempts).toBe(1);
+    await expect.poll(async () => (await second.stats()).starts).toBe(1);
     await second.send(1);
     await expect.poll(async () => (await second.stats()).starts).toBe(1);
     await first.open();
@@ -237,7 +250,10 @@ test('lets another tab notify after autoplay rejection and preserves deduplicati
     await settleNotifications(page);
     await expect(page.locator('.sync-message-text')).toHaveCount(1);
     expect((await first.stats()).starts).toBe(0);
+    const nextSockets = first.sockets() + (second.ownsSocket() ? 1 : 0);
     await otherPage.close();
+    await expect.poll(first.sockets).toBe(nextSockets);
+    await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
     await page.clock.runFor(1000);
     await first.send(2);
     await expect.poll(async () => (await first.stats()).starts).toBe(1);
@@ -261,6 +277,9 @@ test('discards a queued notification when the page leaves and resumes notificati
     expect((await first.stats()).starts).toBe(0);
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow')));
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    await otherPage.evaluate(() => { window.__syncAudioBlocked = true; });
+    await page.clock.runFor(1000);
+    await otherPage.clock.runFor(1000);
     await first.send(2);
     await expect.poll(async () => (await first.stats()).starts).toBe(1);
 });
