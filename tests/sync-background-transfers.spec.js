@@ -22,6 +22,8 @@ let pendingTickets;
 let pendingDownloads;
 let ticketRequests;
 let headRequests;
+let downloadRanges;
+let retryDownload;
 
 const row = (page, name) => page.locator('.sync-message').filter({ has: page.locator('.sync-attachment-name', { hasText: name }) });
 const background = page => page.evaluate(() => {
@@ -42,13 +44,15 @@ test.beforeEach(async ({ page, isMobile }) => {
     pendingDownloads = [];
     ticketRequests = 0;
     headRequests = 0;
+    downloadRanges = [];
+    retryDownload = false;
     const attachments = [
         file('delayed-video.mp4', 'video/mp4', await readFile(path.join(__dirname, '../static/textures/monitor/video/base-static.mp4'))),
         downloadFile
     ];
     const headers = {
         'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id, Range',
-        'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS', 'Access-Control-Expose-Headers': 'Content-Range, Content-Length'
+        'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS', 'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Retry-After'
     };
     server = createServer((request, response) => {
         const pathname = new URL(request.url, 'http://localhost').pathname;
@@ -71,6 +75,11 @@ test.beforeEach(async ({ page, isMobile }) => {
         const start = range ? Number(range[1]) : 0;
         const end = range ? Math.min(Number(range[2]), encrypted.length - 1) : encrypted.length - 1;
         const body = encrypted.subarray(start, end + 1);
+        if (request.method === 'GET') downloadRanges.push({ id, start, end });
+        if (retryDownload && id === 2 && start > 0) {
+            retryDownload = false;
+            response.writeHead(503, { ...headers, 'Retry-After': '2' }); response.end(); return;
+        }
         const send = () => {
             response.writeHead(range ? 206 : 200, { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length),
                 ...(range ? { 'Content-Range': `bytes ${start}-${end}/${encrypted.length}` } : {}) });
@@ -163,4 +172,93 @@ test('keeps a slow native download alive after iframe load, ten minutes and back
     await foreground(page);
     await expect(page.locator('[data-sync-notice]')).not.toHaveAttribute('data-state', 'error');
     expect(ticketRequests).toBe(1);
+});
+
+test('deduplicates active downloads, exposes cancellation and allows a fresh retry', async ({ page }) => {
+    holdDownload = true;
+    const attachment = row(page, 'background-transfer.bin');
+    const button = attachment.locator('[data-sync-download-file]');
+    const cancel = attachment.locator('[data-sync-cancel-download]');
+    let downloads = 0;
+    page.on('download', () => downloads++);
+    const firstEvent = page.waitForEvent('download');
+    await button.click();
+    const first = await firstEvent;
+    await expect.poll(() => pendingDownloads.length).toBe(1);
+    await expect(button).toBeDisabled();
+    await expect(attachment.locator('[data-sync-download-progress]')).toContainText(/99%.*\//);
+    await expect(button).toContainText(/正在下载|Downloading/);
+    await expect(cancel).toBeVisible();
+    await button.dispatchEvent('click');
+    await expect(page.locator('iframe[src*="__sync-e2ee__"]')).toHaveCount(1);
+    await cancel.click();
+    await expect(button).toBeEnabled();
+    await expect(cancel).toBeHidden();
+    await expect(attachment.locator('[data-sync-download-progress]')).toBeHidden();
+    await expect(page.locator('iframe[src*="__sync-e2ee__"]')).toHaveCount(0);
+    expect(await first.failure()).toBeTruthy();
+    expect(downloads).toBe(1);
+    holdDownload = false;
+    pendingDownloads.splice(0).forEach(send => send());
+    const retryEvent = page.waitForEvent('download');
+    await button.click();
+    const retry = await retryEvent;
+    expect(await readFile(await retry.path())).toEqual(originalDownload);
+    await expect(button).toBeEnabled();
+    expect(downloads).toBe(2);
+});
+
+test('cancels download preparation before a delayed ticket arrives', async ({ page }) => {
+    holdTicket = true;
+    const attachment = row(page, 'background-transfer.bin');
+    let downloads = 0;
+    page.on('download', () => downloads++);
+    await attachment.locator('[data-sync-download-file]').click();
+    await expect.poll(() => pendingTickets.length).toBe(1);
+    await attachment.locator('[data-sync-cancel-download]').click();
+    await expect(attachment.locator('[data-sync-download-file]')).toBeEnabled();
+    holdTicket = false;
+    pendingTickets.splice(0).forEach(send => send());
+    // A new attempt may share the pending ticket, but only it may start a transfer.
+    const retryEvent = page.waitForEvent('download');
+    await attachment.locator('[data-sync-download-file]').click();
+    const retry = await retryEvent;
+    expect(await readFile(await retry.path())).toEqual(originalDownload);
+    expect(downloads).toBe(1);
+});
+
+test('a video preview and its native download share cached chunks', async ({ page }) => {
+    const attachment = row(page, 'delayed-video.mp4');
+    await attachment.locator('.sync-attachment-name').click();
+    const viewer = page.locator('[data-sync-preview-window]');
+    await expect.poll(() => viewer.locator('video').evaluate(video => video.videoWidth)).toBeGreaterThan(0);
+    const before = downloadRanges.filter(range => range.id === 1).length;
+    expect(before).toBeGreaterThan(0);
+    await viewer.locator('[data-sync-preview-action="minimize"]').click();
+    const event = page.waitForEvent('download');
+    await attachment.locator('[data-sync-download-file]').click();
+    const download = await event;
+    expect(await readFile(await download.path())).toEqual(await readFile(path.join(__dirname, '../static/textures/monitor/video/base-static.mp4')));
+    expect(downloadRanges.filter(range => range.id === 1)).toHaveLength(before);
+    await page.locator('[data-sync-preview-task]').click();
+    await expect.poll(() => viewer.locator('video').evaluate(video => video.videoWidth)).toBeGreaterThan(0);
+});
+
+test('download progress shows retry waiting and resumes in the background', async ({ page }) => {
+    retryDownload = true;
+    holdDownload = true;
+    const attachment = row(page, 'background-transfer.bin');
+    const event = page.waitForEvent('download');
+    await attachment.locator('[data-sync-download-file]').click();
+    const download = await event;
+    await expect(attachment.locator('[data-sync-download-progress]')).toContainText(/等待|Retrying/);
+    await expect(attachment.locator('[data-sync-download-file]')).toBeDisabled();
+    await background(page);
+    await expect.poll(() => pendingDownloads.length).toBe(1);
+    holdDownload = false;
+    pendingDownloads.splice(0).forEach(send => send());
+    expect(await readFile(await download.path())).toEqual(originalDownload);
+    await foreground(page);
+    await expect(attachment.locator('[data-sync-download-progress]')).toBeHidden();
+    await expect(attachment.locator('[data-sync-download-file]')).toBeEnabled();
 });

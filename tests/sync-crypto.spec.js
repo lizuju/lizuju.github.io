@@ -9,7 +9,7 @@ test.beforeEach(async ({ page, context }) => {
         if (!file) return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Crypto tests</title>' });
         let source;
         if (file === 'module.js') source = (await readFile(path.join(root, 'static/portfolio/js/apps/sync-crypto.js'), 'utf8')).replace('@serenity-kit/opaque', './opaque.js');
-        else if (['sync-image-thumbnail.js', 'sync-image-resource.js'].includes(file)) source = await readFile(path.join(root, 'static/portfolio/js/apps', file), 'utf8');
+        else if (['sync-image-thumbnail.js', 'sync-image-resource.js', 'sync-thumbnail-worker.js'].includes(file)) source = await readFile(path.join(root, 'static/portfolio/js/apps', file), 'utf8');
         else if (file === 'pairing.js') source = (await readFile(path.join(root, 'static/portfolio/js/apps/sync-pairing.js'), 'utf8')).replace('./sync-crypto.js', './module.js');
         else if (file === 'opaque.js') source = await readFile(path.join(root, 'node_modules/@serenity-kit/opaque/esm/index.js'), 'utf8');
         else if (file === 'fingerprint-worker.js') source = (await readFile(path.join(root, 'static/portfolio/js/apps/sync-upload-fingerprint-worker.js'), 'utf8')).replace('@noble/hashes/sha2.js', './noble/sha2.js');
@@ -277,7 +277,7 @@ test('hashes complete file content including bytes outside the former fingerprin
         second[130000] = 1;
         const fingerprint = (bytes) => new Promise((resolve, reject) => {
             const worker = new Worker('/__sync-crypto-test__/fingerprint-worker.js', { type: 'module' });
-            worker.onmessage = ({ data }) => { worker.terminate(); data.error ? reject(new Error(data.error)) : resolve(data.fingerprint); };
+            worker.onmessage = ({ data }) => { if (data.progress !== undefined) return; worker.terminate(); data.error ? reject(new Error(data.error)) : resolve(data.fingerprint); };
             worker.onerror = (event) => { worker.terminate(); reject(new Error(event.message)); };
             worker.postMessage(new File([bytes], 'same-name.bin'));
         });
@@ -455,4 +455,55 @@ test('generates bounded thumbnails inside authenticated encrypted payloads and r
     expect(result.height).toBeLessThanOrEqual(200);
     expect(result.bytes).toBeLessThanOrEqual(4096);
     expect(result).toMatchObject({ matches: true, hidden: true, aborted: true, animated: true, rejectsSVG: false, rejectsForgedSize: false });
+});
+
+test('skips slow thumbnails after the budget and terminates decoding on cancellation', async ({ page }) => {
+    const result = await page.evaluate(async () => {
+        const { createImageThumbnail } = await import('/__sync-crypto-test__/sync-image-thumbnail.js');
+        const workers = [];
+        window.Worker = class {
+            constructor() { workers.push(this); }
+            postMessage() {}
+            terminate() { this.terminated = true; }
+        };
+        const file = new File(['image'], 'slow.heic', { type: 'image/heic' });
+        const start = performance.now();
+        const value = await createImageThumbnail(file, new AbortController().signal);
+        const elapsed = performance.now() - start;
+        const cancelled = new AbortController();
+        const pending = createImageThumbnail(file, cancelled.signal);
+        cancelled.abort();
+        let aborted = false;
+        try { await pending; } catch (error) { aborted = error.name === 'AbortError'; }
+        return { value, elapsed, aborted, stopped: workers.every(worker => worker.terminated) };
+    });
+    expect(result).toMatchObject({ value: null, aborted: true, stopped: true });
+    expect(result.elapsed).toBeGreaterThanOrEqual(1900);
+    expect(result.elapsed).toBeLessThan(3500);
+});
+
+test('bounds the intermediate bitmap for long screenshots before drawing the thumbnail', async ({ page, context }) => {
+    await context.route('**/__sync-crypto-test__/sync-thumbnail-worker.js', async route => {
+        const source = await readFile(path.join(__dirname, '../static/portfolio/js/apps/sync-thumbnail-worker.js'), 'utf8');
+        const probe = `const originalBitmap = globalThis.createImageBitmap;
+            const originalPost = self.postMessage.bind(self);
+            let decoded;
+            globalThis.createImageBitmap = async (...args) => { const bitmap = await originalBitmap(...args); decoded = { width: bitmap.width, height: bitmap.height }; return bitmap; };
+            self.postMessage = thumbnail => originalPost({ thumbnail, decoded });\n`;
+        await route.fulfill({ contentType: 'text/javascript', body: probe + source });
+    });
+    const result = await page.evaluate(async () => {
+        const canvas = new OffscreenCanvas(600, 12000);
+        canvas.getContext('2d').fillRect(0, 0, canvas.width, canvas.height);
+        const blob = await canvas.convertToBlob({ type: 'image/png' });
+        canvas.width = 0; canvas.height = 0;
+        const worker = new Worker('/__sync-crypto-test__/sync-thumbnail-worker.js', { type: 'module' });
+        return new Promise((resolve, reject) => {
+            worker.onmessage = ({ data }) => { worker.terminate(); resolve(data); };
+            worker.onerror = event => { worker.terminate(); reject(new Error(event.message)); };
+            worker.postMessage(new File([blob], 'long.png', { type: 'image/png' }));
+        });
+    });
+    expect(result.decoded).toEqual({ width: 10, height: 200 });
+    expect(result.thumbnail).toMatchObject({ width: 10, height: 200 });
 });

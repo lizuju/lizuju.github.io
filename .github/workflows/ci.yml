@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -63,6 +64,46 @@ jobs:
         id: browser-version
         run: node -p "'version=' + require('@playwright/test/package.json').version" >> "$GITHUB_OUTPUT"
 
+      - name: Validate browser shard allocation
+        run: node --test scripts/browser-shards.test.cjs
+
+      - name: Find the latest measured browser timings
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        id: timings
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { data } = await github.rest.actions.listArtifactsForRepo({
+              ...context.repo, name: 'browser-duration-baseline', per_page: 10
+            });
+            const latest = data.artifacts.find(artifact => !artifact.expired && artifact.workflow_run);
+            core.setOutput('run-id', latest?.workflow_run.id || '');
+
+      - name: Restore measured browser timings
+        if: steps.timings.outputs.run-id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: browser-duration-baseline
+          run-id: ${{ steps.timings.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: output/
+
+      - name: Prepare one timing baseline for all shards
+        if: github.event_name == 'pull_request'
+        run: |
+          mkdir -p output
+          node -e "require('fs').writeFileSync('output/browser-test-durations.json', JSON.stringify(require('./scripts/update-browser-durations.cjs').loadDurations()))"
+
+      - name: Share the timing baseline
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-timing-input
+          path: output/browser-test-durations.json
+          retention-days: 7
+
       - name: Audit dependencies
         run: npm audit --audit-level=moderate
 
@@ -99,7 +140,8 @@ jobs:
           - { project: webkit-desktop, browser: webkit, shard: '3/4', artifact: webkit-desktop-3 }
           - { project: webkit-desktop, browser: webkit, shard: '4/4', artifact: webkit-desktop-4 }
           - { project: chromium-mobile, browser: chromium, shard: '1/1', artifact: chromium-mobile }
-          - { project: webkit-mobile, browser: webkit, shard: '1/1', artifact: webkit-mobile }
+          - { project: webkit-mobile, browser: webkit, shard: '1/2', artifact: webkit-mobile-1 }
+          - { project: webkit-mobile, browser: webkit, shard: '2/2', artifact: webkit-mobile-2 }
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -127,11 +169,25 @@ jobs:
           name: production-site
           path: docs/
 
+      - name: Download the shared timing baseline
+        uses: actions/download-artifact@v8
+        with:
+          name: browser-timing-input
+          path: output/
+
       - name: Run browser regression suite
-        run: npm run test:smoke -- --project=${{ matrix.project }} --shard=${{ matrix.shard }}
+        run: node scripts/run-browser-shard.cjs ${{ matrix.project }} ${{ matrix.shard }}
+
+      - name: Share measured browser timings
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-timings-${{ matrix.artifact }}
+          path: test-results/browser-durations.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload Playwright diagnostics
-        if: failure()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: playwright-diagnostics-${{ matrix.artifact }}
@@ -140,6 +196,35 @@ jobs:
             test-results
           if-no-files-found: ignore
           retention-days: 7
+
+  browser-timings:
+    name: Calibrate browser shard timings
+    needs: browser-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Download the previous baseline
+        uses: actions/download-artifact@v8
+        with:
+          name: browser-timing-input
+          path: output/
+      - name: Download successful shard measurements
+        uses: actions/download-artifact@v8
+        with:
+          pattern: browser-timings-*
+          path: output/browser-timing-samples/
+      - name: Update timing weights
+        run: node scripts/update-browser-durations.cjs output/browser-timing-samples
+      - name: Save the next timing baseline
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-duration-baseline
+          path: output/browser-test-durations.json
+          retention-days: 30
 
   deploy:
     name: Deploy verified site
@@ -162,7 +247,7 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      - name: Require a compatible sync Worker
+      - name: Require the current sync Worker sources
         run: npm run check:sync-api
 
       - name: Download verified production site

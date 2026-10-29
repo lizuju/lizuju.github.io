@@ -38,23 +38,24 @@ const worker = (descriptor, getBytes, Stream = ReadableStream, refresh) => {
   const handlers = new Map();
   const requests = [];
   const notifications = [];
-  let alive = true;
+  const descriptors = new Map([[`${owner}:${token}`, descriptor]]);
   let resolutions = 0;
   const client = {
     id: owner, type: 'window', url: 'https://site.test/portfolio/',
     postMessage(message, ports) {
       notifications.push(message);
-      if (message.type === 'released') { alive = false; return; }
+      if (message.type === 'released') { descriptors.delete(`${this.id}:${message.token}`); return; }
+      if (message.type === 'download-progress') return;
       if (message.type === 'download-state') { descriptor.expiresAt = message.expiresAt; return; }
       if (message.type === 'refresh') { Promise.resolve(refresh()).then(url => ports[0].postMessage(url)); return; }
       assert.equal(message.type, 'resolve');
       resolutions++;
-      ports[0].postMessage(alive && message.token === token ? descriptor : null);
+      ports[0].postMessage(descriptors.get(`${this.id}:${message.token}`) || null);
     }
   };
   const scope = 'https://site.test/portfolio/';
   vm.runInNewContext(source, {
-    self: { registration: { scope }, location: new URL(scope), addEventListener: (name, callback) => handlers.set(name, callback), clients: { get: async id => id === owner ? client : null } },
+    self: { registration: { scope }, location: new URL(scope), addEventListener: (name, callback) => handlers.set(name, callback), clients: { get: async id => id === owner || id === 'browser-two' ? { ...client, id } : null } },
     URL, crypto: webcrypto, atob, TextEncoder, Response, Headers, ReadableStream: Stream, AbortController, MessageChannel, setTimeout, clearTimeout,
     async fetch(url, options) {
       if (String(url) === `${scope}sync-config.json`) return Response.json({ apiBase: 'https://sync.test' });
@@ -76,20 +77,21 @@ const worker = (descriptor, getBytes, Stream = ReadableStream, refresh) => {
     requests,
     notifications,
     get resolutions() { return resolutions; },
-    close() { alive = false; handlers.get('message')({ data: { source: 'gavin-sync-e2ee', type: 'close', token }, source: client }); },
-    async open(value = descriptor) {
+    close(capabilityToken = token, capabilityOwner = owner) { descriptors.delete(`${capabilityOwner}:${capabilityToken}`); handlers.get('message')({ data: { source: 'gavin-sync-e2ee', type: 'close', token: capabilityToken }, source: { ...client, id: capabilityOwner } }); },
+    async open(value = descriptor, capabilityToken = token, capabilityOwner = owner) {
+      descriptors.set(`${capabilityOwner}:${capabilityToken}`, value);
       let pending;
       let result;
       handlers.get('message')({
-        data: { source: 'gavin-sync-e2ee', type: 'open', token, descriptor: value }, source: client,
+        data: { source: 'gavin-sync-e2ee', type: 'open', token: capabilityToken, descriptor: value }, source: { ...client, id: capabilityOwner },
         ports: [{ postMessage(value) { result = value; } }], waitUntil(value) { pending = value; }
       });
       await pending;
       return result;
     },
-    async get({ method = 'GET', range, clientId = owner, signal } = {}) {
+    async get({ method = 'GET', range, clientId = owner, signal, capabilityToken = token, capabilityOwner = owner } = {}) {
       let response;
-      const url = `${scope}__sync-e2ee__/${owner}/${token}`;
+      const url = `${scope}__sync-e2ee__/${capabilityOwner}/${capabilityToken}`;
       handlers.get('fetch')({ request: new Request(url, { method, headers: range ? { Range: range } : {}, signal }), clientId, respondWith(value) { response = value; } });
       return response;
     }
@@ -441,4 +443,108 @@ test('overlapping new-format ranges share pending blocks when one reader is canc
   assert.deepEqual(Buffer.concat(chunks), Buffer.from(file.clear));
   assert.deepEqual(bridge.requests, [[512 * 1024, file.wire.length - 1], [0, 512 * 1024 - 1]]);
   bridge.close();
+});
+
+test('preview and download reuse authenticated chunks, and the final release discards the cache', async () => {
+  const file = await smallChunkFixture(700000);
+  const bridge = worker(file, (start, end) => file.wire.subarray(start, end + 1));
+  const downloadToken = 'b'.repeat(48), reopenedToken = 'c'.repeat(48);
+  await bridge.open();
+  await (await bridge.get({ range: 'bytes=0-9' })).arrayBuffer();
+  await bridge.open({ ...file, download: true }, downloadToken);
+  const result = await (await bridge.get({ capabilityToken: downloadToken })).arrayBuffer();
+  assert.deepEqual(Buffer.from(result), Buffer.from(file.clear));
+  assert.deepEqual(bridge.requests, [[0, 524287], [524288, file.wire.length - 1]]);
+  await (await bridge.get({ range: 'bytes=0-9' })).arrayBuffer();
+  assert.equal(bridge.requests.length, 2);
+  bridge.close();
+  await bridge.open(file, reopenedToken);
+  await (await bridge.get({ capabilityToken: reopenedToken, range: 'bytes=0-9' })).arrayBuffer();
+  assert.equal(bridge.requests.length, 3);
+  bridge.close(reopenedToken);
+});
+
+for (const cancel of ['preview', 'download']) test(`cancelling a ${cancel} leaves the other consumer's pending shared fetch running`, async () => {
+  const file = await smallChunkFixture(1000);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const bridge = worker(file, async (start, end) => { await gate; return file.wire.subarray(start, end + 1); });
+  const downloadToken = 'b'.repeat(48);
+  await bridge.open();
+  await bridge.open({ ...file, download: true }, downloadToken);
+  const reading = (await bridge.get({ range: 'bytes=0-999' })).arrayBuffer().then(value => ({ value }), error => ({ error }));
+  const downloading = (await bridge.get({ capabilityToken: downloadToken })).arrayBuffer().then(value => ({ value }), error => ({ error }));
+  while (!bridge.requests.length) await new Promise(resolve => setTimeout(resolve, 0));
+  bridge.close(cancel === 'preview' ? token : downloadToken);
+  release();
+  const [previewResult, downloadResult] = await Promise.all([reading, downloading]);
+  assert.ok((cancel === 'preview' ? previewResult : downloadResult).error);
+  assert.deepEqual(Buffer.from((cancel === 'preview' ? downloadResult : previewResult).value), Buffer.from(file.clear));
+  assert.equal(bridge.requests.length, 1);
+  bridge.close(); bridge.close(downloadToken);
+});
+
+for (const isolation of ['owner', 'session', 'room', 'key']) test(`chunk reuse is isolated by ${isolation}`, async () => {
+  const file = await smallChunkFixture(1000), nextFile = await smallChunkFixture(1000);
+  const next = isolation === 'key' ? { ...nextFile, url: apiUrl + '2' }
+    : isolation === 'room' ? { ...file, url: apiUrl.replace('/room/', '/other-room/') }
+    : isolation === 'session' ? { ...file, cacheScope: 'new-device-or-room-key' } : file;
+  const bridge = worker(file, (start, end, url) => (isolation === 'key' && url === next.url ? nextFile : file).wire.subarray(start, end + 1));
+  await bridge.open();
+  await (await bridge.get({ range: 'bytes=0-9' })).arrayBuffer();
+  const nextToken = 'b'.repeat(48), nextOwner = isolation === 'owner' ? 'browser-two' : owner;
+  await bridge.open(next, nextToken, nextOwner);
+  assert.deepEqual(Buffer.from(await (await bridge.get({ range: 'bytes=0-9', capabilityToken: nextToken, capabilityOwner: nextOwner, clientId: nextOwner })).arrayBuffer()), Buffer.from(next.clear.subarray(0, 10)));
+  assert.equal(bridge.requests.length, 2);
+  bridge.close(); bridge.close(nextToken, nextOwner);
+});
+
+test('the global chunk budget evicts old file data across active previews', async () => {
+  const file = await fixture(chunkSize);
+  const bridge = worker(file, (start, end) => file.wire.subarray(start, end + 1));
+  const tokens = ['a', 'b', 'c', 'd', 'e'].map(value => value.repeat(48));
+  for (let index = 0; index < tokens.length; index++) {
+    await bridge.open({ ...file, cacheScope: `space-${index}` }, tokens[index]);
+    await (await bridge.get({ range: 'bytes=0-9', capabilityToken: tokens[index] })).arrayBuffer();
+  }
+  assert.equal(bridge.requests.length, 5);
+  await (await bridge.get({ range: 'bytes=0-9' })).arrayBuffer();
+  assert.equal(bridge.requests.length, 6, 'the oldest 8 MiB block must no longer occupy memory');
+  for (const capabilityToken of tokens) bridge.close(capabilityToken);
+});
+
+test('download progress reports retry waiting and counts overlapping plaintext ranges only once', async () => {
+  const file = await smallChunkFixture(1000);
+  let attempts = 0;
+  const bridge = worker({ ...file, download: true }, (start, end) => ++attempts === 1
+    ? new Response(null, { status: 503, headers: { 'Retry-After': '1' } }) : file.wire.subarray(start, end + 1));
+  await bridge.open();
+  await (await bridge.get({ range: 'bytes=0-9' })).arrayBuffer();
+  await (await bridge.get({ range: 'bytes=0-99' })).arrayBuffer();
+  const updates = bridge.notifications.filter(message => message.type === 'download-progress');
+  assert.ok(updates.some(message => message.retryAt > 0 && message.receivedBytes === 0));
+  assert.equal(updates.at(-1).receivedBytes, 100);
+  assert.equal(updates.at(-1).totalBytes, 1000);
+  assert.ok(updates.at(-1).bytesPerSecond > 0);
+  assert.equal(updates.at(-1).retryAt, null);
+  assert.equal(bridge.notifications.some(message => message.status === 'delivered'), false, 'range progress must not resolve a download early');
+  bridge.close();
+});
+
+test('shared ticket refresh uses the surviving capability when the original preview closes', async () => {
+  const file = await smallChunkFixture(1000);
+  let release, refreshes = 0;
+  const freshUrl = apiUrl.replace('ticket', 'b'.repeat(64));
+  const bridge = worker(file, (start, end, url) => url === freshUrl
+    ? file.wire.subarray(start, end + 1) : new Response(null, { status: 401 }), ReadableStream,
+  () => ++refreshes === 1 ? new Promise(resolve => { release = () => resolve(freshUrl); }) : freshUrl);
+  await bridge.open();
+  const downloadToken = 'b'.repeat(48);
+  await bridge.open({ ...file, download: true }, downloadToken);
+  const reading = (await bridge.get({ capabilityToken: downloadToken })).arrayBuffer();
+  while (!release) await new Promise(resolve => setTimeout(resolve, 0));
+  bridge.close();
+  release();
+  assert.deepEqual(Buffer.from(await reading), Buffer.from(file.clear));
+  assert.equal(refreshes, 2);
 });

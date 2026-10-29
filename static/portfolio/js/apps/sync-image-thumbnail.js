@@ -13,62 +13,30 @@ export async function validThumbnail(value) {
     } catch { return false; }
 }
 
+// Thumbnail generation is optional: terminate decoding after two seconds and upload the original.
 export async function createImageThumbnail(file, signal) {
+    signal.throwIfAborted();
     if (file.size > 20 * 1024 * 1024 || !(/\.(png|jpe?g|webp|gif|avif|heic|heif)$/i.test(file.name)
         || /^image\/(png|jpeg|webp|gif|avif|heic|heif)$/.test(file.type))) return null;
-    let image;
-    let url;
+    let worker;
+    let timer;
+    let abort;
     try {
-        signal.throwIfAborted();
-        const details = await inspectImage(file);
-        if (details.width * details.height > 40 * 1024 * 1024) return null;
-        signal.throwIfAborted();
-        try {
-            image = await createImageBitmap(file, { resizeWidth: Math.min(details.width || 260, 260), resizeQuality: 'high' });
-        } catch {
-            signal.throwIfAborted();
-            image = new Image();
-            url = URL.createObjectURL(file);
-            image.src = url;
-            try { await image.decode(); }
-            catch {
-                if (!/\.(heic|heif)$/i.test(file.name) && !/^image\/hei[cf]$/.test(file.type)) return null;
-                signal.throwIfAborted();
-                const { heicTo } = await import(/* webpackChunkName: "preview-heic" */ 'heic-to/csp');
-                const converted = await heicTo({ blob: file, type: 'image/jpeg', quality: 0.6 });
-                signal.throwIfAborted();
-                URL.revokeObjectURL(url);
-                url = URL.createObjectURL(converted);
-                image.src = url;
-                await image.decode();
-            }
-        }
-        signal.throwIfAborted();
-        const width = image.naturalWidth || image.width;
-        const height = image.naturalHeight || image.height;
-        const canvas = document.createElement('canvas');
-        try {
-            for (const maximum of [260, 192, 128]) {
-                const scale = Math.min(1, maximum / width, 200 / height);
-                canvas.width = Math.max(1, Math.round(width * scale));
-                canvas.height = Math.max(1, Math.round(height * scale));
-                canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-                let blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', 0.55));
-                if (blob && blob.type !== 'image/webp') blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.55));
-                signal.throwIfAborted();
-                if (!blob || blob.size > 4096) continue;
-                const bytes = new Uint8Array(await blob.arrayBuffer());
-                return { data: `data:${blob.type};base64,${btoa(String.fromCharCode(...bytes))}`,
-                    width: canvas.width, height: canvas.height, animated: details.animated };
-            }
-        } finally { canvas.width = 0; canvas.height = 0; }
-        return null;
+        return await new Promise((resolve, reject) => {
+            abort = () => reject(signal.reason);
+            signal.addEventListener('abort', abort, { once: true });
+            timer = setTimeout(() => resolve(null), 2000);
+            worker = new Worker(new URL('./sync-thumbnail-worker.js', import.meta.url), { type: 'module', name: 'image-thumbnail' });
+            worker.onmessage = event => resolve(event.data);
+            worker.onerror = event => { event.preventDefault(); resolve(null); };
+            worker.postMessage(file);
+        });
     } catch (error) {
         if (signal.aborted) throw signal.reason;
         return null;
     } finally {
-        image?.close?.();
-        image?.removeAttribute?.('src');
-        if (url) URL.revokeObjectURL(url);
+        clearTimeout(timer);
+        signal.removeEventListener('abort', abort);
+        worker?.terminate();
     }
 }

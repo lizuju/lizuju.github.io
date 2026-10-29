@@ -65,7 +65,8 @@ import { createGomokuWindow } from './sync-gomoku.js';
         const connections = new Map();
         const keyRefreshes = new WeakMap();
         const rotations = new WeakMap();
-        const downloads = new Set();
+        const downloads = new Map();
+        const fingerprints = new WeakMap();
         let switchingSpace = false;
         let savingSpaceName = false;
         let forgettingSpace = null;
@@ -487,7 +488,11 @@ import { createGomokuWindow } from './sync-gomoku.js';
                     || typeof payload.reply.text !== 'string' || Array.from(payload.reply.text).length > 300
                     || (payload.reply.sticker !== undefined && !stickerById(payload.reply.sticker))
                     || typeof payload.reply.attachmentName !== 'string' || Array.from(payload.reply.attachmentName).length > 256)) throw new Error('invalid_reply');
-                if (payload.attachment && (typeof payload.attachment.name !== 'string' || typeof payload.attachment.key !== 'string'
+                if (payload.attachment && (typeof payload.attachment.name !== 'string' || payload.attachment.name.length > 1024
+                    || typeof payload.attachment.type !== 'string' || !/^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/.test(payload.attachment.type)
+                    || typeof payload.attachment.fileId !== 'string' || !/^[a-zA-Z0-9-]{1,128}$/.test(payload.attachment.fileId)
+                    || typeof payload.attachment.key !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(payload.attachment.key)
+                    || typeof payload.attachment.noncePrefix !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(payload.attachment.noncePrefix)
                     || ![undefined, 1, 2].includes(payload.attachment.version)
                     || !Number.isSafeInteger(payload.attachment.size) || payload.attachment.size < 0 || payload.attachment.size > MAX_FILE_BYTES)) throw new Error('invalid_attachment');
                 if (payload.attachment?.kind === 'voice' && (!['audio/wav', 'audio/webm'].includes(payload.attachment.type)
@@ -501,53 +506,62 @@ import { createGomokuWindow } from './sync-gomoku.js';
             }
         };
         const api = async (path, options = {}, session = credentials) => {
-            const base = await loadConfig();
-            if (!base) throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
-            const headers = { 'Content-Type': 'application/json', ...(session ? {
-                Authorization: `Bearer ${session.token}`, 'X-Sync-Key-Id': session.keyring.currentKeyId
-            } : {}), ...options.headers };
-            const signal = options.signal || AbortSignal.timeout(15000);
-            const response = options.uploadProgress ? await new Promise((resolve, reject) => {
-                signal.throwIfAborted();
-                const xhr = new XMLHttpRequest();
-                const cleanup = () => signal.removeEventListener('abort', abort);
-                const abort = () => {
-                    xhr.abort();
-                    cleanup();
-                    reject(signal.reason.name === 'TimeoutError'
-                        ? Object.assign(new Error(signal.reason.message), { name: 'TimeoutError', code: 'network_error' }) : signal.reason);
-                };
-                xhr.open(options.method, base + path);
-                for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
-                xhr.upload.addEventListener('progress', (event) => options.uploadProgress(event.loaded));
-                xhr.addEventListener('load', () => {
-                    cleanup();
-                    resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'Retry-After': xhr.getResponseHeader('Retry-After') || '' } }));
+            const perform = async () => {
+                const base = await loadConfig();
+                if (!base) throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
+                const headers = { 'Content-Type': 'application/json', ...(session ? {
+                    Authorization: `Bearer ${session.token}`, 'X-Sync-Key-Id': session.keyring.currentKeyId
+                } : {}), ...options.headers };
+                const signal = options.signal || AbortSignal.timeout(15000);
+                const response = options.uploadProgress ? await new Promise((resolve, reject) => {
+                    signal.throwIfAborted();
+                    const xhr = new XMLHttpRequest();
+                    const cleanup = () => signal.removeEventListener('abort', abort);
+                    const abort = () => {
+                        xhr.abort();
+                        cleanup();
+                        reject(signal.reason.name === 'TimeoutError'
+                            ? Object.assign(new Error(signal.reason.message), { name: 'TimeoutError', code: 'network_error' }) : signal.reason);
+                    };
+                    xhr.open(options.method, base + path);
+                    for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+                    xhr.upload.addEventListener('progress', (event) => options.uploadProgress(event.loaded));
+                    xhr.addEventListener('load', () => {
+                        cleanup();
+                        resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'Retry-After': xhr.getResponseHeader('Retry-After') || '' } }));
+                    });
+                    xhr.addEventListener('error', () => { cleanup(); reject(Object.assign(new TypeError('Upload network request failed'), { code: 'network_error' })); });
+                    signal.addEventListener('abort', abort, { once: true });
+                    xhr.send(options.body);
+                }) : await fetch(base + path, { ...options, headers, signal }).catch(error => {
+                    if (error instanceof TypeError) error.code = 'network_error';
+                    else if (error.name === 'TimeoutError') throw Object.assign(new Error(error.message), { name: 'TimeoutError', code: 'network_error' });
+                    throw error;
                 });
-                xhr.addEventListener('error', () => { cleanup(); reject(Object.assign(new TypeError('Upload network request failed'), { code: 'network_error' })); });
-                signal.addEventListener('abort', abort, { once: true });
-                xhr.send(options.body);
-            }) : await fetch(base + path, { ...options, headers, signal }).catch(error => {
-                if (error instanceof TypeError) error.code = 'network_error';
-                else if (error.name === 'TimeoutError') throw Object.assign(new Error(error.message), { name: 'TimeoutError', code: 'network_error' });
-                throw error;
-            });
-            const result = await response.json().catch(error => {
-                if (response.ok) throw error;
-                return { error: 'unavailable' };
-            });
-            if (!response.ok) {
-                if (result.error === 'key_changed' && session) await refreshKeys(session);
-                const retryAfter = response.headers.get('Retry-After');
-                const seconds = Number(retryAfter);
-                throw Object.assign(new Error(result.error), {
-                    code: result.error,
-                    status: response.status,
-                    game: result.game,
-                    retryAfter: Number.isFinite(seconds) ? seconds : Math.max(0, (Date.parse(retryAfter) - Date.now()) / 1000)
+                const result = await response.json().catch(error => {
+                    if (response.ok) throw error;
+                    return { error: 'unavailable' };
                 });
-            }
-            if (result === null) return null;
+                if (!response.ok) {
+                    if (result.error === 'key_changed' && session) await refreshKeys(session);
+                    const retryAfter = response.headers.get('Retry-After');
+                    const seconds = Number(retryAfter);
+                    throw Object.assign(new Error(result.error), {
+                        code: result.error,
+                        status: response.status,
+                        game: result.game,
+                        retryAfter: Number.isFinite(seconds) ? seconds : Math.max(0, (Date.parse(retryAfter) - Date.now()) / 1000)
+                    });
+                }
+                return result;
+            };
+            const transport = session && connections.get(session.roomId)?.transport;
+            const shared = !options.unshared && !options.method && !options.signal
+                && [ `/v1/spaces/${session?.roomId}/devices`, `/v1/spaces/${session?.roomId}/pair-code` ].includes(path);
+            const result = shared && transport ? await transport.request(path, perform) : await perform();
+            if (options.method && options.method !== 'GET'
+                && /\/(devices(?:\/[^/]+)?|device|pair-code|pair-accept|key-rotation|key-grants)$/.test(path)) transport?.invalidateResults();
+            if (result === null || options.raw) return result;
             if (session?.keyring) {
                 if (result.messages) result.messages = await Promise.all(result.messages.map(message => decodeMessage(message, session)));
                 if (result.message) result.message = await decodeMessage(result.message, session);
@@ -607,7 +621,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             }
         });
         let pairing = createPairing();
-        const refreshKeys = (session = credentials) => {
+        const refreshKeys = (session = credentials, expectedKeyId = null) => {
             if (keyRefreshes.has(session)) return keyRefreshes.get(session);
             const promise = navigator.locks.request(`gavin-sync-keys:${session.roomId}:${session.deviceId}`, async () => {
                 if (!liveSession(session)) return;
@@ -630,6 +644,8 @@ import { createGomokuWindow } from './sync-gomoku.js';
                         adoptKeys({ ...updated, revision: stored.revision });
                     }
                 }
+                if (expectedKeyId && !connections.get(session.roomId)?.transport?.isLeader
+                    && session.keyring.currentKeyId === expectedKeyId) return;
                 for (;;) {
                     const result = await api(`/v1/spaces/${session.roomId}/key-grants`, {}, session);
                     if (!liveSession(session)) return;
@@ -694,7 +710,8 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 const wireBytes = (pendingUpload.receivedBytes || 0) + (pendingUpload.inflightBytes || 0);
                 const { cipherSize, plainSize } = fileChunkLayout(pendingUpload.encryption || { version: 2 });
                 const transferred = Math.min(pendingUpload.file.size, Math.floor(wireBytes / cipherSize) * plainSize + Math.min(wireBytes % cipherSize, plainSize));
-                const percent = pendingUpload.file.size ? Math.floor(transferred / pendingUpload.file.size * 100) : 100;
+                const percent = pendingUpload.stage === 'syncPreparingUpload' ? pendingUpload.preparedPercent || 0
+                    : pendingUpload.file.size ? Math.floor(transferred / pendingUpload.file.size * 100) : 100;
                 let text = translate(pendingUpload.stage || 'syncUploadProgress', { filename: pendingUpload.file.name, percent });
                 if (pendingUpload.stage === 'syncUploadWaiting') text = translate('syncUploadWaiting', { seconds: Math.max(1, Math.ceil((pendingUpload.retryAt - Date.now()) / 1000)) });
                 if (pendingUpload.stage === 'syncUploadProgress') {
@@ -759,11 +776,12 @@ import { createGomokuWindow } from './sync-gomoku.js';
             const result = await attachmentTicket(message, session);
             return `${base}/v1/spaces/${session.roomId}/downloads/${encodeURIComponent(result.ticket)}`;
         };
-        const encryptedFile = async (message, session, download) => {
+        const encryptedFile = async (message, session, download, onProgress) => {
             const key = `${message.id}:${crypto.randomUUID()}`;
             {
                 const promise = Promise.all([attachmentUrl(message, session), prepareEncryptedFiles()])
-                    .then(([url]) => openEncryptedFile({ url, metadata: message.attachment, download, refresh: async () => {
+                    .then(([url]) => openEncryptedFile({ url, metadata: message.attachment, download, onProgress,
+                        cacheScope: `${session.deviceId}:${session.keyring.currentKeyId}`, refresh: async () => {
                         if (credentials !== session || !messageNodes.has(message.id)) throw new DOMException('Session ended', 'AbortError');
                         downloadTickets.delete(message.id);
                         const nextUrl = await attachmentUrl(message, session);
@@ -784,38 +802,51 @@ import { createGomokuWindow } from './sync-gomoku.js';
             }
             return fileCapabilities.get(key);
         };
-        const downloadAttachment = async (message, button) => {
+        const updateDownloadProgress = id => {
+            const element = messageNodes.get(id)?.querySelector('[data-sync-download-progress]');
+            if (!element) return;
+            const state = downloads.get(id);
+            element.hidden = !state;
+            if (!state) return;
+            const progress = state.progress;
+            element.textContent = !progress ? translate('syncDownloadPreparing') : progress.retryAt
+                ? translate('syncDownloadWaiting', { seconds: Math.max(1, Math.ceil((progress.retryAt - Date.now()) / 1000)) })
+                : translate('syncDownloadProgress', { received: formatSize(progress.receivedBytes), total: formatSize(progress.totalBytes),
+                    percent: progress.totalBytes ? Math.floor(progress.receivedBytes / progress.totalBytes * 100) : 100,
+                    speed: formatSize(progress.bytesPerSecond) });
+        };
+        const downloadAttachment = async (message) => {
+            if (downloads.has(message.id)) return;
             const session = credentials;
             const downloading = {};
-            downloads.add(downloading);
+            downloads.set(message.id, downloading);
+            render();
             updateControls();
-            button.disabled = true;
-            button.dataset.loading = 'true';
-            button.textContent = translate('syncDownloading');
             try {
-                const capability = await encryptedFile(message, session, true);
-                if (credentials !== session || !messageNodes.has(message.id)) {
-                    capability.dispose(); downloads.delete(downloading); updateControls(); return;
+                const capability = await encryptedFile(message, session, true, progress => {
+                    if (credentials !== session || downloads.get(message.id) !== downloading) return;
+                    downloading.progress = progress;
+                    updateDownloadProgress(message.id);
+                });
+                if (credentials !== session || !messageNodes.has(message.id) || downloads.get(message.id) !== downloading) {
+                    capability.dispose(); return;
                 }
+                downloading.capability = capability;
                 const frame = document.createElement('iframe');
                 frame.hidden = true;
                 frame.src = capability.url;
                 document.body.append(frame);
                 capability.closed.then(() => frame.remove());
-                capability.result.then(result => {
-                    if (result.status === 'failed' && credentials === session && messageNodes.has(message.id)) showAttachmentError(new Error('encrypted_file_unavailable'));
-                }).finally(() => {
-                    downloads.delete(downloading);
-                    updateControls();
-                });
+                const result = await capability.result;
+                if (result.status === 'failed' && credentials === session && messageNodes.has(message.id)) showAttachmentError(new Error('encrypted_file_unavailable'));
             } catch (error) {
-                downloads.delete(downloading);
-                updateControls();
-                if (credentials === session && messageNodes.has(message.id) && error.name !== 'AbortError') showAttachmentError(error);
+                if (downloads.get(message.id) === downloading && credentials === session && messageNodes.has(message.id) && error.name !== 'AbortError') showAttachmentError(error);
             } finally {
-                button.disabled = false;
-                delete button.dataset.loading;
-                button.textContent = translate('syncDownload');
+                if (downloads.get(message.id) === downloading) {
+                    downloads.delete(message.id);
+                    render();
+                    updateControls();
+                }
             }
         };
         const previewAttachment = async (message, button) => {
@@ -1195,8 +1226,18 @@ import { createGomokuWindow } from './sync-gomoku.js';
                         download.className = 'sync-attachment-download';
                         download.dataset.syncDownloadFile = '';
                         download.disabled = !!message.sendState;
-                        download.addEventListener('click', () => downloadAttachment(message, download));
-                        actions.append(download);
+                        download.addEventListener('click', () => downloadAttachment(message));
+                        const cancel = document.createElement('button');
+                        cancel.type = 'button';
+                        cancel.className = 'sync-attachment-download';
+                        cancel.dataset.syncCancelDownload = '';
+                        cancel.addEventListener('click', () => {
+                            downloads.get(message.id)?.capability?.dispose();
+                            downloads.delete(message.id);
+                            render();
+                            updateControls();
+                        });
+                        actions.append(download, cancel);
                         const info = document.createElement(previewKind(message.attachment) ? 'button' : 'div');
                         info.className = 'sync-attachment-info';
                         info.append(name, size);
@@ -1211,7 +1252,11 @@ import { createGomokuWindow } from './sync-gomoku.js';
                                 previewAttachment(message, info);
                             });
                         }
-                        attachment.append(info, actions);
+                        const progress = document.createElement('small');
+                        progress.className = 'sync-download-progress';
+                        progress.dataset.syncDownloadProgress = '';
+                        progress.hidden = true;
+                        attachment.append(info, actions, progress);
                         item.append(attachment);
                     }
                     messageNodes.set(message.id, item);
@@ -1288,8 +1333,13 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 }
                 const download = item.querySelector('[data-sync-download-file]');
                 if (download) {
-                    download.textContent = translate(download.dataset.loading ? 'syncDownloading' : 'syncDownload');
-                    download.disabled = !!message.sendState || !!download.dataset.loading;
+                    const downloading = downloads.has(message.id);
+                    download.textContent = translate(downloading ? 'syncDownloading' : 'syncDownload');
+                    download.disabled = !!message.sendState || downloading;
+                    const cancel = item.querySelector('[data-sync-cancel-download]');
+                    cancel.hidden = !downloading;
+                    cancel.textContent = translate('syncCancelDownload');
+                    updateDownloadProgress(message.id);
                 }
                 const preview = item.querySelector('[data-sync-preview-file]');
                 if (preview) {
@@ -1600,7 +1650,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             if (data.type === 'ready') {
                 record.devicesLoaded = false;
                 const revision = record.pairingRevision;
-                await refreshKeys(session);
+                await refreshKeys(session, data.currentKeyId);
                 if (!valid()) return;
                 if (data.rekeyRequired) await rotateKeys(null, session);
                 if (!valid()) return;
@@ -1614,10 +1664,10 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 return;
             } else if (data.type === 'key-rotation' || data.type === 'rekey-required') {
                 if (data.type === 'rekey-required' && record.transport.isLeader) await rotateKeys(null, session);
-                else await refreshKeys(session);
+                else await refreshKeys(session, data.currentKeyId);
                 if (!valid()) return;
-                await refreshPairing(session);
-                await loadDevices(session);
+                refreshPairing(session).catch(error => { if (valid() && credentials === session) showError(error); });
+                loadDevices(session);
                 return;
             } else if (data.type === 'pairing') {
                 await showPairing(data.pairing, session);
@@ -1631,7 +1681,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 });
                 return;
             } else if (data.type === 'devices') {
-                await loadDevices(session);
+                loadDevices(session);
                 return;
             }
             const incoming = data.type === 'message' ? [await decodeMessage(data.message, session)]
@@ -1712,10 +1762,14 @@ import { createGomokuWindow } from './sync-gomoku.js';
             if (!record.transport) {
                 const session = record.session;
                 const transport = new SharedSyncConnection({ session,
+                    request: (path, signal) => {
+                        if (![ `/v1/spaces/${session.roomId}/devices`, `/v1/spaces/${session.roomId}/pair-code` ].includes(path)) throw new Error('invalid_request');
+                        return api(path, { unshared: true, raw: true, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) }, session);
+                    },
                     snapshot: () => {
                         if (credentials === session) cacheCurrentView();
                         const messages = record.history.slice(-50).map(message => message.wire);
-                        return { type: 'ready', deviceId: session.deviceId, messages, historyMode: 'replace',
+                        return { type: 'ready', deviceId: session.deviceId, currentKeyId: session.keyring.currentKeyId, messages, historyMode: 'replace',
                             history: record.historyState, pairing: record.pairingData, spaceProfile: record.spaceProfile,
                             readReceipts: [...record.readReceipts].map(([deviceId, messageId]) => ({ deviceId, messageId })),
                             activeGames: record.activeGames };
@@ -2567,18 +2621,23 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 }
             };
             upload.stage = 'syncPreparingUpload';
+            upload.preparedPercent = 0;
             updateSelectedFile();
-            const fingerprint = await new Promise((resolve, reject) => {
+            const fingerprint = fingerprints.get(upload.file) || await new Promise((resolve, reject) => {
                 controller.signal.throwIfAborted();
                 const worker = new Worker(new URL('./sync-upload-fingerprint-worker.js', import.meta.url), { type: 'module', name: 'upload-fingerprint' });
                 const cleanup = () => { worker.terminate(); controller.signal.removeEventListener('abort', abort); };
                 const abort = () => { cleanup(); reject(controller.signal.reason); };
-                worker.onmessage = ({ data }) => { cleanup(); data.error ? reject(new Error(data.error)) : resolve(data.fingerprint); };
+                worker.onmessage = ({ data }) => {
+                    if (data.progress !== undefined) { upload.preparedPercent = data.progress; updateSelectedFile(); return; }
+                    cleanup(); data.error ? reject(new Error(data.error)) : resolve(data.fingerprint);
+                };
                 worker.onerror = (event) => { cleanup(); reject(new Error(event.message)); };
                 controller.signal.addEventListener('abort', abort, { once: true });
                 worker.postMessage(upload.file);
             });
             controller.signal.throwIfAborted();
+            fingerprints.set(upload.file, fingerprint);
             if (upload.fingerprint && upload.fingerprint !== fingerprint) throw Object.assign(new Error('upload_conflict'), { code: 'upload_conflict' });
             upload.fingerprint = fingerprint;
             if (!upload.encryption) {
@@ -3032,7 +3091,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
         find('leave').addEventListener('click', () => showConfirmation('leave'));
         find('devices-form').addEventListener('submit', (event) => event.preventDefault());
         for (const name of ['devices-close', 'devices-dismiss']) find(name).addEventListener('click', () => devicesDialog.close());
-        for (const dialog of [confirmation, devicesDialog]) {
+        for (const dialog of [confirmation, devicesDialog, spaceNameDialog]) {
             dialog.addEventListener('close', () => {
                 if (!document.activeElement || document.activeElement === document.body || !document.activeElement.getClientRects().length) {
                     find('tools-toggle').focus({ preventScroll: true });

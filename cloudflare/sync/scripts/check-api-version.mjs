@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { workerFingerprint } from './worker-fingerprint.mjs';
 
 // Refuses to publish a frontend that needs a newer sync protocol than the deployed Worker serves.
 export async function checkApiVersion({ apiBase, apiVersion, fetcher = fetch }) {
@@ -15,10 +16,16 @@ export async function checkApiVersion({ apiBase, apiVersion, fetcher = fetch }) 
   return health;
 }
 
+export function checkWorkerSources(actual, expected) {
+  assert.match(actual || '', /^[a-f0-9]{64}$/, 'The Worker does not report a source fingerprint. Deploy the Worker first.');
+  assert.equal(actual, expected, 'Worker sources, dependencies or configuration are not deployed. Deploy the Worker first: cd cloudflare/sync && npm run deploy');
+}
+
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   try {
     const config = JSON.parse(await readFile(new URL('../../../static/portfolio/sync-config.json', import.meta.url), 'utf8'));
     const health = await checkApiVersion(config);
+    checkWorkerSources(health.sourceFingerprint, await workerFingerprint());
     console.log(`Sync Worker serves API ${health.apiVersion}; frontend needs ${config.apiVersion}.`);
   } catch (error) {
     console.error(error.message);

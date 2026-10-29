@@ -923,6 +923,7 @@ test('synchronizes encrypted eight-character space names across devices, reconne
         await expect(page.locator('[data-sync-space-name]')).toHaveValue(expected);
         await page.locator('[data-sync-space-name-form] button[type="submit"]').click();
         await expect(page.locator('[data-sync-space-name-dialog]')).toBeHidden();
+        await expect.poll(() => page.evaluate(() => document.activeElement.matches('[data-sync-tools-toggle], [data-sync-space-rename]') && document.activeElement.getClientRects().length > 0)).toBe(true);
         await hideSyncTools(page);
     };
     try {

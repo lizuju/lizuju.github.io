@@ -76,11 +76,13 @@ node --check static/portfolio/js/gomoku-game.js
 
 Webpack bundles the desktop modules and styles into `docs/portfolio/js/main.js` and `docs/portfolio/css/main.css`; edit their source files under `static/portfolio/`. `docs/` and the Gomoku and satellite bundles in `build/` are ignored by Git: run `npm run build` before previewing or running the browser tests. Run `npm ci --prefix cloudflare/sync` once before the backend tests.
 
+CI assigns whole browser test files using the measured durations in `scripts/browser-test-durations.json` (baseline run `40828775124`), so shared servers and hooks stay together. Run a shard locally with `node scripts/run-browser-shard.cjs webkit-desktop 1/4`; `node --test scripts/browser-shards.test.cjs` checks coverage and balance, including new files. Chromium desktop uses two shards, WebKit desktop four, Chromium mobile one and WebKit mobile two. Failed-attempt traces and reports are uploaded even when a retry succeeds. Update the timing baseline from a completed CI run when test costs change.
+
 ## Release
 
 Pull requests run the backend tests, the production build and the browser tests on GitHub Actions, and must be up to date with `main` before merging. Pushing to `main` then only reruns the backend tests and the build, and publishes the build to GitHub Pages. The sync Worker is deployed by hand with `npm run deploy` in `cloudflare/sync/` (see [`cloudflare/sync/README.md`](cloudflare/sync/README.md)).
 
-When a frontend change needs a new sync protocol, raise `apiVersion` in `static/portfolio/sync-config.json` and `API_VERSION` in `cloudflare/sync/src/api-version.js` together, deploy the Worker, then push to `main`. Before publishing Pages, CI runs `npm run check:sync-api`, which reads the live `/health` and stops the release if the Worker serves an older API than the frontend needs. After Pages is published, `npm run build && npm run verify:release -- <full commit SHA>` confirms that the live site and Worker match that commit.
+When a frontend change needs a new sync protocol, raise `apiVersion` in `static/portfolio/sync-config.json` and `API_VERSION` in `cloudflare/sync/src/api-version.js` together, deploy the Worker, then push to `main`. Before publishing Pages, CI runs `npm run check:sync-api`, which reads the live `/health` and stops the release if the Worker serves an older API than the frontend needs or if its deployed source fingerprint differs from the backend sources, dependencies or Wrangler configuration. Frontend-only commits and squash merges do not require another Worker deployment. After Pages is published, `npm run build && npm run verify:release -- <full commit SHA>` compares the live frontend files with the local build and the Worker source fingerprint with the checkout. The Worker may report an earlier commit when its deployable sources are unchanged; `--backend-only` additionally requires its exact deployment commit.
 
 ## Attribution
 

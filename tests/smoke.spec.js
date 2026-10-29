@@ -1017,32 +1017,37 @@ test('pauses and resumes the render loop when document visibility changes', asyn
     test.skip(isMobile, 'the mobile shell does not create the render loop');
     test.setTimeout(60000);
     await page.addInitScript(() => {
-        const originalRequestAnimationFrame = window.requestAnimationFrame.bind(window);
-        window.__gavinRafRequests = 0;
-        window.requestAnimationFrame = (callback) => {
-            window.__gavinRafRequests += 1;
-            return originalRequestAnimationFrame(callback);
-        };
+        window.__gavinDrawCalls = 0;
+        [window.WebGLRenderingContext, window.WebGL2RenderingContext].forEach((Context) => {
+            if (!Context) return;
+            ['drawArrays', 'drawElements'].forEach((method) => {
+                if (!Object.prototype.hasOwnProperty.call(Context.prototype, method)) return;
+                const original = Context.prototype[method];
+                Context.prototype[method] = function (...args) {
+                    window.__gavinDrawCalls += 1;
+                    return original.apply(this, args);
+                };
+            });
+        });
     });
 
     await page.goto('/');
     await expect(page.locator('canvas').first()).toBeVisible({ timeout: 45000 });
-    await page.waitForTimeout(150);
+    await expect.poll(() => page.evaluate(() => window.__gavinDrawCalls)).toBeGreaterThan(0);
 
-    const countBeforePause = await page.evaluate(() => window.__gavinRafRequests);
-    await page.evaluate(() => {
+    const countAtPause = await page.evaluate(() => {
         Object.defineProperty(document, 'hidden', { configurable: true, value: true });
         document.dispatchEvent(new Event('visibilitychange'));
+        return window.__gavinDrawCalls;
     });
     await page.waitForTimeout(100);
-    const countWhileHidden = await page.evaluate(() => window.__gavinRafRequests);
+    expect(await page.evaluate(() => window.__gavinDrawCalls)).toBe(countAtPause);
 
     await page.evaluate(() => {
         Object.defineProperty(document, 'hidden', { configurable: true, value: false });
         document.dispatchEvent(new Event('visibilitychange'));
     });
-    await expect.poll(() => page.evaluate(() => window.__gavinRafRequests)).toBeGreaterThan(countWhileHidden);
-    expect(countWhileHidden - countBeforePause).toBeLessThanOrEqual(2);
+    await expect.poll(() => page.evaluate(() => window.__gavinDrawCalls)).toBeGreaterThan(countAtPause);
 });
 
 test('pauses the immersive render loop when direct view opens and resumes after returning', async ({ page, isMobile }) => {

@@ -43,6 +43,10 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
               type: 'esm',
               contents: `import worker, { E2eeSyncRoom as ProductionSyncRoom, E2eePairingRegistry as ProductionRegistry, E2eeFileShard as ProductionFileShard } from './index.js';
                 export class FileShard extends ProductionFileShard {
+                  testHoldWrite() { this.writeStarted = false; this.writeGate = new Promise(resolve => { this.releaseWrite = resolve; }); }
+                  testWriteStarted() { return !!this.writeStarted; }
+                  testReleaseWrite() { this.releaseWrite(); this.writeGate = null; }
+                  async writePart(...args) { this.writeStarted = true; if (this.writeGate) await this.writeGate; return super.writePart(...args); }
                   testHoldSize(fail = false) {
                     this.sizeObserved = true;
                     this.sizeFail = fail;
@@ -119,6 +123,15 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                 }
                 export class SyncRoom extends ProductionSyncRoom {
+                  testSocketActivity(activity) {
+                    const ctx = this.ctx;
+                    const sockets = activity.map(item => ({ deserializeAttachment: () => ({ deviceId: item.deviceId, connectedAt: item.at, closing: item.closing }) }));
+                    this.ctx = { getWebSockets: () => sockets, getWebSocketAutoResponseTimestamp: () => null };
+                    try { this.refreshConnectedDevices(); } finally { this.ctx = ctx; }
+                  }
+                  testResetActivity() { this.connectedActivity.clear(); }
+                  testDeleteFileTickets(fileId) { const result = this.sql.exec('DELETE FROM download_tickets WHERE file_id = ?', fileId); return result.rowsRead; }
+                  testRebuildAccounting() { this.shardBytes = null; return this.storageUsage(); }
                   testBeginReads() {
                     this.readCursors = [];
                     const sql = this.sql;
@@ -1133,6 +1146,7 @@ for (const { separateRoom, unknownUsage, clearedHistory } of [
         await deletedStorage.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, ?, ?)', fileId, shard, 64 * MiB);
       }
     }
+    await (await roomObject(deletedSpace, instance)).testRebuildAccounting();
     if (clearedHistory) {
       const cleared = await request(`/v1/spaces/${deletedSpace.roomId}/messages`, { method: 'DELETE', token: deletedSpace.token });
       assert.equal(cleared.status, 200);
@@ -1192,6 +1206,7 @@ test('capacity cleanup preserves a newer active upload when older completed file
       fileId, space.deviceId, clientId, 'old.bin', 'application/octet-stream', size, '', 'complete', timestamp + index, timestamp + index, id, 0);
     for (let shard = 0; shard < 24; shard += 1) await storage.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, ?, ?)', fileId, shard, 64 * MiB);
   }
+  await (await roomObject(space, instance)).testRebuildAccounting();
   const freshClientId = randomUUID();
   const fresh = await initiate(request, space, { clientId: freshClientId, size: 1024 * MiB });
   assert.equal(fresh.status, 201);
@@ -1493,4 +1508,175 @@ test('file lookup and upload cleanup stay bounded with 500 retained attachments'
   assert.ok(results[1].rows[0].updated_at > 0);
   assert.deepEqual(results[2].rows, []);
   for (const { reads } of results) assert.ok(reads <= 3, `expected indexed lookup, read ${reads} rows`);
+});
+
+
+test('warm storage accounting avoids rescanning completed attachments and survives a cold rebuild', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const storage = await roomStorage(space);
+  const room = await roomObject(space);
+  await storage.exec(`WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 499)
+    INSERT INTO files (file_id, device_id, client_id, name, type, size, text, status, created_at, updated_at, message_id, reserved_bytes)
+    SELECT 'usage-' || n, ?, 'usage-' || n, 'encrypted', 'application/octet-stream', 0, '', 'complete', ?, ?, n, 0 FROM numbers`, space.deviceId, Date.now(), Date.now());
+  await storage.exec("INSERT INTO file_shards (file_id, shard_index, bytes) SELECT file_id, 0, 16384 FROM files");
+  const cold = await room.testRebuildAccounting();
+  await room.testBeginReads();
+  for (let index = 0; index < 3; index++) assert.equal((await room.storageUsage()).bytes, cold.bytes);
+  assert.ok(await room.testReadCount() < 20, 'warm usage reads must not grow with the retained file count');
+  assert.equal((await room.testRebuildAccounting()).bytes, cold.bytes);
+});
+
+test('valid download tickets do not inflate reads when pruning expired content', async () => {
+  const request = client(), space = await createSpace(request);
+  const storage = await roomStorage(space), room = await roomObject(space);
+  await storage.exec(`WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 500)
+    INSERT INTO download_tickets (ticket, file_id, device_id, expires_at)
+    SELECT 'ticket-' || n, 'file-' || n, ?, ? FROM numbers`, space.deviceId, Date.now() + 86400000);
+  await storage.exec('INSERT INTO download_tickets VALUES (?, ?, ?, ?)', 'expired', 'old-file', space.deviceId, Date.now() - 1);
+  await room.testBeginReads();
+  await room.pruneExpired();
+  assert.ok(await room.testReadCount() < 50, 'cleanup must not scan all valid tickets');
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM download_tickets'), [{ count: 500 }]);
+  assert.deepEqual(await storage.exec('SELECT ticket FROM download_tickets WHERE ticket = ?', 'expired'), []);
+});
+
+test('slow finalization shares probes while messages continue in the same room', { timeout: 10000 }, async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const started = await initiate(request, space, { size: 16 });
+  await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(16));
+  const shard = (await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS')).getByName(`${started.body.uploadId}:0`);
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  await shard.testHoldSize();
+  const pending = complete(request, space, started.body.uploadId);
+  await registry.testWaitSizeCalls(1);
+  const duplicate = complete(request, space, started.body.uploadId);
+  let timer;
+  try {
+    const sent = await Promise.race([
+      request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'Chat during verification' } }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('message blocked by finalization')), 3000); })
+    ]);
+    assert.equal(sent.status, 201);
+    assert.equal(sent.body.text, 'Chat during verification');
+    assert.deepEqual(await registry.testSizeStats(), [1, 1, 1, 0]);
+  } finally { clearTimeout(timer); await shard.testReleaseSize(); }
+  const completed = await Promise.all([pending, duplicate]);
+  assert.deepEqual(completed.map(result => result.status).sort(), [200, 201]);
+  assert.deepEqual(completed[0].body, completed[1].body);
+  assert.deepEqual(await registry.testSizeStats(), [1, 0, 1, 1]);
+});
+
+for (const change of ['cancel', 'remove-device', 'rotate-key']) {
+  test(`finalization rechecks ${change} after shard probes`, { timeout: 10000 }, async t => {
+    const instance = await createRuntime(); t.after(() => instance.dispose());
+    const request = client(instance), space = await createSpace(request);
+    const started = await initiate(request, space, { size: 16 });
+    await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(16));
+    const shard = (await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS')).getByName(`${started.body.uploadId}:0`);
+    const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+    const storage = await roomStorage(space, instance);
+    await shard.testHoldSize();
+    const pending = complete(request, space, started.body.uploadId);
+    await registry.testWaitSizeCalls(1);
+    try {
+      if (change === 'cancel') {
+        const cancelled = await request(`/v1/spaces/${space.roomId}/files/uploads/${started.body.uploadId}`, { method: 'DELETE', token: space.token });
+        assert.equal(cancelled.status, 200);
+      } else if (change === 'remove-device') await storage.exec('DELETE FROM devices WHERE device_id = ?', space.deviceId);
+      else await storage.exec('UPDATE metadata SET value = ? WHERE key = ?', randomUUID(), 'currentKeyId');
+    } finally { await shard.testReleaseSize(); }
+    const completed = await pending;
+    assert.equal(completed.status, { cancel: 404, 'remove-device': 401, 'rotate-key': 409 }[change]);
+    assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 0 }]);
+  });
+}
+
+test('a delayed chunk write allows same-room messages and serializes duplicate/conflicting chunks', { timeout: 10000 }, async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const started = await initiate(request, space, { size: 16 });
+  const shard = (await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS')).getByName(`${started.body.uploadId}:0`);
+  const storage = await roomStorage(space, instance);
+  await shard.testHoldWrite();
+  const pending = putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(16));
+  while (!await shard.testWriteStarted()) await new Promise(resolve => setTimeout(resolve, 5));
+  const duplicate = putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(16));
+  const conflict = putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(16, 1));
+  let timer;
+  try {
+    const sent = await Promise.race([
+      request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'Chat during chunk write' } }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('message blocked by chunk write')), 3000); })
+    ]);
+    assert.equal(sent.status, 201);
+  } finally { clearTimeout(timer); await shard.testReleaseWrite(); }
+  assert.equal((await pending).status, 200);
+  assert.equal((await duplicate).status, 200);
+  assert.equal((await conflict).status, 409);
+  assert.deepEqual(await storage.exec('SELECT received_bytes, received_chunks FROM files'), [{ received_bytes: 16, received_chunks: 1 }]);
+  assert.equal((await complete(request, space, started.body.uploadId)).status, 201);
+});
+
+for (const change of ['cancel', 'remove-device', 'rotate-key']) {
+  test(`chunk write rechecks ${change} and leaves no orphan shard after cleanup`, { timeout: 10000 }, async t => {
+    const instance = await createRuntime(); t.after(() => instance.dispose());
+    const request = client(instance), space = await createSpace(request);
+    const started = await initiate(request, space, { size: 16 });
+    const room = await roomObject(space, instance), storage = await roomStorage(space, instance);
+    const shard = (await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS')).getByName(`${started.body.uploadId}:0`);
+    await shard.testHoldWrite();
+    const pending = putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(16));
+    while (!await shard.testWriteStarted()) await new Promise(resolve => setTimeout(resolve, 5));
+    try {
+      if (change === 'cancel') assert.equal((await room.cancelUpload(space.deviceId, started.body.uploadId)).ok, true);
+      else if (change === 'remove-device') assert.equal((await room.removeDevice(space.deviceId)).ok, true);
+      else {
+        const session = request.state.sessions.get(space.token);
+        const envelope = await cryptoClient.encryptPayload(session.keyring, space.roomId, 'test-rotation', {});
+        assert.equal((await room.rotateKeys(space.deviceId, session.keyring.currentKeyId, { rotationId: randomUUID(), newKeyId: randomUUID(),
+          removedDeviceId: null, grants: [{ deviceId: space.deviceId, envelope }] })).ok, true);
+      }
+      await room.cleanupFiles();
+      assert.equal((await storage.exec('SELECT count(*) AS count FROM file_shards'))[0].count, 1);
+    } finally { await shard.testReleaseWrite(); }
+    assert.equal((await pending).status, { cancel: 404, 'remove-device': 401, 'rotate-key': 409 }[change]);
+    await room.cleanupFiles();
+    for (const table of ['files', 'file_shards', 'file_upload_chunks', 'messages']) assert.deepEqual(await storage.exec(`SELECT * FROM ${table}`), []);
+    assert.equal((await shard.databaseProbe()).initialized, false);
+    assert.equal((await new Response(await shard.readStream()).arrayBuffer()).byteLength, 0);
+  });
+}
+
+test('file ticket cleanup uses a file-leading index without scanning unrelated tickets', async () => {
+  const request = client(), space = await createSpace(request);
+  const storage = await roomStorage(space), room = await roomObject(space);
+  await storage.exec(`WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 10000)
+    INSERT INTO download_tickets SELECT 'bulk-' || n, 'other-file', ?, ? FROM numbers`, space.deviceId, Date.now() + 86400000);
+  await storage.exec('INSERT INTO download_tickets VALUES (?, ?, ?, ?)', 'target', 'target-file', space.deviceId, Date.now() + 86400000);
+  assert.ok(await room.testDeleteFileTickets('target-file') <= 3);
+  assert.ok(await room.testDeleteFileTickets('missing-file') <= 1);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM download_tickets'), [{ count: 10000 }]);
+});
+
+test('socket activity coalesces duplicate sockets and repeated requests, then refreshes after wake and time advancement', async () => {
+  const request = client(), space = await createSpace(request);
+  const room = await roomObject(space), storage = await roomStorage(space);
+  const now = Date.now();
+  await storage.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ?', now - sevenDays, space.deviceId);
+  await room.testBeginReads();
+  const sockets = [{ deviceId: space.deviceId, at: now }, { deviceId: space.deviceId, at: now - 1000 }];
+  for (let index = 0; index < 40; index++) await room.testSocketActivity(sockets);
+  assert.ok(await room.testReadCount() <= 2);
+  assert.equal((await storage.exec('SELECT last_active_at FROM devices'))[0].last_active_at, now);
+  await room.testSocketActivity([{ deviceId: space.deviceId, at: now + 61000 }]);
+  assert.equal((await storage.exec('SELECT last_active_at FROM devices'))[0].last_active_at, now + 61000);
+  await room.testResetActivity();
+  await storage.exec('UPDATE devices SET last_active_at = ?', now - sevenDays);
+  await room.testSocketActivity(sockets);
+  assert.equal((await storage.exec('SELECT last_active_at FROM devices'))[0].last_active_at, now);
+  await room.removeDevice(space.deviceId);
+  await room.testSocketActivity(sockets);
+  assert.deepEqual(await storage.exec('SELECT * FROM devices'), []);
 });

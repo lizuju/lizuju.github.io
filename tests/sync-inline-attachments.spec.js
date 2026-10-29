@@ -189,3 +189,21 @@ test('loads encrypted inline images inside the desktop iframe and reuses their b
     await chat.locator('[data-sync-preview-action="close"]').click();
     await expect(image).toHaveJSProperty('naturalWidth', 64);
 });
+
+for (const [name, id] of [['camera.jpg', 3], ['camera.HEIC', 6]]) test(`downloads the original ${name} from the preview cache without another network range`, async ({ page, isMobile }) => {
+    await openChat(page, isMobile);
+    const attachment = row(page, name);
+    await attachment.locator('[data-sync-preview-file]').click();
+    const viewer = page.locator('[data-sync-preview-window]');
+    await expect.poll(() => viewer.locator('.sync-preview-body > img').evaluate(image => image.naturalWidth)).toBeGreaterThan(0);
+    const before = gets.get(id);
+    expect(before).toBeGreaterThan(0);
+    await viewer.locator('[data-sync-preview-action="minimize"]').click();
+    const event = page.waitForEvent('download');
+    await attachment.locator('[data-sync-download-file]').click();
+    const download = await event;
+    expect(await readFile(await download.path())).toEqual(bytes[id - 1]);
+    expect(gets.get(id)).toBe(before);
+    await page.locator('[data-sync-preview-task]').click();
+    await expect.poll(() => viewer.locator('.sync-preview-body > img').evaluate(image => image.naturalWidth)).toBeGreaterThan(0);
+});

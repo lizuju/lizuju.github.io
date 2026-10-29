@@ -12,11 +12,11 @@ module.exports = defineConfig({
     retries: process.env.CI ? 1 : 0,
     workers: 1,
     reporter: process.env.CI
-        ? [['line'], ['html', { open: 'never' }]]
+        ? [['line'], ['html', { open: 'never' }], ['./scripts/browser-timing-reporter.cjs']]
         : 'list',
     use: {
         baseURL: 'http://127.0.0.1:3090',
-        trace: 'on-first-retry',
+        trace: 'retain-on-failure',
         screenshot: 'only-on-failure'
     },
     webServer: {
