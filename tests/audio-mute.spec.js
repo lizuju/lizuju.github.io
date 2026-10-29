@@ -1,4 +1,6 @@
 const { test, expect } = require('@playwright/test');
+const { readFileSync } = require('node:fs');
+const { join } = require('node:path');
 
 const sampleRate = 8000;
 const sampleBytes = sampleRate * 20 * 2;
@@ -15,6 +17,9 @@ wav.writeUInt16LE(2, 32);
 wav.writeUInt16LE(16, 34);
 wav.write('data', 36);
 wav.writeUInt32LE(sampleBytes, 40);
+// Linux WebKit in Playwright 1.64 never starts the site's 9 MB music video from the test server,
+// so a small synthetic clip keeps this check about the mute controls.
+const nativeVideo = readFileSync(join(__dirname, 'fixtures/native-video.mp4'));
 
 test.beforeEach(async ({ page, isMobile }) => {
     test.skip(isMobile, 'the mobile shell does not create the scene audio engine');
@@ -221,6 +226,7 @@ for (const delayedTransition of ['resume', 'suspend']) {
 
 test('keeps native media playback and volume independent of both background mute controls', async ({ page }) => {
     await startScene(page);
+    await page.route('**/test-media/native-video.mp4', (route) => route.fulfill({ contentType: 'video/mp4', body: nativeVideo }));
     await page.keyboard.press('Shift');
     const sceneAudio = page.locator('[data-audio-mute-toggle]');
     await expect(sceneAudio).toBeVisible({ timeout: 15000 });
@@ -235,7 +241,7 @@ test('keeps native media playback and volume independent of both background mute
         audio.loop = true;
         const video = document.createElement('video');
         video.dataset.testIndependentVideo = '';
-        video.src = 'assets/music-portfolio/last-christmas-solo.mp4';
+        video.src = '/test-media/native-video.mp4';
         video.volume = 0.65;
         video.loop = true;
         video.muted = true;
