@@ -119,6 +119,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                 }
                 export class SyncRoom extends ProductionSyncRoom {
+                  testRebuildAccounting() { this.shardBytes = null; return this.storageUsage(); }
                   testBeginReads() {
                     this.readCursors = [];
                     const sql = this.sql;
@@ -1133,6 +1134,7 @@ for (const { separateRoom, unknownUsage, clearedHistory } of [
         await deletedStorage.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, ?, ?)', fileId, shard, 64 * MiB);
       }
     }
+    await (await roomObject(deletedSpace, instance)).testRebuildAccounting();
     if (clearedHistory) {
       const cleared = await request(`/v1/spaces/${deletedSpace.roomId}/messages`, { method: 'DELETE', token: deletedSpace.token });
       assert.equal(cleared.status, 200);
@@ -1192,6 +1194,7 @@ test('capacity cleanup preserves a newer active upload when older completed file
       fileId, space.deviceId, clientId, 'old.bin', 'application/octet-stream', size, '', 'complete', timestamp + index, timestamp + index, id, 0);
     for (let shard = 0; shard < 24; shard += 1) await storage.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, ?, ?)', fileId, shard, 64 * MiB);
   }
+  await (await roomObject(space, instance)).testRebuildAccounting();
   const freshClientId = randomUUID();
   const fresh = await initiate(request, space, { clientId: freshClientId, size: 1024 * MiB });
   assert.equal(fresh.status, 201);
@@ -1493,4 +1496,21 @@ test('file lookup and upload cleanup stay bounded with 500 retained attachments'
   assert.ok(results[1].rows[0].updated_at > 0);
   assert.deepEqual(results[2].rows, []);
   for (const { reads } of results) assert.ok(reads <= 3, `expected indexed lookup, read ${reads} rows`);
+});
+
+
+test('warm storage accounting avoids rescanning completed attachments and survives a cold rebuild', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const storage = await roomStorage(space);
+  const room = await roomObject(space);
+  await storage.exec(`WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 499)
+    INSERT INTO files (file_id, device_id, client_id, name, type, size, text, status, created_at, updated_at, message_id, reserved_bytes)
+    SELECT 'usage-' || n, ?, 'usage-' || n, 'encrypted', 'application/octet-stream', 0, '', 'complete', ?, ?, n, 0 FROM numbers`, space.deviceId, Date.now(), Date.now());
+  await storage.exec("INSERT INTO file_shards (file_id, shard_index, bytes) SELECT file_id, 0, 16384 FROM files");
+  const cold = await room.testRebuildAccounting();
+  await room.testBeginReads();
+  for (let index = 0; index < 3; index++) assert.equal((await room.storageUsage()).bytes, cold.bytes);
+  assert.ok(await room.testReadCount() < 20, 'warm usage reads must not grow with the retained file count');
+  assert.equal((await room.testRebuildAccounting()).bytes, cold.bytes);
 });

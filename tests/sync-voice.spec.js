@@ -360,7 +360,7 @@ test('cancels capture on blur, hidden document, inert desktop, scene exit, minim
     expect(uploads).toHaveLength(0);
 });
 
-test('keeps ordinary attachments exclusive with recording and releases reviewed voice URLs on remove and pagehide', async ({ page }) => {
+test('keeps attachments exclusive with recording and releases the reviewed voice on removal', async ({ page }) => {
     await openChat(page);
     await page.locator('[data-sync-file-input]').setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('Ordinary attachment') });
     await expect(page.locator('[data-sync-voice-record]')).toBeDisabled();
@@ -377,8 +377,14 @@ test('keeps ordinary attachments exclusive with recording and releases reviewed 
     await page.locator('[data-sync-remove-file]').click();
     await expect(preview).toBeHidden();
     expect(await page.evaluate(url => window.voiceMock.revoked.includes(url), first)).toBe(true);
+    await microphoneReleased(page);
+});
+
+test('releases the reviewed voice and microphone on pagehide', async ({ page }) => {
+    await openChat(page);
     await startRecording(page);
     await page.locator('[data-sync-voice-stop]').click();
+    const preview = page.locator('[data-sync-voice-preview]');
     await expect(preview).toBeVisible();
     const second = await preview.getAttribute('src');
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));

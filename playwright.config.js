@@ -16,7 +16,7 @@ module.exports = defineConfig({
         : 'list',
     use: {
         baseURL: 'http://127.0.0.1:3090',
-        trace: 'on-first-retry',
+        trace: 'retain-on-failure',
         screenshot: 'only-on-failure'
     },
     webServer: {

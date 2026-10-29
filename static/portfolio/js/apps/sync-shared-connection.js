@@ -13,6 +13,8 @@ export class SharedSyncConnection {
         this.incoming = Promise.resolve();
         this.members = new Set();
         this.welcomed = new Set();
+        this.requests = new Map();
+        this.results = new Map();
         this.socket = {
             readyState: WebSocket.CLOSED,
             send: data => {
@@ -27,6 +29,49 @@ export class SharedSyncConnection {
     }
 
     post(value) { this.channel?.postMessage({ ...value, sender: this.id }); }
+
+    invalidateResults(broadcast = true) {
+        this.results.clear();
+        if (broadcast) this.post({ type: 'invalidate-results' });
+    }
+
+    request(key, load) {
+        if (this.stopped || !this.channel || !this.isLeader && !this.joined) return load();
+        if (this.isLeader) return this.loadResult(key);
+        const id = crypto.randomUUID();
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this.requests.delete(id);
+                reject(Object.assign(new Error('network_error'), { code: 'network_error' }));
+            }, 16000);
+            this.requests.set(id, { resolve, reject, timer });
+            this.post({ type: 'request', owner: this.owner, id, key });
+        });
+    }
+
+    loadResult(key) {
+        const cached = this.results.get(key);
+        if (cached && cached.expiresAt > Date.now()) return cached.promise.then(value => structuredClone(value));
+        const entry = { expiresAt: Infinity };
+        entry.promise = Promise.resolve().then(() => this.options.request(key)).then(value => {
+            entry.expiresAt = Date.now() + 2000;
+            return value;
+        }, error => {
+            if (this.results.get(key) === entry) this.results.delete(key);
+            throw error;
+        });
+        this.results.set(key, entry);
+        return entry.promise.then(value => structuredClone(value));
+    }
+
+    cancelRequests() {
+        for (const request of this.requests.values()) {
+            clearTimeout(request.timer);
+            request.reject(Object.assign(new Error('network_error'), { code: 'network_error' }));
+        }
+        this.requests.clear();
+        this.invalidateResults(false);
+    }
 
     setState(state) {
         this.state = state;
@@ -55,6 +100,7 @@ export class SharedSyncConnection {
         this.lock = navigator.locks.request(key, { signal: this.election.signal }, async () => {
             if (this.stopped) return;
             this.isLeader = true;
+            this.cancelRequests();
             this.owner = this.id;
             this.generation++;
             this.incoming = Promise.resolve();
@@ -64,6 +110,7 @@ export class SharedSyncConnection {
                 receive: (data, current) => {
                     const delivery = this.incoming.then(async () => {
                         if (!current() || this.stopped) return;
+                        if (['ready', 'devices', 'pairing', 'key-rotation', 'rekey-required'].includes(data.type)) this.invalidateResults(false);
                         await this.options.receive(data, current);
                         if (current() && !this.stopped && data.type !== 'ready') {
                             this.post({ type: 'frame', recipients: [...this.welcomed], data });
@@ -111,6 +158,7 @@ export class SharedSyncConnection {
 
     message(event) {
         if (this.stopped || event.sender === this.id) return;
+        if (event.type === 'invalidate-results') { this.invalidateResults(false); return; }
         if (event.type === 'hello') {
             if (this.isLeader) { this.members.add(event.sender); this.welcome(event.sender); }
             return;
@@ -120,9 +168,15 @@ export class SharedSyncConnection {
             if (event.owner !== this.id || !this.welcomed.has(event.sender)) return;
             if (event.type === 'send' && this.transport?.socket?.readyState === WebSocket.OPEN) this.transport.socket.send(event.data);
             if (event.type === 'reconnect') this.transport?.socket?.close();
+            if (event.type === 'request') this.loadResult(event.key).then(
+                value => this.post({ type: 'result', recipient: event.sender, id: event.id, value }),
+                error => this.post({ type: 'result', recipient: event.sender, id: event.id,
+                    error: { message: error.message, code: error.code, status: error.status } })
+            );
             return;
         }
         if (event.type === 'owner') {
+            this.cancelRequests();
             this.owner = event.sender;
             this.generation++;
             this.incoming = Promise.resolve();
@@ -137,7 +191,17 @@ export class SharedSyncConnection {
             this.generation++;
             this.incoming = Promise.resolve();
         } else if (event.sender !== this.owner) return;
+        if (event.type === 'result' && event.recipient === this.id) {
+            const request = this.requests.get(event.id);
+            if (!request) return;
+            clearTimeout(request.timer);
+            this.requests.delete(event.id);
+            if (event.error) request.reject(Object.assign(new Error(event.error.message), event.error));
+            else request.resolve(event.value);
+            return;
+        }
         if (event.type === 'state') {
+            this.cancelRequests();
             this.generation++;
             this.incoming = Promise.resolve();
             this.joined = false;
@@ -170,6 +234,7 @@ export class SharedSyncConnection {
     close() {
         if (this.stopped) return;
         this.stopped = true;
+        this.cancelRequests();
         this.generation++;
         this.post({ type: 'bye' });
         clearTimeout(this.retryTimer);

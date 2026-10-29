@@ -501,53 +501,62 @@ import { createGomokuWindow } from './sync-gomoku.js';
             }
         };
         const api = async (path, options = {}, session = credentials) => {
-            const base = await loadConfig();
-            if (!base) throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
-            const headers = { 'Content-Type': 'application/json', ...(session ? {
-                Authorization: `Bearer ${session.token}`, 'X-Sync-Key-Id': session.keyring.currentKeyId
-            } : {}), ...options.headers };
-            const signal = options.signal || AbortSignal.timeout(15000);
-            const response = options.uploadProgress ? await new Promise((resolve, reject) => {
-                signal.throwIfAborted();
-                const xhr = new XMLHttpRequest();
-                const cleanup = () => signal.removeEventListener('abort', abort);
-                const abort = () => {
-                    xhr.abort();
-                    cleanup();
-                    reject(signal.reason.name === 'TimeoutError'
-                        ? Object.assign(new Error(signal.reason.message), { name: 'TimeoutError', code: 'network_error' }) : signal.reason);
-                };
-                xhr.open(options.method, base + path);
-                for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
-                xhr.upload.addEventListener('progress', (event) => options.uploadProgress(event.loaded));
-                xhr.addEventListener('load', () => {
-                    cleanup();
-                    resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'Retry-After': xhr.getResponseHeader('Retry-After') || '' } }));
+            const perform = async () => {
+                const base = await loadConfig();
+                if (!base) throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
+                const headers = { 'Content-Type': 'application/json', ...(session ? {
+                    Authorization: `Bearer ${session.token}`, 'X-Sync-Key-Id': session.keyring.currentKeyId
+                } : {}), ...options.headers };
+                const signal = options.signal || AbortSignal.timeout(15000);
+                const response = options.uploadProgress ? await new Promise((resolve, reject) => {
+                    signal.throwIfAborted();
+                    const xhr = new XMLHttpRequest();
+                    const cleanup = () => signal.removeEventListener('abort', abort);
+                    const abort = () => {
+                        xhr.abort();
+                        cleanup();
+                        reject(signal.reason.name === 'TimeoutError'
+                            ? Object.assign(new Error(signal.reason.message), { name: 'TimeoutError', code: 'network_error' }) : signal.reason);
+                    };
+                    xhr.open(options.method, base + path);
+                    for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+                    xhr.upload.addEventListener('progress', (event) => options.uploadProgress(event.loaded));
+                    xhr.addEventListener('load', () => {
+                        cleanup();
+                        resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'Retry-After': xhr.getResponseHeader('Retry-After') || '' } }));
+                    });
+                    xhr.addEventListener('error', () => { cleanup(); reject(Object.assign(new TypeError('Upload network request failed'), { code: 'network_error' })); });
+                    signal.addEventListener('abort', abort, { once: true });
+                    xhr.send(options.body);
+                }) : await fetch(base + path, { ...options, headers, signal }).catch(error => {
+                    if (error instanceof TypeError) error.code = 'network_error';
+                    else if (error.name === 'TimeoutError') throw Object.assign(new Error(error.message), { name: 'TimeoutError', code: 'network_error' });
+                    throw error;
                 });
-                xhr.addEventListener('error', () => { cleanup(); reject(Object.assign(new TypeError('Upload network request failed'), { code: 'network_error' })); });
-                signal.addEventListener('abort', abort, { once: true });
-                xhr.send(options.body);
-            }) : await fetch(base + path, { ...options, headers, signal }).catch(error => {
-                if (error instanceof TypeError) error.code = 'network_error';
-                else if (error.name === 'TimeoutError') throw Object.assign(new Error(error.message), { name: 'TimeoutError', code: 'network_error' });
-                throw error;
-            });
-            const result = await response.json().catch(error => {
-                if (response.ok) throw error;
-                return { error: 'unavailable' };
-            });
-            if (!response.ok) {
-                if (result.error === 'key_changed' && session) await refreshKeys(session);
-                const retryAfter = response.headers.get('Retry-After');
-                const seconds = Number(retryAfter);
-                throw Object.assign(new Error(result.error), {
-                    code: result.error,
-                    status: response.status,
-                    game: result.game,
-                    retryAfter: Number.isFinite(seconds) ? seconds : Math.max(0, (Date.parse(retryAfter) - Date.now()) / 1000)
+                const result = await response.json().catch(error => {
+                    if (response.ok) throw error;
+                    return { error: 'unavailable' };
                 });
-            }
-            if (result === null) return null;
+                if (!response.ok) {
+                    if (result.error === 'key_changed' && session) await refreshKeys(session);
+                    const retryAfter = response.headers.get('Retry-After');
+                    const seconds = Number(retryAfter);
+                    throw Object.assign(new Error(result.error), {
+                        code: result.error,
+                        status: response.status,
+                        game: result.game,
+                        retryAfter: Number.isFinite(seconds) ? seconds : Math.max(0, (Date.parse(retryAfter) - Date.now()) / 1000)
+                    });
+                }
+                return result;
+            };
+            const transport = session && connections.get(session.roomId)?.transport;
+            const shared = !options.unshared && !options.method && !options.signal
+                && [ `/v1/spaces/${session?.roomId}/devices`, `/v1/spaces/${session?.roomId}/pair-code` ].includes(path);
+            const result = shared && transport ? await transport.request(path, perform) : await perform();
+            if (options.method && options.method !== 'GET'
+                && /\/(devices(?:\/[^/]+)?|device|pair-code|pair-accept|key-rotation|key-grants)$/.test(path)) transport?.invalidateResults();
+            if (result === null || options.raw) return result;
             if (session?.keyring) {
                 if (result.messages) result.messages = await Promise.all(result.messages.map(message => decodeMessage(message, session)));
                 if (result.message) result.message = await decodeMessage(result.message, session);
@@ -607,7 +616,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             }
         });
         let pairing = createPairing();
-        const refreshKeys = (session = credentials) => {
+        const refreshKeys = (session = credentials, expectedKeyId = null) => {
             if (keyRefreshes.has(session)) return keyRefreshes.get(session);
             const promise = navigator.locks.request(`gavin-sync-keys:${session.roomId}:${session.deviceId}`, async () => {
                 if (!liveSession(session)) return;
@@ -630,6 +639,8 @@ import { createGomokuWindow } from './sync-gomoku.js';
                         adoptKeys({ ...updated, revision: stored.revision });
                     }
                 }
+                if (expectedKeyId && !connections.get(session.roomId)?.transport?.isLeader
+                    && session.keyring.currentKeyId === expectedKeyId) return;
                 for (;;) {
                     const result = await api(`/v1/spaces/${session.roomId}/key-grants`, {}, session);
                     if (!liveSession(session)) return;
@@ -1600,7 +1611,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             if (data.type === 'ready') {
                 record.devicesLoaded = false;
                 const revision = record.pairingRevision;
-                await refreshKeys(session);
+                await refreshKeys(session, data.currentKeyId);
                 if (!valid()) return;
                 if (data.rekeyRequired) await rotateKeys(null, session);
                 if (!valid()) return;
@@ -1614,10 +1625,10 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 return;
             } else if (data.type === 'key-rotation' || data.type === 'rekey-required') {
                 if (data.type === 'rekey-required' && record.transport.isLeader) await rotateKeys(null, session);
-                else await refreshKeys(session);
+                else await refreshKeys(session, data.currentKeyId);
                 if (!valid()) return;
-                await refreshPairing(session);
-                await loadDevices(session);
+                refreshPairing(session).catch(error => { if (valid() && credentials === session) showError(error); });
+                loadDevices(session);
                 return;
             } else if (data.type === 'pairing') {
                 await showPairing(data.pairing, session);
@@ -1631,7 +1642,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 });
                 return;
             } else if (data.type === 'devices') {
-                await loadDevices(session);
+                loadDevices(session);
                 return;
             }
             const incoming = data.type === 'message' ? [await decodeMessage(data.message, session)]
@@ -1712,10 +1723,14 @@ import { createGomokuWindow } from './sync-gomoku.js';
             if (!record.transport) {
                 const session = record.session;
                 const transport = new SharedSyncConnection({ session,
+                    request: path => {
+                        if (![ `/v1/spaces/${session.roomId}/devices`, `/v1/spaces/${session.roomId}/pair-code` ].includes(path)) throw new Error('invalid_request');
+                        return api(path, { unshared: true, raw: true }, session);
+                    },
                     snapshot: () => {
                         if (credentials === session) cacheCurrentView();
                         const messages = record.history.slice(-50).map(message => message.wire);
-                        return { type: 'ready', deviceId: session.deviceId, messages, historyMode: 'replace',
+                        return { type: 'ready', deviceId: session.deviceId, currentKeyId: session.keyring.currentKeyId, messages, historyMode: 'replace',
                             history: record.historyState, pairing: record.pairingData, spaceProfile: record.spaceProfile,
                             readReceipts: [...record.readReceipts].map(([deviceId, messageId]) => ({ deviceId, messageId })),
                             activeGames: record.activeGames };
@@ -3032,7 +3047,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
         find('leave').addEventListener('click', () => showConfirmation('leave'));
         find('devices-form').addEventListener('submit', (event) => event.preventDefault());
         for (const name of ['devices-close', 'devices-dismiss']) find(name).addEventListener('click', () => devicesDialog.close());
-        for (const dialog of [confirmation, devicesDialog]) {
+        for (const dialog of [confirmation, devicesDialog, spaceNameDialog]) {
             dialog.addEventListener('close', () => {
                 if (!document.activeElement || document.activeElement === document.body || !document.activeElement.getClientRects().length) {
                     find('tools-toggle').focus({ preventScroll: true });

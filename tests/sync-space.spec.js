@@ -34,7 +34,7 @@ test('shows the remaining pairing cooldown and enables joining when it expires',
 
 test('caches image previews, renews expired download tickets and authenticates reconnects outside the URL', async ({ page, isMobile, browserName }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
-    await page.clock.install();
+    await page.clock.setFixedTime(new Date());
     const encrypted = file('pixel.png', 'image/png', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64'));
     const attachmentMessage = message(1, '', deviceId, encrypted.metadata, roomId);
     let tickets = 0;
@@ -90,7 +90,7 @@ test('caches image previews, renews expired download tickets and authenticates r
     await page.locator('[data-sync-download-file]').click();
     await downloaded;
     expect(tickets).toBe(1);
-    await page.clock.setSystemTime(Date.now() + 24 * 60 * 60 * 1000);
+    await page.clock.setFixedTime(new Date(Date.now() + 24 * 60 * 60 * 1000));
     await page.locator('[data-sync-preview-file]').click();
     await expect(page.locator('[data-sync-preview-body] img')).toBeVisible();
     expect(tickets).toBe(1);

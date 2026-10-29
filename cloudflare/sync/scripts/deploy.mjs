@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { verifyRelease } from './verify-release.mjs';
+import { workerFingerprint } from './worker-fingerprint.mjs';
 
 const directory = fileURLToPath(new URL('../', import.meta.url));
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -16,8 +17,10 @@ try {
   for (const args of [['test'], ['run', 'check']]) execFileSync(npm, args, { cwd: directory, stdio: 'inherit' });
   const wrangler = fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url));
   execFileSync(process.execPath, [wrangler, 'whoami'], { cwd: directory, stdio: 'inherit' });
-  execFileSync(process.execPath, [wrangler, 'deploy', '--var', `RELEASE_REVISION:${revision}`], { cwd: directory, stdio: 'inherit' });
+  const fingerprint = await workerFingerprint();
+  execFileSync(process.execPath, [wrangler, 'deploy', '--var', `RELEASE_REVISION:${revision}`, '--var', `RELEASE_SOURCE:${fingerprint}`], { cwd: directory, stdio: 'inherit' });
   const health = await verifyRelease({ expectedRevision: revision, apiBase: config.apiBase, backendOnly: true });
+  assert.equal(health.sourceFingerprint, fingerprint, 'The deployed Worker must report the checked source fingerprint.');
   console.log(`Worker verified: ${health.revision} (Cloudflare ${health.versionId}). Verify the frontend after publishing Pages with npm run verify:release -- ${revision} from the repository root.`);
 } catch (error) {
   console.error(error.message);

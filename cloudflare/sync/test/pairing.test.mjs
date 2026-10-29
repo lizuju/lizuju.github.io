@@ -326,7 +326,7 @@ async function authenticateSocket(space, instance = runtime) {
 test('health identifies the sync service and exposes release metadata instead of only reporting reachability', async () => {
   const health = await client()('/health');
   assert.equal(health.status, 200);
-  assert.deepEqual(health.body, { ok: true, service: 'portfolio-sync', apiVersion: 1, encryptionVersion: 1, revision: null, versionId: null });
+  assert.deepEqual(health.body, { ok: true, service: 'portfolio-sync', apiVersion: 1, encryptionVersion: 1, revision: null, sourceFingerprint: null, versionId: null });
   assert.equal(health.headers.get('Cache-Control'), 'no-store');
 });
 

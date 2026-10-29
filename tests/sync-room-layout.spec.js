@@ -32,6 +32,18 @@ const openChat = async (page, initial = []) => {
     return open;
 };
 
+test('closing the space name dialog restores a visible keyboard target', async ({ page }) => {
+    await openChat(page);
+    for (const close of ['escape', 'space-name-close', 'space-name-cancel']) {
+        await page.locator('[data-sync-tools-toggle]').click();
+        await page.locator('[data-sync-space-rename]').click();
+        await expect(page.locator('[data-sync-space-name]')).toBeFocused();
+        if (close === 'escape') await page.keyboard.press('Escape');
+        else await page.locator(`[data-sync-${close}]`).click();
+        await expect(page.locator('[data-sync-tools-toggle]')).toBeFocused();
+    }
+});
+
 test('keeps the tools overlay closed in narrow windows and remembers only the wide layout', async ({ page, isMobile }) => {
     const open = await openChat(page);
     const toggle = page.locator('[data-sync-tools-toggle]');

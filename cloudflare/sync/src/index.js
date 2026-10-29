@@ -184,7 +184,7 @@ export default {
   async route(request, env) {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/health') {
-      return json({ ok: true, service: 'portfolio-sync', apiVersion: API_VERSION, encryptionVersion: 1, revision: env.RELEASE_REVISION || null, versionId: env.WORKER_VERSION?.id || null });
+      return json({ ok: true, service: 'portfolio-sync', apiVersion: API_VERSION, encryptionVersion: 1, revision: env.RELEASE_REVISION || null, sourceFingerprint: env.RELEASE_SOURCE || null, versionId: env.WORKER_VERSION?.id || null });
     }
 
     const registry = env.E2EE_PAIRING_REGISTRY.getByName('registry');
@@ -1109,6 +1109,7 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   initializeStorage() {
+    this.shardBytes = null;
     this.sql.exec("CREATE TABLE IF NOT EXISTS devices (token_hash TEXT PRIMARY KEY, device_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '')");
     if (!this.sql.exec('PRAGMA table_info(devices)').toArray().some(column => column.name === 'name')) {
       this.sql.exec("ALTER TABLE devices ADD COLUMN name TEXT NOT NULL DEFAULT ''");
@@ -1140,6 +1141,7 @@ export class E2eeSyncRoom extends DurableObject {
     if (!fileColumns.some(column => column.name === 'fingerprint')) this.sql.exec('ALTER TABLE files ADD COLUMN fingerprint TEXT');
     this.sql.exec('CREATE INDEX IF NOT EXISTS files_message ON files(message_id)');
     this.sql.exec('CREATE INDEX IF NOT EXISTS files_status_updated ON files(status, updated_at)');
+    this.sql.exec("CREATE INDEX IF NOT EXISTS files_deleting_age ON files(created_at) WHERE status = 'deleting'");
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_shards (file_id TEXT NOT NULL, shard_index INTEGER NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(file_id, shard_index))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_upload_chunks (file_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, size INTEGER NOT NULL, received INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(file_id, chunk_index))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS pair_acceptances (request_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, token_hash TEXT NOT NULL, rotation_id TEXT NOT NULL, key_id TEXT NOT NULL, grant TEXT NOT NULL, expires_at INTEGER NOT NULL)');
@@ -1236,7 +1238,7 @@ export class E2eeSyncRoom extends DurableObject {
 
   async finishRotation(removedDeviceId, games = []) {
     if (removedDeviceId) for (const socket of this.ctx.getWebSockets()) if (socket.deserializeAttachment()?.deviceId === removedDeviceId) { socket.serializeAttachment({ closing: true }); socket.close(4001, 'Device removed'); }
-    this.broadcast({ type: 'key-rotation' });
+    this.broadcast({ type: 'key-rotation', ...this.keyState() });
     this.broadcast({ type: 'devices' });
     for (const game of games) this.broadcast({ type: 'gomoku', game });
     await this.scheduleAlarm();
@@ -1523,7 +1525,7 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   historySnapshot(firstId) {
-    const bounds = this.sql.exec('SELECT min(id) AS oldestId, max(id) AS latestId FROM messages').one();
+    const bounds = this.sql.exec('SELECT (SELECT min(id) FROM messages) AS oldestId, (SELECT max(id) FROM messages) AS latestId').one();
     return {
       generation: this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'historyGeneration').one().value,
       ...bounds,
@@ -1574,11 +1576,13 @@ export class E2eeSyncRoom extends DurableObject {
 
   storageUsage() {
     if (!this.initialized) return { bytes: 0, reservedBytes: 0, oldestAt: null, deletingFiles: 0 };
-    const reservedBytes = this.sql.exec('SELECT coalesce(sum(reserved_bytes), 0) AS bytes FROM files').one().bytes;
+    const reservedBytes = this.sql.exec("SELECT coalesce(sum(reserved_bytes), 0) AS bytes FROM files WHERE status = 'uploading'").one().bytes;
+    // Rebuild once after wake-up, then only when shard allocation changes.
+    this.shardBytes ??= this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM file_shards').one().bytes;
     return {
-      bytes: this.sql.databaseSize + this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM file_shards').one().bytes + reservedBytes,
+      bytes: this.sql.databaseSize + this.shardBytes + reservedBytes,
       reservedBytes,
-      oldestAt: this.sql.exec("SELECT min(created_at) AS oldest_at FROM (SELECT created_at FROM messages UNION ALL SELECT created_at FROM files WHERE status = 'deleting')").one().oldest_at,
+      oldestAt: this.sql.exec("SELECT min(created_at) AS oldest_at FROM (SELECT min(created_at) AS created_at FROM messages UNION ALL SELECT min(created_at) FROM files WHERE status = 'deleting')").one().oldest_at,
       deletingFiles: this.sql.exec("SELECT count(*) AS count FROM files WHERE status = 'deleting'").one().count
     };
   }
@@ -1702,6 +1706,7 @@ export class E2eeSyncRoom extends DurableObject {
       this.uploadProgress(file);
       const received = file.received_chunks;
       if (!previous && index !== received) return { error: 'invalid_chunk', status: 400 };
+      this.shardBytes = null;
       const allocation = bytes.byteLength + 65536;
       if (!previous) {
         this.ctx.storage.transactionSync(() => {
@@ -1736,6 +1741,7 @@ export class E2eeSyncRoom extends DurableObject {
       if (metadata.error) return metadata;
       this.uploadProgress(file);
       if (file.received_bytes !== file.size) return { error: 'upload_incomplete', status: 409 };
+      this.shardBytes = null;
       const shards = this.sql.exec('SELECT shard_index, bytes FROM file_shards WHERE file_id = ? ORDER BY shard_index', uploadId).toArray();
       for (let index = 0; index < shards.length; index += 4) {
         const batch = shards.slice(index, index + 4);
@@ -1780,6 +1786,7 @@ export class E2eeSyncRoom extends DurableObject {
     const shards = this.sql.exec("SELECT s.file_id, s.shard_index FROM file_shards s JOIN files f ON f.file_id = s.file_id WHERE f.status = 'deleting' ORDER BY f.created_at, s.shard_index LIMIT 4").toArray();
     for (const shard of shards) {
       await this.env.E2EE_FILE_SHARDS.getByName(`${shard.file_id}:${shard.shard_index}`).erase();
+      this.shardBytes = null;
       this.sql.exec('DELETE FROM file_shards WHERE file_id = ? AND shard_index = ?', shard.file_id, shard.shard_index);
     }
     const finished = this.sql.exec("SELECT file_id FROM files WHERE status = 'deleting' AND NOT EXISTS (SELECT 1 FROM file_shards WHERE file_shards.file_id = files.file_id)").toArray();

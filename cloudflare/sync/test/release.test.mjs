@@ -3,9 +3,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
-import { checkApiVersion } from '../scripts/check-api-version.mjs';
+import { checkApiVersion, checkWorkerSources } from '../scripts/check-api-version.mjs';
 import { verifyRelease } from '../scripts/verify-release.mjs';
 import { API_VERSION } from '../src/api-version.js';
+import { pathToFileURL } from 'node:url';
+import { workerFingerprint } from '../scripts/worker-fingerprint.mjs';
 
 const revision = 'a'.repeat(40);
 const config = JSON.parse(await readFile(new URL('../../../static/portfolio/sync-config.json', import.meta.url), 'utf8'));
@@ -83,4 +85,29 @@ test('Pages publishing waits for a Worker that serves the API the frontend needs
   await assert.rejects(checkApiVersion({ apiBase, apiVersion: undefined, fetcher: serving(1) }), /apiVersion/);
   await assert.rejects(checkApiVersion({ apiBase, apiVersion: 1, fetcher: async () => Response.json({ ...health, service: 'other' }) }), /another service/);
   await assert.rejects(checkApiVersion({ apiBase, apiVersion: 1, fetcher: async () => new Response('down', { status: 503 }) }), /HTTP 503/);
+});
+
+
+test('Pages checks deployed backend fingerprints independently of frontend commit history', () => {
+  const fingerprint = 'a'.repeat(64);
+  checkWorkerSources(fingerprint, fingerprint);
+  assert.throws(() => checkWorkerSources(fingerprint, 'b'.repeat(64)), /Deploy the Worker first/);
+  assert.throws(() => checkWorkerSources(undefined, fingerprint), /Deploy the Worker first/);
+});
+
+test('the Worker fingerprint covers deployable code and configuration but ignores unrelated documents', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'sync-fingerprint-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await mkdir(join(directory, 'src'));
+  for (const file of ['package.json', 'package-lock.json', 'wrangler.jsonc', 'src/index.js']) await writeFile(join(directory, file), '{}');
+  const root = pathToFileURL(directory + '/');
+  let previous = await workerFingerprint(root);
+  await writeFile(join(directory, 'README.md'), 'Documentation only');
+  assert.equal(await workerFingerprint(root), previous);
+  for (const file of ['src/index.js', 'package-lock.json', 'wrangler.jsonc']) {
+    await writeFile(join(directory, file), 'changed');
+    const current = await workerFingerprint(root);
+    assert.notEqual(current, previous);
+    previous = current;
+  }
 });
