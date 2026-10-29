@@ -116,7 +116,7 @@ test('normal native download reports stream delivery and releases its capability
     expect(requests).toBe(2);
 });
 
-test('a second encrypted chunk failure reports failure, clears cache and permits range resume', async ({ page }) => {
+test('a second encrypted chunk failure retains authenticated cache and permits range resume', async ({ page }) => {
     failSecond = true;
     await open(page);
     const downloading = page.waitForEvent('download');
@@ -135,7 +135,7 @@ test('a second encrypted chunk failure reports failure, clears cache and permits
         return { status: response.status, bytes: [...new Uint8Array(await response.arrayBuffer())] };
     });
     expect(first).toEqual({ status: 206, bytes: [7] });
-    expect(requests).toBe(5);
+    expect(requests).toBe(4);
     failSecond = false;
     const resumed = await page.evaluate(async start => {
         const response = await fetch(window.capability.url, { headers: { Range: `bytes=${start}-` } });
@@ -143,12 +143,12 @@ test('a second encrypted chunk failure reports failure, clears cache and permits
     }, clearChunk);
     expect(resumed.status).toBe(206);
     expect(Buffer.from(resumed.bytes)).toEqual(clear.subarray(clearChunk));
-    expect(requests).toBe(6);
+    expect(requests).toBe(5);
     expect(await page.evaluate(() => window.result)).toEqual({ status: 'failed' });
     await page.evaluate(() => window.capability.dispose());
 });
 
-test('cancelling a streamed download releases decrypted data and keeps a bounded resume window', async ({ page }) => {
+test('cancelling a streamed download reuses authenticated chunks within the bounded resume window', async ({ page }) => {
     holdSecond = true;
     await open(page);
     await page.evaluate(async () => {
@@ -164,8 +164,9 @@ test('cancelling a streamed download releases decrypted data and keeps a bounded
         const response = await fetch(window.capability.url, { headers: { Range: 'bytes=0-0' } });
         return [...new Uint8Array(await response.arrayBuffer())];
     })).toEqual([7]);
-    expect(requests).toBe(before + 1);
+    expect(requests).toBe(before);
     await page.evaluate(() => window.capability.dispose());
+    expect(await page.evaluate(async () => (await fetch(window.capability.url)).status)).toBe(404);
 });
 
 test('cancelling a native download reports cancellation before the final chunk arrives', async ({ page }) => {

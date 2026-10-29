@@ -35,7 +35,8 @@ async function scenario(respond) {
     const controller = new AbortController();
     let settled = false;
     const chunks = [];
-    const result = scope.read(entry, 0, 1, controller.signal, (_index, bytes) => chunks.push(Buffer.from(bytes))).then(() => {
+    const waits = [];
+    const result = scope.read(entry, 0, 1, controller.signal, (_index, bytes) => chunks.push(Buffer.from(bytes)), retryAt => waits.push(retryAt)).then(() => {
         settled = true;
         return { bytes: Buffer.concat(chunks) };
     }, error => { settled = true; return { error: error.name }; });
@@ -55,7 +56,7 @@ async function scenario(respond) {
         await flush();
     };
     await flush();
-    return { requests, timers, result, controller, advance, settled: () => settled };
+    return { requests, timers, waits, result, controller, advance, settled: () => settled };
 }
 
 const response = body => new Response(body, { status: 206, headers: { 'Content-Range': `bytes 0-${encrypted.length - 1}/${encrypted.length}` } });
@@ -78,6 +79,9 @@ for (const stage of ['headers', 'body']) test(`retries a ${stage} stall after th
     await transfer.advance(501);
     expect(await transfer.result).toEqual({ bytes: clear });
     expect(transfer.requests).toEqual([0, 30500]);
+    expect(transfer.waits).toHaveLength(2);
+    expect(transfer.waits[0]).toBeGreaterThan(0);
+    expect(transfer.waits[1]).toBeNull();
     expect(transfer.timers.size).toBe(0);
 });
 
