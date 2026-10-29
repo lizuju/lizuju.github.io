@@ -17,9 +17,20 @@ wav.writeUInt16LE(2, 32);
 wav.writeUInt16LE(16, 34);
 wav.write('data', 36);
 wav.writeUInt32LE(sampleBytes, 40);
-// Linux WebKit in Playwright 1.64 never starts the site's 9 MB music video from the test server,
-// so a small synthetic clip keeps this check about the mute controls.
 const nativeVideo = readFileSync(join(__dirname, 'fixtures/native-video.mp4'));
+// Linux WebKit reads video in byte ranges and stalls when a range request gets the whole file,
+// so answer ranges the way GitHub Pages does.
+const serveNativeVideo = (route) => {
+    const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
+    const headers = { 'Accept-Ranges': 'bytes' };
+    if (!range) return route.fulfill({ contentType: 'video/mp4', headers, body: nativeVideo });
+    const start = Number(range[1]);
+    const end = Math.min(range[2] ? Number(range[2]) : Infinity, nativeVideo.length - 1);
+    return route.fulfill({
+        status: 206, contentType: 'video/mp4', body: nativeVideo.subarray(start, end + 1),
+        headers: { ...headers, 'Content-Range': `bytes ${start}-${end}/${nativeVideo.length}` },
+    });
+};
 
 test.beforeEach(async ({ page, isMobile }) => {
     test.skip(isMobile, 'the mobile shell does not create the scene audio engine');
@@ -226,7 +237,7 @@ for (const delayedTransition of ['resume', 'suspend']) {
 
 test('keeps native media playback and volume independent of both background mute controls', async ({ page }) => {
     await startScene(page);
-    await page.route('**/test-media/native-video.mp4', (route) => route.fulfill({ contentType: 'video/mp4', body: nativeVideo }));
+    await page.route('**/test-media/native-video.mp4', serveNativeVideo);
     await page.keyboard.press('Shift');
     const sceneAudio = page.locator('[data-audio-mute-toggle]');
     await expect(sceneAudio).toBeVisible({ timeout: 15000 });
