@@ -16,8 +16,12 @@ export class SharedSyncConnection {
         this.requests = new Map();
         this.results = new Map();
         this.requestControllers = new Set();
+        const connection = this;
         this.socket = {
-            readyState: WebSocket.CLOSED,
+            get readyState() {
+                return connection.isLeader ? connection.transport?.socket?.readyState ?? WebSocket.CLOSED
+                    : connection.state === 'online' ? WebSocket.OPEN : WebSocket.CLOSED;
+            },
             send: data => {
                 if (this.isLeader) this.transport?.socket?.send(data);
                 else this.post({ type: 'send', owner: this.owner, data });
@@ -96,7 +100,6 @@ export class SharedSyncConnection {
 
     setState(state) {
         this.state = state;
-        this.socket.readyState = state === 'online' ? WebSocket.OPEN : WebSocket.CLOSED;
         this.options.onState(state);
     }
 

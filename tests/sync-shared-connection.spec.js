@@ -4,6 +4,39 @@ const path = require('node:path');
 
 test.use({ serviceWorkers: 'block' });
 
+test('reflects a closing owner socket before its asynchronous close event', async ({ page }) => {
+    await page.route('**/__shared-connection__/**', async route => {
+        const filename = new URL(route.request().url()).pathname.split('/').at(-1);
+        return route.fulfill({ contentType: filename ? 'text/javascript' : 'text/html', body: filename
+            ? await readFile(path.join(__dirname, '../static/portfolio/js/apps', filename)) : '<!doctype html>' });
+    });
+    await page.routeWebSocket('ws://127.0.0.1:3090/__socket__/closing', socket => {
+        socket.onMessage(raw => {
+            if (JSON.parse(raw).type === 'auth') socket.send(JSON.stringify({ type: 'ready' }));
+        });
+    });
+    await page.goto('/__shared-connection__/');
+    await page.evaluate(async () => {
+        const { SharedSyncConnection } = await import('./sync-shared-connection.js');
+        window.connection = new SharedSyncConnection({
+            session: { roomId: 'closing', token: 'device' },
+            getUrl: () => `ws://${location.host}/__socket__/closing`,
+            receive: () => {}, onState: () => {}, onClose: () => {}
+        });
+        window.connection.connect();
+    });
+    await expect.poll(() => page.evaluate(() => window.connection.state)).toBe('online');
+    const state = await page.evaluate(() => {
+        const connection = window.connection;
+        connection.socket.close();
+        const readyState = connection.socket.readyState;
+        if (readyState === WebSocket.OPEN) connection.socket.send(JSON.stringify({ type: 'read', messageId: 1 }));
+        connection.close();
+        return readyState;
+    });
+    expect(state).toBe(2);
+});
+
 test('shares ordered frames and reads, isolates rooms, reconnects and transfers the socket when its owner closes', async ({ page, context }) => {
     await context.route('**/__shared-connection__/**', async route => {
         const filename = new URL(route.request().url()).pathname.split('/').at(-1);
