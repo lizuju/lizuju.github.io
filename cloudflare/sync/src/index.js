@@ -1102,6 +1102,9 @@ export class E2eeSyncRoom extends DurableObject {
     this.sql = ctx.storage.sql;
     this.pairingQueue = Promise.resolve();
     this.downloadRevision = 0;
+    this.uploadCompletions = new Map();
+    this.uploadWrites = new Map();
+    this.connectedActivity = new Map();
     // Stale requests can wake reclaimed objects; only initialize may create their tables.
     this.initialized = this.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'devices'").toArray().length !== 0;
     if (this.initialized) this.initializeStorage();
@@ -1150,6 +1153,8 @@ export class E2eeSyncRoom extends DurableObject {
     this.sql.exec('CREATE INDEX IF NOT EXISTS key_grants_device ON key_grants(device_id, id)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS download_tickets (ticket TEXT PRIMARY KEY, file_id TEXT NOT NULL, device_id TEXT NOT NULL, expires_at INTEGER NOT NULL)');
     this.sql.exec('CREATE INDEX IF NOT EXISTS download_tickets_device_file ON download_tickets(device_id, file_id, expires_at)');
+    this.sql.exec('CREATE INDEX IF NOT EXISTS download_tickets_expiry ON download_tickets(expires_at)');
+    this.sql.exec('CREATE INDEX IF NOT EXISTS download_tickets_file ON download_tickets(file_id)');
     this.sql.exec("CREATE TRIGGER IF NOT EXISTS delete_message_files AFTER DELETE ON messages BEGIN UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE message_id = OLD.id; END");
     this.initialized = true;
   }
@@ -1230,6 +1235,7 @@ export class E2eeSyncRoom extends DurableObject {
     if (!preserveUploads) this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading'");
     if (rotation.removedDeviceId) {
       this.sql.exec('DELETE FROM devices WHERE device_id = ?', rotation.removedDeviceId);
+      this.connectedActivity.delete(rotation.removedDeviceId);
       this.downloadRevision++;
       this.sql.exec('DELETE FROM key_grants WHERE device_id = ?', rotation.removedDeviceId);
     }
@@ -1297,11 +1303,18 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   refreshConnectedDevices() {
+    const activity = new Map();
     for (const socket of this.ctx.getWebSockets()) {
       const attachment = socket.deserializeAttachment();
       if (!attachment?.deviceId || attachment.closing) continue;
       const lastActiveAt = this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime() || attachment.connectedAt;
-      if (lastActiveAt) this.sql.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ? AND last_active_at <= ?', lastActiveAt, attachment.deviceId, lastActiveAt - DEVICE_ACTIVITY_WRITE_INTERVAL);
+      if (lastActiveAt) activity.set(attachment.deviceId, Math.max(activity.get(attachment.deviceId) || 0, lastActiveAt));
+    }
+    for (const deviceId of this.connectedActivity.keys()) if (!activity.has(deviceId)) this.connectedActivity.delete(deviceId);
+    for (const [deviceId, lastActiveAt] of activity) {
+      if (lastActiveAt - (this.connectedActivity.get(deviceId) || 0) < DEVICE_ACTIVITY_WRITE_INTERVAL) continue;
+      this.sql.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ? AND last_active_at <= ?', lastActiveAt, deviceId, lastActiveAt - DEVICE_ACTIVITY_WRITE_INTERVAL);
+      this.connectedActivity.set(deviceId, lastActiveAt);
     }
   }
 
@@ -1690,7 +1703,9 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   async writeFileChunk(deviceId, uploadId, index, bytes, keyId) {
-    return this.ctx.blockConcurrencyWhile(async () => {
+    const previousWrite = this.uploadWrites.get(uploadId);
+    const writing = (async () => {
+      if (previousWrite) await previousWrite.catch(() => {});
       if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
       const denied = this.checkWrite(keyId);
       if (denied.error) return denied;
@@ -1717,58 +1732,87 @@ export class E2eeSyncRoom extends DurableObject {
       }
       const result = await shard.writePart(index, bytes);
       if (result.error) return result;
+      if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+      const currentKey = this.checkWrite(keyId);
+      if (currentKey.error) return currentKey;
+      if (!this.sql.exec("SELECT 1 FROM files WHERE file_id = ? AND status = 'uploading'", uploadId).toArray().length) return { error: 'not_found', status: 404 };
       this.ctx.storage.transactionSync(() => {
         this.sql.exec('UPDATE file_upload_chunks SET received = 1 WHERE file_id = ? AND chunk_index = ?', uploadId, index);
         this.sql.exec('UPDATE files SET updated_at = ?, received_bytes = received_bytes + ?, received_chunks = received_chunks + ? WHERE file_id = ?', Date.now(), previous?.received ? 0 : bytes.byteLength, previous?.received ? 0 : 1, uploadId);
         const accounted = (tracked?.bytes || 0) + (previous ? 0 : allocation);
         this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', Math.max(result.bytes, accounted), uploadId, shardIndex);
       });
-      await this.scheduleAlarm();
       return { receivedBytes: file.received_bytes + (previous?.received ? 0 : bytes.byteLength) };
-    });
+    })();
+    this.uploadWrites.set(uploadId, writing);
+    try { return await writing; }
+    finally {
+      if (this.uploadWrites.get(uploadId) === writing) this.uploadWrites.delete(uploadId);
+      await this.scheduleAlarm();
+    }
   }
 
   async completeUpload(deviceId, uploadId, keyId) {
-    return this.ctx.blockConcurrencyWhile(async () => {
-      if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
-      const denied = this.checkWrite(keyId);
-      if (denied.error) return denied;
-      const file = this.sql.exec('SELECT * FROM files WHERE file_id = ? AND device_id = ?', uploadId, deviceId).toArray()[0];
-      if (!file || file.status === 'deleting' || (file.status === 'uploading' && file.updated_at + UPLOAD_LIFETIME <= Date.now())) return { error: 'not_found', status: 404 };
-      const existing = this.findMessage(deviceId, file.client_id);
-      if (existing) return existing;
-      const metadata = this.checkWrite(keyId, file.text);
-      if (metadata.error) return metadata;
-      this.uploadProgress(file);
-      if (file.received_bytes !== file.size) return { error: 'upload_incomplete', status: 409 };
-      this.shardBytes = null;
+    const key = `${deviceId}:${uploadId}:${keyId}`;
+    const pending = this.uploadCompletions.get(key);
+    if (pending) {
+      const result = await pending;
+      return result.message ? { ...result, created: false } : result;
+    }
+    const complete = (async () => {
+      const readUpload = () => {
+        if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+        const denied = this.checkWrite(keyId);
+        if (denied.error) return denied;
+        const file = this.sql.exec('SELECT * FROM files WHERE file_id = ? AND device_id = ?', uploadId, deviceId).toArray()[0];
+        if (!file || file.status === 'deleting' || (file.status === 'uploading' && file.updated_at + UPLOAD_LIFETIME <= Date.now())) return { error: 'not_found', status: 404 };
+        const existing = this.findMessage(deviceId, file.client_id);
+        if (existing) return existing;
+        const metadata = this.checkWrite(keyId, file.text);
+        if (metadata.error) return metadata;
+        this.uploadProgress(file);
+        if (file.received_bytes !== file.size) return { error: 'upload_incomplete', status: 409 };
+        return { file };
+      };
+      const initial = readUpload();
+      if (!initial.file) return initial;
       const shards = this.sql.exec('SELECT shard_index, bytes FROM file_shards WHERE file_id = ? ORDER BY shard_index', uploadId).toArray();
+      const measured = [];
+      // Remote shard probes must not hold the room's input gate while people are chatting.
       for (let index = 0; index < shards.length; index += 4) {
         const batch = shards.slice(index, index + 4);
         const sizes = await Promise.allSettled(batch.map(shard => this.env.E2EE_FILE_SHARDS.getByName(`${uploadId}:${shard.shard_index}`).storageBytes()));
         const failed = sizes.find(result => result.status === 'rejected');
         if (failed) throw failed.reason;
-        this.ctx.storage.transactionSync(() => {
-          batch.forEach((shard, position) => {
-            if (sizes[position].value !== shard.bytes) this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', sizes[position].value, uploadId, shard.shard_index);
-          });
-        });
+        batch.forEach((shard, position) => measured.push({ ...shard, bytes: sizes[position].value }));
       }
-      const attachment = { name: file.name, type: file.type, size: file.size };
-      let pruned = false;
-      const message = this.ctx.storage.transactionSync(() => {
-        const created = this.sql.exec('INSERT INTO messages (client_id, device_id, text, created_at, attachment) VALUES (?, ?, ?, ?, ?) RETURNING id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment', file.client_id, deviceId, file.text, Date.now(), JSON.stringify(attachment)).one();
-        this.sql.exec("UPDATE files SET status = 'complete', message_id = ?, created_at = ?, reserved_bytes = 0 WHERE file_id = ?", created.id, created.createdAt, uploadId);
-        pruned = this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500) RETURNING id').toArray().length > 0;
-        if (pruned) this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
-        return publicMessage(created);
+      return this.ctx.blockConcurrencyWhile(async () => {
+        // Cancellation, device removal and key rotation may have happened during the probes.
+        const current = readUpload();
+        if (!current.file) return current;
+        const file = current.file;
+        const attachment = { name: file.name, type: file.type, size: file.size };
+        let pruned = false;
+        const message = this.ctx.storage.transactionSync(() => {
+          measured.forEach((shard, index) => {
+            if (shard.bytes !== shards[index].bytes) this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', shard.bytes, uploadId, shard.shard_index);
+          });
+          const created = this.sql.exec('INSERT INTO messages (client_id, device_id, text, created_at, attachment) VALUES (?, ?, ?, ?, ?) RETURNING id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment', file.client_id, deviceId, file.text, Date.now(), JSON.stringify(attachment)).one();
+          this.sql.exec("UPDATE files SET status = 'complete', message_id = ?, created_at = ?, reserved_bytes = 0 WHERE file_id = ?", created.id, created.createdAt, uploadId);
+          pruned = this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500) RETURNING id').toArray().length > 0;
+          if (pruned) this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
+          return publicMessage(created);
+        });
+        this.shardBytes = null;
+        if (pruned) this.downloadRevision++;
+        this.broadcast({ type: 'message', message, history: this.historySnapshot(), ...(pruned ? { activeGames: this.activeGames() } : {}) });
+        await this.scheduleAlarm();
+        return { message, created: true };
       });
-      if (pruned) this.downloadRevision++;
-      this.broadcast({ type: 'message', message, history: this.historySnapshot(), ...(pruned ? { activeGames: this.activeGames() } : {}) });
-      await this.cleanupFiles();
-      await this.scheduleAlarm();
-      return { message, created: true };
-    });
+    })();
+    this.uploadCompletions.set(key, complete);
+    try { return await complete; }
+    finally { this.uploadCompletions.delete(key); }
   }
 
   async cancelUpload(deviceId, uploadId) {
@@ -1785,12 +1829,14 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.initialized) return;
     const shards = this.sql.exec("SELECT s.file_id, s.shard_index FROM file_shards s JOIN files f ON f.file_id = s.file_id WHERE f.status = 'deleting' ORDER BY f.created_at, s.shard_index LIMIT 4").toArray();
     for (const shard of shards) {
+      if (this.uploadWrites.has(shard.file_id)) continue;
       await this.env.E2EE_FILE_SHARDS.getByName(`${shard.file_id}:${shard.shard_index}`).erase();
       this.shardBytes = null;
       this.sql.exec('DELETE FROM file_shards WHERE file_id = ? AND shard_index = ?', shard.file_id, shard.shard_index);
     }
     const finished = this.sql.exec("SELECT file_id FROM files WHERE status = 'deleting' AND NOT EXISTS (SELECT 1 FROM file_shards WHERE file_shards.file_id = files.file_id)").toArray();
     for (const file of finished) {
+      if (this.uploadWrites.has(file.file_id)) continue;
       this.sql.exec('DELETE FROM file_upload_chunks WHERE file_id = ?', file.file_id);
       this.sql.exec('DELETE FROM download_tickets WHERE file_id = ?', file.file_id);
       this.sql.exec('DELETE FROM files WHERE file_id = ?', file.file_id);
@@ -1869,6 +1915,7 @@ export class E2eeSyncRoom extends DurableObject {
       return { error: 'device_not_found', status: 404 };
     }
     this.downloadRevision++;
+    this.connectedActivity.delete(deviceId);
     const games = this.finishDeviceGames(deviceId);
     this.sql.exec('DELETE FROM download_tickets WHERE device_id = ?', deviceId);
     this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE device_id = ? AND status = 'uploading'", deviceId);

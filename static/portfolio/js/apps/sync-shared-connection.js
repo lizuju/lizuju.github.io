@@ -15,6 +15,7 @@ export class SharedSyncConnection {
         this.welcomed = new Set();
         this.requests = new Map();
         this.results = new Map();
+        this.requestControllers = new Set();
         this.socket = {
             readyState: WebSocket.CLOSED,
             send: data => {
@@ -43,7 +44,7 @@ export class SharedSyncConnection {
             const timer = setTimeout(() => {
                 this.requests.delete(id);
                 reject(Object.assign(new Error('network_error'), { code: 'network_error' }));
-            }, 16000);
+            }, key.endsWith('/devices') ? 155000 : 16000);
             this.requests.set(id, { resolve, reject, timer });
             this.post({ type: 'request', owner: this.owner, id, key });
         });
@@ -52,19 +53,39 @@ export class SharedSyncConnection {
     loadResult(key) {
         const cached = this.results.get(key);
         if (cached && cached.expiresAt > Date.now()) return cached.promise.then(value => structuredClone(value));
-        const entry = { expiresAt: Infinity };
-        entry.promise = Promise.resolve().then(() => this.options.request(key)).then(value => {
+        const entry = { expiresAt: Infinity, controller: new AbortController() };
+        const signal = entry.controller.signal;
+        this.requestControllers.add(entry.controller);
+        entry.promise = Promise.resolve().then(async () => {
+            for (let attempt = 0; ; attempt++) {
+                signal.throwIfAborted();
+                try { return await this.options.request(key, signal); }
+                catch (error) {
+                    signal.throwIfAborted();
+                    if (!key.endsWith('/devices') || attempt >= 3
+                        || !(error.code === 'network_error' || error.status === 408 || error.status === 429 || error.status >= 500)) throw error;
+                    const delay = Math.min(30000, Math.max([1000, 3000, 10000][attempt], (error.retryAfter || 0) * 1000));
+                    await new Promise((resolve, reject) => {
+                        const abort = () => { clearTimeout(timer); reject(signal.reason); };
+                        const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, delay);
+                        signal.addEventListener('abort', abort, { once: true });
+                    });
+                }
+            }
+        }).then(value => {
             entry.expiresAt = Date.now() + 2000;
             return value;
         }, error => {
             if (this.results.get(key) === entry) this.results.delete(key);
             throw error;
-        });
+        }).finally(() => this.requestControllers.delete(entry.controller));
         this.results.set(key, entry);
         return entry.promise.then(value => structuredClone(value));
     }
 
     cancelRequests() {
+        for (const controller of this.requestControllers) controller.abort();
+        this.requestControllers.clear();
         for (const request of this.requests.values()) {
             clearTimeout(request.timer);
             request.reject(Object.assign(new Error('network_error'), { code: 'network_error' }));

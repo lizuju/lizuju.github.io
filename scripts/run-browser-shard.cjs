@@ -1,9 +1,10 @@
 const { readdirSync } = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
-const durations = require('./browser-test-durations.json');
+const { loadDurations } = require('./update-browser-durations.cjs');
+const durations = loadDurations();
 
-// Whole files keep their shared test servers and hooks together. Timings are from CI run 40828775124.
+// Whole files keep their shared test servers and hooks together.
 function allocate(files, project, count) {
     const column = durations.projects.indexOf(project);
     if (column < 0 || !Number.isInteger(count) || count < 1) throw new Error('Invalid browser project or shard count');
@@ -25,7 +26,7 @@ if (require.main === module) {
     const [index, count] = (shard || '').split('/').map(Number);
     if (!Number.isInteger(index) || index < 1 || index > count) throw new Error('Expected project and shard, e.g. webkit-desktop 1/4');
     const selected = allocate(testFiles(), project, count)[index - 1];
-    console.log(`${project} ${shard}: ${selected.files.length} files, approximately ${Math.round(selected.seconds)}s from the CI baseline`);
+    console.log(`${project} ${shard}: ${selected.files.length} files, approximately ${Math.round(selected.seconds)}s from the timing baseline`);
     if (!selected.files.length) throw new Error('Empty browser shard');
     const result = spawnSync(process.execPath, [require.resolve('@playwright/test/cli'), 'test', `--project=${project}`, ...selected.files, ...extra], { stdio: 'inherit' });
     if (result.error) throw result.error;

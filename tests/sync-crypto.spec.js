@@ -277,7 +277,7 @@ test('hashes complete file content including bytes outside the former fingerprin
         second[130000] = 1;
         const fingerprint = (bytes) => new Promise((resolve, reject) => {
             const worker = new Worker('/__sync-crypto-test__/fingerprint-worker.js', { type: 'module' });
-            worker.onmessage = ({ data }) => { worker.terminate(); data.error ? reject(new Error(data.error)) : resolve(data.fingerprint); };
+            worker.onmessage = ({ data }) => { if (data.progress !== undefined) return; worker.terminate(); data.error ? reject(new Error(data.error)) : resolve(data.fingerprint); };
             worker.onerror = (event) => { worker.terminate(); reject(new Error(event.message)); };
             worker.postMessage(new File([bytes], 'same-name.bin'));
         });
@@ -480,4 +480,30 @@ test('skips slow thumbnails after the budget and terminates decoding on cancella
     expect(result).toMatchObject({ value: null, aborted: true, stopped: true });
     expect(result.elapsed).toBeGreaterThanOrEqual(1900);
     expect(result.elapsed).toBeLessThan(3500);
+});
+
+test('bounds the intermediate bitmap for long screenshots before drawing the thumbnail', async ({ page, context }) => {
+    await context.route('**/__sync-crypto-test__/sync-thumbnail-worker.js', async route => {
+        const source = await readFile(path.join(__dirname, '../static/portfolio/js/apps/sync-thumbnail-worker.js'), 'utf8');
+        const probe = `const originalBitmap = globalThis.createImageBitmap;
+            const originalPost = self.postMessage.bind(self);
+            let decoded;
+            globalThis.createImageBitmap = async (...args) => { const bitmap = await originalBitmap(...args); decoded = { width: bitmap.width, height: bitmap.height }; return bitmap; };
+            self.postMessage = thumbnail => originalPost({ thumbnail, decoded });\n`;
+        await route.fulfill({ contentType: 'text/javascript', body: probe + source });
+    });
+    const result = await page.evaluate(async () => {
+        const canvas = new OffscreenCanvas(600, 12000);
+        canvas.getContext('2d').fillRect(0, 0, canvas.width, canvas.height);
+        const blob = await canvas.convertToBlob({ type: 'image/png' });
+        canvas.width = 0; canvas.height = 0;
+        const worker = new Worker('/__sync-crypto-test__/sync-thumbnail-worker.js', { type: 'module' });
+        return new Promise((resolve, reject) => {
+            worker.onmessage = ({ data }) => { worker.terminate(); resolve(data); };
+            worker.onerror = event => { worker.terminate(); reject(new Error(event.message)); };
+            worker.postMessage(new File([blob], 'long.png', { type: 'image/png' }));
+        });
+    });
+    expect(result.decoded).toEqual({ width: 10, height: 200 });
+    expect(result.thumbnail).toMatchObject({ width: 10, height: 200 });
 });

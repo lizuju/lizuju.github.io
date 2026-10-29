@@ -565,3 +565,89 @@ test(`discards an old attachment key after revocation through ${source}`, async 
     } finally { release?.(); }
 });
 }
+
+test('reuses the fingerprint on manual retry of the same File and reports hashing progress', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the sync application is a desktop window');
+    await prepare(page);
+    await page.addInitScript(() => {
+        const NativeWorker = window.Worker;
+        window.fingerprintWorkers = 0;
+        window.hashProgress = [];
+        window.Worker = class extends NativeWorker {
+            constructor(url, options) {
+                super(url, options);
+                if (options?.name !== 'upload-fingerprint') return;
+                window.fingerprintWorkers++;
+                this.addEventListener('message', ({ data }) => {
+                    if (data.progress !== undefined) window.hashProgress.push(data.progress);
+                });
+            }
+        };
+    });
+    let chunks = 0;
+    const uploads = [];
+    await page.route('https://sync.test/**', route => {
+        if (route.request().method() === 'OPTIONS') return routeDefault(route);
+        const path = new URL(route.request().url()).pathname;
+        if (path.endsWith('/uploads')) {
+            uploads.push(route.request().postDataJSON());
+            return route.fulfill({ headers, json: { uploadId: 'test-upload', receivedBytes: 0, chunkSize: 8 * 1024 * 1024 } });
+        }
+        if (path.includes('/chunks/')) {
+            chunks++;
+            return route.fulfill({ status: 400, headers, json: { error: 'upload_expired' } });
+        }
+        return routeDefault(route);
+    });
+    await page.routeWebSocket('wss://sync.test/**', socket => socket.onMessage(data => {
+        if (data === 'ping') return socket.send('pong');
+        if (JSON.parse(data).type === 'auth') socket.send(JSON.stringify({ type: 'ready', deviceId, messages: [], pairing: null, history: bounds(null), historyMode: 'replace' }));
+    }));
+    await open(page);
+    await page.locator('[data-sync-file-input]').setInputFiles({ name: 'retry.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(9 * 1024 * 1024, 7) });
+    await page.locator('[data-sync-send]').click();
+    const retry = page.locator('[data-sync-retry-message]');
+    await expect(retry).toBeVisible();
+    await retry.click();
+    await expect.poll(() => chunks).toBe(2);
+    await expect(retry).toBeVisible();
+    expect(uploads).toHaveLength(2);
+    expect(uploads[1].fingerprint).toBe(uploads[0].fingerprint);
+    expect(await page.evaluate(() => window.fingerprintWorkers)).toBe(1);
+    const progress = await page.evaluate(() => window.hashProgress);
+    expect(progress.length).toBeGreaterThan(1);
+    expect(progress.at(-1)).toBe(100);
+});
+
+test('malformed authenticated attachment metadata becomes an isolated placeholder without breaking the chat', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the sync application is a desktop window');
+    const { file, otherId } = require('./fixtures/sync-e2ee.cjs');
+    await prepare(page);
+    const valid = file('safe.bin', 'application/octet-stream', Buffer.from('valid')).metadata;
+    const malformed = [
+        { name: 'broken.bin', key: valid.key, size: 1 },
+        { ...valid, type: null }, { ...valid, type: {} }, { ...valid, fileId: '../outside' },
+        { ...valid, key: 'short' }, { ...valid, noncePrefix: 'bad' },
+        { ...valid, size: -1 }, { ...valid, version: 99 }
+    ];
+    await page.route('https://sync.test/**', routeDefault);
+    let socket;
+    await page.routeWebSocket('wss://sync.test/**', value => {
+        socket = value;
+        socket.onMessage(data => {
+            if (data === 'ping') return socket.send('pong');
+            if (JSON.parse(data).type !== 'auth') return;
+            socket.send(JSON.stringify({ type: 'ready', deviceId, pairing: null,
+                messages: [...malformed.map((attachment, index) => message(index + 1, '', otherId, attachment)), message(9, 'Still readable', otherId)] }));
+        });
+    });
+    await open(page);
+    await expect(page.locator('.sync-message')).toHaveCount(9);
+    await expect(page.locator('[data-sync-messages]')).toContainText('Still readable');
+    await expect(page.locator('.sync-attachment')).toHaveCount(0);
+    socket.send(JSON.stringify({ type: 'message', message: message(10, 'The next message arrives', otherId) }));
+    await expect(page.locator('[data-sync-messages]')).toContainText('The next message arrives');
+    await page.locator('[data-sync-input]').fill('Sending still works');
+    await expect(page.locator('[data-sync-send]')).toBeEnabled();
+    await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+});

@@ -158,3 +158,100 @@ test('a slow shared device refresh does not delay encrypted messages in either t
         await expect(follower.locator('.sync-message-meta').last()).toContainText('Peer');
     } finally { release(); }
 });
+
+test('tabs share automatic device-list retries without blocking messages and recover member names', async ({ page, context }) => {
+    const { authorize, deviceId, otherId, keyId, message, profile } = require('./fixtures/sync-e2ee.cjs');
+    await authorize(page);
+    const production = require('../static/portfolio/sync-config.json').apiBase;
+    await context.route('**/chat/', async route => {
+        const response = await route.fetch();
+        await route.fulfill({ response, body: (await response.text()).replaceAll(production, 'https://sync.test').replaceAll(production.replace('https:', 'wss:'), 'wss://sync.test') });
+    });
+    const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Retry-After' };
+    let requests = 0, recovering = false;
+    const sockets = [];
+    await context.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
+    await context.route('https://sync.test/**', route => {
+        if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { ...headers, 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id' } });
+        if (route.request().url().endsWith('/devices')) {
+            requests++;
+            if (recovering) {
+                recovering = false;
+                return route.fulfill({ status: 503, headers: { ...headers, 'Retry-After': '1' }, json: { error: 'unavailable' } });
+            }
+            return route.fulfill({ headers, json: { deviceId, devices: [profile(), profile(requests > 1 ? 'New name' : 'Peer', otherId)] } });
+        }
+        return route.fulfill({ headers, json: { grants: [], hasMore: false, keyId } });
+    });
+    await context.routeWebSocket('wss://sync.test/**', socket => {
+        sockets.push(socket);
+        socket.onMessage(raw => {
+            if (raw === 'ping') return socket.send('pong');
+            if (JSON.parse(raw).type === 'auth') socket.send(JSON.stringify({ type: 'ready', deviceId, pairing: null, messages: [message(1, 'Hello', otherId)] }));
+        });
+    });
+    await page.goto('/chat/');
+    await expect(page.locator('.sync-message-meta')).toContainText('Peer');
+    const follower = await context.newPage();
+    await follower.goto('/chat/');
+    await expect(follower.locator('.sync-message-meta')).toContainText('Peer');
+    const before = requests;
+    recovering = true;
+    sockets[0].send(JSON.stringify({ type: 'devices' }));
+    await expect.poll(() => requests).toBe(before + 1);
+    sockets[0].send(JSON.stringify({ type: 'message', message: message(2, 'Chat continues during retry', otherId) }));
+    for (const tab of [page, follower]) {
+        await expect(tab.locator('[data-sync-messages]')).toContainText('Chat continues during retry');
+        await expect(tab.locator('.sync-message-meta').last()).toContainText('New name');
+        await tab.locator('[data-sync-input]').fill('@');
+        await expect(tab.locator('[data-sync-mention-menu]')).toContainText('New name');
+    }
+    expect(requests).toBe(before + 2);
+    expect(sockets).toHaveLength(1);
+});
+
+test('device retry survives unrelated pairing frames and stops when the connection closes', async ({ page, context }) => {
+    await context.route('**/__retry-connection__/**', async route => {
+        const filename = new URL(route.request().url()).pathname.split('/').at(-1);
+        return route.fulfill(filename ? { contentType: 'text/javascript', body: await readFile(path.join(__dirname, '../static/portfolio/js/apps', filename)) }
+            : { contentType: 'text/html', body: '<!doctype html><title>Device retry</title>' });
+    });
+    let socket;
+    await context.routeWebSocket('ws://127.0.0.1:3090/__retry-socket__', value => {
+        socket = value;
+        socket.onMessage(raw => {
+            if (raw === 'ping') return socket.send('pong');
+            if (JSON.parse(raw).type === 'auth') socket.send(JSON.stringify({ type: 'ready', messages: [] }));
+        });
+    });
+    await page.goto('/__retry-connection__/');
+    await page.evaluate(async () => {
+        const { SharedSyncConnection } = await import('./sync-shared-connection.js');
+        window.calls = 0;
+        window.connection = new SharedSyncConnection({
+            session: { roomId: 'room', token: 'retry-device' }, getUrl: () => `ws://${location.host}/__retry-socket__`,
+            receive: () => {}, snapshot: () => ({ type: 'ready', messages: [] }), onState: state => { window.state = state; }, onClose: () => {},
+            request: async () => {
+                window.calls++;
+                if (window.calls !== 2) throw Object.assign(new Error('unavailable'), { status: 503 });
+                return { devices: ['Peer'] };
+            }
+        });
+        window.connection.connect();
+    });
+    await expect.poll(() => page.evaluate(() => window.state)).toBe('online');
+    await page.evaluate(() => { window.result = window.connection.request('/v1/spaces/room/devices'); });
+    await expect.poll(() => page.evaluate(() => window.calls)).toBe(1);
+    socket.send(JSON.stringify({ type: 'pairing', pairing: null }));
+    expect(await page.evaluate(() => window.result)).toEqual({ devices: ['Peer'] });
+    await page.evaluate(() => {
+        window.connection.invalidateResults();
+        window.result = window.connection.request('/v1/spaces/room/devices').catch(error => error.name);
+    });
+    await expect.poll(() => page.evaluate(() => window.calls)).toBe(3);
+    await page.evaluate(() => window.connection.close());
+    expect(await page.evaluate(() => window.result)).toBe('AbortError');
+    await page.clock.install();
+    await page.clock.fastForward(60000);
+    expect(await page.evaluate(() => window.calls)).toBe(3);
+});

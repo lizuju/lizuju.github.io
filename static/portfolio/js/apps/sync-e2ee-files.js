@@ -7,6 +7,7 @@ let workerPromise;
 navigator.serviceWorker?.addEventListener('message', (event) => {
     if (event.source?.scriptURL !== workerUrl.href || event.data?.source !== 'gavin-sync-e2ee') return;
     if (event.data.type === 'released') entries.get(event.data.token)?.release(event.data.status);
+    else if (event.data.type === 'download-progress') entries.get(event.data.token)?.onProgress?.(event.data);
     else if (event.data.type === 'download-state') entries.get(event.data.token)?.update(event.data);
     else if (event.data.type === 'resolve' && event.ports[0]) event.ports[0].postMessage(entries.get(event.data.token)?.descriptor || null);
     else if (event.data.type === 'refresh' && event.ports[0]) {
@@ -64,7 +65,7 @@ export const prepareEncryptedFiles = () => {
     return workerPromise;
 };
 
-export async function openEncryptedFile({ url, metadata, download = false, refresh }) {
+export async function openEncryptedFile({ url, metadata, download = false, refresh, cacheScope, onProgress }) {
     await prepareEncryptedFiles();
     const worker = navigator.serviceWorker.controller;
     const token = Array.from(crypto.getRandomValues(new Uint8Array(24)), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -72,7 +73,7 @@ export async function openEncryptedFile({ url, metadata, download = false, refre
         mov: 'video/quicktime', mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', ogv: 'video/ogg', ogg: 'video/ogg',
         mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', oga: 'audio/ogg', opus: 'audio/ogg', flac: 'audio/flac'
     }[metadata.name.split('.').pop().toLowerCase()];
-    const descriptor = { url, metadata: !download && metadata.type === 'application/octet-stream' && mediaType
+    const descriptor = { url, cacheScope, metadata: !download && metadata.type === 'application/octet-stream' && mediaType
         ? { ...metadata, type: mediaType } : metadata, download, expiresAt: download ? Date.now() + DOWNLOAD_IDLE_MS : null };
     let release;
     let report;
@@ -96,7 +97,7 @@ export async function openEncryptedFile({ url, metadata, download = false, refre
         if (expiresAt) idleTimer = setTimeout(dispose, Math.max(0, expiresAt - Date.now()));
         if (status) report(status);
     };
-    entries.set(token, { descriptor, release, update, refresh });
+    entries.set(token, { descriptor, release, update, refresh, onProgress });
     if (download) update({ expiresAt: descriptor.expiresAt });
     try {
         const localUrl = await new Promise((resolve, reject) => {

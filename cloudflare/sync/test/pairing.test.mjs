@@ -205,6 +205,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   testSchema() { return this.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name' ORDER BY name").toArray(); }
                   testAgeConnection(deviceId, timestamp) {
+                    this.connectedActivity.delete(deviceId);
                     this.sql.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ?', timestamp, deviceId);
                     for (const socket of this.ctx.getWebSockets()) {
                       const attachment = socket.deserializeAttachment();

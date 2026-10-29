@@ -95,6 +95,8 @@ export function createImageResource({ kind = 'image', name = '', load }) {
         removeIdle(state);
         state.evictOnRelease = true;
         state.controller.abort();
+        state.capability?.dispose?.();
+        state.capability = null;
         state.blob = null;
         if (state.url) { URL.revokeObjectURL(state.url); state.url = null; }
         state.users.forEach(user => user.reject(error));
@@ -116,13 +118,11 @@ export function createImageResource({ kind = 'image', name = '', load }) {
                 current = state;
                 state.promise = Promise.resolve().then(async () => {
                     const capability = await load(state.controller.signal);
-                    let blob;
-                    try {
-                        state.controller.signal.throwIfAborted();
-                        const response = await fetch(capability.url, { signal: state.controller.signal });
-                        if (!response.ok) throw new Error('image_preview_failed');
-                        blob = await response.blob();
-                    } finally { capability.dispose?.(); }
+                    state.capability = capability;
+                    state.controller.signal.throwIfAborted();
+                    const response = await fetch(capability.url, { signal: state.controller.signal });
+                    if (!response.ok) throw new Error('image_preview_failed');
+                    const blob = await response.blob();
                     state.controller.signal.throwIfAborted();
                     const details = await inspectImage(blob);
                     state.controller.signal.throwIfAborted();

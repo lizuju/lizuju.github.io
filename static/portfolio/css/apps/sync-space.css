@@ -1066,6 +1066,13 @@ button.sync-attachment-info:focus-visible {
     gap: 5px;
 }
 
+.sync-download-progress {
+    min-width: 0;
+    color: #505050;
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
 .sync-attachment-download {
     min-height: 26px;
     padding: 2px 7px;

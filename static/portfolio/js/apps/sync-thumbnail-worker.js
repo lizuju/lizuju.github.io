@@ -6,7 +6,9 @@ self.onmessage = async ({ data: file }) => {
     try {
         const details = await inspectImage(file);
         if (details.width * details.height > 40 * 1024 * 1024) { self.postMessage(null); return; }
-        const options = { resizeWidth: Math.min(details.width || 260, 260), resizeQuality: 'high' };
+        const scale = Math.min(1, 260 / (details.width || 260), 200 / (details.height || 200));
+        const options = { resizeWidth: Math.max(1, Math.round((details.width || 260) * scale)), resizeQuality: 'high' };
+        if (details.width && details.height) options.resizeHeight = Math.max(1, Math.round(details.height * scale));
         try { image = await createImageBitmap(file, options); }
         catch {
             if (!/\.(heic|heif)$/i.test(file.name) && !/^image\/hei[cf]$/.test(file.type)) throw new Error('unsupported_image');
