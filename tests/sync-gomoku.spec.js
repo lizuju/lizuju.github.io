@@ -312,7 +312,19 @@ test('keeps an encrypted invitation and one opponent through concurrent joins, r
         expect(finished.board).toEqual(finalBoard);
         expect(finished.lastMove).toEqual({ row: 7, col: 7 });
         for (const page of pages) {
+            await expect(page.locator('[data-sync-gomoku-window]')).toBeVisible();
+            await expect(page.locator('[data-sync-gomoku-result]')).toBeVisible();
+            await expect(page.locator('[data-sync-gomoku-score]')).toHaveText('1 : 0');
+            await expect(page.locator('[data-sync-gomoku-outcome="host"]')).toHaveText('胜利 · 5 步');
+            await expect(page.locator('[data-sync-gomoku-outcome="guest"]')).toHaveText('落败 · 4 步');
+            await expect.poll(() => page.evaluate(() => JSON.parse(window.render_game_to_text()).board)).toEqual(finalBoard);
+            await expect(page.locator('[data-sync-gomoku-board]')).toHaveAttribute('aria-disabled', 'true');
+            await page.screenshot({ path: testInfo.outputPath(`settlement-${pages.indexOf(page)}.png`) });
+            await page.locator('[data-sync-gomoku-result-close]').click();
             await expect(page.locator('[data-sync-gomoku-window]')).toBeHidden();
+            if (!await page.locator('[data-sync-window]').isVisible()) {
+                await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+            }
             const result = page.locator(`[data-sync-game-card="${id}"] [data-sync-game-result]`);
             await expect(result).toBeVisible();
             await expect(result).toContainText('5');

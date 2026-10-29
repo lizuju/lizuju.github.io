@@ -3,11 +3,12 @@ import { createKeyring, createDeviceIdentity, encryptPayload, decryptPayload, cr
     createKeyRotation, acceptKeyRotation } from './sync-crypto.js';
 import { EncryptedPairing } from './sync-pairing.js';
 import { SavedSpaces, CREDENTIAL_KEY, CATALOG_KEY } from './sync-spaces.js';
-import { SyncConnection } from './sync-connection.js';
+import { SharedSyncConnection } from './sync-shared-connection.js';
 import { createMentions, validMentions, renderMessageText } from './sync-mentions.js';
 import { openEncryptedFile, prepareEncryptedFiles } from './sync-e2ee-files.js';
 import { createInlineImage } from './sync-inline-image.js';
 import { createImageResource } from './sync-image-resource.js';
+import { createImageThumbnail, validThumbnail } from './sync-image-thumbnail.js';
 import { VoiceRecorder } from './sync-voice-recorder.js';
 import { createVoicePlayer } from './sync-voice-player.js';
 import { STICKERS, stickerById } from './sync-stickers.js';
@@ -161,6 +162,16 @@ import { createGomokuWindow } from './sync-gomoku.js';
         const spaceSwitchBlocked = () => busy || sending || recording() || downloads.size > 0 || switchingSpace;
         // Background spaces keep their own connection, so their unread set stays current without switching.
         const spaceHasUnread = roomId => roomId !== credentials?.roomId && !!connections.get(roomId)?.unread.size;
+        const spaceIndicator = roomId => {
+            const record = connections.get(roomId);
+            const outgoing = roomId === credentials?.roomId ? [...outbox.values()] : [];
+            if (outgoing.some(message => message.sendState === 'failed') || roomId !== credentials?.roomId && record?.failedMessages?.size) return { color: 'red', key: 'syncSpaceFailed' };
+            if (record?.disconnected) return { color: 'red', key: 'syncSpaceOffline' };
+            if (outgoing.some(message => message.sendState === 'sending')) return { color: 'yellow', key: 'syncSpaceSending' };
+            if (record?.connectionState === 'connecting') return { color: 'yellow', key: 'syncSpaceConnecting' };
+            if (spaceHasUnread(roomId)) return { color: 'green', key: 'syncSpaceUnread' };
+            return null;
+        };
         const renderSpaces = () => {
             let spaces;
             try { spaces = savedSpaces.list(); } catch { return; }
@@ -180,15 +191,18 @@ import { createGomokuWindow } from './sync-gomoku.js';
                     const dot = document.createElement('span');
                     dot.className = 'sync-space-unread';
                     dot.dataset.syncSpaceUnread = '';
+                    dot.setAttribute('aria-hidden', 'true');
                     dot.hidden = true;
                     button.append(name, dot);
                     list.append(button);
                 }
                 const label = space.name || translate('syncSpaceName', { number: space.number });
-                const hasUnread = spaceHasUnread(space.roomId);
+                const indicator = spaceIndicator(space.roomId);
                 button.firstChild.textContent = label;
-                button.lastChild.hidden = !hasUnread;
-                button.title = hasUnread ? translate('syncSpaceUnread', { name: label }) : label;
+                button.lastChild.hidden = !indicator;
+                button.lastChild.dataset.state = indicator?.color || '';
+                button.title = indicator ? translate(indicator.key, { name: label }) : label;
+                button.setAttribute('aria-label', button.title);
                 button.setAttribute('aria-current', String(space.roomId === credentials?.roomId && !addingSpace));
                 button.disabled = spaceSwitchBlocked();
             }
@@ -205,6 +219,10 @@ import { createGomokuWindow } from './sync-gomoku.js';
             toggle.setAttribute('aria-label', translate(collapsed ? 'syncSpacesExpand' : 'syncSpacesCollapse'));
             toggle.title = toggle.getAttribute('aria-label');
             toggle.classList.toggle('has-unread', spaces.some(space => spaceHasUnread(space.roomId)));
+            const indicators = spaces.map(space => spaceIndicator(space.roomId)).filter(Boolean);
+            const color = ['red', 'yellow', 'green'].find(color => indicators.some(indicator => indicator.color === color));
+            toggle.classList.toggle('has-status', !!color);
+            toggle.dataset.state = color || '';
         };
         const updateSoundToggle = () => {
             const label = translate(soundEnabled ? 'syncSoundMute' : 'syncSoundUnmute');
@@ -475,10 +493,11 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 if (payload.attachment?.kind === 'voice' && (!['audio/wav', 'audio/webm'].includes(payload.attachment.type)
                     || !Number.isSafeInteger(payload.attachment.durationMs) || payload.attachment.durationMs < 1 || payload.attachment.durationMs > 60000
                     || payload.attachment.size <= 44 || payload.attachment.size > 44 + 16000 * 2 * 60)) throw new Error('invalid_voice');
-                return { ...message, text: payload.text, mentions: payload.mentions || [], sticker: payload.sticker, gomoku: payload.gomoku, attachment: payload.attachment || null, reply: payload.reply || null };
+                if (payload.attachment?.thumbnail && !await validThumbnail(payload.attachment.thumbnail)) delete payload.attachment.thumbnail;
+                return { ...message, wire: message, text: payload.text, mentions: payload.mentions || [], sticker: payload.sticker, gomoku: payload.gomoku, attachment: payload.attachment || null, reply: payload.reply || null };
             } catch {
                 if (credentials === session) setNotice('syncDecryptFailed', true);
-                return { ...message, text: '', attachment: null, reply: null, decryptionFailed: true };
+                return { ...message, wire: message, text: '', attachment: null, reply: null, decryptionFailed: true };
             }
         };
         const api = async (path, options = {}, session = credentials) => {
@@ -590,24 +609,34 @@ import { createGomokuWindow } from './sync-gomoku.js';
         let pairing = createPairing();
         const refreshKeys = (session = credentials) => {
             if (keyRefreshes.has(session)) return keyRefreshes.get(session);
-            const promise = (async () => {
-                const revoked = new Set(session.revokedDevices);
+            const promise = navigator.locks.request(`gavin-sync-keys:${session.roomId}:${session.deviceId}`, async () => {
+                if (!liveSession(session)) return;
+                const adoptKeys = updated => {
+                    const revoked = new Set(session.revokedDevices);
+                    Object.assign(session, updated);
+                    if (credentials === session && session.revokedDevices.some(id => !revoked.has(id))) {
+                        cancelRecording(); pauseVoiceMedia();
+                        if (pendingUpload) {
+                            uploadController?.abort(Object.assign(new Error('key_changed'), { code: 'key_changed' }));
+                            discardUpload(true);
+                        }
+                    }
+                };
+                const stored = savedSpaces.find(session);
+                if (stored) {
+                    const updated = await loadLocalSession(stored);
+                    if (!liveSession(session)) return;
+                    if (Object.hasOwn(updated.keyring.keys, session.keyring.currentKeyId)) {
+                        adoptKeys({ ...updated, revision: stored.revision });
+                    }
+                }
                 for (;;) {
                     const result = await api(`/v1/spaces/${session.roomId}/key-grants`, {}, session);
                     if (!liveSession(session)) return;
                     for (const grant of result.grants) {
                         const next = await acceptKeyRotation(session, grant);
                         if (!liveSession(session)) return;
-                        session.keyring = next.keyring;
-                        session.trustedDevices = next.trustedDevices;
-                        session.revokedDevices = next.revokedDevices;
-                        if (credentials === session && session.revokedDevices.some(id => !revoked.has(id))) {
-                            cancelRecording(); pauseVoiceMedia();
-                            if (pendingUpload) {
-                                uploadController?.abort(Object.assign(new Error('key_changed'), { code: 'key_changed' }));
-                                discardUpload(true);
-                            }
-                        }
+                        adoptKeys(next);
                     }
                     if (result.grants.length) {
                         await persistSession(session);
@@ -617,7 +646,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
                     }
                     if (!result.hasMore) break;
                 }
-            })().finally(() => keyRefreshes.delete(session));
+            }).finally(() => keyRefreshes.delete(session));
             keyRefreshes.set(session, promise);
             return promise;
         };
@@ -627,6 +656,8 @@ import { createGomokuWindow } from './sync-gomoku.js';
             if (!credentials) return Promise.resolve(true);
             const session = credentials;
             const revision = ++draftRevision;
+            const record = connections.get(session.roomId);
+            if (record) record.failedMessages = new Set([...outbox.values()].filter(message => message.sendState === 'failed').map(message => message.clientId));
             const upload = pendingUpload && {
                 clientId: pendingUpload.clientId, uploadId: pendingUpload.uploadId, text: pendingUpload.text, reply: pendingUpload.reply, mentions: pendingUpload.mentions, voice: pendingUpload.voice, fingerprint: pendingUpload.fingerprint, receivedBytes: pendingUpload.receivedBytes || 0,
                 encryption: pendingUpload.encryption, encryptedText: pendingUpload.encryptedText, keyId: pendingUpload.keyId, revokedDevices: pendingUpload.revokedDevices,
@@ -821,7 +852,8 @@ import { createGomokuWindow } from './sync-gomoku.js';
         const isReading = () => !room.hidden && active && browserFocused && document.hasFocus() && !document.hidden
             && performance.now() - lastInteraction < 60000 && app.classList.contains('is-active')
             && !app.classList.contains('is-minimized') && !find('search').value.trim()
-            && !app.closest('[inert]') && !devicesDialog.open && !confirmation.open && !stickerDialog.open && !replyNavigation;
+            && !app.closest('[inert]') && !devicesDialog.open && !confirmation.open && !stickerDialog.open && !spaceNameDialog.open && !replyNavigation
+            && !(app.clientWidth <= 640 && (!app.classList.contains('is-tools-collapsed') || !app.classList.contains('is-spaces-collapsed')));
         const updateReadReceipts = () => {
             const otherReadId = Math.max(0, ...[...readReceipts].filter(([id]) => id !== deviceId
                 && credentials?.trustedDevices[id] && !credentials.revokedDevices.includes(id)).map(([, id]) => id));
@@ -906,7 +938,10 @@ import { createGomokuWindow } from './sync-gomoku.js';
             const next = rememberGame(game);
             if (!isGameActive(next)) {
                 if (open && next.canViewBoard && next.board) gameWindow.show(next);
-                else if (gameWindow.currentId === next.id && !isGameActive(previous) && next.canViewBoard && next.board) gameWindow.update(next);
+                else if (gameWindow.currentId === next.id && next.status === 'finished') {
+                    gameWindow.update(next);
+                    if (!next.board && isGameActive(previous)) readGame(next.id).catch(showError);
+                }
                 else if (gameWindow.currentId === next.id) {
                     gameWindow.close();
                     entry.show();
@@ -1011,6 +1046,8 @@ import { createGomokuWindow } from './sync-gomoku.js';
         };
         const applySearch = () => {
             const query = find('search').value.trim().toLocaleLowerCase();
+            find('search-state').hidden = !query;
+            find('search-label').textContent = query ? translate('syncSearchActive', { query: find('search').value.trim() }) : '';
             let count = 0;
             for (const message of [...history, ...outbox.values()]) {
                 const text = message.decryptionFailed ? translate('syncDecryptFailed') : message.text;
@@ -1204,6 +1241,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
                         imageResources.set(message.id, resource);
                         const image = createInlineImage({
                             name: message.attachment.name,
+                            thumbnail: message.attachment.thumbnail,
                             viewport: feed,
                             retryLabel: () => translate('syncImageRetry'),
                             previewLabel: () => translate('syncPreview'),
@@ -1495,6 +1533,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             record.reconnectCursor = reconnectCursor;
             record.readReceipts = new Map(readReceipts);
             record.unread = new Set(unread);
+            record.failedMessages = new Set([...outbox.values()].filter(message => message.sendState === 'failed').map(message => message.clientId));
             record.devices = devices;
             record.activeGames = [...games.values()].filter(isGameActive);
         };
@@ -1556,6 +1595,8 @@ import { createGomokuWindow } from './sync-gomoku.js';
             const session = record.session;
             const valid = () => connections.get(session.roomId) === record && current();
             if (!valid()) return;
+            if (data.spaceProfile) record.spaceProfile = data.spaceProfile;
+            if (data.profile) record.spaceProfile = data.profile;
             if (data.type === 'ready') {
                 record.devicesLoaded = false;
                 const revision = record.pairingRevision;
@@ -1572,7 +1613,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 await applySpaceProfile(data.profile, session);
                 return;
             } else if (data.type === 'key-rotation' || data.type === 'rekey-required') {
-                if (data.type === 'rekey-required') await rotateKeys(null, session);
+                if (data.type === 'rekey-required' && record.transport.isLeader) await rotateKeys(null, session);
                 else await refreshKeys(session);
                 if (!valid()) return;
                 await refreshPairing(session);
@@ -1582,6 +1623,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 await showPairing(data.pairing, session);
                 return;
             } else if (data.type === 'pair-request' || data.type === 'pair-finish') {
+                if (!record.transport.isLeader) return;
                 const offer = record.pairing.offer;
                 record.pairing.handle(data).catch(error => {
                     if (valid() && credentials === session && record.pairing.offer === offer
@@ -1597,6 +1639,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             if (!valid()) return;
             if (data.type === 'message' && credentials !== session && incoming[0].deviceId !== session.deviceId
                 && !record.history.some(message => message.id === incoming[0].id)) notifyMessage(incoming[0], session);
+            for (const message of incoming) if (message.deviceId === session.deviceId) record.failedMessages.delete(message.clientId);
             const receipts = data.type === 'read' ? [data] : data.readReceipts || [];
             for (const receipt of receipts) record.readReceipts.set(receipt.deviceId,
                 Math.max(record.readReceipts.get(receipt.deviceId) || 0, receipt.messageId));
@@ -1604,6 +1647,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
             if (data.type === 'cleared') {
                 record.history = [];
                 record.unread.clear();
+                record.failedMessages.clear();
                 record.historyState = data.history;
                 record.reconnectCursor = null;
                 record.activeGames = [];
@@ -1658,7 +1702,7 @@ import { createGomokuWindow } from './sync-gomoku.js';
         };
         const createConnection = session => {
             const record = { session, history: [], historyState: null, reconnectCursor: null, readReceipts: new Map(),
-                unread: new Set(), devices: [], activeGames: [], pairingRevision: 0, pairingData: session.pairing || null };
+                unread: new Set(), failedMessages: new Set(), devices: [], activeGames: [], pairingRevision: 0, pairingData: session.pairing || null };
             connections.set(session.roomId, record);
             record.pairing = createPairing(session);
             return record;
@@ -1667,7 +1711,15 @@ import { createGomokuWindow } from './sync-gomoku.js';
             if ((!active && !needsGameConnection()) || !record || connections.get(record.session.roomId) !== record) return;
             if (!record.transport) {
                 const session = record.session;
-                const transport = new SyncConnection({ session,
+                const transport = new SharedSyncConnection({ session,
+                    snapshot: () => {
+                        if (credentials === session) cacheCurrentView();
+                        const messages = record.history.slice(-50).map(message => message.wire);
+                        return { type: 'ready', deviceId: session.deviceId, messages, historyMode: 'replace',
+                            history: record.historyState, pairing: record.pairingData, spaceProfile: record.spaceProfile,
+                            readReceipts: [...record.readReceipts].map(([deviceId, messageId]) => ({ deviceId, messageId })),
+                            activeGames: record.activeGames };
+                    },
                     getUrl: async () => {
                         if (credentials === session) cacheCurrentView();
                         const base = await loadConfig();
@@ -1682,7 +1734,11 @@ import { createGomokuWindow } from './sync-gomoku.js';
                     },
                     receive: (data, current) => receiveFrame(record, data, current),
                     onState: state => {
-                        if (credentials !== session || connections.get(session.roomId) !== record) return;
+                        if (connections.get(session.roomId) !== record) return;
+                        record.connectionState = state;
+                        if (state === 'online') record.disconnected = false;
+                        else if (state === 'offline' && !record.transport?.stopped) record.disconnected = true;
+                        if (credentials !== session) { renderSpaces(); return; }
                         socket = record.transport?.socket || null;
                         setConnection(state === 'online');
                         if (state === 'connecting') setText(status, 'syncConnecting', 'connecting');
@@ -1742,10 +1798,10 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 find('pair-code').textContent = offer?.code || '';
                 startCountdowns();
             }
-            if (offer?.ownerDeviceId === session.deviceId) {
+            if (record.transport?.isLeader && offer?.ownerDeviceId === session.deviceId) {
                 host.resume().catch(error => { if (credentials === session && error.code !== 'invalid_code') showError(error); });
             }
-            if (!offer && value?.locked && value.enabled !== false && !record.renewal) {
+            if (record.transport?.isLeader && !offer && value?.locked && value.enabled !== false && !record.renewal) {
                 record.renewal = true;
                 try {
                     await refreshKeys(session);
@@ -1977,7 +2033,15 @@ import { createGomokuWindow } from './sync-gomoku.js';
                     try {
                         const session = await loadLocalSession(stored);
                         if (!sameSession(stored, savedSpaces.find(session)) || connections.has(session.roomId)) continue;
-                        connect(createConnection({ ...session, revision: stored.revision }));
+                        const record = createConnection({ ...session, revision: stored.revision });
+                        try {
+                            const encrypted = sessionStorage.getItem(`portfolio-sync-draft:${session.roomId}`);
+                            if (encrypted) {
+                                const draft = await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted);
+                                record.failedMessages = new Set((draft.outbox || []).map(message => message.clientId));
+                            }
+                        } catch { /* Connection recovery does not depend on a saved draft. */ }
+                        connect(record);
                     } catch { /* A missing local key must not prevent other saved spaces from connecting. */ }
                 }
                 renderSpaces();
@@ -2518,7 +2582,9 @@ import { createGomokuWindow } from './sync-gomoku.js';
             if (upload.fingerprint && upload.fingerprint !== fingerprint) throw Object.assign(new Error('upload_conflict'), { code: 'upload_conflict' });
             upload.fingerprint = fingerprint;
             if (!upload.encryption) {
+                const thumbnail = await createImageThumbnail(upload.file, controller.signal);
                 upload.encryption = { ...createFileMetadata(upload.file), ...upload.voice };
+                if (thumbnail) upload.encryption.thumbnail = thumbnail;
                 upload.revokedDevices = [...session.revokedDevices];
             }
             const { plainSize, uploadPlainSize } = fileChunkLayout(upload.encryption);
@@ -2530,6 +2596,10 @@ import { createGomokuWindow } from './sync-gomoku.js';
                     if (!upload.encryptedText || upload.keyId !== session.keyring.currentKeyId) {
                         const keyring = session.keyring;
                         upload.encryptedText = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${upload.clientId}`, { text: upload.text, attachment: upload.encryption, reply: upload.reply, ...(upload.mentions?.length ? { mentions: upload.mentions } : {}) });
+                        if (upload.encryptedText.length > 65536 && upload.encryption.thumbnail) {
+                            delete upload.encryption.thumbnail;
+                            upload.encryptedText = await encryptPayload(keyring, session.roomId, `message:${session.deviceId}:${upload.clientId}`, { text: upload.text, attachment: upload.encryption, reply: upload.reply, ...(upload.mentions?.length ? { mentions: upload.mentions } : {}) });
+                        }
                         upload.keyId = keyring.currentKeyId;
                     }
                     saveDraft();
@@ -2844,6 +2914,13 @@ import { createGomokuWindow } from './sync-gomoku.js';
         input.addEventListener('keydown', (event) => {
             if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
             event.preventDefault();
+            if (event.ctrlKey || event.metaKey) {
+                if (input.value.length - (input.selectionEnd - input.selectionStart) < input.maxLength) {
+                    input.setRangeText('\n', input.selectionStart, input.selectionEnd, 'end');
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                return;
+            }
             if (!event.repeat) find('send-form').requestSubmit();
         });
         find('copy-code').addEventListener('click', () => {
@@ -2870,6 +2947,11 @@ import { createGomokuWindow } from './sync-gomoku.js';
                 markRead();
             }
             if (find('search').value.trim()) searchTimer = setTimeout(searchHistory, 180);
+        });
+        find('search-clear').addEventListener('click', () => {
+            find('search').value = '';
+            find('search').dispatchEvent(new Event('input'));
+            input.focus({ preventScroll: true });
         });
         find('latest').addEventListener('click', () => {
             find('search').value = '';
@@ -2951,7 +3033,12 @@ import { createGomokuWindow } from './sync-gomoku.js';
         find('devices-form').addEventListener('submit', (event) => event.preventDefault());
         for (const name of ['devices-close', 'devices-dismiss']) find(name).addEventListener('click', () => devicesDialog.close());
         for (const dialog of [confirmation, devicesDialog]) {
-            dialog.addEventListener('close', markRead);
+            dialog.addEventListener('close', () => {
+                if (!document.activeElement || document.activeElement === document.body || !document.activeElement.getClientRects().length) {
+                    find('tools-toggle').focus({ preventScroll: true });
+                }
+                markRead();
+            });
             dialog.addEventListener('keydown', (event) => {
                 event.stopPropagation();
                 if (event.key === 'Enter' && event.target.matches('[data-sync-device-name]') && !event.isComposing && event.keyCode !== 229) {

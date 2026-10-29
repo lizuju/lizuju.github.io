@@ -1804,12 +1804,16 @@ test(`continues an encrypted upload after a new device pairs (${restore})`, asyn
     let uploadAborted = false;
     let uploadSockets = 0;
     uploader.on('websocket', () => { uploadSockets++; });
-    if (restore === 'cross-tab') await uploader.routeWebSocket(`${apiOrigin.replace(/^http/, 'ws')}/**`, socket => {
-        const server = socket.connectToServer();
-        server.onMessage(data => {
-            if (data !== 'pong' && JSON.parse(data).type === 'key-rotation') return;
-            socket.send(data);
-        });
+    if (restore === 'cross-tab') await uploader.addInitScript(() => {
+        const Channel = window.BroadcastChannel;
+        window.BroadcastChannel = class extends Channel {
+            constructor(name) {
+                super(name);
+                this.addEventListener('message', event => {
+                    if (event.data?.type === 'frame' && event.data.data?.type === 'key-rotation') event.stopImmediatePropagation();
+                });
+            }
+        };
     });
     const file = { name: 'pairing-during-upload.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(9 * 1024 * 1024, 0x3c) };
     file.buffer.write('preserve-encrypted-chunks-across-pairing');
@@ -1884,7 +1888,7 @@ test(`continues an encrypted upload after a new device pairs (${restore})`, asyn
             if (restore === 'cross-tab') {
                 await expect(uploader.locator('[data-sync-upload-status]')).toBeVisible();
                 await expect(uploader.locator('[data-sync-file-name]')).toHaveText(file.name);
-                expect(uploadSockets).toBe(1);
+                expect(uploadSockets).toBe(0);
                 expect(uploadAborted).toBe(false);
             }
             releaseChunk();
@@ -1902,7 +1906,7 @@ test(`continues an encrypted upload after a new device pairs (${restore})`, asyn
         expect(chunks.filter(chunk => chunk.index === 0)).toHaveLength(1);
         expect(chunks.filter(chunk => chunk.index === 1)).toHaveLength(2);
         expect(chunks.at(-1).keyId).toBe(currentKeyId);
-        if (restore === 'cross-tab') { expect(uploadSockets).toBe(1); expect(uploadAborted).toBe(false); }
+        if (restore === 'cross-tab') { expect(uploadSockets).toBe(0); expect(uploadAborted).toBe(false); }
 
         const downloading = second.waitForEvent('download');
         await message.locator('[data-sync-download-file]').click();
@@ -1915,3 +1919,81 @@ test(`continues an encrypted upload after a new device pairs (${restore})`, asyn
     }
 });
 }
+
+test('shares desktop and standalone tabs, hands over ownership and decrypts thumbnails after pairing rotates keys', async ({ browser, isMobile }) => {
+    test.setTimeout(120000);
+    const contexts = await Promise.all(Array.from({ length: 2 }, () => browser.newContext({
+        viewport: isMobile ? { width: 320, height: 568 } : { width: 1366, height: 900 }
+    })));
+    if (browser.browserType().name() === 'chromium') await Promise.all(contexts.map(context => context.grantPermissions(['local-network-access'])));
+    contexts.forEach(context => context.setDefaultTimeout(15000));
+    const first = await contexts[0].newPage();
+    const second = await contexts[0].newPage();
+    const peer = await contexts[1].newPage();
+    const firstConnections = watchSpaceConnections(first);
+    const secondConnections = watchSpaceConnections(second);
+    const challenges = [];
+    const downloads = [];
+    interceptApi = request => {
+        if (request.method === 'POST' && /\/pair-challenge$/.test(request.url)) challenges.push(request.url);
+        if (/\/files\/\d+(\/download|\?|$)/.test(request.url)) downloads.push(request.url);
+    };
+    try {
+        await openApp(first);
+        await first.locator('[data-sync-create]').click();
+        await awaitOnline(first);
+        await sendText(first, 'before another tab');
+        await expect(first.locator('[data-sync-messages]')).toContainText('before another tab');
+        await second.goto(`${siteOrigin}/chat/`);
+        await awaitOnline(second);
+        await expect(second.locator('[data-sync-messages]')).toContainText('before another tab');
+        expect(firstConnections.length + secondConnections.length).toBe(1);
+        await sendText(second, 'sent from follower');
+        await expect(first.locator('[data-sync-messages]')).toContainText('sent from follower');
+        await expect(first.locator('[data-sync-pair-code]')).toHaveText(/^\d{4}$/);
+        const code = await first.locator('[data-sync-pair-code]').textContent();
+        await peer.goto(`${siteOrigin}/chat/`);
+        await peer.locator('[data-sync-code]').fill(code);
+        await peer.locator('[data-sync-join]').click();
+        await awaitOnline(peer);
+        expect(challenges).toHaveLength(1);
+        await sendText(peer, 'after key rotation');
+        for (const page of [first, second]) await expect(page.locator('[data-sync-messages]')).toContainText('after key rotation');
+        await sendText(second, 'follower uses new key');
+        await expect(peer.locator('[data-sync-messages]')).toContainText('follower uses new key');
+        for (const file of [
+            { name: 'encrypted-thumbnail.png', mimeType: 'image/png', buffer: png, width: 1 },
+            { name: 'encrypted-thumbnail.heic', mimeType: 'image/heic', buffer: await readFile(path.join(__dirname, 'fixtures/heic-gradient.heic')), width: 64 }
+        ]) {
+            const downloadsBefore = downloads.length;
+            await expect(second.locator('[data-sync-attach]')).toBeEnabled();
+            await second.locator('[data-sync-file-input]').setInputFiles(file);
+            await second.locator('[data-sync-send]').click();
+            for (const page of [first, second, peer]) {
+                const image = page.locator('.sync-message').filter({ hasText: file.name }).locator('.sync-message-image img');
+                await expect(image).toHaveAttribute('src', /^data:image\/(webp|jpeg);base64,/);
+                await expect.poll(() => image.evaluate(image => image.naturalWidth)).toBe(file.width);
+            }
+            expect(downloads.length).toBe(downloadsBefore);
+            expect(Buffer.concat(wireBodies).includes(Buffer.from('data:image/'))).toBe(false);
+            await peer.locator('.sync-message').filter({ hasText: file.name }).locator('.sync-message-image').click();
+            await expect.poll(() => peer.locator('[data-sync-preview-window] img').evaluate(image => image.naturalWidth)).toBe(file.width);
+            expect(downloads.length).toBeGreaterThan(downloadsBefore);
+            await peer.locator('[data-sync-preview-action="close"]').click();
+        }
+        await first.close();
+        await expect.poll(() => secondConnections.length).toBe(1);
+        await awaitOnline(second);
+        await sendText(peer, 'after leader closed');
+        await expect(second.locator('[data-sync-messages]')).toContainText('after leader closed');
+        await second.reload();
+        await awaitOnline(second);
+        await expect(second.locator('[data-sync-messages]')).toContainText('after leader closed');
+        const member = await readSession(peer);
+        await showSyncTools(second);
+        await second.locator('[data-sync-devices]').click();
+        await second.locator(`[data-device-id="${member.deviceId}"] [data-sync-device-remove]`).click();
+        await second.locator('[data-sync-confirm-accept]').click();
+        await expect(peer.locator('[data-sync-setup]')).toBeVisible();
+    } finally { await Promise.all(contexts.map(context => context.close())); }
+});

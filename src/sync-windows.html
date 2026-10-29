@@ -63,6 +63,10 @@
                                     data-i18n="syncConnecting">正在连接…</p>
                             </div>
                         </div>
+                        <div class="sync-search-state" data-sync-search-state hidden>
+                            <span data-sync-search-label></span>
+                            <button class="sync-button" type="button" data-sync-search-clear data-i18n="syncSearchClear">清除搜索</button>
+                        </div>
                         <div class="sync-pairing-dock" data-sync-pairing-dock>
                             <details class="sync-pairing" data-sync-pairing hidden>
                                 <summary class="sync-pairing-toggle" aria-labelledby="sync-pairing-title">
@@ -344,6 +348,7 @@
                         <i class="sync-gomoku-stone sync-gomoku-stone--black" aria-hidden="true"></i>
                         <span data-i18n="syncGameBlack">黑方</span>
                         <strong data-sync-gomoku-host></strong>
+                        <small data-sync-gomoku-outcome="host" hidden></small>
                     </div>
                     <div class="sync-gomoku-player sync-gomoku-move-count">
                         <span data-i18n="syncGameMoveCount">步数</span>
@@ -353,7 +358,12 @@
                         <i class="sync-gomoku-stone sync-gomoku-stone--white" aria-hidden="true"></i>
                         <span data-i18n="syncGameWhite">白方</span>
                         <strong data-sync-gomoku-guest></strong>
+                        <small data-sync-gomoku-outcome="guest" hidden></small>
                     </div>
+                </div>
+                <div class="sync-gomoku-player sync-gomoku-summary" data-sync-gomoku-result hidden role="status">
+                    <div><strong data-sync-gomoku-result-title></strong><span class="sync-gomoku-summary-score" data-sync-gomoku-score></span></div>
+                    <button type="button" class="sync-button" data-sync-gomoku-result-close data-i18n="syncGameClose">关闭对局</button>
                 </div>
                 <div class="sync-gomoku-board-frame" data-sync-gomoku-frame>
                     <canvas class="sync-gomoku-board" data-sync-gomoku-board width="480" height="480" tabindex="0"

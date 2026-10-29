@@ -147,10 +147,22 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
         if (!current) return;
         find('host').textContent = deviceLabel(current.hostDeviceId);
         find('guest').textContent = current.guestDeviceId ? deviceLabel(current.guestDeviceId) : text('syncGameWaitingPlayer');
-        find('move-count').textContent = current.board.filter(Boolean).length;
+        find('move-count').textContent = current.result ? current.result.hostMoves + current.result.guestMoves : current.board.filter(Boolean).length;
         for (const seat of ['host', 'guest']) {
             app.querySelector(`[data-sync-gomoku-player="${seat}"]`).classList.toggle('is-turn',
                 current.status === 'playing' && current.turnDeviceId === current[`${seat}DeviceId`]);
+            const outcome = app.querySelector(`[data-sync-gomoku-outcome="${seat}"]`);
+            outcome.hidden = !current.result;
+            if (current.result) {
+                const won = current.result.winnerDeviceId === current[`${seat}DeviceId`];
+                outcome.textContent = `${text(!current.result.winnerDeviceId ? 'syncGameDraw' : won ? 'syncGameWon' : 'syncGameLost')} · ${translate('syncGameMoves', { moves: current.result[`${seat}Moves`] })}`;
+            }
+        }
+        find('result').hidden = current.status !== 'finished';
+        if (current.result) {
+            find('result-title').textContent = current.result.winnerDeviceId
+                ? translate('syncGameWinner', { name: deviceLabel(current.result.winnerDeviceId) }) : text('syncGameDraw');
+            find('score').textContent = `${current.result.hostScore} : ${current.result.guestScore}`;
         }
         const status = statusText();
         const review = ['finished', 'cancelled'].includes(current.status);
@@ -187,6 +199,7 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
             if (!confirmation.open) confirmation.showModal();
         } else close();
     };
+    find('result-close').addEventListener('click', close);
 
     const entry = manager.registerWindow({
         id: 'sync-gomoku', element: app, task, titlebar: find('drag'), resizeHandle: find('resize'),
@@ -261,7 +274,11 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
         render();
         try {
             await onLeave();
-            if (current?.id === gameId) close();
+            if (current?.id === gameId) {
+                leaving = false;
+                confirmation.close();
+                render();
+            }
         } catch {
             if (current?.id !== gameId) return;
             leaving = false;
@@ -313,7 +330,7 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
         },
         update(game) {
             if (!current || game.id !== current.id || game.revision < current.revision) return;
-            current = game;
+            current = { ...game, board: game.board || current.board, lastMove: game.board ? game.lastMove : current.lastMove };
             if (pending && game.revision > pending.revision) pending = null;
             render();
         },

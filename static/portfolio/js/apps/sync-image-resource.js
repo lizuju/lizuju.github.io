@@ -2,7 +2,7 @@ const idle = new Map();
 let idleBytes = 0;
 const AUTOMATIC_PIXEL_LIMIT = 8 * 1024 * 1024;
 
-const inspectImage = async blob => {
+export const inspectImage = async blob => {
     const bytes = new Uint8Array(await blob.slice(0, 1024 * 1024).arrayBuffer());
     const view = new DataView(bytes.buffer);
     const text = (start, length) => String.fromCharCode(...bytes.subarray(start, start + length));

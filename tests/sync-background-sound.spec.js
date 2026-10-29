@@ -20,7 +20,10 @@ const message = (room, id, sender = otherId) => {
     })).toString('base64url')}` };
 };
 
+const servers = new WeakMap();
 const openChat = async (page, seed = true) => {
+    if (!servers.has(page.context())) servers.set(page.context(), { sockets: new Map(), reads: [], openings: 0 });
+    const server = servers.get(page.context());
     await allowSyncOrigin(page, 'https://sync.test');
     await page.addInitScript(() => {
         window.notificationStarts = 0;
@@ -49,28 +52,32 @@ const openChat = async (page, seed = true) => {
     await page.route('https://sync.test/**', route => route.request().method() === 'OPTIONS'
         ? route.fulfill({ status: 204, headers })
         : route.fulfill({ headers, json: { deviceId, devices: [], grants: [], hasMore: false, keyId } }));
-    const sockets = new Map();
-    const reads = [];
+    const { sockets, reads } = server;
     await page.routeWebSocket('wss://sync.test/**', socket => {
         const room = new URL(socket.url()).pathname.split('/')[3];
         sockets.set(room, socket);
+        server.openings++;
         socket.onMessage(raw => {
             if (raw === 'ping') return socket.send('pong');
             const frame = JSON.parse(raw);
-            if (frame.type === 'auth') socket.send(JSON.stringify({ type: 'ready', deviceId, messages: [message(room, 1)],
+            if (frame.type === 'auth' && !server.holdReady) socket.send(JSON.stringify({ type: 'ready', deviceId, messages: [message(room, 1)],
                 pairing: null, readReceipts: [], history: bounds(1), historyMode: 'replace' }));
             if (frame.type === 'read') reads.push({ room, id: frame.messageId });
         });
     });
     const open = async () => {
-        sockets.clear();
+        const previous = server.openings;
         await page.goto('/portfolio/');
         await page.bringToFront();
         if (await page.locator('[data-window-action="minimize"]').isVisible()) await page.locator('[data-window-action="minimize"]').click();
         if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
         await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
         await expect.poll(() => sockets.size).toBe(3);
+        if (seed) await expect.poll(() => server.openings).toBe(previous + 3);
         await hideSyncTools(page);
+        if (await page.locator('[data-sync-spaces-toggle]').getAttribute('aria-expanded') === 'true') {
+            await page.locator('[data-sync-spaces-toggle]').click();
+        }
         await page.locator('[data-sync-input]').click();
         await page.clock.runFor(1000);
     };
@@ -78,7 +85,7 @@ const openChat = async (page, seed = true) => {
     const flush = async room => {
         await page.evaluate(({ room, deviceId }) => navigator.locks.request(`portfolio-sync-notification:${room}:${deviceId}`, () => {}), { room, deviceId });
     };
-    return { open, reads, sockets, flush,
+    return { open, reads, sockets, flush, holdReady: value => { server.holdReady = value; }, openings: () => server.openings,
         starts: () => page.evaluate(() => window.notificationStarts),
         frame: (room, data) => sockets.get(room).send(JSON.stringify(data)),
         send: (room, id, sender = otherId) => sockets.get(room).send(JSON.stringify({ type: 'message', message: message(room, id, sender), history: bounds(id) }))
@@ -121,6 +128,7 @@ test('deduplicates background notifications across tabs and keeps them active wh
     const first = await openChat(page);
     const otherPage = await context.newPage();
     const second = await openChat(otherPage, false);
+    expect(second.openings()).toBe(3);
     const starts = async () => (await first.starts()) + (await second.starts());
     first.send(rooms[2], 2);
     second.send(rooms[2], 2);
@@ -138,4 +146,48 @@ test('deduplicates background notifications across tabs and keeps them active wh
     expect(first.reads.some(item => item.room === rooms[2])).toBe(false);
     expect(second.reads.some(item => item.room === rooms[2])).toBe(false);
     await otherPage.close();
+});
+
+
+test('shows only the most important space dot and restores unread green after a background reconnect', async ({ page }) => {
+    const chat = await openChat(page);
+    const button = page.locator(`[data-sync-space-id="${rooms[1]}"]`);
+    const dot = button.locator('[data-sync-space-unread]');
+    if (!await button.isVisible()) await page.locator('[data-sync-spaces-toggle]').click();
+    chat.send(rooms[1], 2);
+    await expect(dot).toHaveAttribute('data-state', 'green');
+    await expect(dot).toHaveCount(1);
+    chat.holdReady(true);
+    chat.sockets.get(rooms[1]).close({ code: 1001, reason: 'test disconnect' });
+    await expect(dot).toHaveAttribute('data-state', 'red');
+    await expect(button).toHaveAttribute('title', '空间 2（连接已断开，正在重连）');
+    await expect(page.locator('[data-sync-spaces-toggle]')).toHaveAttribute('data-state', 'red');
+    await page.clock.runFor(2000);
+    await expect.poll(chat.openings).toBe(4);
+    await expect(dot).toHaveAttribute('data-state', 'red');
+    chat.frame(rooms[1], { type: 'ready', deviceId, messages: [message(rooms[1], 1), message(rooms[1], 2)],
+        pairing: null, readReceipts: [], history: bounds(2), historyMode: 'replace' });
+    await expect(dot).toHaveAttribute('data-state', 'green');
+    await expect(page.locator('[data-sync-spaces-toggle]')).toHaveAttribute('data-state', 'green');
+    await expect(page.locator('[data-sync-space-title]')).toHaveText('空间 1');
+});
+
+test('keeps a failed-send red dot above unread green after switching spaces and refreshing', async ({ page }) => {
+    const chat = await openChat(page);
+    await page.route('https://sync.test/**/messages', route => route.fulfill({ status: 503, headers, json: { error: 'unavailable' } }));
+    await page.locator('[data-sync-input]').fill('A failed outgoing message');
+    await page.locator('[data-sync-send]').click();
+    await expect(page.locator('.sync-message[data-state="failed"]')).toHaveCount(1);
+    const failedRoom = page.locator(`[data-sync-space-id="${rooms[0]}"]`);
+    if (!await failedRoom.isVisible()) await page.locator('[data-sync-spaces-toggle]').click();
+    await expect(failedRoom.locator('[data-sync-space-unread]')).toHaveAttribute('data-state', 'red');
+    await page.locator(`[data-sync-space-id="${rooms[1]}"]`).click();
+    await expect(page.locator('[data-sync-space-title]')).toHaveText('空间 2');
+    chat.send(rooms[0], 2);
+    await expect(failedRoom.locator('[data-sync-space-unread]')).toHaveCount(1);
+    await expect(failedRoom.locator('[data-sync-space-unread]')).toHaveAttribute('data-state', 'red');
+    await expect(failedRoom).toHaveAttribute('title', '空间 1（消息发送失败）');
+    await chat.open();
+    await expect(page.locator('[data-sync-space-title]')).toHaveText('空间 2');
+    await expect(failedRoom.locator('[data-sync-space-unread]')).toHaveAttribute('data-state', 'red');
 });

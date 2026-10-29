@@ -71,6 +71,26 @@
     white-space: nowrap;
 }
 
+.sync-gomoku-player small {
+    grid-column: 1 / -1;
+    color: #444;
+}
+
+.sync-gomoku-summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.sync-gomoku-summary[hidden] { display: none; }
+.sync-gomoku-summary strong { white-space: normal; }
+.sync-gomoku-summary-score {
+    margin-left: 12px;
+    color: #183d36;
+    font-size: 20px;
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
 .sync-gomoku-stone {
     width: 12px;
     height: 12px;

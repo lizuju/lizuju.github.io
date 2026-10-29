@@ -8,6 +8,7 @@ const headers = {
 };
 const bounds = id => ({ generation: '1', oldestId: id ? 1 : null, latestId: id, continuationId: id, hasNewer: false });
 const confirmed = (body, id) => ({ id, deviceId, clientId: body.clientId, text: body.text, createdAt: Date.now() });
+const spaceDot = page => page.locator('[data-sync-space-id][aria-current="true"] [data-sync-space-unread]');
 const receipt = page => page.locator('.sync-message.is-own .sync-message-read');
 
 const openChat = async (page, handleRequest) => {
@@ -61,10 +62,13 @@ test('clears the composer immediately, keeps an identical new draft, and changes
         await expect(page.locator('.sync-message[data-state="sending"]')).toHaveCount(1);
         await expect(page.locator('.sync-message-text')).toHaveText('Identical text');
         await expect(receipt(page)).toBeHidden();
+        await expect(spaceDot(page)).toHaveAttribute('data-state', 'yellow');
+        await expect(page.locator('[data-sync-spaces-toggle]')).toHaveAttribute('data-state', 'yellow');
         await page.locator('[data-sync-input]').fill('Identical text');
         release();
         await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(1);
         await expect(receipt(page)).toHaveAttribute('data-state', 'sent');
+        await expect(spaceDot(page)).toBeHidden();
         await expect(receipt(page)).toHaveText('✓');
         const sentColor = await receipt(page).evaluate(element => getComputedStyle(element).color);
         await expect(page.locator('[data-sync-input]')).toHaveValue('Identical text');
@@ -158,6 +162,7 @@ test('restores a failed bubble after reload and retries its original client id w
     try {
         await chat.send('Original failed message');
         await expect(page.locator('.sync-message[data-state="failed"]')).toHaveCount(1);
+        await expect(spaceDot(page)).toHaveAttribute('data-state', 'red');
         await expect(page.locator('[data-sync-input]')).toHaveValue('');
         await expect(receipt(page)).toBeHidden();
         await page.locator('[data-sync-input]').fill('Do not replace this draft');
@@ -166,7 +171,9 @@ test('restores a failed bubble after reload and retries its original client id w
         await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
         await expect(page.locator('.sync-message[data-state="failed"]')).toHaveCount(1);
         await expect(page.locator('[data-sync-input]')).toHaveValue('Do not replace this draft');
+        await expect(spaceDot(page)).toHaveAttribute('data-state', 'red');
         await page.locator('[data-sync-retry-message]').click();
+        await expect(spaceDot(page)).toHaveAttribute('data-state', 'yellow');
         await expect(page.locator('.sync-message[data-state="sending"]')).toHaveCount(1);
         await expect.poll(() => submissions.length).toBe(2);
         expect(submissions[1].clientId).toBe(submissions[0].clientId);
@@ -175,6 +182,7 @@ test('restores a failed bubble after reload and retries its original client id w
         retryRelease();
         await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(1);
         await expect(page.locator('.sync-message-text')).toHaveText('Original failed message');
+        await expect(spaceDot(page)).toBeHidden();
         await expect(page.locator('[data-sync-input]')).toHaveValue('Do not replace this draft');
     } finally { retryRelease(); }
 });
@@ -322,6 +330,7 @@ test('sends and retries a quoted text independently while an attachment is still
         await page.locator('[data-sync-file-input]').setInputFiles({ name: 'parallel.txt', mimeType: 'text/plain', buffer: Buffer.from('Attachment in flight') });
         await chat.send('File caption');
         await expect.poll(() => completing).toBe(true);
+        await expect(spaceDot(page)).toHaveAttribute('data-state', 'yellow');
         await page.locator('[data-sync-reply-message]').first().click();
         await page.locator('[data-sync-input]').fill('Text during upload');
         await expect(page.locator('[data-sync-send]')).toBeEnabled();
@@ -330,6 +339,8 @@ test('sends and retries a quoted text independently while an attachment is still
         await expect(page.locator('[data-sync-reply]')).toBeHidden();
         const failed = page.locator('.sync-message[data-state="failed"]');
         await expect(failed.locator('.sync-message-text')).toHaveText('Text during upload');
+        await expect(spaceDot(page)).toHaveCount(1);
+        await expect(spaceDot(page)).toHaveAttribute('data-state', 'red');
         await expect(failed.locator('.sync-message-quote-text')).toHaveText('Reply source');
         await expect(failed.locator('.sync-attachment')).toHaveCount(0);
         await expect(page.locator('[data-sync-upload-status]')).toBeVisible();
@@ -337,6 +348,7 @@ test('sends and retries a quoted text independently while an attachment is still
         await failed.locator('[data-sync-retry-message]').click();
         const sentText = page.locator('.sync-message[data-state="sent"]').filter({ hasText: 'Text during upload' });
         await expect(sentText).toHaveCount(1);
+        await expect(spaceDot(page)).toHaveAttribute('data-state', 'yellow');
         await expect(sentText.locator('.sync-message-read')).toHaveAttribute('data-state', 'sent');
         expect(texts).toHaveLength(2);
         expect(texts[1]).toEqual(texts[0]);
@@ -349,6 +361,7 @@ test('sends and retries a quoted text independently while an attachment is still
         release();
         await expect(page.locator('.sync-message[data-state="sending"]')).toHaveCount(0);
         await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(3);
+        await expect(spaceDot(page)).toBeHidden();
         await expect(page.locator('[data-sync-upload-status]')).toBeHidden();
         await expect(page.locator('[data-sync-input]')).toHaveValue('Next draft');
     } finally { release(); }
@@ -451,4 +464,31 @@ test('ignores both in-flight responses after another tab removes the paired sess
         await expect(page.locator('.sync-message')).toHaveCount(0);
         await expect(page.locator('[data-sync-upload-status]')).toBeHidden();
     } finally { release(); }
+});
+
+
+test('Enter sends while Control, Command and Shift Enter insert newlines and preserve selected text edits', async ({ page }) => {
+    let requests = 0;
+    await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        requests++;
+        await route.fulfill({ headers, json: confirmed(route.request().postDataJSON(), requests) });
+        return true;
+    });
+    const input = page.locator('[data-sync-input]');
+    for (const modifier of ['Control', 'Meta', 'Shift']) {
+        await input.fill('firstsecond');
+        await input.evaluate(element => element.setSelectionRange(5, 5));
+        await input.press(`${modifier}+Enter`);
+        await expect(input).toHaveValue('first\nsecond');
+        expect(requests).toBe(0);
+    }
+    await input.fill('before SELECT after');
+    await input.evaluate(element => element.setSelectionRange(7, 13));
+    await input.press('Control+Enter');
+    await expect(input).toHaveValue('before \n after');
+    await input.press('Enter');
+    await expect(input).toHaveValue('');
+    await expect(page.locator('.sync-message[data-state="sent"] .sync-message-text')).toHaveText('before \n after');
+    expect(requests).toBe(1);
 });

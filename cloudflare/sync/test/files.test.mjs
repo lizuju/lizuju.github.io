@@ -126,6 +126,14 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                       const cursor = target.exec(...args); this.readCursors.push(cursor); return cursor;
                     } : Reflect.get(target, key, target) });
                   }
+                  testFileLookups(messageId) {
+                    const queries = [
+                      this.sql.exec("SELECT * FROM files WHERE message_id = ? AND status = 'complete'", messageId),
+                      this.sql.exec("SELECT min(updated_at) AS updated_at FROM files WHERE status = 'uploading'"),
+                      this.sql.exec("SELECT 1 FROM files WHERE status = 'deleting' LIMIT 1")
+                    ];
+                    return queries.map(cursor => ({ rows: cursor.toArray(), reads: cursor.rowsRead }));
+                  }
                   testReadCount() { return this.readCursors.reduce((sum, cursor) => sum + cursor.rowsRead, 0); }
                   testArmUploadAuthorization() { this.uploadAuthorizationArmed = true; this.uploadAuthorized = false; }
                   testUploadAuthorized() { return !!this.uploadAuthorized; }
@@ -1469,4 +1477,20 @@ test('upload chunks bypass the global registry while retaining device authentica
   }
   assert.equal(await registry.testRoomLookups(), before);
   assert.equal((await complete(request, space, started.body.uploadId)).status, 201);
+});
+
+
+test('file lookup and upload cleanup stay bounded with 500 retained attachments', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const storage = await roomStorage(space);
+  await storage.exec(`WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 500)
+    INSERT INTO files (file_id, device_id, client_id, name, type, size, text, status, created_at, updated_at, message_id, reserved_bytes)
+    SELECT 'index-' || n, ?, 'index-' || n, 'encrypted', 'application/octet-stream', 0, '',
+      CASE WHEN n = 500 THEN 'uploading' ELSE 'complete' END, ?, ?, n, 0 FROM numbers`, space.deviceId, Date.now(), Date.now());
+  const results = await (await roomObject(space)).testFileLookups(250);
+  assert.equal(results[0].rows[0].message_id, 250);
+  assert.ok(results[1].rows[0].updated_at > 0);
+  assert.deepEqual(results[2].rows, []);
+  for (const { reads } of results) assert.ok(reads <= 3, `expected indexed lookup, read ${reads} rows`);
 });

@@ -57,6 +57,13 @@ const choose = async page => {
 test('selects a member with the keyboard before Enter sends and encrypts the identity with the message', async ({ page }) => {
     const chat = await openChat(page);
     const input = page.locator('[data-sync-input]');
+    for (const modifier of ['Control', 'Meta']) {
+        await input.fill('@设');
+        await expect(page.locator('[data-sync-mention-menu]')).toBeVisible();
+        await input.press(`${modifier}+Enter`);
+        await expect(input).toHaveValue('@设\n');
+        expect(chat.sent).toHaveLength(0);
+    }
     await input.fill('@设');
     await expect(page.locator('[data-sync-mention-device]')).toHaveCount(1);
     await input.press('ArrowDown');

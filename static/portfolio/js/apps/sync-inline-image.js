@@ -8,7 +8,7 @@ const pump = () => {
     }
 };
 
-export function createInlineImage({ name, resource, onPreview, onLoad, onError, viewport, retryLabel, previewLabel }) {
+export function createInlineImage({ name, resource, thumbnail, onPreview, onLoad, onError, viewport, retryLabel, previewLabel }) {
     const element = document.createElement('button');
     element.type = 'button';
     element.className = 'sync-message-image';
@@ -23,8 +23,8 @@ export function createInlineImage({ name, resource, onPreview, onLoad, onError, 
     element.append(image, retry);
     let lease;
     let controller;
-    let poster;
-    let animated;
+    let poster = thumbnail?.data;
+    let animated = thumbnail?.animated;
     let enabled = false;
     let visible = false;
     let running = false;
@@ -149,8 +149,8 @@ export function createInlineImage({ name, resource, onPreview, onLoad, onError, 
         image.hidden = true;
         image.removeAttribute('src');
         if (!failed && !deferred) element.dataset.state = 'loading';
-        if (poster) URL.revokeObjectURL(poster);
-        poster = null;
+        if (poster && poster !== thumbnail?.data) URL.revokeObjectURL(poster);
+        poster = thumbnail?.data;
     };
 
     return {
@@ -160,6 +160,12 @@ export function createInlineImage({ name, resource, onPreview, onLoad, onError, 
             updateRetry();
             if (enabled) return;
             enabled = true;
+            if (poster) {
+                image.src = poster;
+                image.hidden = false;
+                element.style.aspectRatio = `${thumbnail?.width || image.naturalWidth} / ${thumbnail?.height || image.naturalHeight}`;
+                element.dataset.state = 'loaded';
+            }
             observer = new IntersectionObserver(entries => {
                 for (const entry of entries) {
                     visible = entry.isIntersecting;
