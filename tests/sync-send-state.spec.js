@@ -1,4 +1,4 @@
-const { test, expect, deviceId, otherId, keyId, authorize, message } = require('./fixtures/sync-e2ee.cjs');
+const { test, expect, roomId, deviceId, otherId, keyId, authorize, message } = require('./fixtures/sync-e2ee.cjs');
 
 test.use({ serviceWorkers: 'block' });
 
@@ -20,11 +20,12 @@ const openChat = async (page, handleRequest) => {
         return route.fulfill({ headers, json: { deviceId, devices: [], grants: [], hasMore: false, keyId } });
     });
     let connection;
+    let holdReady = false;
     await page.routeWebSocket('wss://sync.test/**', socket => {
         connection = socket;
         socket.onMessage(raw => {
             if (raw === 'ping') return socket.send('pong');
-            if (JSON.parse(raw).type === 'auth') socket.send(JSON.stringify({
+            if (JSON.parse(raw).type === 'auth' && !holdReady) socket.send(JSON.stringify({
                 type: 'ready', deviceId, messages: [], historyMode: 'replace', history: bounds(null), readReceipts: [], pairing: null
             }));
         });
@@ -35,6 +36,8 @@ const openChat = async (page, handleRequest) => {
     await page.locator('.desktop-shortcut[data-open-sync-space]').click();
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
     return {
+        disconnect: () => { holdReady = true; connection.close({ code: 1001 }); },
+        reconnect: () => { holdReady = false; connection.send(JSON.stringify({ type: 'ready', deviceId, messages: [], historyMode: 'replace', history: bounds(null), readReceipts: [], pairing: null })); },
         send: async text => {
             await page.locator('[data-sync-input]').fill(text);
             await page.locator('[data-sync-send]').click();
@@ -491,4 +494,54 @@ test('Enter sends while Control, Command and Shift Enter insert newlines and pre
     await expect(input).toHaveValue('');
     await expect(page.locator('.sync-message[data-state="sent"] .sync-message-text')).toHaveText('before \n after');
     expect(requests).toBe(1);
+});
+
+test('encrypts offline text, restores it on reload and sends each queued message once in order after reconnecting', async ({ page }) => {
+    const submissions = [];
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        const body = route.request().postDataJSON();
+        submissions.push(body);
+        await route.fulfill({ headers, json: confirmed(body, submissions.length) });
+        return true;
+    });
+    chat.disconnect();
+    await expect(page.locator('[data-sync-status]')).not.toHaveAttribute('data-state', 'online');
+    await chat.send('Private offline first');
+    await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(1);
+    await chat.send('Private offline second');
+    await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(2);
+    await expect(page.locator('[data-sync-input]')).toHaveValue('');
+    expect(submissions).toHaveLength(0);
+    await expect.poll(() => page.evaluate(key => sessionStorage.getItem(key), `portfolio-sync-draft:${roomId}`)).toMatch(/^e2ee1\./);
+    expect(await page.evaluate(() => JSON.stringify(sessionStorage))).not.toContain('Private offline');
+    await page.reload();
+    if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+    await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(2);
+    await page.locator('[data-sync-input]').fill('Unsent new draft');
+    chat.reconnect();
+    await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(2);
+    await expect(page.locator('.sync-message-text')).toHaveText(['Private offline first', 'Private offline second']);
+    expect(submissions).toHaveLength(2);
+    expect(new Set(submissions.map(item => item.clientId)).size).toBe(2);
+    expect(JSON.stringify(submissions)).not.toContain('Private offline');
+    await expect(page.locator('[data-sync-input]')).toHaveValue('Unsent new draft');
+    await expect(spaceDot(page)).toBeHidden();
+});
+
+test('reuses the same client id when a lost response moves an online text into the automatic queue', async ({ page }) => {
+    const submissions = [];
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        const body = route.request().postDataJSON();
+        submissions.push(body);
+        if (submissions.length === 1) await route.abort('failed');
+        else await route.fulfill({ headers, json: confirmed(body, 1) });
+        return true;
+    });
+    await chat.send('Retried automatically');
+    await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(1);
+    expect(submissions).toHaveLength(2);
+    expect(submissions[1].clientId).toBe(submissions[0].clientId);
+    await expect(page.locator('[data-sync-input]')).toHaveValue('');
 });

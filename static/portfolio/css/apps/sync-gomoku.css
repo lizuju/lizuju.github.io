@@ -81,6 +81,8 @@
 }
 
 .sync-gomoku-summary[hidden] { display: none; }
+.sync-gomoku-rematch { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.sync-gomoku-rematch[hidden] { display: none; }
 .sync-gomoku-summary strong { white-space: normal; }
 .sync-gomoku-summary-score {
     margin-left: 12px;

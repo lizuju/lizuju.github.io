@@ -191,3 +191,72 @@ test('keeps a failed-send red dot above unread green after switching spaces and 
     await expect(page.locator('[data-sync-space-title]')).toHaveText('空间 2');
     await expect(failedRoom.locator('[data-sync-space-unread]')).toHaveAttribute('data-state', 'red');
 });
+
+test('flushes encrypted offline text after switching to another saved space', async ({ page }) => {
+    const chat = await openChat(page);
+    const sent = [];
+    await page.route('https://sync.test/**/messages', async route => {
+        if (route.request().method() !== 'POST') return route.fulfill({ status: 204, headers });
+        const body = route.request().postDataJSON();
+        sent.push(body);
+        await route.fulfill({ headers, json: { id: 2, clientId: body.clientId, deviceId, text: body.text, createdAt: Date.now() } });
+    });
+    chat.holdReady(true);
+    chat.sockets.get(rooms[0]).close({ code: 1001 });
+    await expect(page.locator('[data-sync-status]')).not.toHaveAttribute('data-state', 'online');
+    await page.locator('[data-sync-input]').fill('Background queued text');
+    await page.locator('[data-sync-send]').click();
+    await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(1);
+    await page.locator('[data-sync-spaces-toggle]').click();
+    await page.locator(`[data-sync-space-id="${rooms[1]}"]`).click();
+    await expect(page.locator('[data-sync-space-title]')).toHaveText('空间 2');
+    await page.clock.runFor(2000);
+    chat.frame(rooms[0], { type: 'ready', deviceId, messages: [message(rooms[0], 1)], historyMode: 'replace', history: bounds(1) });
+    await expect.poll(() => sent.length).toBe(1);
+    if (!await page.locator(`[data-sync-space-id="${rooms[0]}"]`).isVisible()) await page.locator('[data-sync-spaces-toggle]').click();
+    await page.locator(`[data-sync-space-id="${rooms[0]}"]`).click();
+    await expect(page.locator('.sync-message-text').last()).toHaveText('Background queued text');
+    await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(0);
+    expect(JSON.stringify(sent)).not.toContain('Background queued text');
+});
+
+test('keeps the send lock and newer draft when returning to a space with an in-flight queued message', async ({ page }) => {
+    const chat = await openChat(page);
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    let submitted;
+    await page.route('https://sync.test/**/messages', async route => {
+        if (route.request().method() !== 'POST') return route.fulfill({ status: 204, headers });
+        submitted = route.request().postDataJSON();
+        await pending;
+        await route.fulfill({ headers, json: { id: 2, clientId: submitted.clientId, deviceId, text: submitted.text, createdAt: Date.now() } });
+    });
+    try {
+        chat.holdReady(true);
+        chat.sockets.get(rooms[0]).close({ code: 1001 });
+        await expect(page.locator('[data-sync-status]')).not.toHaveAttribute('data-state', 'online');
+        await page.locator('[data-sync-input]').fill('Waiting background message');
+        await page.locator('[data-sync-send]').click();
+        await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(1);
+        await page.locator('[data-sync-spaces-toggle]').click();
+        await page.locator(`[data-sync-space-id="${rooms[1]}"]`).click();
+        await expect(page.locator('[data-sync-space-title]')).toHaveText('空间 2');
+        await page.clock.runFor(2000);
+        chat.frame(rooms[0], { type: 'ready', deviceId, messages: [message(rooms[0], 1)], historyMode: 'replace', history: bounds(1) });
+        await expect.poll(() => submitted).toBeTruthy();
+        if (!await page.locator(`[data-sync-space-id="${rooms[0]}"]`).isVisible()) await page.locator('[data-sync-spaces-toggle]').click();
+        await page.locator(`[data-sync-space-id="${rooms[0]}"]`).click();
+        await expect(page.locator('.sync-message[data-state="sending"]')).toHaveCount(1);
+        await page.locator('[data-sync-input]').fill('Newer unsent draft');
+        await expect(page.locator('[data-sync-send]')).toBeDisabled();
+        release();
+        await expect(page.locator('.sync-message-text').last()).toHaveText('Waiting background message');
+        await expect(page.locator('.sync-message[data-state="sending"]')).toHaveCount(0);
+        await expect(page.locator('[data-sync-send]')).toBeEnabled();
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Newer unsent draft');
+        chat.holdReady(false);
+        await chat.open();
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Newer unsent draft');
+        await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(0);
+    } finally { release(); }
+});

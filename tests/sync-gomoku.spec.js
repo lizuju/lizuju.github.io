@@ -400,3 +400,43 @@ test('keeps an encrypted invitation and one opponent through concurrent joins, r
         await Promise.all(contexts.map(context => context.close()));
     }
 });
+
+test('offers a rematch in settlement, waits for the opponent and swaps colors without losing the previous result', async ({ browser, isMobile }, testInfo) => {
+    test.setTimeout(60000);
+    const { contexts, pages, sessions, pageErrors } = await pairDevices(browser, isMobile);
+    const [owner, guest] = pages;
+    try {
+        await owner.locator('[data-sync-game-share]').click();
+        await expect(owner.locator('[data-sync-game-card]')).toHaveCount(1);
+        const id = await owner.locator('[data-sync-game-card]').getAttribute('data-sync-game-card');
+        await guest.locator('[data-sync-game-join]').click();
+        await expect(owner.locator('[data-sync-gomoku-role]')).toHaveText('你执黑棋');
+        await expect(guest.locator('[data-sync-gomoku-role]')).toHaveText('你执白棋');
+        await guest.locator('[data-sync-gomoku-action="close"]').click();
+        await guest.locator('[data-sync-gomoku-leave]').click();
+        for (const page of [owner, guest]) await expect(page.locator('[data-sync-gomoku-result]')).toBeVisible();
+        await owner.locator('[data-sync-gomoku-rematch]').click();
+        await expect(owner.locator('[data-sync-gomoku-rematch]')).toHaveText('等待对方同意');
+        await expect(owner.locator('[data-sync-gomoku-rematch]')).toBeDisabled();
+        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText('接受再来一局');
+        await guest.reload();
+        await awaitOnline(guest);
+        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText('接受再来一局');
+        await expect(guest.locator('[data-sync-gomoku-result]')).toBeVisible();
+        await guest.screenshot({ path: testInfo.outputPath('rematch-offer.png') });
+        await guest.locator('[data-sync-gomoku-rematch]').click();
+        await expect(owner.locator('[data-sync-gomoku-role]')).toHaveText('你执白棋');
+        await expect(guest.locator('[data-sync-gomoku-role]')).toHaveText('你执黑棋');
+        for (const page of [owner, guest]) {
+            await expect(page.locator('[data-sync-gomoku-result]')).toBeHidden();
+            await expect(page.locator('[data-sync-gomoku-move-count]')).toHaveText('0');
+        }
+        const previous = await readGame(sessions[0], id);
+        expect(previous.result).toMatchObject({ hostScore: 1, guestScore: 0 });
+        expect(previous.status).toBe('finished');
+        await expect(guest.locator('[data-sync-gomoku-board]')).toHaveAttribute('aria-disabled', 'false');
+        await guest.locator('[data-sync-gomoku-board]').press('Enter');
+        await expect(owner.locator('[data-sync-gomoku-move-count]')).toHaveText('1');
+        expect(pageErrors).toEqual([]);
+    } finally { await Promise.all(contexts.map(context => context.close())); }
+});
