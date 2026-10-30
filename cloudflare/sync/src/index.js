@@ -270,11 +270,12 @@ export default {
       if (!token) return json({ error: 'unauthorized' }, 401);
       const body = await readJson(request, 73728);
       if (body.error) return resultResponse(body);
-      const { clientId, text, game } = body.value;
+      const { clientId, text, game, previousGameId } = body.value;
       if (typeof clientId !== 'string' || !ROOM_ID.test(clientId)) return json({ error: 'invalid_client_id' }, 400);
       if (!encrypted(text)) return json({ error: 'invalid_text' }, 400);
       if (game !== undefined && game !== 'gomoku') return json({ error: 'game_invalid_move' }, 400);
-      const result = await registry.storeMessage(roomId, token, clientId, text, request.headers.get('X-Sync-Key-Id'), game);
+      if (previousGameId !== undefined && (game !== 'gomoku' || typeof previousGameId !== 'string' || !ROOM_ID.test(previousGameId))) return json({ error: 'game_invalid_move' }, 400);
+      const result = await registry.storeMessage(roomId, token, clientId, text, request.headers.get('X-Sync-Key-Id'), game, previousGameId);
       if (result.error) return resultResponse(result);
       return json(result.message, result.created ? 201 : 200);
     }
@@ -605,7 +606,7 @@ export class E2eePairingRegistry extends DurableObject {
     });
   }
 
-  async storeMessage(roomId, token, clientId, text, keyId, game) {
+  async storeMessage(roomId, token, clientId, text, keyId, game, previousGameId) {
     return this.withRoom(roomId, async () => {
       if (!this.hasRoom(roomId)) return { error: 'not_found', status: 404 };
       const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
@@ -620,7 +621,7 @@ export class E2eePairingRegistry extends DurableObject {
       if (denied) { await this.resumeCleanup(); return denied; }
       let committed = false;
       try {
-        const { usage, ...result } = await room.addMessage(prepared.deviceId, clientId, text, keyId, game);
+        const { usage, ...result } = await room.addMessage(prepared.deviceId, clientId, text, keyId, game, previousGameId);
         if (usage) {
           this.ctx.storage.transactionSync(() => {
             this.rememberUsage(roomId, usage);
@@ -1136,6 +1137,10 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.sql.exec('PRAGMA table_info(messages)').toArray().some(column => column.name === 'attachment')) this.sql.exec('ALTER TABLE messages ADD COLUMN attachment TEXT');
     this.sql.exec('CREATE INDEX IF NOT EXISTS messages_expiry ON messages(created_at)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS gomoku_games (game_id TEXT PRIMARY KEY, message_id INTEGER NOT NULL UNIQUE, host_device_id TEXT NOT NULL, guest_device_id TEXT, status TEXT NOT NULL, revision INTEGER NOT NULL, move_count INTEGER NOT NULL DEFAULT 0, board TEXT, last_move TEXT, last_command_id TEXT, last_command_device_id TEXT, result TEXT, updated_at INTEGER NOT NULL)');
+    const gameColumns = this.sql.exec('PRAGMA table_info(gomoku_games)').toArray();
+    for (const column of ['previous_game_id', 'next_game_id', 'rematch_requested_by', 'base_score']) {
+      if (!gameColumns.some(value => value.name === column)) this.sql.exec(`ALTER TABLE gomoku_games ADD COLUMN ${column} TEXT`);
+    }
     this.sql.exec("CREATE TRIGGER IF NOT EXISTS delete_message_games AFTER DELETE ON messages BEGIN DELETE FROM gomoku_games WHERE message_id = OLD.id; END");
     this.sql.exec('CREATE TABLE IF NOT EXISTS files (file_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, client_id TEXT NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, message_id INTEGER, reserved_bytes INTEGER NOT NULL, UNIQUE(device_id, client_id))');
     const fileColumns = this.sql.exec('PRAGMA table_info(files)').toArray();
@@ -1405,6 +1410,7 @@ export class E2eeSyncRoom extends DurableObject {
     return {
       id: game.game_id, messageId: game.message_id, hostDeviceId: game.host_device_id,
       guestDeviceId: game.guest_device_id, status: game.status, revision: game.revision,
+      previousGameId: game.previous_game_id, nextGameId: game.next_game_id, requestedBy: game.rematch_requested_by,
       turnDeviceId: game.status === 'playing' ? (game.move_count % 2 ? game.guest_device_id : game.host_device_id) : null,
       canViewBoard: game.status === 'finished' && !!game.board,
       ...(includeBoard && game.board ? { board: JSON.parse(game.board) } : {}),
@@ -1433,10 +1439,11 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   finishGame(game, winnerDeviceId, reason) {
+    const score = game.base_score ? JSON.parse(game.base_score) : { host: 0, guest: 0 };
     const result = game.status === 'waiting' ? null : {
       winnerDeviceId, reason, hostMoves: Math.ceil(game.move_count / 2), guestMoves: Math.floor(game.move_count / 2),
-      hostScore: reason === 'draw' || winnerDeviceId === game.host_device_id ? 1 : 0,
-      guestScore: reason === 'draw' || winnerDeviceId === game.guest_device_id ? 1 : 0
+      hostScore: score.host + (reason === 'draw' || winnerDeviceId === game.host_device_id ? 1 : 0),
+      guestScore: score.guest + (reason === 'draw' || winnerDeviceId === game.guest_device_id ? 1 : 0)
     };
     game.status = game.status === 'waiting' ? 'cancelled' : 'finished';
     game.revision++;
@@ -1474,6 +1481,13 @@ export class E2eeSyncRoom extends DurableObject {
       const reject = (error, status = 409) => ({ error, status, game: this.gameSnapshot(game) });
       if (action === 'join') {
         if (Object.keys(value).length) return reject('game_invalid_move', 400);
+        if (game.previous_game_id) {
+          if (![game.host_device_id, game.guest_device_id].includes(deviceId)) return reject('game_not_player', 403);
+          if (game.status !== 'waiting' || game.rematch_requested_by === deviceId) return { game: this.gameSnapshot(game) };
+          this.sql.exec("UPDATE gomoku_games SET status = 'playing', revision = revision + 1, updated_at = ? WHERE game_id = ?", Date.now(), gameId);
+          changed = true;
+          return { game: this.gameSnapshot(this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', gameId).one()) };
+        }
         if (game.host_device_id === deviceId || game.guest_device_id === deviceId || game.status !== 'waiting') return { game: this.gameSnapshot(game) };
         if (this.sql.exec("SELECT 1 FROM gomoku_games WHERE status IN ('waiting', 'playing') AND (host_device_id = ? OR guest_device_id = ?)", deviceId, deviceId).toArray().length) return reject('game_busy');
         this.sql.exec("UPDATE gomoku_games SET guest_device_id = ?, status = 'playing', revision = revision + 1, updated_at = ? WHERE game_id = ? AND status = 'waiting' AND guest_device_id IS NULL", deviceId, Date.now(), gameId);
@@ -1865,7 +1879,7 @@ export class E2eeSyncRoom extends DurableObject {
     return { deviceId, existing: this.findMessage(deviceId, clientId), usage };
   }
 
-  async addMessage(deviceId, clientId, text, keyId, gameType) {
+  async addMessage(deviceId, clientId, text, keyId, gameType, previousGameId) {
     if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
     const denied = this.checkWrite(keyId, text);
     if (denied.error) return denied;
@@ -1873,7 +1887,21 @@ export class E2eeSyncRoom extends DurableObject {
     if (existing) return existing;
     let pruned = false;
     const saved = this.ctx.storage.transactionSync(() => {
+      let previous;
       if (gameType) {
+        if (previousGameId) {
+          previous = this.sql.exec('SELECT g.*, m.created_at FROM gomoku_games g JOIN messages m ON m.id = g.message_id WHERE g.game_id = ?', previousGameId).toArray()[0];
+          if (!previous || previous.created_at + MESSAGE_LIFETIME <= Date.now()) return { error: 'game_not_found', status: 404 };
+          if (previous.status !== 'finished') return { error: 'game_conflict', status: 409 };
+          if (![previous.host_device_id, previous.guest_device_id].includes(deviceId)) return { error: 'game_not_player', status: 403 };
+          if (this.sql.exec('SELECT 1 FROM devices WHERE device_id IN (?, ?)', previous.host_device_id, previous.guest_device_id).toArray().length !== 2) return { error: 'game_not_found', status: 404 };
+          if (previous.next_game_id) {
+            const next = this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', previous.next_game_id).toArray()[0];
+            if (next && next.status !== 'cancelled') return { error: 'game_conflict', status: 409, game: this.gameSnapshot(previous) };
+          }
+          const opponent = previous.host_device_id === deviceId ? previous.guest_device_id : previous.host_device_id;
+          if (this.sql.exec("SELECT 1 FROM gomoku_games WHERE status IN ('waiting', 'playing') AND (host_device_id = ? OR guest_device_id = ?)", opponent, opponent).toArray().length) return { error: 'game_busy', status: 409 };
+        }
         const busy = this.sql.exec("SELECT * FROM gomoku_games WHERE status IN ('waiting', 'playing') AND (host_device_id = ? OR guest_device_id = ?)", deviceId, deviceId).toArray()[0];
         if (busy) return { error: 'game_busy', status: 409, game: this.gameSnapshot(busy) };
         if (this.sql.exec('SELECT 1 FROM gomoku_games WHERE game_id = ?', clientId).toArray().length) return { error: 'game_conflict', status: 409 };
@@ -1882,7 +1910,14 @@ export class E2eeSyncRoom extends DurableObject {
         'INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?) RETURNING id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt',
         clientId, deviceId, text, Date.now()
       ).one();
-      if (gameType) this.sql.exec("INSERT INTO gomoku_games (game_id, message_id, host_device_id, status, revision, board, updated_at) VALUES (?, ?, ?, 'waiting', 1, ?, ?)", clientId, created.id, deviceId, JSON.stringify(Array(225).fill(0)), created.createdAt);
+      if (gameType) {
+        const score = previous && JSON.parse(previous.result);
+        this.sql.exec("INSERT INTO gomoku_games (game_id, message_id, host_device_id, guest_device_id, status, revision, board, updated_at, previous_game_id, rematch_requested_by, base_score) VALUES (?, ?, ?, ?, 'waiting', 1, ?, ?, ?, ?, ?)",
+          clientId, created.id, previous ? previous.guest_device_id : deviceId, previous ? previous.host_device_id : null,
+          JSON.stringify(Array(225).fill(0)), created.createdAt, previousGameId || null, previous ? deviceId : null,
+          score ? JSON.stringify({ host: score.guestScore, guest: score.hostScore }) : null);
+        if (previous) this.sql.exec('UPDATE gomoku_games SET next_game_id = ?, revision = revision + 1 WHERE game_id = ?', clientId, previousGameId);
+      }
       pruned = this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500) RETURNING id').toArray().length > 0;
       if (pruned) this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
       return { message: this.decorateMessages([created])[0] };
@@ -1892,6 +1927,10 @@ export class E2eeSyncRoom extends DurableObject {
     if (pruned) this.downloadRevision++;
     this.broadcast({ type: 'message', message, history: this.historySnapshot(), ...(pruned ? { activeGames: this.activeGames() } : {}) });
     if (gameType) this.broadcast({ type: 'gomoku', game: this.gameSnapshot(this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', clientId).one()) });
+    if (previousGameId) {
+      const previous = this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', previousGameId).toArray()[0];
+      if (previous) this.broadcast({ type: 'gomoku', game: this.gameSnapshot(previous) });
+    }
     await this.scheduleAlarm();
     return { message, created: true, usage: this.storageUsage() };
   }

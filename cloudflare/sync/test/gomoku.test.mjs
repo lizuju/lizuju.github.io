@@ -363,3 +363,52 @@ test('clearing, seven-day expiry, capacity pruning and the 500-message cap delet
     connected.socket.close();
   }
 });
+
+test('rematches require both original players, swap colors, preserve the old board and accumulate scores', async () => {
+  const { host, guest, spectator, game, storage, path } = await playing();
+  const finished = (await act(guest, game.id, 'leave')).body.game;
+  const create = device => request(`${path}/messages`, device, { method: 'POST', json: {
+    clientId: randomUUID(), text: cipher(device.keyId), game: 'gomoku', previousGameId: game.id
+  } });
+  for (const previousGameId of [[game.id], null, 'invalid']) {
+    const rejected = await request(`${path}/messages`, host, { method: 'POST', json: {
+      clientId: randomUUID(), text: cipher(host.keyId), game: 'gomoku', previousGameId
+    } });
+    assert.equal(rejected.status, 400);
+  }
+  assert.equal((await create(spectator)).status, 403);
+  const attempts = await Promise.all([create(host), create(guest)]);
+  assert.deepEqual(attempts.map(value => value.status).sort(), [201, 409]);
+  const next = attempts.find(value => value.status === 201).body.game;
+  assert.equal(next.hostDeviceId, guest.deviceId);
+  assert.equal(next.guestDeviceId, host.deviceId);
+  assert.equal(next.status, 'waiting');
+  assert.equal((await act(spectator, next.id, 'join')).status, 403);
+  const requester = next.requestedBy === host.deviceId ? host : guest;
+  const opponent = requester === host ? guest : host;
+  assert.equal((await act(requester, next.id, 'join')).body.game.status, 'waiting');
+  const accepted = (await act(opponent, next.id, 'join')).body.game;
+  assert.equal(accepted.status, 'playing');
+  assert.equal(accepted.turnDeviceId, guest.deviceId);
+  assert.equal(accepted.board.filter(Boolean).length, 0);
+  const old = (await read(host, game.id)).body.game;
+  assert.deepEqual(old.result, finished.result);
+  assert.equal(old.nextGameId, next.id);
+  assert.equal(old.board.length, 225);
+  const ended = (await act(host, next.id, 'leave')).body.game;
+  assert.equal(ended.result.hostScore, 1);
+  assert.equal(ended.result.guestScore, 1);
+  assert.equal((await storage.exec('SELECT count(*) AS count FROM gomoku_games'))[0].count, 2);
+});
+
+test('either rematch player can cancel and request again without overwriting a finished game', async () => {
+  const { host, guest, game, path } = await playing();
+  await act(guest, game.id, 'leave');
+  const create = () => request(`${path}/messages`, host, { method: 'POST', json: {
+    clientId: randomUUID(), text: cipher(host.keyId), game: 'gomoku', previousGameId: game.id
+  } });
+  const next = (await create()).body.game;
+  assert.equal((await act(guest, next.id, 'leave')).body.game.status, 'cancelled');
+  assert.equal((await create()).status, 201);
+  assert.equal((await read(host, game.id)).body.game.status, 'finished');
+});

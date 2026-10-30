@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { after, afterEach, before, test } from 'node:test';
 import { Miniflare } from 'miniflare';
+import { API_VERSION } from '../src/api-version.js';
 import { encryptedClient, cryptoClient } from './e2ee-client.mjs';
 
 const origin = 'https://lizuju.github.io';
@@ -327,7 +328,7 @@ async function authenticateSocket(space, instance = runtime) {
 test('health identifies the sync service and exposes release metadata instead of only reporting reachability', async () => {
   const health = await client()('/health');
   assert.equal(health.status, 200);
-  assert.deepEqual(health.body, { ok: true, service: 'portfolio-sync', apiVersion: 1, encryptionVersion: 1, revision: null, sourceFingerprint: null, versionId: null });
+  assert.deepEqual(health.body, { ok: true, service: 'portfolio-sync', apiVersion: API_VERSION, encryptionVersion: 1, revision: null, sourceFingerprint: null, versionId: null });
   assert.equal(health.headers.get('Cache-Control'), 'no-store');
 });
 
