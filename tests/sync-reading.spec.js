@@ -196,7 +196,9 @@ test('floats unread navigation without moving the feed or reading position when 
 });
 
 test('cancels pending read confirmation while an ancestor is inert and requires the full dwell again', async ({ page }) => {
-    const chat = await openChat(page, []);
+    await page.clock.install({ time: new Date('2026-10-30T00:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-10-30T00:00:01Z'));
+    const chat = await openChat(page, [], [], false, true);
     await chat.incoming(1);
     await page.mouse.move(2, 2);
     await page.clock.runFor(300);

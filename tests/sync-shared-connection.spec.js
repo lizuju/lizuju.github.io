@@ -10,7 +10,7 @@ test('reflects a closing owner socket before its asynchronous close event', asyn
         return route.fulfill({ contentType: filename ? 'text/javascript' : 'text/html', body: filename
             ? await readFile(path.join(__dirname, '../static/portfolio/js/apps', filename)) : '<!doctype html>' });
     });
-    await page.routeWebSocket('ws://127.0.0.1:3090/__socket__/closing', socket => {
+    await page.routeWebSocket(/\/__socket__\/closing$/, socket => {
         socket.onMessage(raw => {
             if (JSON.parse(raw).type === 'auth') socket.send(JSON.stringify({ type: 'ready' }));
         });
@@ -46,7 +46,7 @@ test('shares ordered frames and reads, isolates rooms, reconnects and transfers 
     const sockets = [];
     const reads = [];
     let number = 0;
-    await context.routeWebSocket('ws://127.0.0.1:3090/__socket__/**', socket => {
+    await context.routeWebSocket(/\/__socket__\//, socket => {
         const entry = { socket, room: new URL(socket.url()).pathname.split('/').at(-1), number: ++number };
         sockets.push(entry);
         socket.onMessage(raw => {
@@ -250,7 +250,7 @@ test('device retry survives unrelated pairing frames and stops when the connecti
             : { contentType: 'text/html', body: '<!doctype html><title>Device retry</title>' });
     });
     let socket;
-    await context.routeWebSocket('ws://127.0.0.1:3090/__retry-socket__', value => {
+    await context.routeWebSocket(/\/__retry-socket__$/, value => {
         socket = value;
         socket.onMessage(raw => {
             if (raw === 'ping') return socket.send('pong');
