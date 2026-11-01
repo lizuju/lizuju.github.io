@@ -50,6 +50,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                 export default { fetch(request, env) { return worker.fetch(request, observe(env)); } };
                 export { E2eeFileShard as FileShard } from './index.js';
                 export class PairingRegistry extends ProductionRegistry {
+                  testRestartCapacity() { this.accountedBytes = null; }
                   constructor(ctx, env) {
                     const legacy = ${JSON.stringify(legacyUsage)};
                     if (legacy && !ctx.storage.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'room_usage'").toArray().length) {
@@ -192,7 +193,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                   }
                   testFailMaintenance(value) { this.failMaintenance = value; this.maintenanceCalls = 0; }
                   testMaintenanceCalls() { return this.maintenanceCalls || 0; }
-                  async maintain(roomId) {
+                  async maintain(roomId, cleanFiles) {
                     this.maintenanceCalls = (this.maintenanceCalls || 0) + 1;
                     if (this.failMaintenance) throw new Error('test_maintenance_failed');
                     if (this.maintenanceRelease) {
@@ -200,7 +201,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                       await this.maintenanceRelease;
                       this.maintenanceRelease = null;
                     }
-                    return super.maintain(roomId);
+                    return super.maintain(roomId, cleanFiles);
                   }
                   testRunAlarm() { return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
@@ -1997,6 +1998,7 @@ test('stale high usage is refreshed before background cleanup can delete current
   }
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   await registryStorage.exec('UPDATE room_usage SET bytes = ? WHERE room_id = ?', 4_800_000_000, spaces[0].roomId);
+  await (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry').testRestartCapacity();
   const blocked = await request(`/v1/spaces/${spaces[1].roomId}/messages`, {
     method: 'POST', token: spaces[1].token, json: { clientId: randomUUID(), text: 'retry after refresh' }
   });
@@ -2050,6 +2052,7 @@ test('concurrent space creation admits only one room when storage has headroom f
   const availableBefore = 4_800_000_000 - 200_000;
   const total = await registry.storageBytes();
   await registryStorage.exec('UPDATE room_usage SET bytes = bytes + ? WHERE room_id = ?', availableBefore - total, existing.roomId);
+  await (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry').testRestartCapacity();
   assert.equal(await registry.storageBytes(), availableBefore);
 
   const results = await Promise.all([client(instance), client(instance)].map(request => request('/v1/spaces', { method: 'POST' })));
@@ -2080,6 +2083,7 @@ test('space creation under storage pressure starts cleanup without allocating an
   assert.equal(sent.status, 201);
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   await registryStorage.exec('UPDATE room_usage SET bytes = ? WHERE room_id = ?', 4_800_000_000, space.roomId);
+  await (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry').testRestartCapacity();
   const blocked = await client(instance)('/v1/spaces', { method: 'POST' });
   assert.equal(blocked.status, 503);
   assert.equal(blocked.body.error, 'storage_cleaning');

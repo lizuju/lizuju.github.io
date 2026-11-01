@@ -1,18 +1,21 @@
-const { test, expect, roomId, deviceId, otherId, keyId, authorize, message } = require('./fixtures/sync-e2ee.cjs');
+const { test, expect, roomId, deviceId, otherId, keyId, authorize, message, allowSyncOrigin } = require('./fixtures/sync-e2ee.cjs');
+
+const { showSyncTools } = require('./fixtures/sync-tools.cjs');
 
 test.use({ serviceWorkers: 'block' });
 
 const headers = {
     'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Sync-Key-Id',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS'
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
 };
 const bounds = id => ({ generation: '1', oldestId: id ? 1 : null, latestId: id, continuationId: id, hasNewer: false });
 const confirmed = (body, id) => ({ id, deviceId, clientId: body.clientId, text: body.text, createdAt: Date.now() });
 const spaceDot = page => page.locator('[data-sync-space-id][aria-current="true"] [data-sync-space-unread]');
 const receipt = page => page.locator('.sync-message.is-own .sync-message-read');
 
-const openChat = async (page, handleRequest) => {
-    await authorize(page);
+const openChat = async (page, handleRequest, seed = true) => {
+    if (seed) await authorize(page);
+    else await allowSyncOrigin(page, 'https://sync.test');
     await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
     await page.route('https://sync.test/**', async route => {
         if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
@@ -544,4 +547,87 @@ test('reuses the same client id when a lost response moves an online text into t
     expect(submissions).toHaveLength(2);
     expect(submissions[1].clientId).toBe(submissions[0].clientId);
     await expect(page.locator('[data-sync-input]')).toHaveValue('');
+});
+
+
+test('restores encrypted pending text after closing the original tab and deduplicates two recovering tabs', async ({ page, context }) => {
+    const submissions = [];
+    const handle = async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        const body = route.request().postDataJSON(); submissions.push(body);
+        await route.fulfill({ headers, json: confirmed(body, 1) }); return true;
+    };
+    const chat = await openChat(page, handle);
+    chat.disconnect();
+    await expect(page.locator('[data-sync-status]')).not.toHaveAttribute('data-state', 'online');
+    await chat.send('Persist across closed tabs');
+    await expect(page.locator('[data-sync-notice]')).toHaveText('等待联网后发送');
+    const stored = await page.evaluate(async () => {
+        const db = await new Promise(resolve => { const request = indexedDB.open('gavin-sync-outbox', 1); request.onsuccess = () => resolve(request.result); });
+        const entries = await new Promise(resolve => { const request = db.transaction('messages').objectStore('messages').getAll(); request.onsuccess = () => resolve(request.result); });
+        db.close(); return entries;
+    });
+    expect(stored).toHaveLength(1);
+    expect(stored[0].encrypted).toMatch(/^e2ee1\./);
+    expect(JSON.stringify(stored)).not.toContain('Persist across closed tabs');
+    await page.close();
+    const first = await context.newPage(), second = await context.newPage();
+    await Promise.all([openChat(first, handle, false), openChat(second, handle, false)]);
+    await expect.poll(() => submissions.length).toBe(1);
+    await expect(first.locator('.sync-message[data-state="queued"]')).toHaveCount(0);
+    await expect(second.locator('.sync-message[data-state="queued"]')).toHaveCount(0);
+});
+
+test('resumes a deferred retry after a slow space-name save finishes', async ({ page }) => {
+    let release, profileStarted = false, posts = 0;
+    const gate = new Promise(resolve => { release = resolve; });
+    const chat = await openChat(page, async route => {
+        if (route.request().method() === 'PATCH' && route.request().url().endsWith('/profile')) {
+            profileStarted = true; await gate; await route.fulfill({ headers, json: { profile: null } }); return true;
+        }
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        posts++;
+        if (posts === 1) await route.abort('failed');
+        else if (posts === 2) await route.fulfill({ status: 503, headers: { ...headers, 'Retry-After': '5' }, json: { error: 'storage_cleaning' } });
+        else await route.fulfill({ headers, json: confirmed(route.request().postDataJSON(), 1) });
+        return true;
+    });
+    await page.clock.install();
+    await chat.send('Retry after settings');
+    await expect.poll(() => posts).toBe(2);
+    try {
+        await showSyncTools(page);
+        await page.locator('[data-sync-space-rename]').click();
+        await page.locator('[data-sync-space-name]').fill('新的名称');
+        await page.locator('[data-sync-space-name-form]').getByRole('button', { name: '保存', exact: true }).click();
+        await expect.poll(() => profileStarted).toBe(true);
+        await page.clock.runFor(6000);
+        expect(posts).toBe(2);
+        release();
+        await expect(page.locator('[data-sync-space-name-dialog]')).not.toBeVisible();
+        await page.clock.runFor(1100);
+        await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(1);
+        expect(posts).toBe(3);
+    } finally { release(); }
+});
+
+test('clearing history removes durable pending text before reconnect or reload can resend it', async ({ page }) => {
+    let posts = 0;
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        posts++;
+        if (posts === 1) await route.abort('failed');
+        else await route.fulfill({ status: 503, headers: { ...headers, 'Retry-After': '30' }, json: { error: 'storage_cleaning' } });
+        return true;
+    });
+    await chat.send('Must not reappear');
+    await expect.poll(() => posts).toBe(2);
+    await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(1);
+    chat.clear();
+    await expect(page.locator('.sync-message')).toHaveCount(0);
+    await page.reload();
+    if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+    await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    await expect(page.locator('.sync-message')).toHaveCount(0);
+    expect(posts).toBe(2);
 });

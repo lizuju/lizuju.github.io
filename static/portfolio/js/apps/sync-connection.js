@@ -45,6 +45,7 @@ export class SyncConnection {
                     let data;
                     try { data = JSON.parse(event.data); } catch { return; }
                     if (!data || typeof data.type !== 'string') return;
+                    data.receivedAt = Date.now();
                     if (data.type === 'ready') {
                         attempt.authenticated = true;
                         this.authenticated = true;

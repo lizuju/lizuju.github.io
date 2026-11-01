@@ -473,10 +473,12 @@ export class E2eePairingRegistry extends DurableObject {
   }
 
   rememberUsage(roomId, usage) {
+    const previous = this.accountedBytes == null ? 0 : this.sql.exec('SELECT bytes FROM room_usage WHERE room_id = ?', roomId).toArray()[0]?.bytes || 0;
     this.sql.exec(
       'INSERT INTO room_usage (room_id, bytes, oldest_at, deleting_files, reserved_bytes) VALUES (?, ?, ?, ?, ?) ON CONFLICT(room_id) DO UPDATE SET bytes = excluded.bytes, oldest_at = excluded.oldest_at, deleting_files = excluded.deleting_files, reserved_bytes = excluded.reserved_bytes WHERE room_usage.bytes IS NOT excluded.bytes OR room_usage.oldest_at IS NOT excluded.oldest_at OR room_usage.deleting_files IS NOT excluded.deleting_files OR room_usage.reserved_bytes IS NOT excluded.reserved_bytes',
       roomId, usage.bytes, usage.oldestAt, usage.deletingFiles, usage.reservedBytes
     );
+    if (this.accountedBytes != null) this.accountedBytes += usage.bytes - previous;
   }
 
   hasRoom(roomId) {
@@ -484,7 +486,8 @@ export class E2eePairingRegistry extends DurableObject {
   }
 
   storageBytes() {
-    return this.sql.databaseSize + this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM room_usage').one().bytes + this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM reservations').one().bytes;
+    this.accountedBytes ??= this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM room_usage').one().bytes + this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM reservations').one().bytes;
+    return this.sql.databaseSize + this.accountedBytes;
   }
 
   async resumeCleanup() {
@@ -497,7 +500,7 @@ export class E2eePairingRegistry extends DurableObject {
 
   withRoom(roomId, work) {
     const previous = this.roomQueues.get(roomId) || Promise.resolve();
-    const pending = previous.then(work);
+    const pending = previous.then(work).catch(error => { this.accountedBytes = null; throw error; });
     const settled = pending.then(() => {}, () => {});
     this.roomQueues.set(roomId, settled);
     settled.then(() => { if (this.roomQueues.get(roomId) === settled) this.roomQueues.delete(roomId); });
@@ -524,6 +527,7 @@ export class E2eePairingRegistry extends DurableObject {
   }
 
   async maintainRooms() {
+    this.accountedBytes = null;
     this.startCleanup();
     this.sql.exec("UPDATE cleanup SET phase = CASE WHEN target_bytes IS NULL THEN 'refresh' ELSE 'prune' END, cursor = '' WHERE phase = 'retry'");
     await this.resumeCleanup();
@@ -550,24 +554,27 @@ export class E2eePairingRegistry extends DurableObject {
   }
 
   async refreshRoom(roomId) {
-    await this.withRoom(roomId, () => this.refreshUsage(roomId));
+    if (!this.hasRoom(roomId)) return;
+    await this.env.E2EE_SYNC_ROOMS.getByName(roomId).maintain(roomId);
+    await this.withRoom(roomId, () => this.refreshUsage(roomId, true));
   }
 
-  async refreshUsage(roomId) {
+  async refreshUsage(roomId, maintained = false) {
     if (!this.hasRoom(roomId)) return null;
     const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
-    const usage = await room.maintain(roomId);
+    const usage = maintained ? await room.storageUsage() : await room.maintain(roomId, false);
     const invitation = this.currentInvite(roomId);
     if (usage.oldestAt === null && (!invitation?.offerId || invitation.locked) && await room.reclaimIfEmpty()) {
       this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
       this.sql.exec('DELETE FROM room_pairing WHERE room_id = ?', roomId);
-      this.sql.exec('DELETE FROM room_usage WHERE room_id = ?', roomId);
-      this.sql.exec('DELETE FROM reservations WHERE room_id = ?', roomId);
+      const removed = this.sql.exec('DELETE FROM room_usage WHERE room_id = ? RETURNING bytes', roomId).toArray()[0];
+      if (this.accountedBytes != null) this.accountedBytes -= removed?.bytes || 0;
+      this.releaseCapacity(roomId);
       return null;
     }
     this.ctx.storage.transactionSync(() => {
       this.rememberUsage(roomId, usage);
-      this.sql.exec('DELETE FROM reservations WHERE room_id = ?', roomId);
+      this.releaseCapacity(roomId);
     });
     return usage;
   }
@@ -581,14 +588,20 @@ export class E2eePairingRegistry extends DurableObject {
       return { error: 'storage_cleaning', status: 503, retryAfter: 1 };
     }
     this.sql.exec('INSERT INTO reservations (room_id, bytes) VALUES (?, ?)', roomId, bytes);
+    this.accountedBytes += bytes;
     return null;
+  }
+
+  releaseCapacity(roomId) {
+    const removed = this.sql.exec('DELETE FROM reservations WHERE room_id = ? RETURNING bytes', roomId).toArray()[0];
+    if (this.accountedBytes != null) this.accountedBytes -= removed?.bytes || 0;
   }
 
   async commitUsage(roomId, room) {
     const usage = await room.storageUsage();
     this.ctx.storage.transactionSync(() => {
       this.rememberUsage(roomId, usage);
-      this.sql.exec('DELETE FROM reservations WHERE room_id = ?', roomId);
+      this.releaseCapacity(roomId);
     });
   }
 
@@ -614,7 +627,7 @@ export class E2eePairingRegistry extends DurableObject {
       if (prepared.error) return prepared;
       this.ctx.storage.transactionSync(() => {
         this.rememberUsage(roomId, prepared.usage);
-        this.sql.exec('DELETE FROM reservations WHERE room_id = ?', roomId);
+        this.releaseCapacity(roomId);
       });
       if (prepared.existing) return prepared.existing;
       const denied = this.reserveCapacity(roomId, MESSAGE_WRITE_HEADROOM);
@@ -625,7 +638,7 @@ export class E2eePairingRegistry extends DurableObject {
         if (usage) {
           this.ctx.storage.transactionSync(() => {
             this.rememberUsage(roomId, usage);
-            this.sql.exec('DELETE FROM reservations WHERE room_id = ?', roomId);
+            this.releaseCapacity(roomId);
           });
           committed = true;
         }
@@ -675,6 +688,7 @@ export class E2eePairingRegistry extends DurableObject {
     const rooms = this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes, coalesce(sum(reserved_bytes), 0) AS reservedBytes FROM room_usage').one();
     const roomBytes = rooms.bytes;
     const pendingReservations = this.sql.exec('SELECT coalesce(sum(bytes), 0) AS bytes FROM reservations').one().bytes;
+    this.accountedBytes = roomBytes + pendingReservations;
     const reservedBytes = rooms.reservedBytes + pendingReservations;
     const storedBytes = this.sql.databaseSize + roomBytes - rooms.reservedBytes;
     const sample = this.sql.exec('SELECT room_id FROM room_usage WHERE room_id > ? ORDER BY room_id LIMIT 1', this.diagnosticRoomCursor || '').toArray()[0]
@@ -1626,15 +1640,13 @@ export class E2eeSyncRoom extends DurableObject {
     return deleted.length + expiredDevices.length;
   }
 
-  async maintain(roomId) {
-    return this.ctx.blockConcurrencyWhile(async () => {
-      if (!this.initialized) return this.storageUsage();
-      if (roomId) this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'roomId', roomId);
-      this.pruneExpired();
-      await this.cleanupFiles();
-      await this.scheduleAlarm();
-      return this.storageUsage();
-    });
+  async maintain(roomId, cleanFiles = true) {
+    if (!this.initialized) return this.storageUsage();
+    if (roomId) this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'roomId', roomId);
+    this.pruneExpired();
+    if (cleanFiles) await this.cleanupFiles();
+    await this.scheduleAlarm();
+    return this.storageUsage();
   }
 
   async reclaimIfEmpty() {
@@ -1668,7 +1680,6 @@ export class E2eeSyncRoom extends DurableObject {
       const ids = selected.map(item => item.messageId);
       if (ids.length) this.sql.exec(`DELETE FROM messages WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids);
       if (ids.length) this.historyChanged();
-      await this.cleanupFiles();
       await this.scheduleAlarm();
       return this.storageUsage();
     });
@@ -1833,13 +1844,17 @@ export class E2eeSyncRoom extends DurableObject {
     return this.ctx.blockConcurrencyWhile(async () => {
       if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
       if (!this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE file_id = ? AND device_id = ? AND status = 'uploading' RETURNING file_id", uploadId, deviceId).toArray().length) return { error: 'not_found', status: 404 };
-      await this.cleanupFiles();
       await this.scheduleAlarm();
       return { ok: true };
     });
   }
 
-  async cleanupFiles() {
+  cleanupFiles() {
+    if (!this.fileCleanup) this.fileCleanup = this.eraseDeletedFiles().finally(() => { this.fileCleanup = null; });
+    return this.fileCleanup;
+  }
+
+  async eraseDeletedFiles() {
     if (!this.initialized) return;
     const shards = this.sql.exec("SELECT s.file_id, s.shard_index FROM file_shards s JOIN files f ON f.file_id = s.file_id WHERE f.status = 'deleting' ORDER BY f.created_at, s.shard_index LIMIT 4").toArray();
     for (const shard of shards) {
@@ -1875,7 +1890,7 @@ export class E2eeSyncRoom extends DurableObject {
     if (!deviceId) return { error: 'unauthorized', status: 401 };
     const denied = this.checkWrite(keyId, text);
     if (denied.error) return denied;
-    const usage = await this.maintain(roomId);
+    const usage = await this.maintain(roomId, false);
     return { deviceId, existing: this.findMessage(deviceId, clientId), usage };
   }
 

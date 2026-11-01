@@ -1,4 +1,5 @@
 import { setupSyncStorage } from './sync-storage.js';
+import { setupSyncDiagnostics } from './sync-diagnostics-view.js';
 
 (() => {
     const desktop = window.GavinDesktop;
@@ -7,47 +8,61 @@ import { setupSyncStorage } from './sync-storage.js';
         const root = app.querySelector('[data-control-panel-root]');
         const view = app.querySelector('[data-sync-storage-view]');
         const item = app.querySelector('[data-open-sync-storage]');
+        const diagnosticsView = app.querySelector('[data-sync-diagnostics-view]');
+        const diagnosticsItem = app.querySelector('[data-open-sync-diagnostics]');
         const back = app.querySelector('[data-control-panel-back]');
         const location = app.querySelector('[data-control-panel-location]');
         const storage = setupSyncStorage(view);
+        const diagnostics = setupSyncDiagnostics(diagnosticsView);
+        let page = 'root';
         const updateLocation = () => {
-            location.textContent = view.hidden ? desktop.t().controlPanel : `${desktop.t().controlPanel} › ${desktop.t().syncStorage}`;
+            location.textContent = page === 'root' ? desktop.t().controlPanel
+                : `${desktop.t().controlPanel} › ${desktop.t()[page === 'storage' ? 'syncStorage' : 'syncDiagnostics']}`;
         };
-        const setPage = (showStorage) => {
-            root.hidden = showStorage;
-            view.hidden = !showStorage;
-            back.hidden = !showStorage;
+        const setPage = (nextPage) => {
+            page = nextPage;
+            root.hidden = page !== 'root';
+            view.hidden = page !== 'storage';
+            diagnosticsView.hidden = page !== 'diagnostics';
+            back.hidden = page === 'root';
             updateLocation();
-            if (showStorage) storage.show();
+            if (page === 'storage') storage.show();
             else storage.reset();
+            if (page === 'diagnostics') diagnostics.show();
         };
         const entry = manager.registerWindow({
             id: 'control-panel', element: app, task: document.querySelector('[data-control-panel-task]'),
             titlebar: app.querySelector('[data-control-panel-drag]'), resizeHandle: app.querySelector('[data-control-panel-resize]'),
             actionAttribute: 'data-control-panel-action', minWidth: 280, minHeight: 220,
-            focusTarget: () => view.hidden ? item : back,
+            focusTarget: () => page === 'root' ? item : back,
             show: () => {
                 manager.showWindow(app, entry.task, { revealTask: true });
                 if (!view.hidden) storage.show();
+                if (!diagnosticsView.hidden) diagnostics.show();
             },
             hide: (state) => {
-                if (state === 'is-closed') setPage(false);
+                if (state === 'is-closed') setPage('root');
                 manager.hideWindow(app, entry.task, state, { hideTask: state === 'is-closed' });
             }
         });
         item.addEventListener('click', () => {
-            setPage(true);
+            setPage('storage');
+            back.focus({ preventScroll: true });
+        });
+        diagnosticsItem.addEventListener('click', () => {
+            setPage('diagnostics');
             back.focus({ preventScroll: true });
         });
         back.addEventListener('click', () => {
-            setPage(false);
-            item.focus({ preventScroll: true });
+            const target = page === 'diagnostics' ? diagnosticsItem : item;
+            setPage('root');
+            target.focus({ preventScroll: true });
         });
         document.querySelector('[data-open-control-panel]').addEventListener('click', entry.show);
         manager.onSession({
-            save: () => ({ controlPanelView: view.hidden ? 'root' : 'storage' }),
+            save: () => ({ controlPanelView: page }),
             restore: (state) => {
-                if (!app.classList.contains('is-closed') && state.controlPanelView === 'storage') setPage(true);
+                if (!app.classList.contains('is-closed') && ['storage', 'diagnostics'].includes(state.controlPanelView)) setPage(state.controlPanelView);
             }
         });
         window.addEventListener('portfolio-language-change', () => {

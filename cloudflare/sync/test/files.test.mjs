@@ -43,6 +43,11 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
               type: 'esm',
               contents: `import worker, { E2eeSyncRoom as ProductionSyncRoom, E2eePairingRegistry as ProductionRegistry, E2eeFileShard as ProductionFileShard } from './index.js';
                 export class FileShard extends ProductionFileShard {
+                  testHoldErase() { this.eraseStarted = false; this.eraseGate = new Promise(resolve => { this.releaseErase = resolve; }); }
+                  testEraseStarted() { return !!this.eraseStarted; }
+                  testReleaseErase() { this.releaseErase(); this.eraseGate = null; }
+                  async erase() { this.eraseStarted = true; if (this.eraseGate) await this.eraseGate; return super.erase(); }
+
                   testHoldWrite() { this.writeStarted = false; this.writeGate = new Promise(resolve => { this.releaseWrite = resolve; }); }
                   testWriteStarted() { return !!this.writeStarted; }
                   testReleaseWrite() { this.releaseWrite(); this.writeGate = null; }
@@ -92,6 +97,25 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   }
                 };
                 export class PairingRegistry extends ProductionRegistry {
+                  testCapacityCache(count) {
+                    this.accountedBytes = null;
+                    for (let i = 0; i < count; i++) this.rememberUsage('capacity-' + i, { bytes: 100, reservedBytes: 0, oldestAt: null, deletingFiles: 0 });
+                    this.storageBytes();
+                    let reads = 0;
+                    const sql = this.sql;
+                    this.sql = new Proxy(sql, { get: (target, key) => key === 'exec' ? (...args) => {
+                      const cursor = target.exec(...args); reads += cursor.rowsRead; return cursor;
+                    } : Reflect.get(target, key, target) });
+                    try {
+                      const baseline = this.storageBytes();
+                      this.rememberUsage('capacity-0', { bytes: 150, reservedBytes: 0, oldestAt: null, deletingFiles: 0 });
+                      this.reserveCapacity('capacity-0', 200);
+                      const reserved = this.storageBytes() - baseline;
+                      this.releaseCapacity('capacity-0');
+                      return { reads, reserved, committed: this.storageBytes() - baseline };
+                    } finally { this.sql = sql; }
+                  }
+
                   hasRoom(roomId) { this.roomLookups = (this.roomLookups || 0) + 1; return super.hasRoom(roomId); }
                   testRoomLookups() { return this.roomLookups || 0; }
                   async testExpireDiagnosticsCache() { this.diagnosticsCacheUntil = Date.now() - 1; await caches.default.delete('https://sync.test/v1/status?release=local'); }
@@ -1679,4 +1703,38 @@ test('socket activity coalesces duplicate sockets and repeated requests, then re
   await room.removeDevice(space.deviceId);
   await room.testSocketActivity(sockets);
   assert.deepEqual(await storage.exec('SELECT * FROM devices'), []);
+});
+
+
+test('slow maintenance erasure does not hold up same-room text messages', { timeout: 10000 }, async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const started = await initiate(request, space, { size: 16 });
+  await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(16));
+  assert.equal((await complete(request, space, started.body.uploadId)).status, 201);
+  const shard = (await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS')).getByName(`${started.body.uploadId}:0`);
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const storage = await roomStorage(space, instance);
+  await storage.exec("UPDATE files SET status = 'deleting' WHERE file_id = ?", started.body.uploadId);
+  await shard.testHoldErase();
+  const maintenance = registry.refreshRoom(space.roomId);
+  while (!await shard.testEraseStarted()) await new Promise(resolve => setTimeout(resolve, 5));
+  let timer;
+  try {
+    const sent = await Promise.race([
+      request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'during erasure' } }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('message blocked by cleanup')), 2000); })
+    ]);
+    assert.equal(sent.status, 201);
+  } finally { clearTimeout(timer); await shard.testReleaseErase(); await maintenance; }
+  assert.deepEqual(await storage.exec('SELECT * FROM file_shards'), []);
+});
+
+test('warm capacity checks read a constant number of rows and track reservations', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const measured = await registry.testCapacityCache(1000);
+  assert.ok(measured.reads < 10, JSON.stringify(measured));
+  assert.equal(measured.reserved, 250);
+  assert.equal(measured.committed, 50);
 });
