@@ -14,6 +14,7 @@ import { createVoicePlayer } from './sync-voice-player.js';
 import { STICKERS, stickerById } from './sync-stickers.js';
 import { createGomokuWindow } from './sync-gomoku.js';
 import { createSystemNotifications } from './sync-notifications.js';
+import { pendingMessages } from './sync-outbox.js';
 
 (() => {
     const desktopApi = window.GavinDesktop;
@@ -36,6 +37,32 @@ import { createSystemNotifications } from './sync-notifications.js';
         const feed = find('feed');
         const status = find('status');
         const notice = find('notice');
+        const mobileLayout = matchMedia('(pointer: coarse) and (max-width: 900px), (pointer: coarse) and (max-height: 520px)');
+        const resizeComposer = () => {
+            if (!mobileLayout.matches || !input.clientWidth) return;
+            const style = getComputedStyle(input);
+            const border = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+            input.style.height = '0px';
+            input.style.height = `${input.scrollHeight + border}px`;
+            if (document.activeElement === input) find('send-form').scrollTop = find('send-form').scrollHeight;
+        };
+        const updateMobileViewport = () => {
+            app.classList.toggle('is-mobile-layout', mobileLayout.matches);
+            if (!mobileLayout.matches) { input.style.removeProperty('height'); return; }
+            const viewport = window.visualViewport;
+            // Pinch zoom should magnify the existing layout instead of shrinking it again.
+            if (viewport && viewport.scale !== 1) return;
+            const height = viewport?.height ?? innerHeight;
+            app.style.setProperty('--sync-viewport-top', `${viewport?.offsetTop || 0}px`);
+            app.style.setProperty('--sync-viewport-height', `${height}px`);
+            app.style.setProperty('--sync-bottom-gap', innerHeight - height > 100 ? '4px' : '39px');
+            resizeComposer();
+        };
+        mobileLayout.addEventListener('change', updateMobileViewport);
+        window.addEventListener('resize', updateMobileViewport);
+        window.visualViewport?.addEventListener('resize', updateMobileViewport);
+        window.visualViewport?.addEventListener('scroll', updateMobileViewport);
+        updateMobileViewport();
         const confirmation = find('confirm-dialog');
         const devicesDialog = find('devices-dialog');
         const spaceNameDialog = find('space-name-dialog');
@@ -58,6 +85,10 @@ import { createSystemNotifications } from './sync-notifications.js';
         let gameWindow = null;
         let restoringGame = false;
         const unread = new Set();
+        const unreadDivider = document.createElement('li');
+        unreadDivider.className = 'sync-unread-separator';
+        unreadDivider.dataset.syncUnreadSeparator = '';
+        let lastMentionId = 0;
         const cooldowns = { create: 0, join: 0, pair: 0 };
         const savedSpaces = new SavedSpaces();
         const spacesReady = savedSpaces.importActive();
@@ -259,8 +290,8 @@ import { createSystemNotifications } from './sync-notifications.js';
             }
             updateSoundToggle();
         };
-        const notifyMessage = (message, session = credentials) => {
-            if (session && !message.decryptionFailed) systemNotifications.show(message, session).catch(() => {});
+        const notifyMessage = (message, session = credentials, receivedAt = Date.now()) => {
+            if (session && !message.decryptionFailed) systemNotifications.show(message, session, receivedAt).catch(() => {});
             if (!soundEnabled || !soundReady || !session || message.decryptionFailed) return;
             const version = soundVersion;
             const key = `portfolio-sync-notification:${session.roomId}:${session.deviceId}`;
@@ -338,7 +369,8 @@ import { createSystemNotifications } from './sync-notifications.js';
             voicePlayers.forEach(player => player.pause());
             find('voice-preview').pause();
         };
-        const cancelRecording = () => {
+        const cancelRecording = (interrupted = false) => {
+            if (interrupted && recording()) setNotice('syncVoiceInterrupted', true);
             recordingSession = null;
             const cancelled = recorder.cancel();
             updateControls();
@@ -363,17 +395,19 @@ import { createSystemNotifications } from './sync-notifications.js';
                 recordingSession = null;
                 const key = error.name === 'NotAllowedError' || error.name === 'SecurityError' ? 'syncVoiceDenied'
                     : error.name === 'NotFoundError' ? 'syncVoiceNoMicrophone'
-                    : error.name === 'NotSupportedError' ? 'syncVoiceUnavailable' : 'syncVoiceFailed';
+                    : error.name === 'NotSupportedError' ? 'syncVoiceUnavailable'
+                    : error.name === 'NotReadableError' ? 'syncVoiceInterrupted' : 'syncVoiceFailed';
                 setNotice(key, true);
                 updateControls();
             }
         });
         const updateVoiceVisibility = () => {
             if (voiceVisible()) return;
-            if (recording()) cancelRecording();
+            if (recording()) cancelRecording(true);
             pauseVoiceMedia();
         };
         const updateControls = () => {
+            resizeComposer();
             const working = busy || switchingSpace;
             input.disabled = switchingSpace;
             find('create').disabled = working || sending || secondsLeft(cooldowns.create) > 0;
@@ -392,7 +426,8 @@ import { createSystemNotifications } from './sync-notifications.js';
             find('sticker-grid').querySelectorAll('button').forEach(button => { button.disabled = find('stickers').disabled; });
             find('voice-recording').hidden = !recording();
             find('voice-stop').disabled = recorder.state !== 'recording';
-            setText(find('voice-status'), recorder.state === 'starting' ? 'syncVoiceStarting' : 'syncVoiceRecording');
+            setText(find('voice-status'), recorder.state === 'starting' ? 'syncVoiceStarting'
+                : recorder.state === 'stopping' ? 'syncVoiceFinishing' : 'syncVoiceRecording');
             find('remove-file').disabled = working || sending;
             find('cancel-upload').hidden = !uploadController || !pendingUpload;
             find('cancel-upload').disabled = working || !uploadController || pendingUpload?.completing || uploadController.signal.aborted;
@@ -670,6 +705,17 @@ import { createSystemNotifications } from './sync-notifications.js';
             return promise;
         };
         const roomPath = (suffix = '') => `/v1/spaces/${credentials.roomId}${suffix}`;
+        const restorePending = async (session, draft) => {
+            if (draft && !draft.durableOutbox) {
+                for (const message of draft.outbox || []) if (message.autoSend && !message.attachment) await pendingMessages.save(session, message, true);
+                draft.durableOutbox = true;
+                const encrypted = await encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, draft);
+                sessionStorage.setItem(`portfolio-sync-draft:${session.roomId}`, encrypted);
+            }
+            const stored = await pendingMessages.load(session);
+            const ids = new Set(stored.map(message => message.clientId));
+            return [...stored, ...(draft?.outbox || []).filter(message => !message.autoSend && !ids.has(message.clientId))];
+        };
         const draftKey = () => `portfolio-sync-draft:${credentials.roomId}`;
         const saveDraft = () => {
             if (!credentials) return Promise.resolve(true);
@@ -683,7 +729,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                 file: { name: pendingUpload.file.name, type: pendingUpload.file.type, size: pendingUpload.file.size, lastModified: pendingUpload.file.lastModified }
             };
             const key = draftKey();
-            return draftSave = encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, { text: input.value, mentions: mentionComposer.snapshot(), reply: selectedReply, outbox: [...outbox.values()], upload })
+            return draftSave = encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, { durableOutbox: true, text: input.value, mentions: mentionComposer.snapshot(), reply: selectedReply, outbox: [...outbox.values()], upload })
                 .then(encrypted => {
                     if (revision !== draftRevision) return false;
                     sessionStorage.setItem(key, encrypted);
@@ -908,7 +954,34 @@ import { createSystemNotifications } from './sync-notifications.js';
             updateReadReceipts();
             updateUnread();
         };
+        const hasOlderUnread = () => history.length && historyState?.oldestId !== null
+            && history[0].id > Math.max(historyState?.oldestId || history[0].id, (readReceipts.get(deviceId) || 0) + 1);
+        const unreadMentions = () => history.filter(message => unread.has(message.id)
+            && message.mentions?.some(mention => mention.deviceId === deviceId));
         const updateUnread = () => {
+            const first = !find('search').value.trim() && history.find(message => unread.has(message.id));
+            const firstNode = first && messageNodes.get(first.id);
+            const dividerLabel = translate('syncUnreadStart');
+            if (unreadDivider.textContent !== dividerLabel) unreadDivider.textContent = dividerLabel;
+            if (firstNode ? unreadDivider.nextElementSibling !== firstNode : unreadDivider.isConnected) {
+                const top = feed.getBoundingClientRect().top;
+                const anchor = !followLatest && history.find(message => !messageNodes.get(message.id)?.hidden
+                    && messageNodes.get(message.id)?.getBoundingClientRect().bottom > top);
+                const node = anchor ? messageNodes.get(anchor.id) : null;
+                const offset = node?.getBoundingClientRect().top;
+                if (firstNode) messages.insertBefore(unreadDivider, firstNode);
+                else unreadDivider.remove();
+                if (node && offset !== undefined) {
+                    feed.scrollTop += node.getBoundingClientRect().top - offset;
+                    lastFeedScrollTop = feed.scrollTop;
+                }
+            }
+            find('first-unread').hidden = !unread.size && !hasOlderUnread();
+            find('first-unread').textContent = translate('syncFirstUnread');
+            const mentions = unreadMentions();
+            find('unread-mention').hidden = !mentions.length && !hasOlderUnread();
+            find('unread-mention').textContent = translate(mentions.length ? 'syncUnreadMentions' : 'syncUnreadMentionsMore', { count: mentions.length });
+            find('unread-navigation').hidden = find('first-unread').hidden && find('unread-mention').hidden;
             const badge = document.querySelector('[data-sync-unread]');
             badge.hidden = !unread.size;
             badge.textContent = unread.size > 99 ? '99+' : String(unread.size);
@@ -1104,6 +1177,7 @@ import { createSystemNotifications } from './sync-notifications.js';
             setText(find('no-results'), searchController && !searchController.signal.aborted ? 'syncSearching'
                 : historyState && history[0]?.id > historyState.oldestId ? 'syncSearchIncomplete' : 'syncNoResults');
             updateInlineImages();
+            updateUnread();
         };
         const render = (scroll = false, preserve = false) => {
             if (scroll) followLatest = true;
@@ -1120,7 +1194,8 @@ import { createSystemNotifications } from './sync-notifications.js';
             for (const [id, item] of messageNodes) {
                 if (!ids.has(id)) { disposeAttachment(id); item.remove(); messageNodes.delete(id); unread.delete(id); }
             }
-            rendered.forEach((message, index) => {
+            let previousItem = null;
+            rendered.forEach((message) => {
                 let item = messageNodes.get(message.id);
                 if (!item) {
                     item = document.createElement('li');
@@ -1175,7 +1250,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                         quote.type = 'button';
                         quote.className = 'sync-message-quote';
                         quote.dataset.syncJumpReply = '';
-                        quote.addEventListener('click', () => jumpToReply(message.reply));
+                        quote.addEventListener('click', () => jumpToMessage(message.reply));
                         const author = document.createElement('strong');
                         author.className = 'sync-message-quote-author';
                         const excerpt = document.createElement('span');
@@ -1358,7 +1433,10 @@ import { createSystemNotifications } from './sync-notifications.js';
                     preview.setAttribute('aria-label', `${translate('syncPreview')} ${message.attachment.name}`);
                 }
                 voicePlayers.get(message.id)?.updateLanguage();
-                if (messages.children[index] !== item) messages.insertBefore(item, messages.children[index] || null);
+                let nextItem = previousItem ? previousItem.nextElementSibling : messages.firstElementChild;
+                if (nextItem === unreadDivider) nextItem = nextItem.nextElementSibling;
+                if (nextItem !== item) messages.insertBefore(item, nextItem);
+                previousItem = item;
             });
             applySearch();
             updateReadReceipts();
@@ -1380,6 +1458,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                 const outgoing = outbox.get(message.clientId);
                 if (!outgoing) continue;
                 outgoing.confirmed = true;
+                pendingMessages.remove(credentials, message.clientId).catch(() => setNotice('syncStorageError', true));
                 outbox.delete(message.clientId);
                 confirmed = true;
             }
@@ -1403,12 +1482,10 @@ import { createSystemNotifications } from './sync-notifications.js';
         const receiveHistory = (incoming, initial = false, mode = 'replace', metadata = null) => {
             reconcileUpload(incoming);
             const known = new Set(history.map((message) => message.id));
-            if (mode !== 'prepend') {
-                for (const message of incoming) {
-                    if (!known.has(message.id) && message.deviceId !== deviceId && message.id > (readReceipts.get(deviceId) || 0)) {
-                        unread.add(message.id);
-                        readAfterInteraction = interactionRevision + 1;
-                    }
+            for (const message of incoming) {
+                if (!known.has(message.id) && message.deviceId !== deviceId && message.id > (readReceipts.get(deviceId) || 0)) {
+                    unread.add(message.id);
+                    readAfterInteraction = interactionRevision + 1;
                 }
             }
             const scrollTop = feed.scrollTop;
@@ -1474,7 +1551,8 @@ import { createSystemNotifications } from './sync-notifications.js';
                 if (searchController === controller) { searchController = null; applySearch(); }
             }
         };
-        const jumpToReply = async (reply) => {
+        const jumpToMessage = async (reply = null, mention = false) => {
+            if (!reply && catchingUp) { setNotice('syncUnreadPending'); return; }
             replyNavigation?.abort();
             const controller = new AbortController();
             replyNavigation = controller;
@@ -1493,30 +1571,37 @@ import { createSystemNotifications } from './sync-notifications.js';
             searchAnchor = null;
             applySearch();
             try {
-                while (current() && history.length && reply.id < history[0].id && reply.id >= historyState?.oldestId) {
+                while (current() && (reply
+                    ? history.length && reply.id < history[0].id && reply.id >= historyState?.oldestId
+                    : hasOlderUnread())) {
                     if (!online) { setNotice('syncOffline', true); return; }
-                    setNotice('syncReplyLocating');
+                    setNotice(reply ? 'syncReplyLocating' : 'syncUnreadLocating');
                     if (!await loadOlder(controller.signal)) {
-                        if (current() && (historyState?.oldestId === null || reply.id < historyState?.oldestId || history[0]?.id <= reply.id)) setNotice('syncReplyMissing', true);
+                        if (reply && current() && (historyState?.oldestId === null || reply.id < historyState?.oldestId || history[0]?.id <= reply.id)) setNotice('syncReplyMissing', true);
                         return;
                     }
                 }
                 if (!current()) return;
-                const original = history.find(message => message.id === reply.id && message.deviceId === reply.deviceId);
+                const candidates = mention ? unreadMentions() : history.filter(message => unread.has(message.id));
+                const original = reply ? history.find(message => message.id === reply.id && message.deviceId === reply.deviceId)
+                    : mention ? candidates.find(message => message.id > lastMentionId) || candidates[0] : candidates[0];
                 const target = original && messageNodes.get(original.id);
-                if (!target) { setNotice('syncReplyMissing', true); return; }
+                if (!target) { setNotice(reply ? 'syncReplyMissing' : mention ? 'syncUnreadMentionNone' : 'syncUnreadNone', !!reply); return; }
                 clearTimeout(replyHighlightTimer);
                 for (const node of messageNodes.values()) node.classList.remove('is-reply-target');
                 target.classList.add('is-reply-target');
                 feed.scrollTop += target.getBoundingClientRect().top - feed.getBoundingClientRect().top
-                    - Math.max(0, (feed.clientHeight - target.offsetHeight) / 2);
+                    - (reply ? Math.max(0, (feed.clientHeight - target.offsetHeight) / 2) : 36);
                 lastFeedScrollTop = feed.scrollTop;
+                if (!reply) readAfterInteraction = interactionRevision + 1;
                 target.focus({ preventScroll: true });
+                if (mention) lastMentionId = original.id;
                 replyHighlightTimer = setTimeout(() => target.classList.remove('is-reply-target'), 1800);
-                setNotice('syncReplyLocated');
+                setNotice(reply ? 'syncReplyLocated' : 'syncUnreadLocated');
                 updateInlineImages();
             } finally {
                 if (replyNavigation === controller) replyNavigation = null;
+                updateUnread();
                 updateControls();
             }
         };
@@ -1547,7 +1632,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                 }
             }
         };
-        const addMessage = (message, metadata = null, advanceCursor = true, notify = false) => {
+        const addMessage = (message, metadata = null, advanceCursor = true, notify = false, receivedAt = Date.now()) => {
             const openInvitation = !!message.gomoku && !message.game?.previousGameId && outbox.has(message.clientId);
             reconcileUpload([message]);
             const known = history.some((item) => item.id === message.id);
@@ -1574,7 +1659,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                 if (message.deviceId !== deviceId) {
                     unread.add(message.id);
                     readAfterInteraction = interactionRevision + 1;
-                    if (notify) notifyMessage(message);
+                    if (notify) notifyMessage(message, credentials, receivedAt);
                 }
                 history = [...history, message].sort((a, b) => a.id - b.id).slice(-500);
             }
@@ -1700,7 +1785,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                 : data.messages ? await Promise.all(data.messages.map(message => decodeMessage(message, session))) : [];
             if (!valid()) return;
             if (data.type === 'message' && credentials !== session && incoming[0].deviceId !== session.deviceId
-                && !record.history.some(message => message.id === incoming[0].id)) notifyMessage(incoming[0], session);
+                && !record.history.some(message => message.id === incoming[0].id)) notifyMessage(incoming[0], session, data.receivedAt);
             for (const message of incoming) if (message.deviceId === session.deviceId) {
                 record.failedMessages.delete(message.clientId);
                 const queued = record.queuedMessages.get(message.clientId);
@@ -1716,6 +1801,8 @@ import { createSystemNotifications } from './sync-notifications.js';
                 Math.max(record.readReceipts.get(receipt.deviceId) || 0, receipt.messageId));
             for (const id of record.unread) if (id <= (record.readReceipts.get(session.deviceId) || 0)) record.unread.delete(id);
             if (data.type === 'cleared') {
+                record.outboxEpoch++;
+                await pendingMessages.clear(session);
                 record.history = [];
                 record.unread.clear();
                 record.failedMessages.clear();
@@ -1753,7 +1840,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                 if (notice.dataset.i18n === 'syncUnavailable') setNotice('syncJoined');
                 loadDevices(session);
             } else if (data.type === 'message') {
-                addMessage(incoming[0], data.history, true, true);
+                addMessage(incoming[0], data.history, true, true, data.receivedAt);
                 await synchronizeGames(data.activeGames);
             } else if (data.type === 'gomoku') acceptGame(data.game);
             else if (data.type === 'history') {
@@ -1775,7 +1862,7 @@ import { createSystemNotifications } from './sync-notifications.js';
         };
         const createConnection = session => {
             const record = { session, history: [], historyState: null, reconnectCursor: null, readReceipts: new Map(),
-                unread: new Set(), failedMessages: new Set(), queuedMessages: new Map(), devices: [], activeGames: [], pairingRevision: 0, pairingData: session.pairing || null };
+                unread: new Set(), failedMessages: new Set(), queuedMessages: new Map(), outboxEpoch: 0, devices: [], activeGames: [], pairingRevision: 0, pairingData: session.pairing || null };
             connections.set(session.roomId, record);
             record.pairing = createPairing(session);
             return record;
@@ -1842,6 +1929,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                             disposeConnection(record);
                             spaceFiles.delete(session.roomId);
                             sessionStorage.removeItem(`portfolio-sync-draft:${session.roomId}`);
+                            await pendingMessages.clear(session);
                             await savedSpaces.remove(session);
                             renderSpaces();
                         }
@@ -1913,6 +2001,7 @@ import { createSystemNotifications } from './sync-notifications.js';
             replyNavigation?.abort();
             replyNavigation = null;
             clearTimeout(replyHighlightTimer);
+            lastMentionId = 0;
             if (keepConnection) cacheCurrentView();
             else disposeConnection(credentials && connections.get(credentials.roomId));
             if (forget) restoringGame = false;
@@ -1962,7 +2051,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                 const forgotten = credentials;
                 spaceFiles.delete(forgotten.roomId);
                 sessionStorage.removeItem(`portfolio-sync-draft:${forgotten.roomId}`);
-                const removal = savedSpaces.remove(forgotten);
+                const removal = pendingMessages.clear(forgotten).then(() => savedSpaces.remove(forgotten));
                 forgettingSpace = removal;
                 removal.then(() => {
                     if (forgettingSpace !== removal) return;
@@ -2059,8 +2148,10 @@ import { createSystemNotifications } from './sync-notifications.js';
                     mentionComposer.restore(draft?.mentions);
                     selectedReply = draft?.reply || null;
                     pendingUpload = draft?.upload || null;
-                    for (const message of draft?.outbox || []) {
-                        if (record.history.some(sent => sent.deviceId === session.deviceId && sent.clientId === message.clientId)) continue;
+                    for (const message of await restorePending(session, draft)) {
+                        if (record.history.some(sent => sent.deviceId === session.deviceId && sent.clientId === message.clientId)) {
+                            await pendingMessages.remove(session, message.clientId); continue;
+                        }
                         if (!message.attachment || pendingUpload?.clientId === message.clientId) {
                             const restored = record.queuedMessages.get(message.clientId) || { ...message, sendState: message.autoSend ? 'queued' : 'failed' };
                             outbox.set(message.clientId, restored);
@@ -2105,7 +2196,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                 await spacesReady;
                 for (const record of connections.values()) {
                     const stored = savedSpaces.find(record.session);
-                    if (!stored) { disposeConnection(record); continue; }
+                    if (!stored) { disposeConnection(record); await pendingMessages.clear(record.session); continue; }
                     if (record.session === credentials || stored.revision === record.session.revision) continue;
                     const updated = await loadLocalSession(stored);
                     if (connections.get(updated.roomId) !== record || !sameSession(stored, savedSpaces.find(record.session))) continue;
@@ -2123,11 +2214,10 @@ import { createSystemNotifications } from './sync-notifications.js';
                         const record = createConnection({ ...session, revision: stored.revision });
                         try {
                             const encrypted = sessionStorage.getItem(`portfolio-sync-draft:${session.roomId}`);
-                            if (encrypted) {
-                                const draft = await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted);
-                                record.failedMessages = new Set((draft.outbox || []).filter(message => !message.autoSend).map(message => message.clientId));
-                                record.queuedMessages = new Map((draft.outbox || []).filter(message => message.autoSend && !message.attachment).map(message => [message.clientId, { ...message, sendState: 'queued' }]));
-                            }
+                            const draft = encrypted ? await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted) : null;
+                            const restored = await restorePending(session, draft);
+                            record.failedMessages = new Set(restored.filter(message => !message.autoSend).map(message => message.clientId));
+                            record.queuedMessages = new Map(restored.filter(message => message.autoSend && !message.attachment).map(message => [message.clientId, { ...message, sendState: 'queued' }]));
                         } catch { /* Connection recovery does not depend on a saved draft. */ }
                         connect(record);
                     } catch { /* A missing local key must not prevent other saved spaces from connecting. */ }
@@ -2445,7 +2535,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                 markRead();
             },
             hide: (state) => {
-                cancelRecording();
+                cancelRecording(true);
                 pauseVoiceMedia();
                 releaseVoicePreview();
                 followOnRestore = !find('search').value.trim() && atBottom();
@@ -2769,6 +2859,7 @@ import { createSystemNotifications } from './sync-notifications.js';
         find('attach').addEventListener('click', () => find('file-input').click());
         find('voice-record').addEventListener('click', async () => {
             if (busy || sending || !online || selectedFile || pendingUpload || recording() || !voiceVisible()) return;
+            if (mobileLayout.matches) input.blur();
             pauseVoiceMedia();
             recordingSession = credentials;
             find('voice-time').textContent = '00:00 / 01:00';
@@ -2783,7 +2874,7 @@ import { createSystemNotifications } from './sync-notifications.js';
             await stopped;
             updateControls();
         });
-        find('voice-cancel').addEventListener('click', cancelRecording);
+        find('voice-cancel').addEventListener('click', () => cancelRecording());
         find('voice-preview').addEventListener('play', () => {
             if (!voiceVisible()) { find('voice-preview').pause(); return; }
             voicePlayers.forEach(player => player.pause());
@@ -2877,7 +2968,19 @@ import { createSystemNotifications } from './sync-notifications.js';
             } catch (error) { if (credentials === session) showError(error); }
             finally { if (credentials === session) { busy = false; updateSelectedFile(); } }
         });
-        const persistQueued = (record, outgoing, remove = false) => {
+        const enqueuePending = async (record, outgoing) => {
+            const epoch = record.outboxEpoch;
+            await pendingMessages.save(record.session, outgoing, true);
+            if (!liveSession(record.session) || epoch !== record.outboxEpoch || outgoing.confirmed) {
+                await pendingMessages.remove(record.session, outgoing.clientId);
+                return false;
+            }
+            record.queuedMessages.set(outgoing.clientId, outgoing);
+            return true;
+        };
+        const persistQueued = async (record, outgoing, remove = false) => {
+            if (remove) await pendingMessages.remove(record.session, outgoing.clientId);
+            else await pendingMessages.save(record.session, outgoing);
             if (credentials === record.session && !switchingSpace) return saveDraft();
             record.queueSave = (record.queueSave || Promise.resolve()).then(async () => {
                 const session = record.session;
@@ -2886,6 +2989,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                 const key = `portfolio-sync-draft:${session.roomId}`;
                 const encrypted = sessionStorage.getItem(key);
                 const draft = encrypted ? await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted) : {};
+                draft.durableOutbox = true;
                 draft.outbox = (draft.outbox || []).filter(message => message.clientId !== outgoing.clientId);
                 if (!remove) draft.outbox.push(outgoing);
                 const saved = await encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, draft);
@@ -2896,20 +3000,39 @@ import { createSystemNotifications } from './sync-notifications.js';
             return record.queueSave;
         };
         const flushQueued = async record => {
-            if (!record || record.flushing || record.connectionState !== 'online' || !liveSession(record.session)) return;
-            if (credentials === record.session && (busy || switchingSpace || sendingText)) return;
-            record.flushing = true;
+            if (!record || record.flushing || record.connectionState !== 'online' || !liveSession(record.session) || !record.queuedMessages.size) return;
             clearTimeout(record.queueTimer);
+            if (credentials === record.session && (busy || switchingSpace || sendingText)) {
+                record.queueTimer = setTimeout(() => flushQueued(record), 1000);
+                return;
+            }
+            record.flushing = true;
             try {
-                for (const outgoing of record.queuedMessages.values()) {
-                    if (record.connectionState !== 'online' || !liveSession(record.session)) break;
-                    await sendOutgoing(outgoing, record);
-                    if (outgoing.sendState === 'queued') {
-                        record.queueTimer = setTimeout(() => flushQueued(record), Math.max(5000, outgoing.retryAfter || 0));
-                        break;
+                await navigator.locks.request(`gavin-sync-outbox-send:${record.session.roomId}:${record.session.deviceId}`, async () => {
+                    for (const outgoing of record.queuedMessages.values()) {
+                        if (record.connectionState !== 'online' || !liveSession(record.session)) break;
+                        const stored = await pendingMessages.get(record.session, outgoing.clientId);
+                        if (!stored) {
+                            record.queuedMessages.delete(outgoing.clientId);
+                            if (credentials === record.session) { outbox.delete(outgoing.clientId); render(); }
+                            continue;
+                        }
+                        if (!stored.autoSend) {
+                            record.queuedMessages.delete(outgoing.clientId);
+                            outgoing.autoSend = false; outgoing.sendState = 'failed'; record.failedMessages.add(outgoing.clientId);
+                            if (credentials === record.session) render();
+                            continue;
+                        }
+                        outgoing.nextAttemptAt = stored.nextAttemptAt;
+                        if (!(outgoing.nextAttemptAt > Date.now())) await sendOutgoing(outgoing, record);
+                        if (outgoing.sendState === 'queued') {
+                            record.queueTimer = setTimeout(() => flushQueued(record), Math.max(1000, (outgoing.nextAttemptAt || 0) - Date.now()));
+                            break;
+                        }
                     }
-                }
-            } finally { record.flushing = false; }
+                });
+            } catch { if (credentials === record.session) setNotice('syncStorageError', true); }
+            finally { record.flushing = false; }
         };
         const sendOutgoing = async (outgoing, queuedRecord = null) => {
             const session = queuedRecord?.session || credentials;
@@ -2926,10 +3049,10 @@ import { createSystemNotifications } from './sync-notifications.js';
             const controller = upload ? new AbortController() : null;
             if (upload) uploadController = controller;
             else if (current()) sendingText = true;
-            if (queuedRecord) await persistQueued(queuedRecord, outgoing);
-            else saveDraft();
             if (current()) { render(true); updateSelectedFile(); setNotice('syncSending'); }
             try {
+                if (queuedRecord) await persistQueued(queuedRecord, outgoing);
+                else saveDraft();
                 if (upload) {
                     const message = await uploadAttachment(upload, session, controller);
                     if (credentials === session && message && !controller.signal.aborted && pendingUpload === upload) addMessage(message, null, false);
@@ -2965,7 +3088,7 @@ import { createSystemNotifications } from './sync-notifications.js';
                 if (queuedRecord && liveSession(session) && !outgoing.confirmed && pending()) {
                     const retry = !navigator.onLine || queuedRecord.connectionState !== 'online' || ['network_error', 'rate_limited', 'storage_cleaning'].includes(error.code);
                     outgoing.sendState = retry ? 'queued' : 'failed';
-                    outgoing.retryAfter = Math.max(0, error.retryAfter || 0) * 1000;
+                    outgoing.nextAttemptAt = Date.now() + Math.max(5000, (error.retryAfter || 0) * 1000);
                     if (!retry) { outgoing.autoSend = false; queuedRecord.queuedMessages.delete(outgoing.clientId); queuedRecord.failedMessages.add(outgoing.clientId); }
                     await persistQueued(queuedRecord, outgoing);
                     if (current() && !retry) showError(error);
@@ -2982,7 +3105,8 @@ import { createSystemNotifications } from './sync-notifications.js';
                         outgoing.sendState = 'failed';
                         if (!upload && !outgoing.gomoku && !outgoing.sticker && error.code === 'network_error') {
                             outgoing.sendState = 'queued'; outgoing.autoSend = true;
-                            connections.get(session.roomId)?.queuedMessages.set(outgoing.clientId, outgoing);
+                            try { await enqueuePending(connections.get(session.roomId), outgoing); }
+                            catch { outgoing.sendState = 'failed'; outgoing.autoSend = false; setNotice('syncStorageError', true); }
                         }
                     }
                     saveDraft();
@@ -3030,13 +3154,15 @@ import { createSystemNotifications } from './sync-notifications.js';
                 outgoing.sendState = 'queued';
                 outgoing.autoSend = true;
                 const record = connections.get(credentials.roomId);
-                record.queuedMessages.set(clientId, outgoing);
                 render(true);
+                try { if (!await enqueuePending(record, outgoing)) return; }
+                catch { outgoing.sendState = 'failed'; outgoing.autoSend = false; record.queuedMessages.delete(clientId); setNotice('syncStorageError', true); saveDraft(); render(); return; }
                 let saving = saveDraft();
                 let saved = await saving;
                 while (saving !== draftSave) { saving = draftSave; saved = await saving; }
                 if (!saved) {
-                    outgoing.sendState = 'failed'; outgoing.autoSend = false; record.queuedMessages.delete(clientId); render();
+                    outgoing.sendState = 'failed'; outgoing.autoSend = false; record.queuedMessages.delete(clientId);
+                    await pendingMessages.save(record.session, outgoing); render();
                     return;
                 }
                 setNotice('syncMessageQueued');
@@ -3101,6 +3227,7 @@ import { createSystemNotifications } from './sync-notifications.js';
             saveDraft();
             input.focus();
         });
+        input.addEventListener('focus', resizeComposer);
         input.maxLength = 10000;
         input.addEventListener('input', () => { saveDraft(); updateControls(); });
         input.addEventListener('keydown', (event) => {
@@ -3120,6 +3247,8 @@ import { createSystemNotifications } from './sync-notifications.js';
             else updateCountdowns();
         });
         find('search').addEventListener('input', () => {
+            replyNavigation?.abort();
+            replyNavigation = null;
             clearTimeout(searchTimer);
             searchController?.abort();
             if (find('search').value.trim() && searchScrollTop === null) {
@@ -3146,6 +3275,8 @@ import { createSystemNotifications } from './sync-notifications.js';
             input.focus({ preventScroll: true });
         });
         find('latest').addEventListener('click', () => {
+            replyNavigation?.abort();
+            replyNavigation = null;
             find('search').value = '';
             searchScrollTop = null;
             searchAnchor = null;
@@ -3155,13 +3286,27 @@ import { createSystemNotifications } from './sync-notifications.js';
             scrollToLatest();
             markRead();
         });
+        find('first-unread').addEventListener('click', () => jumpToMessage());
+        find('unread-mention').addEventListener('click', () => jumpToMessage(null, true));
         find('history-more').addEventListener('click', () => loadOlder());
+        let readingAnchor = null;
+        let feedWidth = feed.clientWidth;
+        const rememberReadingPosition = () => {
+            if (!mobileLayout.matches || !feed.clientHeight || feed.clientWidth !== feedWidth) return;
+            const top = feed.getBoundingClientRect().top;
+            const anchor = history.map(message => messageNodes.get(message.id))
+                .find(node => node && !node.hidden && node.getBoundingClientRect().bottom > top);
+            readingAnchor = anchor ? { node: anchor, offset: anchor.getBoundingClientRect().top - top } : null;
+        };
         feed.addEventListener('scroll', () => {
+            // A rotation can clamp scrollTop before ResizeObserver restores the reading anchor.
+            if (mobileLayout.matches && feed.clientWidth !== feedWidth) return;
             if (!find('search').value.trim()) {
                 if (atBottom()) followLatest = true;
                 else if (feed.scrollTop < lastFeedScrollTop) followLatest = false;
             }
             lastFeedScrollTop = feed.scrollTop;
+            rememberReadingPosition();
             markRead();
         });
         feed.addEventListener('wheel', event => { if (event.deltaY < 0) followLatest = false; }, { passive: true });
@@ -3170,17 +3315,34 @@ import { createSystemNotifications } from './sync-notifications.js';
             else markRead();
         }).observe(messages);
         new ResizeObserver(() => {
+            const width = feed.clientWidth;
+            if (!width) return;
+            if (mobileLayout.matches && width !== feedWidth && !followLatest && readingAnchor?.node.isConnected) {
+                feed.scrollTop += readingAnchor.node.getBoundingClientRect().top - feed.getBoundingClientRect().top - readingAnchor.offset;
+                lastFeedScrollTop = feed.scrollTop;
+            }
+            feedWidth = width;
+            rememberReadingPosition();
             if (followLatest) scrollToLatest();
             else markRead();
         }).observe(feed);
+        let composerWidth = input.clientWidth;
+        new ResizeObserver(() => {
+            if (input.clientWidth === composerWidth) return;
+            composerWidth = input.clientWidth;
+            resizeComposer();
+        }).observe(input);
         // The pairing card sits above the feed, so scroll by its height change before the next paint to keep the messages still
         // when it opens, closes or appears. Changes while the feed is not rendered have nothing on screen to keep in place.
         let pairingHeight = null;
+        let pairingWidth = feed.clientWidth;
         new ResizeObserver(() => {
+            const rotated = mobileLayout.matches && pairingWidth !== feed.clientWidth;
+            pairingWidth = feed.clientWidth;
             const height = feed.clientHeight ? find('pairing-dock').offsetHeight : null;
             const change = pairingHeight === null || height === null ? 0 : height - pairingHeight;
             pairingHeight = height;
-            if (!change) return;
+            if (!change || rotated) return;
             if (followLatest && !find('search').value.trim()) feed.scrollTop = feed.scrollHeight;
             else feed.scrollTop += change;
             lastFeedScrollTop = feed.scrollTop;
@@ -3329,7 +3491,7 @@ import { createSystemNotifications } from './sync-notifications.js';
             if (event.key === CREDENTIAL_KEY || event.key === CATALOG_KEY || event.key === null) reconcileSession();
         });
         window.addEventListener('pagehide', () => {
-            cancelRecording();
+            cancelRecording(true);
             voicePlayers.forEach(player => player.release());
             releaseVoicePreview();
             saveDraft(); disconnect(); soundVersion++; soundUnlocking = false;
@@ -3342,7 +3504,7 @@ import { createSystemNotifications } from './sync-notifications.js';
         });
         window.addEventListener('blur', () => {
             browserFocused = false;
-            if (recording()) cancelRecording();
+            if (recording()) cancelRecording(true);
             pauseVoiceMedia();
             markRead();
         });
@@ -3392,6 +3554,7 @@ import { createSystemNotifications } from './sync-notifications.js';
             button: find('notifications'), translate, onError: key => setNotice(key, true),
             onOpen: roomId => { entry.show(); if (credentials?.roomId !== roomId) switchSpace(roomId); }
         });
+        desktopApi.notificationDiagnostics = () => systemNotifications.diagnostics();
         reconcileSession().then(recoverPendingPairing);
         updateSoundToggle();
         updateControls();

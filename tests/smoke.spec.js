@@ -1092,6 +1092,7 @@ test('pauses the immersive render loop when direct view opens and resumes after 
 });
 
 test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => {
+    await page.clock.install({ time: new Date('2026-11-02T00:00:00Z') });
     if (!isMobile) await page.setViewportSize({ width: 983, height: 754 });
     await page.goto(isMobile ? '/portfolio/?view=mobile-homepage' : '/portfolio/');
 
@@ -1241,6 +1242,8 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
         > Number(window.getComputedStyle(document.querySelector('[data-app-window]')).zIndex)
     ))).toBe(true);
 
+    // Keep the AI timer from racing the separate keyboard and state-inspection calls.
+    await page.clock.pauseAt(new Date('2026-11-02T00:01:00Z'));
     await canvas.focus();
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('ArrowDown');
@@ -1251,7 +1254,7 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     keyboardState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
     expect(keyboardState.phase).toBe('thinking');
     expect(keyboardState.moves[0]).toEqual({ row: 8, col: 8, player: 'human-black' });
-    await page.evaluate(() => window.advanceTime(1000));
+    await page.clock.runFor(1000);
     await page.keyboard.press('Control+z');
     keyboardState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
     expect(keyboardState.moves).toHaveLength(0);
@@ -1261,10 +1264,11 @@ test('runs the retro Gomoku desktop application', async ({ page, isMobile }) => 
     keyboardState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
     expect(keyboardState.phase).toBe('thinking');
     expect(keyboardState.moves[0]).toEqual({ row: 8, col: 7, player: 'human-black' });
-    await page.evaluate(() => window.advanceTime(1000));
+    await page.clock.runFor(1000);
     await page.keyboard.press('Control+z');
     keyboardState = JSON.parse(await page.evaluate(() => window.render_game_to_text()));
     expect(keyboardState.moves).toHaveLength(0);
+    await page.clock.resume();
 
     for (let index = 0; index < 16; index += 1) {
         await page.keyboard.press('ArrowUp');

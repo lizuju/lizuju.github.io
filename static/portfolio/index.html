@@ -144,6 +144,10 @@
                     <span class="control-panel-item-icon" aria-hidden="true">↔</span>
                     <span><strong data-i18n="syncStorage">联络站存储</strong><small data-i18n="controlPanelStorageHint">查看联络站存储与维护状态</small></span>
                 </button>
+                <button class="control-panel-item" type="button" data-open-sync-diagnostics>
+                    <span class="control-panel-item-icon" aria-hidden="true">⌁</span>
+                    <span><strong data-i18n="syncDiagnostics">连接诊断</strong><small data-i18n="syncDiagnosticsHint">查看连接与通知状态</small></span>
+                </button>
             </div>
             <div class="sync-storage-view" data-sync-storage-view hidden>
                 <div class="sync-storage-body">
@@ -161,6 +165,22 @@
                     </div>
                 </div>
                 <p class="sync-notice" role="status" aria-live="polite" data-sync-storage-notice data-i18n="syncStorageReady">点击刷新查看存储与额度。</p>
+            </div>
+            <div class="sync-storage-view" data-sync-diagnostics-view hidden>
+                <div class="sync-storage-body">
+                    <div class="sync-diagnostics-actions">
+                        <button class="sync-button" type="button" data-sync-diagnostics-test data-i18n="syncDiagnosticsTest">测试通知</button>
+                        <button class="sync-button" type="button" data-sync-diagnostics-export data-i18n="syncDiagnosticsExport">导出诊断</button>
+                    </div>
+                    <p data-i18n="syncDiagnosticsLocal">仅本页面的诊断，不含聊天内容或凭据。</p>
+                    <dl class="sync-storage-metrics" data-sync-diagnostics-metrics></dl>
+                    <h3 data-i18n="syncDiagnosticsNotification">最近通知耗时</h3>
+                    <dl class="sync-storage-metrics" data-sync-diagnostics-timings></dl>
+                    <p data-i18n="syncDiagnosticsLimit">耗时截至通知接口响应，不代表系统横幅出现时间。</p>
+                    <h3 data-i18n="syncDiagnosticsEvents">最近记录</h3>
+                    <ol class="sync-diagnostics-events" data-sync-diagnostics-events></ol>
+                </div>
+                <p class="sync-notice" role="status" aria-live="polite" data-sync-diagnostics-notice></p>
             </div>
             <button class="window-resize-handle" type="button" data-control-panel-resize data-i18n-aria="controlPanelResize" aria-label="调整控制面板窗口大小"></button>
         </section>

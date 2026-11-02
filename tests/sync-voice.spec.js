@@ -137,10 +137,12 @@ test.beforeEach(async ({ page }) => {
                 this.port = { closed: false,
                     postMessage: data => {
                         if (data.type !== 'stop') return;
-                        queueMicrotask(() => {
+                        const finish = () => {
                             this.port.onmessage?.({ data: { type: 'samples', samples: new Float32Array(state.sampleCount).fill(0.125) } });
                             this.port.onmessage?.({ data: { type: 'stopped' } });
-                        });
+                        };
+                        if (state.holdStop) state.finishStop = finish;
+                        else queueMicrotask(finish);
                     },
                     close() { this.closed = true; }
                 };
@@ -314,6 +316,30 @@ test('handles denied microphone access and cancels a delayed permission result w
     await startRecording(page);
     await page.locator('[data-sync-voice-cancel]').click();
     await microphoneReleased(page);
+    await expect(page.locator('[data-sync-notice]')).not.toHaveAttribute('data-i18n', 'syncVoiceInterrupted');
+});
+
+test('shows processing while the recording is being finalized and distinguishes a microphone interruption', async ({ page }) => {
+    await openChat(page);
+    await page.locator('[data-sync-input]').fill('Keep voice caption');
+    await page.evaluate(() => { voiceMock.holdStop = true; });
+    await startRecording(page);
+    await page.locator('[data-sync-voice-stop]').click();
+    await expect(page.locator('[data-sync-voice-status]')).toHaveAttribute('data-i18n', 'syncVoiceFinishing');
+    await expect(page.locator('[data-sync-voice-stop]')).toBeDisabled();
+    await page.evaluate(() => voiceMock.finishStop());
+    await expect(page.locator('[data-sync-voice-preview]')).toBeVisible();
+    await page.locator('[data-sync-remove-file]').click();
+    await page.evaluate(() => { voiceMock.holdStop = false; });
+    await startRecording(page);
+    await page.evaluate(() => voiceMock.tracks.at(-1).dispatchEvent(new Event('ended')));
+    await expect(page.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncVoiceInterrupted');
+    await microphoneReleased(page);
+    await expect(page.locator('[data-sync-voice-preview]')).toBeHidden();
+    await expect(page.locator('[data-sync-input]')).toHaveValue('Keep voice caption');
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(page.locator('[data-sync-notice]')).toHaveText('Recording interrupted. Please record again.');
+    expect(uploads).toHaveLength(0);
 });
 
 test('rejects a sub-250ms recording and stops the next recording at sixty seconds before sending', async ({ page }) => {
@@ -355,6 +381,7 @@ test('cancels capture on blur, hidden document, inert desktop, scene exit, minim
         await restore();
         await expect(page.locator('[data-sync-voice-recording]')).toBeHidden();
         await expect(page.locator('[data-sync-voice-preview]')).toBeHidden();
+        await expect(page.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncVoiceInterrupted');
         await expect(page.locator('[data-sync-input]')).toHaveValue('Preserved through every interruption');
     }
     expect(uploads).toHaveLength(0);

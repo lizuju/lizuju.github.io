@@ -107,8 +107,15 @@
                                 <ol class="sync-messages" data-sync-messages role="log" aria-live="polite"
                                     aria-relevant="additions" aria-labelledby="sync-messages-title"></ol>
                             </div>
-                            <button class="sync-button sync-latest" type="button" data-sync-latest hidden
-                                data-i18n="syncLatest">回到最新消息</button>
+                            <div class="sync-message-navigation">
+                                <div class="sync-unread-navigation" data-sync-unread-navigation hidden>
+                                    <button class="sync-button" type="button" data-sync-first-unread hidden
+                                        data-i18n="syncFirstUnread">首条未读</button>
+                                    <button class="sync-button" type="button" data-sync-unread-mention hidden></button>
+                                </div>
+                                <button class="sync-button sync-latest" type="button" data-sync-latest hidden
+                                    data-i18n="syncLatest">回到最新消息</button>
+                            </div>
                         </div>
                         <form class="sync-compose" data-sync-send-form>
                             <label class="visually-hidden" for="sync-file" data-i18n="syncAttach">选择文件/图片</label>

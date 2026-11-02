@@ -464,16 +464,19 @@ self.addEventListener('fetch', (event) => {
 });
 // Notifications never include message content or decryption keys.
 const showSystemNotification = event => {
-    if (event.data?.source !== 'gavin-sync-notification' || event.data.type !== 'show' || !trustedClient(event.source)) return;
+    if (event.data?.source !== 'gavin-sync-notification' || !['show', 'test'].includes(event.data.type) || !trustedClient(event.source)) return;
+    const testing = event.data.type === 'test';
+    const receivedAt = Date.now();
+    const reply = status => event.ports[0]?.postMessage({ status, workerMs: Date.now() - receivedAt });
     event.waitUntil((async () => {
         const windows = await self.clients.matchAll({ type: 'window' });
-        if (windows.some(client => client.focused && client.visibilityState === 'visible')) { event.ports[0]?.postMessage(false); return; }
+        if (!testing && windows.some(client => client.focused && client.visibilityState === 'visible')) { reply('foreground'); return; }
         await self.registration.showNotification(event.data.title, {
-            body: event.data.body, tag: `sync:${event.data.roomId}`, silent: true,
-            data: { clientId: event.source.id, roomId: event.data.roomId }
+            body: event.data.body, tag: testing ? 'sync:test' : `sync:${event.data.roomId}`, silent: true,
+            data: testing ? { clientId: event.source.id } : { clientId: event.source.id, roomId: event.data.roomId }
         });
-        event.ports[0]?.postMessage(true);
-    })().catch(() => event.ports[0]?.postMessage(false)));
+        reply('shown');
+    })().catch(() => reply('error')));
 };
 self.addEventListener('notificationclick', event => {
     event.notification.close();
@@ -481,7 +484,7 @@ self.addEventListener('notificationclick', event => {
         const client = await self.clients.get(event.notification.data.clientId);
         if (client) {
             await client.focus();
-            client.postMessage({ source: 'gavin-sync-notification', roomId: event.notification.data.roomId });
+            if (event.notification.data.roomId) client.postMessage({ source: 'gavin-sync-notification', roomId: event.notification.data.roomId });
         } else await self.clients.openWindow(new URL('.', self.location.href).href);
     })());
 });

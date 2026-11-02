@@ -239,12 +239,10 @@
 .sync-mention-composer { position: relative; min-width: 0; }
 .sync-mention-composer textarea { display: block; }
 .sync-mention-menu {
-    position: absolute;
-    z-index: 5;
-    bottom: calc(100% + 4px);
-    left: 0;
-    width: min(280px, 100%);
-    max-height: min(180px, 30vh);
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    padding: 0;
     overflow: auto;
     border: 2px outset #fff;
     color: var(--window-dark);
@@ -1100,13 +1098,49 @@ button.sync-attachment-info:focus-visible {
     object-fit: contain;
 }
 
-.sync-latest {
+.sync-unread-separator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #49615d;
+    font-size: 11px;
+    text-align: center;
+}
+
+.sync-unread-separator::before,
+.sync-unread-separator::after {
+    content: '';
+    height: 1px;
+    flex: 1;
+    background: #b5c7c3;
+}
+
+.sync-message-navigation {
     position: absolute;
     right: 22px;
     bottom: 12px;
     z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
     max-width: calc(100% - 44px);
+    pointer-events: none;
+}
+
+.sync-unread-navigation {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 5px;
+    max-width: 100%;
+}
+
+.sync-unread-navigation .sync-button,
+.sync-latest {
+    max-width: 100%;
     margin: 0;
+    pointer-events: auto;
     box-shadow: 2px 3px 6px #0003;
 }
 
@@ -1623,3 +1657,64 @@ button.sync-attachment-info:focus-visible {
     border-color: #90701e;
     background: #e4b83f;
 }
+
+/* Only the chat window follows the phone's visible viewport; other desktop windows keep their geometry. */
+body .app-window.sync-window.is-mobile-layout {
+    position: fixed;
+    top: calc(var(--sync-viewport-top, 0px) + 4px + env(safe-area-inset-top)) !important;
+    right: max(4px, env(safe-area-inset-right)) !important;
+    bottom: auto !important;
+    left: max(4px, env(safe-area-inset-left)) !important;
+    width: auto !important;
+    height: calc(var(--sync-viewport-height, 100dvh) - 4px - var(--sync-bottom-gap, 39px) - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+    min-width: 0;
+    min-height: 0;
+}
+
+.sync-window.is-mobile-layout .window-resize-handle { display: none; }
+.sync-window.is-mobile-layout input,
+.sync-window.is-mobile-layout textarea { font-size: 16px; }
+
+.sync-window.is-mobile-layout .sync-compose {
+    min-height: 112px;
+    max-height: 65%;
+    flex-shrink: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 6px;
+}
+
+.sync-window.is-mobile-layout .sync-compose textarea {
+    min-height: 40px;
+    max-height: min(112px, max(40px, calc(var(--sync-viewport-height, 100dvh) * 0.22 - 16px)));
+    line-height: 24px;
+    resize: none;
+    overflow-y: auto;
+}
+
+.sync-window.is-mobile-layout .sync-compose-footer {
+    position: sticky;
+    bottom: -6px;
+    padding-bottom: 6px;
+    background: #f3f3ef;
+}
+
+.sync-window.is-mobile-layout .sync-attach-controls {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+}
+
+.sync-window.is-mobile-layout .sync-compose-footer .sync-button,
+.sync-window.is-mobile-layout .sync-voice-recording .sync-button {
+    min-height: 44px;
+    touch-action: manipulation;
+}
+
+.sync-window.is-mobile-layout .sync-voice-recording {
+    display: grid;
+    grid-template-columns: 1fr auto;
+}
+
+.sync-window.is-mobile-layout .sync-message-area { min-height: 0; overflow: hidden; }
+.sync-window.is-mobile-layout .sync-pairing-dock { max-height: 25%; overflow-y: auto; }
+.sync-window.is-mobile-layout .sync-notice { max-height: 3.5em; overflow-y: auto; }

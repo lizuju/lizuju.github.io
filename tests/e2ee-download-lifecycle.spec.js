@@ -71,7 +71,7 @@ test.beforeAll(async () => {
             response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ apiBase }));
         } else if (request.url === '/portfolio/client.html') {
             response.writeHead(200, { 'Content-Type': 'text/html' });
-            response.end('<script type="module">import {openEncryptedFile} from "./client.js"; window.openEncryptedFile = openEncryptedFile;</script>');
+            response.end('<script type="module">import {openEncryptedFile, prepareEncryptedFiles} from "./client.js"; window.openEncryptedFile = openEncryptedFile; window.prepareEncryptedFiles = prepareEncryptedFiles;</script>');
         } else { response.writeHead(404); response.end(); }
     });
     await new Promise(resolve => site.listen(0, '127.0.0.1', resolve));
@@ -343,4 +343,20 @@ test('rejects ticket renewal into a different space before making another upstre
     }, { apiBase, metadata });
     expect(result).toEqual({ rejected: true, renewals: 1 });
     expect(requests).toBe(1);
+});
+
+
+test('returns the current worker after an update replaces a prepared controller', async ({ page }) => {
+    await open(page, false);
+    await page.evaluate(async () => { window.oldWorker = await prepareEncryptedFiles(); });
+    workerRevision++;
+    const current = await page.evaluate(async () => {
+        const changed = new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+        const registration = await navigator.serviceWorker.getRegistration();
+        await registration.update();
+        await changed;
+        const worker = await prepareEncryptedFiles();
+        return { changed: worker !== oldWorker, current: worker === navigator.serviceWorker.controller, oldState: oldWorker.state };
+    });
+    expect(current).toEqual({ changed: true, current: true, oldState: 'redundant' });
 });

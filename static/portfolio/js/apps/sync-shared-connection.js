@@ -1,4 +1,5 @@
 import { SyncConnection } from './sync-connection.js';
+import { recordConnectionState, removeConnectionDiagnostics } from './sync-connection-diagnostics.js';
 
 // A Web Lock elects one socket owner per saved device; closing that page releases it automatically.
 export class SharedSyncConnection {
@@ -100,6 +101,7 @@ export class SharedSyncConnection {
 
     setState(state) {
         this.state = state;
+        if (!this.stopped) recordConnectionState(this, state);
         this.options.onState(state);
     }
 
@@ -268,5 +270,6 @@ export class SharedSyncConnection {
         this.channel?.close();
         this.channel = null;
         this.setState('offline');
+        removeConnectionDiagnostics(this);
     }
 }

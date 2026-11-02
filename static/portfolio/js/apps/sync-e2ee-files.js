@@ -62,7 +62,12 @@ export const prepareEncryptedFiles = () => {
             return navigator.serviceWorker.controller;
         })().catch((error) => { workerPromise = null; throw error; });
     }
-    return workerPromise;
+    return workerPromise.then(() => {
+        const current = navigator.serviceWorker.controller;
+        if (current?.scriptURL === workerUrl.href && current.state !== 'redundant') return current;
+        workerPromise = null;
+        return prepareEncryptedFiles();
+    });
 };
 
 export async function openEncryptedFile({ url, metadata, download = false, refresh, cacheScope, onProgress }) {

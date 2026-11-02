@@ -18,11 +18,30 @@ export function createMentions({ input, menu, members, translate }) {
     let candidates = [];
     let selected = 0;
     let pendingEdit = null;
+    menu.popover = 'manual';
     const close = () => {
+        if (menu.matches(':popover-open')) menu.hidePopover();
         menu.hidden = true;
         query = null;
         input.setAttribute('aria-expanded', 'false');
         input.removeAttribute('aria-activedescendant');
+    };
+    const position = () => {
+        if (menu.hidden) return;
+        if (!input.getClientRects().length || input.closest('[inert]')) return close();
+        const rect = input.getBoundingClientRect();
+        const viewport = window.visualViewport;
+        const top = (viewport?.offsetTop || 0) + 4;
+        const left = (viewport?.offsetLeft || 0) + 4;
+        const bottom = top + (viewport?.height || innerHeight) - 8;
+        const right = left + (viewport?.width || innerWidth) - 8;
+        const above = Math.max(0, rect.top - top - 4);
+        const below = Math.max(0, bottom - rect.bottom - 4);
+        const upwards = above >= Math.min(180, below);
+        menu.style.width = `${Math.max(0, Math.min(280, rect.width, right - left))}px`;
+        menu.style.maxHeight = `${Math.min(180, upwards ? above : below)}px`;
+        menu.style.left = `${Math.max(left, Math.min(rect.left, right - menu.offsetWidth))}px`;
+        menu.style.top = `${upwards ? Math.max(top, rect.top - 4 - menu.offsetHeight) : rect.bottom + 4}px`;
     };
     const sync = (edit = pendingEdit) => {
         pendingEdit = null;
@@ -100,6 +119,8 @@ export function createMentions({ input, menu, members, translate }) {
             input.removeAttribute('aria-activedescendant');
         } else input.setAttribute('aria-activedescendant', `sync-mention-${selected}`);
         menu.hidden = false;
+        if (!menu.matches(':popover-open')) menu.showPopover();
+        position();
         input.setAttribute('aria-expanded', 'true');
     };
     input.addEventListener('beforeinput', event => {
@@ -131,6 +152,11 @@ export function createMentions({ input, menu, members, translate }) {
     document.addEventListener('pointerdown', event => {
         if (event.target !== input && !menu.contains(event.target)) close();
     });
+    document.addEventListener('scroll', position, true);
+    window.addEventListener('resize', position);
+    window.visualViewport?.addEventListener('resize', position);
+    window.visualViewport?.addEventListener('scroll', position);
+    new ResizeObserver(position).observe(input);
     return {
         close,
         update,

@@ -45,6 +45,25 @@
     background: #e8e8f5;
 }
 
+.control-panel-item + .control-panel-item {
+    margin-top: 12px;
+}
+
+.sync-diagnostics-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.sync-diagnostics-events {
+    padding-left: 20px;
+    overflow-wrap: anywhere;
+}
+
+.sync-diagnostics-events li + li {
+    margin-top: 8px;
+}
+
 .control-panel-item-icon {
     flex: 0 0 36px;
     color: #000080;
