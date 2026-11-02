@@ -22,6 +22,7 @@ test('opens local diagnostics without cloud probes, switches language and export
     await page.goto('/portfolio/');
     const view = await openDiagnostics(page);
     await expect(view).toBeVisible();
+    await expect(view.locator('[data-sync-diagnostics-metrics]')).toContainText('本页尚未连接联络站');
     await expect(page.locator('[data-sync-storage-view]')).toBeHidden();
     await expect(view.locator('[data-sync-diagnostics-timings]')).toContainText('120 ms');
     await expect(view.locator('[data-sync-diagnostics-events]')).toContainText('已提交系统通知');
@@ -31,6 +32,7 @@ test('opens local diagnostics without cloud probes, switches language and export
     const downloaded = page.waitForEvent('download');
     await view.locator('[data-sync-diagnostics-export]').click();
     const download = await downloaded;
+    await expect(view.locator('[data-sync-diagnostics-notice]')).toHaveText('Download requested. Check your browser downloads.');
     expect(download.suggestedFilename()).toBe('gavin-connection-diagnostics.json');
     const stream = await download.createReadStream();
     const chunks = [];
@@ -66,6 +68,22 @@ test('asks notification permission only when testing and reports denial without 
     await expect(view.locator('[data-sync-diagnostics-notice]')).toHaveText('Notification permission not granted');
 });
 
+test('downloads diagnostics through a native link inside the immersive iframe', async ({ page }) => {
+    await page.route('**/__diagnostics-shell__/', route => route.fulfill({ contentType: 'text/html',
+        body: '<iframe id="computer-screen" src="/portfolio/" style="width:900px;height:680px;border:0"></iframe>' }));
+    await page.goto('/__diagnostics-shell__/');
+    const frame = page.frameLocator('#computer-screen');
+    const view = await openDiagnostics(frame);
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const downloaded = page.waitForEvent('download');
+        await view.locator('[data-sync-diagnostics-export]').click();
+        const download = await downloaded;
+        expect(download.suggestedFilename()).toBe('gavin-connection-diagnostics.json');
+        expect(await download.failure()).toBeNull();
+        await expect(view.locator('[data-sync-diagnostics-notice]')).toHaveText('已发起下载，请查看浏览器下载列表。');
+    }
+});
+
 test('shows live connection and reconnect state without fetching diagnostics from the backend', async ({ page }) => {
     await authorize(page);
     await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
@@ -84,10 +102,11 @@ test('shows live connection and reconnect state without fetching diagnostics fro
         });
     });
     await page.goto('/portfolio/');
-    if (await page.locator('[data-window-action="minimize"]').isVisible()) await page.locator('[data-window-action="minimize"]').click();
-    await page.locator('.desktop-shortcut[data-open-sync-space]').click();
-    await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
     const view = await openDiagnostics(page);
+    await expect(view.locator('[data-sync-diagnostics-metrics]')).toContainText('本页尚未连接联络站');
+    await view.locator('[data-sync-diagnostics-open]').click();
+    await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    await page.locator('[data-control-panel-task]').click();
     const metrics = view.locator('[data-sync-diagnostics-metrics]');
     await expect(metrics).toContainText('在线 1 · 连接中 0 · 离线 0');
     await connection.close({ code: 1012, reason: 'Restart' });
