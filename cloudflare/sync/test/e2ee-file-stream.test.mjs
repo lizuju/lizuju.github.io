@@ -486,6 +486,7 @@ for (const cancel of ['preview', 'download']) test(`cancelling a ${cancel} leave
 
 for (const isolation of ['owner', 'session', 'room', 'key']) test(`chunk reuse is isolated by ${isolation}`, async () => {
   const file = await smallChunkFixture(1000), nextFile = await smallChunkFixture(1000);
+  if (isolation !== 'owner') file.cacheScope = nextFile.cacheScope = 'device:room-key';
   const next = isolation === 'key' ? { ...nextFile, url: apiUrl + '2' }
     : isolation === 'room' ? { ...file, url: apiUrl.replace('/room/', '/other-room/') }
     : isolation === 'session' ? { ...file, cacheScope: 'new-device-or-room-key' } : file;
@@ -547,4 +548,29 @@ test('shared ticket refresh uses the surviving capability when the original prev
   release();
   assert.deepEqual(Buffer.from(await reading), Buffer.from(file.clear));
   assert.equal(refreshes, 2);
+});
+
+for (const cancel of ['capability', 'range']) test(`cancelling the first ${cancel} cannot abort another tab's shared ticket refresh`, async () => {
+  const file = { ...await fixture(), cacheScope: 'device:room-key' };
+  const secondToken = 'b'.repeat(48);
+  const freshUrl = apiUrl.replace('ticket', 'c'.repeat(64));
+  let release, refreshes = 0;
+  const bridge = worker(file, (start, end, url) => url === freshUrl
+    ? file.wire.subarray(start, end + 1) : new Response(null, { status: 401 }), ReadableStream,
+  () => ++refreshes === 1 ? new Promise(resolve => { release = () => resolve(freshUrl); }) : freshUrl);
+  await bridge.open();
+  await bridge.open(file, secondToken, 'browser-two');
+  const controller = new AbortController();
+  const first = (await bridge.get({ range: 'bytes=0-9', signal: controller.signal })).arrayBuffer().then(() => false, () => true);
+  while (!release) await new Promise(resolve => setTimeout(resolve, 0));
+  const second = (await bridge.get({ range: `bytes=${chunkSize}-${chunkSize + 9}`,
+    capabilityToken: secondToken, capabilityOwner: 'browser-two', clientId: 'browser-two' })).arrayBuffer();
+  while (bridge.requests.length < 2) await new Promise(resolve => setTimeout(resolve, 0));
+  if (cancel === 'capability') bridge.close();
+  else controller.abort();
+  release();
+  assert.equal(await first, true);
+  assert.deepEqual(Buffer.from(await second), Buffer.from(file.clear.subarray(chunkSize, chunkSize + 10)));
+  bridge.close();
+  bridge.close(secondToken, 'browser-two');
 });

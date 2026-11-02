@@ -147,6 +147,8 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                 }
                 export class SyncRoom extends ProductionSyncRoom {
+                  testFailCleanup(value) { this.failCleanup = value; }
+                  cleanupFiles() { if (this.failCleanup) throw new Error('test_cleanup_failed'); return super.cleanupFiles(); }
                   testSocketActivity(activity) {
                     const ctx = this.ctx;
                     const sockets = activity.map(item => ({ deserializeAttachment: () => ({ deviceId: item.deviceId, connectedAt: item.at, closing: item.closing }) }));
@@ -172,6 +174,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                     return queries.map(cursor => ({ rows: cursor.toArray(), reads: cursor.rowsRead }));
                   }
                   testReadCount() { return this.readCursors.reduce((sum, cursor) => sum + cursor.rowsRead, 0); }
+                  testQueryCount() { return this.readCursors.length; }
                   testArmUploadAuthorization() { this.uploadAuthorizationArmed = true; this.uploadAuthorized = false; }
                   testUploadAuthorized() { return !!this.uploadAuthorized; }
                   checkWrite(...args) {
@@ -1835,4 +1838,46 @@ test('warm capacity checks read a constant number of rows and track reservations
   assert.ok(measured.reads < 10, JSON.stringify(measured));
   assert.equal(measured.reserved, 250);
   assert.equal(measured.committed, 50);
+});
+
+test('download tickets do not depend on cleanup and still reject expired and deleted attachments', async () => {
+  const request = client(), space = await createSpace(request);
+  const sent = await upload(request, space);
+  const room = await roomObject(space);
+  const registry = (await runtime.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const refreshes = await registry.testRefreshes();
+  await room.testFailCleanup(true);
+  try {
+    const path = `/v1/spaces/${space.roomId}/files/${sent.body.id}/download`;
+    const issued = await request(path, { method: 'POST', token: space.token });
+    assert.equal(issued.status, 200);
+    assert.equal(await registry.testRefreshes(), refreshes);
+    const downloaded = await request(`/v1/spaces/${space.roomId}/downloads/${issued.body.ticket}`);
+    assert.deepEqual(downloaded.body, Buffer.from('attachment'));
+    const storage = await roomStorage(space);
+    await storage.exec('UPDATE files SET created_at = ?', Date.now() - sevenDays - 1);
+    assert.equal((await request(path, { method: 'POST', token: space.token })).status, 404);
+    await storage.exec('UPDATE files SET created_at = ?', Date.now());
+    await storage.exec('DELETE FROM messages');
+    assert.equal((await request(path, { method: 'POST', token: space.token })).status, 404);
+  } finally { await room.testFailCleanup(false); }
+});
+
+test('warm text sends keep SQL operations bounded while scheduling history expiration', async () => {
+  const request = client(), space = await createSpace(request);
+  const path = `/v1/spaces/${space.roomId}/messages`;
+  await request(path, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'warm-up' } });
+  const room = await roomObject(space);
+  const registry = (await runtime.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const session = request.state.sessions.get(space.token);
+  const clientId = randomUUID();
+  const text = await cryptoClient.encryptPayload(session.keyring, space.roomId, `message:${space.deviceId}:${clientId}`, { text: 'measured send' });
+  await room.testBeginReads();
+  const result = await registry.storeMessage(space.roomId, space.token, clientId, text, session.keyring.currentKeyId);
+  const queries = await room.testQueryCount();
+  const reads = await room.testReadCount();
+  assert.equal(result.created, true);
+  assert.ok(queries <= 23, `expected <= 23 SQL calls, got ${queries}`);
+  assert.ok(reads < 40, `expected fewer than 40 read rows, got ${reads}`);
+  assert.ok(await room.testReadAlarm() <= Date.now() + sevenDays);
 });

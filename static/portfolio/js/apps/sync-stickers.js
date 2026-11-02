@@ -6,6 +6,7 @@ export const STICKERS = [
     { id: 'wow', zh: '震惊', en: 'Wow', url: new URL('../../assets/stickers/wow.png', import.meta.url).href },
     { id: 'love', zh: '比心', en: 'Love', url: new URL('../../assets/stickers/love.png', import.meta.url).href },
     { id: 'like', zh: '点赞', en: 'Nice', url: new URL('../../assets/stickers/like.png', import.meta.url).href },
+    { id: 'dislike', zh: '倒拇指', en: 'Thumbs down', url: new URL('../../assets/stickers/dislike.png', import.meta.url).href },
     { id: 'sleepy', zh: '困了', en: 'Sleepy', url: new URL('../../assets/stickers/sleepy.png', import.meta.url).href },
     { id: 'confused', zh: '疑惑', en: 'Confused', url: new URL('../../assets/stickers/confused.png', import.meta.url).href },
     { id: 'awkward', zh: '尴尬', en: 'Awkward', url: new URL('../../assets/stickers/awkward.png', import.meta.url).href },

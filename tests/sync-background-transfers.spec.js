@@ -24,6 +24,7 @@ let ticketRequests;
 let headRequests;
 let downloadRanges;
 let retryDownload;
+let connection;
 
 const row = (page, name) => page.locator('.sync-message').filter({ has: page.locator('.sync-attachment-name', { hasText: name }) });
 const background = page => page.evaluate(() => {
@@ -92,13 +93,13 @@ test.beforeEach(async ({ page, isMobile }) => {
     const apiBase = `http://127.0.0.1:${server.address().port}`;
     site = await startSite(apiBase);
     await authorize(page, `${site.origin}/portfolio/`);
-    await page.routeWebSocket(`${apiBase.replace('http:', 'ws:')}/**`, socket => socket.onMessage(raw => {
+    await page.routeWebSocket(`${apiBase.replace('http:', 'ws:')}/**`, socket => { connection = socket; socket.onMessage(raw => {
         if (raw === 'ping') return socket.send('pong');
         if (JSON.parse(raw).type === 'auth') socket.send(JSON.stringify({
             type: 'ready', deviceId, pairing: null,
             messages: attachments.map((attachment, index) => message(index + 1, '', deviceId, attachment.metadata))
         }));
-    }));
+    }); });
     await page.goto(`${site.origin}/${isMobile ? 'chat/' : 'portfolio/'}`);
     if (!isMobile) {
         await page.locator('[data-window-action="minimize"]').click();
@@ -149,6 +150,20 @@ test('keeps a delayed preview loading while the page is hidden', async ({ page }
     await expect(media).toBeVisible();
     expect(ticketRequests).toBe(1);
     expect(headRequests).toBe(0);
+});
+
+test('history pruning keeps a surviving attachment preview loading', async ({ page }) => {
+    holdTicket = true;
+    await row(page, 'delayed-video.mp4').locator('.sync-attachment-name').click();
+    const viewer = page.locator('[data-sync-preview-window]');
+    await expect.poll(() => pendingTickets.length).toBe(1);
+    connection.send(JSON.stringify({ type: 'history', messages: [], historyMode: 'prune',
+        history: { generation: '2', oldestId: 1, latestId: 1, removedIds: [2] } }));
+    await expect(page.locator('.sync-message')).toHaveCount(1);
+    await expect(viewer).toBeVisible();
+    pendingTickets.splice(0).forEach(send => send());
+    await expect.poll(() => viewer.locator('video').evaluate(video => video.videoWidth)).toBeGreaterThan(0);
+    expect(ticketRequests).toBe(1);
 });
 
 test('keeps a slow native download alive after iframe load, ten minutes and backgrounding', async ({ page }) => {

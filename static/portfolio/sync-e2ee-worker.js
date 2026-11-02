@@ -78,7 +78,7 @@ const prepare = async (descriptor, owner, token) => {
     const cipherSize = metadata.version === 2 ? 512 * 1024 : CIPHER_CHUNK;
     const rawKey = bytes(metadata.key, 32);
     const noncePrefix = bytes(metadata.noncePrefix, 8);
-    const cacheKey = JSON.stringify([owner, url.origin, url.pathname.slice(0, url.pathname.lastIndexOf('/')),
+    const cacheKey = JSON.stringify([descriptor.cacheScope ? null : owner, url.origin, url.pathname.slice(0, url.pathname.lastIndexOf('/')),
         descriptor.cacheScope || '', metadata.fileId, metadata.version || 1, metadata.size, [...rawKey], [...noncePrefix]]);
     const key = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['decrypt']);
     const download = descriptor.download === true;
@@ -137,12 +137,14 @@ const resolve = async (owner, token) => {
     return pending.get(capability);
 };
 const fetchChunks = async (entry, index, count, signal, receive, waiting) => {
-    const start = index * entry.cipherSize;
     const total = entry.metadata.size + Math.ceil(entry.metadata.size / entry.plainSize) * 16;
     const end = Math.min(total, (index + count) * entry.cipherSize) - 1;
+    let part = index;
     let refreshed = false;
     for (let attempt = 0; ; attempt++) {
         signal.throwIfAborted();
+        const start = part * entry.cipherSize;
+        if (start > end) return;
         const request = new AbortController();
         const abort = () => request.abort(signal.reason);
         signal.addEventListener('abort', abort, { once: true });
@@ -173,7 +175,7 @@ const fetchChunks = async (entry, index, count, signal, receive, waiting) => {
                                 channel.port1.onmessage = ({ data }) => { clearTimeout(timer); channel.port1.close(); resolve(data); };
                                 client.postMessage({ source: 'gavin-sync-e2ee', type: 'refresh', token: member.token }, [channel.port2]);
                             });
-                            signal.throwIfAborted();
+                            // Refresh belongs to the shared source, not the first range's lifetime.
                             if (typeof url !== 'string' || !entry.members.has(member)) continue;
                             const previous = new URL(entry.url);
                             const next = new URL(url);
@@ -205,7 +207,6 @@ const fetchChunks = async (entry, index, count, signal, receive, waiting) => {
             }
             const reader = response.body.getReader();
             let offset = 0;
-            let part = index;
             let filled = 0;
             let encrypted = new Uint8Array(Math.min(entry.cipherSize, total - part * entry.cipherSize));
             try {
@@ -407,7 +408,7 @@ const serve = async (event, owner, token) => {
         if (!entry.download) return;
         entry.streamCount--;
         if (entries.get(token) !== entry) return;
-        if (status === 'delivered' && !range) entry.delivered = true;
+        if (status === 'delivered' && entry.receivedBytes === size) entry.delivered = true;
         if (!entry.streamCount) {
             if (entry.delivered) { await releaseDownload(entry, owner, token, 'delivered'); return; }
             expireDownload(entry, owner, token);

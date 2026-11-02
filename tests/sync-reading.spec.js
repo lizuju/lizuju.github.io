@@ -166,7 +166,9 @@ test('floats unread navigation without moving the feed or reading position when 
     const before = await feed.boundingBox();
     const compose = await page.locator('[data-sync-send-form]').boundingBox();
     const anchor = await page.locator('.sync-message').first().boundingBox();
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
     for (let id = 41; id <= 51; id++) await chat.incoming(id);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await expect(latest).toBeVisible();
     expect(await feed.boundingBox()).toEqual(before);
     expect(await page.locator('[data-sync-send-form]').boundingBox()).toEqual(compose);
@@ -183,7 +185,9 @@ test('floats unread navigation without moving the feed or reading position when 
     expect(await feed.boundingBox()).toEqual(before);
     expect(await page.locator('[data-sync-send-form]').boundingBox()).toEqual(compose);
     expect((await page.locator('.sync-message').first().boundingBox()).y).toBe(anchor.y);
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
     for (let id = 53; id <= 63; id++) await chat.incoming(id);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await latest.click();
     await expect(latest).toBeHidden();
     await expect(page.locator('.sync-message.is-reply-target .sync-message-text')).toHaveText('Incoming 53');

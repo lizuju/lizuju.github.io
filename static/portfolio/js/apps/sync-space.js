@@ -967,7 +967,7 @@ import { pendingMessages } from './sync-outbox.js';
         const updateUnread = () => {
             const record = credentials && connections.get(credentials.roomId);
             if (record) {
-                if (unread.size > 10) record.unreadPromptActive = true;
+                if (record.unreadStartId && unread.size > 10) record.unreadPromptActive = true;
                 else if (!unread.size && !record.unread.size && !hasOlderUnread()) {
                     record.unreadPromptActive = false;
                     record.unreadPromptDismissed = false;
@@ -1525,28 +1525,36 @@ import { pendingMessages } from './sync-outbox.js';
             }
             const scrollTop = feed.scrollTop;
             const previousHeight = feed.scrollHeight;
-            if (mode === 'replace') {
+            const removed = new Set(metadata?.removedIds);
+            const top = feed.getBoundingClientRect().top;
+            const anchor = mode === 'prune' && history.find(message => !removed.has(message.id)
+                && !messageNodes.get(message.id)?.hidden && messageNodes.get(message.id)?.getBoundingClientRect().bottom > top);
+            const offset = anchor ? messageNodes.get(anchor.id).getBoundingClientRect().top - top : 0;
+            if (mode === 'replace' || mode === 'prune') {
                 searchController?.abort();
                 catchupController?.abort();
                 catchingUp = false;
                 historyRequest++;
                 loadingOlder = false;
-                history = incoming;
+                history = mode === 'prune' ? history.filter(message => !removed.has(message.id)) : incoming;
             } else history = [...history, ...incoming.filter((message) => !known.has(message.id))].sort((a, b) => a.id - b.id);
             if (metadata) {
-                historyState = historyState?.generation === metadata.generation
+                historyState = mode === 'prune' ? { ...historyState, ...metadata }
+                    : historyState?.generation === metadata.generation
                     ? { ...metadata, latestId: Math.max(historyState.latestId || 0, metadata.latestId || 0) || null }
                     : metadata;
                 history = history.filter((message) => metadata.oldestId === null || message.id >= metadata.oldestId);
             }
-            if (mode !== 'prepend') reconnectCursor = metadata?.continuationId ?? incoming.at(-1)?.id ?? null;
-            render(initial, mode === 'prepend');
+            if (mode !== 'prepend' && mode !== 'prune') reconnectCursor = metadata?.continuationId ?? incoming.at(-1)?.id ?? null;
+            render(initial, mode === 'prepend' || mode === 'prune');
             if (mode === 'prepend') {
                 const addedHeight = feed.scrollHeight - previousHeight;
                 if (searchScrollTop !== null) searchScrollTop += addedHeight;
                 feed.scrollTop = scrollTop + addedHeight;
             }
-            if (mode === 'replace' && find('search').value.trim()) {
+            if (anchor) feed.scrollTop += messageNodes.get(anchor.id).getBoundingClientRect().top - top - offset;
+            if (mode === 'prune') { lastFeedScrollTop = feed.scrollTop; catchUp(historyState); }
+            if ((mode === 'replace' || mode === 'prune') && find('search').value.trim()) {
                 clearTimeout(searchTimer);
                 searchTimer = setTimeout(searchHistory, 180);
             }
@@ -1741,13 +1749,16 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const rememberHistory = (record, incoming, mode, metadata, live = false) => {
             const known = new Set(record.history.map(message => message.id));
+            const removed = new Set(metadata?.removedIds);
             record.history = (mode === 'replace' ? incoming : [...record.history, ...incoming.filter(message => !known.has(message.id))])
+                .filter(message => !removed.has(message.id))
                 .filter(message => !metadata?.oldestId || message.id >= metadata.oldestId)
                 .sort((a, b) => a.id - b.id).slice(-500);
-            if (metadata) record.historyState = live && record.historyState?.hasNewer
+            if (metadata) record.historyState = mode === 'prune' ? { ...record.historyState, ...metadata }
+                : live && record.historyState?.hasNewer
                 ? { ...metadata, generation: record.historyState.generation, hasNewer: true, continuationId: record.historyState.continuationId }
                 : metadata;
-            if (mode !== 'prepend') {
+            if (mode !== 'prepend' && mode !== 'prune') {
                 if (!live || !record.historyState?.hasNewer) record.reconnectCursor = metadata?.continuationId ?? incoming.at(-1)?.id ?? record.reconnectCursor;
                 for (const message of incoming) {
                     if (!known.has(message.id) && message.deviceId !== record.session.deviceId
