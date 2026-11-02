@@ -80,41 +80,59 @@ test('pruning removes only deleted messages and preserves the loaded reading pos
     await expect(page.locator('.sync-message')).toHaveCount(0);
 });
 
-for (const action of ['wheel', 'touch', 'keyboard', 'scrollbar']) test(`dismisses the single unread prompt after ${action} without reading the backlog`, async ({ page, browserName, isMobile }) => {
-    const chat = await openChat(page, { history: Array.from({ length: 30 }, (_, i) => message(i + 1, `Backlog ${i + 1}`, otherId)), standalone: true });
-    const prompt = page.locator('[data-sync-first-unread]');
+for (const action of ['wheel', 'keyboard', 'touch']) test(`marks the current backlog read after a foreground ${action} gesture, including unloaded history`, async ({ page, browserName, isMobile }) => {
+    test.skip(action === 'touch' && browserName !== 'chromium', 'CDP provides native touch gestures in Chromium');
+    test.skip(action === 'wheel' && browserName === 'webkit' && isMobile, 'iOS uses touch scrolling');
+    const chat = await openChat(page, { history: Array.from({ length: 50 }, (_, i) => message(i + 51, `Backlog ${i + 51}`, otherId)),
+        older: Array.from({ length: 50 }, (_, i) => message(i + 1, `Backlog ${i + 1}`, otherId)), readId: 20, standalone: true });
     const feed = page.locator('[data-sync-feed]');
-    await expect(prompt).toHaveText('有 30 条新消息 · 首条未读');
-    await expect(page.locator('[data-sync-latest]')).toHaveCount(0);
-    await page.locator('[data-taskbar-lang]').click();
-    await expect(prompt).toHaveText('30 new messages · First unread');
-    if (action === 'wheel') {
-        if (browserName === 'webkit' && isMobile) await feed.dispatchEvent('wheel', { deltaY: -20 });
-        else {
-            await feed.hover();
-            await page.mouse.wheel(0, -20);
-        }
-    } else if (action === 'touch') await feed.dispatchEvent('touchmove');
-    else if (action === 'keyboard') {
-        await feed.focus();
-        await page.keyboard.press('ArrowUp');
-    } else {
-        await feed.dispatchEvent('pointerdown');
-        await feed.evaluate(element => { element.scrollTop -= 20; });
-    }
-    await expect(prompt).toBeHidden();
-    if (action === 'scrollbar') await feed.dispatchEvent('pointerup');
+    await expect(page.locator('[data-sync-first-unread]')).toBeVisible();
+    await expect(page.locator('[data-sync-task]')).toBeVisible();
+    await expect(page.locator('[data-sync-task] [data-sync-unread]')).toHaveCount(0);
+    await feed.evaluate(element => { element.scrollTop -= 20; });
+    await feed.dispatchEvent('wheel', { deltaY: -20 });
     await page.clock.runFor(800);
     expect(chat.reads).toEqual([]);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('30');
-    chat.frame({ type: 'message', message: message(31, 'Foreground addition', otherId), history: bounds(31) });
-    await expect(page.locator('.sync-message')).toHaveCount(31);
-    await expect(prompt).toBeHidden();
     await page.evaluate(() => window.dispatchEvent(new Event('blur')));
-    chat.frame({ type: 'message', message: message(32, 'New background arrival', otherId), history: bounds(32) });
-    await expect(page.locator('.sync-message')).toHaveCount(32);
+    await feed.focus();
+    await page.keyboard.press('PageUp');
+    await page.clock.runFor(800);
+    expect(chat.reads).toEqual([]);
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await expect(prompt).toBeVisible();
+    if (action === 'wheel') {
+        await feed.hover();
+        await page.mouse.wheel(0, -20);
+    } else if (action === 'keyboard') {
+        await feed.focus();
+        await page.keyboard.press('PageUp');
+    } else {
+        const box = await feed.boundingBox();
+        const x = box.x + box.width / 2, y = box.y + box.height / 2;
+        const session = await page.context().newCDPSession(page);
+        await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - 40 }] });
+        await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await session.detach();
+    }
+    await expect.poll(() => chat.reads.at(-1)).toBe(100);
+    expect(chat.historyRequests).toEqual([]);
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
+    await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(0);
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    chat.frame({ type: 'message', message: message(101, 'Later arrival', otherId), history: bounds(101) });
+    await expect(page.locator('.sync-message')).toHaveCount(51);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.clock.runFor(800);
+    expect(chat.reads.at(-1)).toBe(100);
+});
+
+test('does not restore unread mentions from delayed messages below the saved read watermark', async ({ page }) => {
+    const chat = await openChat(page, { history: [message(100, 'Already read', otherId)], readId: 100, standalone: true });
+    chat.frame({ type: 'message', message: mentionMessage(99), history: bounds(100) });
+    await expect(page.locator('.sync-message')).toHaveCount(2);
+    await expect(page.locator('[data-sync-unread-mention]')).toBeHidden();
+    chat.frame({ type: 'message', message: mentionMessage(101), history: bounds(101) });
+    await expect(page.locator('[data-sync-unread-mention]')).toHaveText('@我 · 1');
 });
 
 test('keeps a background backlog unread after automatic scrolling and reads only the messages actually viewed', async ({ page }) => {
@@ -190,7 +208,6 @@ for (const standalone of [false, true]) test(`does not show a backlog prompt for
     await page.locator('[data-sync-input]').fill('Still chatting');
     for (let id = 2; id <= 30; id++) chat.frame({ type: 'message', message: message(id, `Foreground ${id}`, otherId), history: bounds(id) });
     await expect(page.locator('.sync-message')).toHaveCount(30);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('29');
     await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
     await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(0);
     await page.clock.runFor(1000);
@@ -213,7 +230,6 @@ test('locates the first unread across history pages without reading newer messag
     expect(await divider.evaluate(element => element.nextElementSibling.querySelector('.sync-message-text').textContent)).toBe('Message 21');
     await page.clock.runFor(1000);
     expect(chat.reads).toEqual([]);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('80');
     const feed = await page.locator('[data-sync-feed]').boundingBox();
     const target = await page.locator('.sync-message').filter({ has: page.getByText('Message 21', { exact: true }) }).boundingBox();
     expect(target.y).toBeGreaterThanOrEqual(feed.y);

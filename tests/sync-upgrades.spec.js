@@ -75,7 +75,6 @@ test('loads earlier messages without jumping, searches retained history, and rec
     expect(socketUrls.at(-1).searchParams.get('generation')).toBe('1');
     await expect(page.locator('.sync-message-text').first()).toHaveText('History message 1');
     await expect(page.locator('[data-sync-search]')).toHaveValue('History message 90');
-    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
     await showSyncTools(page);
     await page.locator('[data-sync-search]').fill('');
     expect(Math.abs((await anchor.boundingBox()).y - before.y)).toBeLessThan(2);

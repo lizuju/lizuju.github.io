@@ -251,7 +251,7 @@ test('keeps background spaces paired and synchronized through key rotation, clea
     } finally { await Promise.all(contexts.map(context => context.close())); }
 });
 
-test('marks a background space with a green dot when it receives a new message and clears it on switching there', async ({ browser, isMobile }) => {
+test('clears a background space green dot after foreground scrolling and keeps it cleared after switching and reload', async ({ browser, isMobile }) => {
     test.setTimeout(90000);
     const contexts = await Promise.all(Array.from({ length: 2 }, () => browser.newContext({
         viewport: isMobile ? { width: 320, height: 568 } : { width: 1366, height: 900 }, isMobile, hasTouch: isMobile
@@ -288,10 +288,22 @@ test('marks a background space with a green dot when it receives a new message a
 
         await selectSpace(owner, first.roomId);
         await expect(owner.locator('[data-sync-messages]')).toContainText('background-space-unread');
+        await owner.bringToFront();
+        if (await owner.locator('[data-sync-spaces-toggle]').getAttribute('aria-expanded') === 'true') await owner.locator('[data-sync-spaces-toggle]').click();
+        await owner.locator('[data-sync-feed]').focus();
+        await owner.locator('[data-sync-feed]').press('ArrowUp');
+        await expect(peer.locator('.sync-message.is-own .sync-message-read')).toHaveAttribute('data-state', 'read');
+        await selectSpace(owner, second.roomId);
         await expandSpaces(owner);
         await expect(dot(first.roomId)).toBeHidden();
         await expect(dot(second.roomId)).toBeHidden();
         await expect(owner.locator('[data-sync-spaces-toggle]')).not.toHaveClass(/has-unread/);
+        await owner.reload();
+        await awaitOnline(owner);
+        await expandSpaces(owner);
+        await expect(dot(first.roomId)).toBeHidden();
+        await sendText(peer, 'new-unread-after-scroll');
+        await expect(dot(first.roomId)).toBeVisible();
     } finally { await Promise.all(contexts.map(context => context.close())); }
 });
 
