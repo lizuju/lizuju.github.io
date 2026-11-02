@@ -50,9 +50,65 @@ const choose = async page => {
     await page.locator('[data-sync-input]').fill('@');
     await expect(page.locator('[data-sync-mention-menu]')).toBeVisible();
     const option = page.locator(`[data-sync-mention-device="${otherId}"]`);
+    await expect.poll(() => option.evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+    })).toBe(true);
     if (test.info().project.use.hasTouch) await option.tap();
     else await option.click();
 };
+
+test('keeps touch mention choices above the scrollable composer when the keyboard viewport changes', async ({ page, isMobile }) => {
+    test.skip(!isMobile, 'touch keyboard viewport');
+    await page.addInitScript(() => {
+        const viewport = new EventTarget();
+        Object.assign(viewport, { height: innerHeight, width: innerWidth, offsetTop: 0, offsetLeft: 0, scale: 1 });
+        Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+    });
+    await openChat(page);
+    const input = page.locator('[data-sync-input]');
+    await input.fill('Long draft\n'.repeat(12) + '@');
+    const menu = page.locator('[data-sync-mention-menu]');
+    await expect(menu).toBeVisible();
+    await page.evaluate(() => {
+        Object.assign(visualViewport, { height: 320, offsetTop: 25 });
+        visualViewport.dispatchEvent(new Event('resize'));
+    });
+    await expect.poll(() => menu.evaluate(element => element.getBoundingClientRect().bottom)).toBeLessThanOrEqual(345);
+    await expect.poll(() => menu.evaluate(element => element.getBoundingClientRect().top)).toBeGreaterThanOrEqual(25);
+    const option = page.locator(`[data-sync-mention-device="${otherId}"]`);
+    await expect.poll(() => option.evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+    })).toBe(true);
+    await option.tap();
+    await expect(input).toHaveValue('Long draft\n'.repeat(12) + '@设备 2 ');
+    await expect(menu).toBeHidden();
+});
+
+test('dismisses the elevated mention picker when switching windows or minimizing chat', async ({ page }) => {
+    await openChat(page);
+    const input = page.locator('[data-sync-input]');
+    const menu = page.locator('[data-sync-mention-menu]');
+    await input.fill('@');
+    await expect(menu).toBeVisible();
+    await page.locator('[data-start-toggle]').click();
+    await page.locator('[data-open-control-panel]').click();
+    await expect(menu).toBeHidden();
+    expect(await menu.evaluate(element => element.matches(':popover-open'))).toBe(false);
+    await page.locator('[data-sync-task]').click();
+    await input.fill('@again');
+    await expect(menu).toBeVisible();
+    await page.locator('[data-sync-action="minimize"]').click();
+    await expect(menu).toBeHidden();
+    expect(await menu.evaluate(element => element.matches(':popover-open'))).toBe(false);
+    await page.locator('[data-sync-task]').click();
+    await input.fill('@');
+    await expect(menu).toBeVisible();
+    await page.locator('[data-sync-action="minimize"]').evaluate(button => button.click());
+    await expect(menu).toBeHidden();
+    expect(await menu.evaluate(element => element.matches(':popover-open'))).toBe(false);
+});
 
 test('selects a member with the keyboard before Enter sends and encrypts the identity with the message', async ({ page }) => {
     const chat = await openChat(page);

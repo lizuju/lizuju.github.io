@@ -239,12 +239,10 @@
 .sync-mention-composer { position: relative; min-width: 0; }
 .sync-mention-composer textarea { display: block; }
 .sync-mention-menu {
-    position: absolute;
-    z-index: 5;
-    bottom: calc(100% + 4px);
-    left: 0;
-    width: min(280px, 100%);
-    max-height: min(180px, 30vh);
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    padding: 0;
     overflow: auto;
     border: 2px outset #fff;
     color: var(--window-dark);
