@@ -507,3 +507,33 @@ test('bounds the intermediate bitmap for long screenshots before drawing the thu
     expect(result.decoded).toEqual({ width: 10, height: 200 });
     expect(result.thumbnail).toMatchObject({ width: 10, height: 200 });
 });
+
+test('phone JPEG thumbnails preserve EXIF rotation and reflection without stretching', async ({ page }) => {
+    const results = await page.evaluate(async () => {
+        const { createImageThumbnail } = await import('/__sync-crypto-test__/sync-image-thumbnail.js');
+        const canvas = document.createElement('canvas');
+        canvas.width = 128; canvas.height = 64;
+        const context = canvas.getContext('2d');
+        context.fillStyle = '#ffd34f'; context.fillRect(0, 0, 128, 64);
+        context.fillStyle = '#44a6e8'; context.fillRect(0, 0, 64, 64);
+        const jpeg = new Uint8Array(await (await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'))).arrayBuffer());
+        const results = [];
+        for (const little of [true, false]) for (const orientation of [1, 3, 5, 6, 7, 8]) {
+            const exif = new Uint8Array(36);
+            exif.set([0xff, 0xe1, 0, 34, 69, 120, 105, 102, 0, 0]);
+            const view = new DataView(exif.buffer);
+            exif.set(little ? [73, 73] : [77, 77], 10);
+            view.setUint16(12, 42, little); view.setUint32(14, 8, little);
+            view.setUint16(18, 1, little); view.setUint16(20, 0x112, little);
+            view.setUint16(22, 3, little); view.setUint32(24, 1, little);
+            view.setUint16(28, orientation, little);
+            const file = new File([jpeg.slice(0, 2), exif, jpeg.slice(2)], 'phone.jpg', { type: 'image/jpeg' });
+            const original = await createImageBitmap(file);
+            const thumbnail = await createImageThumbnail(file, new AbortController().signal);
+            results.push({ orientation, little, original: [original.width, original.height], thumbnail: [thumbnail?.width, thumbnail?.height] });
+            original.close();
+        }
+        return results;
+    });
+    for (const result of results) expect(result.thumbnail, JSON.stringify(result)).toEqual(result.original);
+});

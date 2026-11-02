@@ -229,7 +229,60 @@ test('reuses a deferred high-resolution image without downloading or decoding it
         dimensions: [4000, 3000], remaining: 0 });
 });
 
-test('counts deferred compressed Blobs against the shared cache limit', async ({ page }) => {
+for (const ranged of [true, false]) test(`bounds automatic image reads when the server ${ranged ? 'honors' : 'ignores'} Range`, async ({ page }) => {
+    const result = await page.evaluate(async ranged => {
+        const original = new Uint8Array(20 * 1024 * 1024);
+        original.set([137, 80, 78, 71, 13, 10, 26, 10]);
+        const view = new DataView(original.buffer);
+        view.setUint32(16, 6000);
+        view.setUint32(20, 4000);
+        const requests = [];
+        let readBytes = 0;
+        let cancelled = 0;
+        window.fetch = async (_url, options) => {
+            const range = options.headers?.Range;
+            requests.push(range || 'full');
+            const match = ranged && /^bytes=(\d+)-(\d*)$/.exec(range || '');
+            const start = match ? Number(match[1]) : 0;
+            const end = match?.[2] ? Math.min(original.length, Number(match[2]) + 1) : original.length;
+            let cursor = start;
+            return new Response(new ReadableStream({
+                pull(controller) {
+                    if (cursor === end) { controller.close(); return; }
+                    const chunk = original.slice(cursor, Math.min(end, cursor + 65536));
+                    cursor += chunk.length;
+                    readBytes += chunk.length;
+                    controller.enqueue(chunk);
+                },
+                cancel() { cancelled++; }
+            }), { status: match ? 206 : 200, headers: { 'Content-Type': 'image/png',
+                ...(match ? { 'Content-Range': `bytes ${start}-${end - 1}/${original.length}` } : {}) } });
+        };
+        const resource = window.createImageResource({ load: async () => ({ url: '/large-image' }) });
+        const deferred = await resource.acquire({ automatic: true }).catch(error => error.code);
+        const firstBytes = readBytes;
+        const urlsBefore = window.created.length;
+        const repeated = await resource.acquire({ automatic: true }).catch(error => error.code);
+        const reusedHeader = readBytes === firstBytes;
+        const lease = await resource.acquire();
+        const downloaded = new Uint8Array(await (await window.nativeFetch(lease.url)).arrayBuffer());
+        const intact = downloaded.length === original.length && downloaded.every((byte, index) => byte === original[index]);
+        lease.release();
+        resource.dispose();
+        return { deferred, repeated, firstBytes, urlsBefore, reusedHeader, requests, intact, cancelled };
+    }, ranged);
+    expect(result).toEqual({
+        deferred: 'image_preview_deferred', repeated: 'image_preview_deferred',
+        firstBytes: expect.any(Number), urlsBefore: 0, reusedHeader: true,
+        requests: ['bytes=0-1048575', ranged ? 'bytes=1048576-' : 'full'], intact: true, cancelled: expect.any(Number)
+    });
+    // Include one possible upstream read-ahead buffer when Range is ignored.
+    expect(result.firstBytes).toBeLessThanOrEqual(1024 * 1024 + 65536);
+    if (!ranged) expect(result.cancelled).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.created[0].size)).toBe(20 * 1024 * 1024);
+});
+
+test('retains only small headers of deferred images instead of evicting them as full Blobs', async ({ page }) => {
     expect(await page.evaluate(async () => {
         const header = new Uint8Array(33);
         header.set([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -245,7 +298,7 @@ test('counts deferred compressed Blobs against the shared cache limit', async ({
         await resources[0].acquire({ automatic: true }).catch(() => {});
         resources.forEach(resource => resource.dispose());
         return { afterTwo, downloads, decoded: window.created.length };
-    })).toEqual({ afterTwo: 2, downloads: 3, decoded: 0 });
+    })).toEqual({ afterTwo: 2, downloads: 2, decoded: 0 });
 });
 
 test('permits ordinary HEIC dimensions through the automatic gate', async ({ page }) => {

@@ -62,14 +62,14 @@ test.beforeAll(async () => {
     apiBase = `http://127.0.0.1:${api.address().port}`;
     site = createServer((request, response) => {
         const source = text => shortExpiry ? text.replace('DOWNLOAD_IDLE_MS = 60000;', 'DOWNLOAD_IDLE_MS = 300;') : text;
-        if (request.url === '/portfolio/sync-e2ee-worker.js') {
+        if (/^\/(portfolio|chat)\/sync-e2ee-worker.js$/.test(request.url)) {
             response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
             response.end(`${source(worker)}\n// ${workerRevision}`);
-        } else if (request.url === '/portfolio/client.js') {
+        } else if (/^\/(portfolio|chat)\/client.js$/.test(request.url)) {
             response.writeHead(200, { 'Content-Type': 'application/javascript' }); response.end(source(helper));
-        } else if (request.url === '/portfolio/sync-config.json') {
+        } else if (/^\/(portfolio|chat)\/sync-config.json$/.test(request.url)) {
             response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ apiBase }));
-        } else if (request.url === '/portfolio/client.html') {
+        } else if (/^\/(portfolio|chat)\/client.html$/.test(request.url)) {
             response.writeHead(200, { 'Content-Type': 'text/html' });
             response.end('<script type="module">import {openEncryptedFile, prepareEncryptedFiles} from "./client.js"; window.openEncryptedFile = openEncryptedFile; window.prepareEncryptedFiles = prepareEncryptedFiles;</script>');
         } else { response.writeHead(404); response.end(); }
@@ -87,18 +87,93 @@ test.afterAll(async () => {
     }
 });
 
-const open = async (page, download = true) => {
-    await page.goto(`${origin}/portfolio/client.html`);
+const open = async (page, download = true, options = {}, path = 'portfolio') => {
+    await page.goto(`${origin}/${path}/client.html`);
     await page.waitForFunction(() => typeof window.openEncryptedFile === 'function');
-    return page.evaluate(async ({ apiBase, metadata, download }) => {
-        window.capability = await window.openEncryptedFile({ url: `${apiBase}/v1/spaces/room/downloads/ticket`, metadata, download });
+    return page.evaluate(async ({ apiBase, metadata, download, options }) => {
+        window.capability = await window.openEncryptedFile({ url: `${apiBase}/v1/spaces/room/downloads/ticket`, metadata, download, ...options });
         window.result = null;
         window.capabilityClosed = false;
         window.capability.result.then(result => { window.result = result; });
         window.capability.closed.then(() => { window.capabilityClosed = true; });
         return window.capability.url;
-    }, { apiBase, metadata, download });
+    }, { apiBase, metadata, download, options });
 };
+
+test('completes a range download as soon as all non-overlapping bytes have been delivered', async ({ page }) => {
+    await open(page);
+    for (const range of ['bytes=0-31', 'bytes=16-47', `bytes=${clearChunk}-`, `bytes=48-${clearChunk - 1}`]) {
+        expect(await page.evaluate(async range => {
+            const response = await fetch(window.capability.url, { headers: { Range: range } });
+            return (await response.arrayBuffer()).byteLength;
+        }, range)).toBeGreaterThan(0);
+        if (range !== `bytes=48-${clearChunk - 1}`) {
+            expect(await page.evaluate(() => window.result)).toBeNull();
+            expect(await page.evaluate(() => window.capabilityClosed)).toBe(false);
+        }
+    }
+    await expect.poll(() => page.evaluate(() => ({ result: window.result, closed: window.capabilityClosed })))
+        .toEqual({ result: { status: 'delivered' }, closed: true });
+    expect(requests).toBe(2);
+});
+
+for (const path of ['portfolio', 'chat']) test(`shares authenticated chunks across ${path} tabs without sharing capability ownership or cancellation`, async ({ page, context }) => {
+    const cacheScope = 'device:room-key';
+    const other = await context.newPage();
+    const firstUrl = await open(page, false, { cacheScope }, path);
+    await open(other, false, { cacheScope }, path);
+    expect(await other.evaluate(async url => (await fetch(url)).status, firstUrl)).toBe(404);
+    const read = target => target.evaluate(async () => {
+        const response = await fetch(window.capability.url, { headers: { Range: 'bytes=0-31' } });
+        return [...new Uint8Array(await response.arrayBuffer())];
+    });
+    expect(await read(page)).toEqual(Array(32).fill(7));
+    expect(await read(other)).toEqual(Array(32).fill(7));
+    expect(requests).toBe(1);
+    await page.evaluate(() => window.capability.dispose());
+    await page.close();
+    expect(await read(other)).toEqual(Array(32).fill(7));
+    expect(requests).toBe(1);
+    await other.evaluate(() => window.capability.dispose());
+    await other.close();
+});
+
+test('one tab cancelling a pending transfer leaves the other tab downloading', async ({ page, context }) => {
+    holdFirst = true;
+    const other = await context.newPage();
+    await open(page, false, { cacheScope: 'device:key' });
+    await open(other, false, { cacheScope: 'device:key' });
+    for (const target of [page, other]) await target.evaluate(() => {
+        window.pendingRead = fetch(window.capability.url, { headers: { Range: 'bytes=0-31' } })
+            .then(response => { const reading = response.arrayBuffer(); window.readStarted = true; return reading; })
+            .then(bytes => bytes.byteLength, () => 'cancelled');
+    });
+    await expect.poll(() => requests).toBe(1);
+    await expect.poll(() => other.evaluate(() => window.readStarted)).toBe(true);
+    await page.evaluate(() => window.capability.dispose());
+    holdFirst = false;
+    for (const response of heldResponses) {
+        response.writeHead(206, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Content-Range',
+            'Content-Range': `bytes 0-${clearChunk + 15}/${encrypted.length}` });
+        response.end(encrypted.subarray(0, clearChunk + 16));
+    }
+    expect(await other.evaluate(() => window.pendingRead)).toBe(32);
+    expect(requests).toBe(1);
+    await other.evaluate(() => window.capability.dispose());
+    await other.close();
+});
+
+test('keeps another device or encryption scope out of a tab cache', async ({ page, context }) => {
+    const other = await context.newPage();
+    await open(page, false, { cacheScope: 'first-device:key' });
+    await open(other, false, { cacheScope: 'second-device:key' });
+    for (const target of [page, other]) await target.evaluate(async () => {
+        await (await fetch(window.capability.url, { headers: { Range: 'bytes=0-31' } })).arrayBuffer();
+    });
+    expect(requests).toBe(2);
+    for (const target of [page, other]) await target.evaluate(() => window.capability.dispose());
+    await other.close();
+});
 
 test('normal native download reports stream delivery and releases its capability', async ({ page }) => {
     await open(page);

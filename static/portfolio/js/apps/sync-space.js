@@ -959,6 +959,7 @@ import { pendingMessages } from './sync-outbox.js';
             }
             updateReadReceipts();
             updateUnread();
+            renderSpaces();
         };
         const hasOlderUnread = () => history.length && historyState?.oldestId !== null
             && history[0].id > Math.max(historyState?.oldestId || history[0].id, (readReceipts.get(deviceId) || 0) + 1);
@@ -967,7 +968,7 @@ import { pendingMessages } from './sync-outbox.js';
         const updateUnread = () => {
             const record = credentials && connections.get(credentials.roomId);
             if (record) {
-                if (unread.size > 10) record.unreadPromptActive = true;
+                if (record.unreadStartId && unread.size > 10) record.unreadPromptActive = true;
                 else if (!unread.size && !record.unread.size && !hasOlderUnread()) {
                     record.unreadPromptActive = false;
                     record.unreadPromptDismissed = false;
@@ -1000,10 +1001,6 @@ import { pendingMessages } from './sync-outbox.js';
             find('unread-mention').hidden = !mentions.length && !hasOlderUnread();
             find('unread-mention').textContent = translate(mentions.length ? 'syncUnreadMentions' : 'syncUnreadMentionsMore', { count: mentions.length });
             find('unread-navigation').hidden = find('first-unread').hidden && find('unread-mention').hidden;
-            const badge = document.querySelector('[data-sync-unread]');
-            badge.hidden = !unread.size;
-            badge.textContent = unread.size > 99 ? '99+' : String(unread.size);
-            badge.setAttribute('aria-label', translate('syncUnread', { count: unread.size }));
         };
         const dismissUnreadPrompt = () => {
             const record = credentials && connections.get(credentials.roomId);
@@ -1049,6 +1046,17 @@ import { pendingMessages } from './sync-outbox.js';
                     socket.send(JSON.stringify({ type: 'read', messageId: candidate }));
                 }
             }, 600);
+        };
+        const markAllRead = event => {
+            if (!event.isTrusted || !isChatForeground() || find('search').value.trim() || !online || socket?.readyState !== WebSocket.OPEN) return;
+            const latestId = Math.max(historyState?.latestId || 0, history.at(-1)?.id || 0);
+            if (latestId <= Math.max(sentReadId, readReceipts.get(deviceId) || 0)) return;
+            clearTimeout(readTimer);
+            readTimer = null;
+            readCandidate = null;
+            sentReadId = latestId;
+            mergeReadReceipts([{ deviceId, messageId: latestId }]);
+            socket.send(JSON.stringify({ type: 'read', messageId: latestId }));
         };
         const scrollToLatest = () => {
             if (scrollFrame !== null) return;
@@ -1525,28 +1533,36 @@ import { pendingMessages } from './sync-outbox.js';
             }
             const scrollTop = feed.scrollTop;
             const previousHeight = feed.scrollHeight;
-            if (mode === 'replace') {
+            const removed = new Set(metadata?.removedIds);
+            const top = feed.getBoundingClientRect().top;
+            const anchor = mode === 'prune' && history.find(message => !removed.has(message.id)
+                && !messageNodes.get(message.id)?.hidden && messageNodes.get(message.id)?.getBoundingClientRect().bottom > top);
+            const offset = anchor ? messageNodes.get(anchor.id).getBoundingClientRect().top - top : 0;
+            if (mode === 'replace' || mode === 'prune') {
                 searchController?.abort();
                 catchupController?.abort();
                 catchingUp = false;
                 historyRequest++;
                 loadingOlder = false;
-                history = incoming;
+                history = mode === 'prune' ? history.filter(message => !removed.has(message.id)) : incoming;
             } else history = [...history, ...incoming.filter((message) => !known.has(message.id))].sort((a, b) => a.id - b.id);
             if (metadata) {
-                historyState = historyState?.generation === metadata.generation
+                historyState = mode === 'prune' ? { ...historyState, ...metadata }
+                    : historyState?.generation === metadata.generation
                     ? { ...metadata, latestId: Math.max(historyState.latestId || 0, metadata.latestId || 0) || null }
                     : metadata;
                 history = history.filter((message) => metadata.oldestId === null || message.id >= metadata.oldestId);
             }
-            if (mode !== 'prepend') reconnectCursor = metadata?.continuationId ?? incoming.at(-1)?.id ?? null;
-            render(initial, mode === 'prepend');
+            if (mode !== 'prepend' && mode !== 'prune') reconnectCursor = metadata?.continuationId ?? incoming.at(-1)?.id ?? null;
+            render(initial, mode === 'prepend' || mode === 'prune');
             if (mode === 'prepend') {
                 const addedHeight = feed.scrollHeight - previousHeight;
                 if (searchScrollTop !== null) searchScrollTop += addedHeight;
                 feed.scrollTop = scrollTop + addedHeight;
             }
-            if (mode === 'replace' && find('search').value.trim()) {
+            if (anchor) feed.scrollTop += messageNodes.get(anchor.id).getBoundingClientRect().top - top - offset;
+            if (mode === 'prune') { lastFeedScrollTop = feed.scrollTop; catchUp(historyState); }
+            if ((mode === 'replace' || mode === 'prune') && find('search').value.trim()) {
                 clearTimeout(searchTimer);
                 searchTimer = setTimeout(searchHistory, 180);
             }
@@ -1692,7 +1708,7 @@ import { pendingMessages } from './sync-outbox.js';
             }
             if (advanceCursor && !catchingUp) reconnectCursor = Math.max(reconnectCursor || 0, message.id);
             if (!known) {
-                if (message.deviceId !== deviceId) {
+                if (message.deviceId !== deviceId && message.id > (readReceipts.get(deviceId) || 0)) {
                     unread.add(message.id);
                     readAfterInteraction = interactionRevision + 1;
                     if (notify) notifyMessage(message, credentials, receivedAt);
@@ -1741,13 +1757,16 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const rememberHistory = (record, incoming, mode, metadata, live = false) => {
             const known = new Set(record.history.map(message => message.id));
+            const removed = new Set(metadata?.removedIds);
             record.history = (mode === 'replace' ? incoming : [...record.history, ...incoming.filter(message => !known.has(message.id))])
+                .filter(message => !removed.has(message.id))
                 .filter(message => !metadata?.oldestId || message.id >= metadata.oldestId)
                 .sort((a, b) => a.id - b.id).slice(-500);
-            if (metadata) record.historyState = live && record.historyState?.hasNewer
+            if (metadata) record.historyState = mode === 'prune' ? { ...record.historyState, ...metadata }
+                : live && record.historyState?.hasNewer
                 ? { ...metadata, generation: record.historyState.generation, hasNewer: true, continuationId: record.historyState.continuationId }
                 : metadata;
-            if (mode !== 'prepend') {
+            if (mode !== 'prepend' && mode !== 'prune') {
                 if (!live || !record.historyState?.hasNewer) record.reconnectCursor = metadata?.continuationId ?? incoming.at(-1)?.id ?? record.reconnectCursor;
                 for (const message of incoming) {
                     if (!known.has(message.id) && message.deviceId !== record.session.deviceId
@@ -3340,12 +3359,14 @@ import { pendingMessages } from './sync-outbox.js';
             readingAnchor = anchor ? { node: anchor, offset: anchor.getBoundingClientRect().top - top } : null;
         };
         let draggingFeed = false;
-        feed.addEventListener('pointerdown', () => { draggingFeed = true; });
+        feed.addEventListener('pointerdown', event => {
+            draggingFeed = event.isTrusted && event.target === feed && event.clientX >= feed.getBoundingClientRect().right - 20;
+        });
         for (const type of ['pointerup', 'pointercancel']) document.addEventListener(type, () => { draggingFeed = false; });
-        feed.addEventListener('scroll', () => {
+        feed.addEventListener('scroll', event => {
             // A rotation can clamp scrollTop before ResizeObserver restores the reading anchor.
             if (mobileLayout.matches && feed.clientWidth !== feedWidth) return;
-            if (draggingFeed && feed.scrollTop !== lastFeedScrollTop) dismissUnreadPrompt();
+            if (draggingFeed && feed.scrollTop !== lastFeedScrollTop) markAllRead(event);
             if (!find('search').value.trim()) {
                 if (atBottom()) followLatest = true;
                 else if (feed.scrollTop < lastFeedScrollTop) followLatest = false;
@@ -3355,13 +3376,20 @@ import { pendingMessages } from './sync-outbox.js';
             markRead();
         });
         feed.addEventListener('wheel', event => {
+            if (event.deltaY && !event.ctrlKey) markAllRead(event);
             if (event.deltaY) dismissUnreadPrompt();
             if (event.deltaY < 0) followLatest = false;
         }, { passive: true });
-        feed.addEventListener('touchmove', dismissUnreadPrompt, { passive: true });
+        feed.addEventListener('touchmove', event => {
+            if (event.touches.length === 1) markAllRead(event);
+            dismissUnreadPrompt();
+        }, { passive: true });
         feed.addEventListener('keydown', event => {
             if (event.target.closest('button, input, textarea, select, audio, video, a')) return;
-            if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) dismissUnreadPrompt();
+            if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
+                markAllRead(event);
+                dismissUnreadPrompt();
+            }
         });
         new ResizeObserver(() => {
             if (followLatest) scrollToLatest();

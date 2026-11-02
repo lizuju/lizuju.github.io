@@ -89,7 +89,6 @@ test('follows a new message while unfocused but leaves it unread until the user 
     await chat.incoming(41);
     await expect.poll(() => atBottom(page)).toBeLessThan(3);
     await page.clock.runFor(1200);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
     expect(chat.reads).toHaveLength(baseline);
     await page.evaluate(() => {
         Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => true });
@@ -98,7 +97,6 @@ test('follows a new message while unfocused but leaves it unread until the user 
     });
     await page.clock.runFor(1000);
     expect(chat.reads).toHaveLength(baseline);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
     await page.evaluate(() => {
         Object.defineProperty(document, 'hidden', { configurable: true, value: false });
         document.dispatchEvent(new Event('visibilitychange'));
@@ -106,7 +104,6 @@ test('follows a new message while unfocused but leaves it unread until the user 
     await page.locator('[data-sync-input]').click();
     await page.clock.runFor(800);
     await expect.poll(() => chat.reads.at(-1)).toBe(41);
-    await expect(page.locator('[data-sync-unread]')).toBeHidden();
 });
 
 test('does not mark new messages read behind another desktop window or while minimized', async ({ page }) => {
@@ -118,7 +115,6 @@ test('does not mark new messages read behind another desktop window or while min
     await chat.incoming(31);
     await page.clock.runFor(1000);
     expect(chat.reads).toHaveLength(baseline);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
     await page.locator('[data-sync-task]').click();
     await page.locator('[data-sync-input]').click();
     await page.clock.runFor(800);
@@ -127,7 +123,6 @@ test('does not mark new messages read behind another desktop window or while min
     await chat.incoming(32);
     await page.clock.runFor(1000);
     expect(chat.reads.at(-1)).toBe(31);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
     await page.locator('[data-sync-task]').click();
     await page.locator('[data-sync-input]').click();
     await page.clock.runFor(800);
@@ -137,16 +132,13 @@ test('does not mark new messages read behind another desktop window or while min
 test('synchronizes a partial own-device read watermark without reading newer messages in another tab', async ({ page }) => {
     const chat = await openChat(page, []);
     await page.locator('[data-sync-action="minimize"]').click();
-    await chat.incoming(1);
-    await chat.incoming(2);
-    await chat.incoming(3);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('3');
-    chat.receipt(deviceId, 2);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
+    for (let id = 1; id <= 13; id++) await chat.incoming(id);
+    await expect(page.locator('[data-sync-first-unread]')).toHaveText('有 13 条新消息 · 首条未读');
+    chat.receipt(deviceId, 12);
+    await expect(page.locator('[data-sync-first-unread]')).toHaveText('有 1 条新消息 · 首条未读');
     chat.receipt(deviceId, 1);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
-    chat.receipt(deviceId, 3);
-    await expect(page.locator('[data-sync-unread]')).toBeHidden();
+    await expect(page.locator('[data-sync-first-unread]')).toHaveText('有 1 条新消息 · 首条未读');
+    chat.receipt(deviceId, 13);
     await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
     expect(chat.reads).toHaveLength(0);
 });
@@ -166,7 +158,9 @@ test('floats unread navigation without moving the feed or reading position when 
     const before = await feed.boundingBox();
     const compose = await page.locator('[data-sync-send-form]').boundingBox();
     const anchor = await page.locator('.sync-message').first().boundingBox();
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
     for (let id = 41; id <= 51; id++) await chat.incoming(id);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await expect(latest).toBeVisible();
     expect(await feed.boundingBox()).toEqual(before);
     expect(await page.locator('[data-sync-send-form]').boundingBox()).toEqual(compose);
@@ -183,7 +177,9 @@ test('floats unread navigation without moving the feed or reading position when 
     expect(await feed.boundingBox()).toEqual(before);
     expect(await page.locator('[data-sync-send-form]').boundingBox()).toEqual(compose);
     expect((await page.locator('.sync-message').first().boundingBox()).y).toBe(anchor.y);
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
     for (let id = 53; id <= 63; id++) await chat.incoming(id);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await latest.click();
     await expect(latest).toBeHidden();
     await expect(page.locator('.sync-message.is-reply-target .sync-message-text')).toHaveText('Incoming 53');
@@ -219,7 +215,6 @@ test('does not read new messages when the shutdown screen fully covers the chat'
     await page.mouse.move(2, 2);
     await page.clock.runFor(1000);
     expect(chat.reads).toHaveLength(0);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
     await page.clock.runFor(2500);
     await page.locator('[data-restart]').click();
     await page.locator('[data-sync-task]').click();
@@ -237,18 +232,15 @@ test('keeps an idle frontmost chat unread until mouse, keyboard, or touch activi
     await chat.incoming(2);
     await page.clock.runFor(1200);
     expect(chat.reads.at(-1)).toBe(1);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
     await page.locator('[data-sync-input]').click();
     await page.clock.runFor(800);
     await expect.poll(() => chat.reads.at(-1)).toBe(2);
-    await expect(page.locator('[data-sync-unread]')).toBeHidden();
 });
 
 test('restores unread messages from the server watermark when the chat first connects without browser focus', async ({ page }) => {
     const chat = await openChat(page, [message(1, 'Read before reload', otherId), message(2, 'Unread before reload', otherId)],
         [{ deviceId, messageId: 1 }], true);
     await page.clock.runFor(1000);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
     expect(chat.reads).toHaveLength(0);
     await page.evaluate(() => {
         Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => true });
@@ -257,7 +249,6 @@ test('restores unread messages from the server watermark when the chat first con
     await page.locator('[data-sync-input]').click();
     await page.clock.runFor(800);
     await expect.poll(() => chat.reads.at(-1)).toBe(2);
-    await expect(page.locator('[data-sync-unread]')).toBeHidden();
 });
 
 test('accepts mouse movement and website wheel or touch activity after an incoming message', async ({ page, browserName, isMobile }) => {
@@ -269,7 +260,6 @@ test('accepts mouse movement and website wheel or touch activity after an incomi
     await page.clock.runFor(1200);
     await expect.poll(() => atBottom(page)).toBeLessThan(3);
     expect(chat.reads.at(-1)).toBe(1);
-    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
     await page.mouse.move(2, 2);
     await page.clock.runFor(800);
     await expect.poll(() => chat.reads.at(-1)).toBe(2);
@@ -334,7 +324,6 @@ test('keeps loaded history and the reading anchor when a live message advances t
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await expect(page.locator('.sync-message')).toHaveCount(500);
     await expect(page.locator('.sync-message-text').first()).toHaveText('History 2');
-    await expect(page.locator('[data-sync-unread]')).toHaveText('1');
     expect(Math.abs((await anchor.boundingBox()).y - before.y)).toBeLessThan(2);
     expect(await feed.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeGreaterThan(500);
     await page.waitForTimeout(800);
@@ -351,7 +340,6 @@ for (const sidebar of ['tools', 'spaces']) {
         await page.mouse.move(100, 200);
         await page.clock.runFor(1200);
         expect(chat.reads).toEqual([]);
-        await expect(page.locator('[data-sync-unread]')).toHaveText('1');
         await toggle.click();
         await page.locator('[data-sync-input]').click();
         await page.clock.runFor(1000);

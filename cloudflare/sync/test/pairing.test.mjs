@@ -1006,7 +1006,8 @@ test('fixed codes count towards the thirty open-space limit and closing one free
   t.after(() => instance.dispose());
   const request = client(instance), space = await createSpace(request);
   assert.equal((await setPairingLock(request, space, true)).status, 200);
-  await Promise.all(Array.from({ length: 29 }, () => createSpace(client(instance))));
+  await authenticateSocket(space, instance);
+  for (let index = 0; index < 29; index++) await authenticateSocket(await createSpace(client(instance)), instance);
   const extraRequest = client(instance), extra = await createSpace(extraRequest);
   const extraPath = `/v1/spaces/${extra.roomId}/pair-code`;
   assert.equal((await extraRequest(extraPath, { method: 'POST', token: extra.token })).body.error, 'pairing_busy');
@@ -1021,7 +1022,7 @@ test('offer generation rechecks expiry and the thirty-space limit after an onlin
     const peer = (await client(instance)('/v1/pair', { method: 'POST', json: { code: space.code } })).body;
     const old = (await request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token })).body;
     await authenticateSocket(space, instance);
-    await Promise.all(Array.from({ length: 29 }, () => createSpace(client(instance))));
+    for (let index = 0; index < 29; index++) await authenticateSocket(await createSpace(client(instance)), instance);
     const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
     const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
     const hostSession = request.state.sessions.get(space.token), peerSession = request.state.sessions.get(peer.token);
@@ -1040,7 +1041,7 @@ test('offer generation rechecks expiry and the thirty-space limit after an onlin
     const pending = pairing.createOffer().then(value => ({ value }), error => ({ error }));
     await room.testWaitOnlineProbes(probes + 1);
     await new Promise(resolve => setTimeout(resolve, Math.max(1, expiresAt - Date.now() + 10)));
-    if (fillExpiredSlot) await createSpace(client(instance));
+    if (fillExpiredSlot) await authenticateSocket(await createSpace(client(instance)), instance);
     await room.testReleaseOnlineProbe();
     const result = await pending;
     if (fillExpiredSlot) {
@@ -1767,7 +1768,7 @@ test('text commit rechecks revoked devices and changed encryption keys after cap
   });
 });
 
-test('the alarm removes seven-day history without a page visit and broadcasts the surviving history', async () => {
+test('the alarm removes seven-day history without a page visit and broadcasts only the removed IDs', async () => {
   const request = client();
   const space = await createSpace(request);
   const sent = [];
@@ -1790,13 +1791,15 @@ test('the alarm removes seven-day history without a page visit and broadcasts th
   await room.testRunAlarm();
   const frame = JSON.parse((await history).data);
   assert.equal(frame.type, 'history');
-  assert.deepEqual(frame.messages.map(message => message.text), ['still within seven days']);
+  assert.equal(frame.historyMode, 'prune');
+  assert.deepEqual(frame.history.removedIds, [sent[0].id]);
+  assert.deepEqual(frame.messages, []);
   assert.deepEqual(await storage.exec('SELECT id FROM messages'), [{ id: sent[1].id }]);
   assert.equal(await room.testReadAlarm(), survivorTime + sevenDays);
   const state = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
-  assert.deepEqual(state.body.messages, frame.messages);
+  assert.deepEqual(state.body.messages.map(message => message.text), ['still within seven days']);
   const reconnected = await authenticateSocket(space);
-  assert.deepEqual(reconnected.frame.messages, frame.messages);
+  assert.deepEqual(reconnected.frame.messages, state.body.messages);
 });
 
 test('HTTP reads and a first WebSocket authentication never restore expired messages', async () => {
@@ -2530,4 +2533,40 @@ test('capacity cleanup can prune healthy rooms while retaining failed-room estim
   assert.deepEqual(await storage.exec('SELECT * FROM cleanup'), []);
   assert.deepEqual(await storage.exec('SELECT * FROM maintenance_failures'), []);
   assert.ok((await registry.storageBytes()) <= target);
+});
+
+test('offline fixed invitations free active slots without losing their saved code and unknown hosts keep their slot', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const locked = (await setPairingLock(request, space, true)).body;
+  await authenticateSocket(space, instance);
+  const offlineRequest = client(instance), offlineSpace = await createSpace(offlineRequest);
+  const offlineLocked = (await setPairingLock(offlineRequest, offlineSpace, true)).body;
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const rooms = await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
+  const offline = [];
+  for (let i = 0; i < 28; i++) {
+    const roomId = randomUUID(), ownerId = randomUUID(), offerId = randomUUID();
+    offline.push({ roomId, ownerId, offerId });
+    await storage.exec('INSERT INTO offers VALUES (?, ?, ?, ?, ?, ?)', offerId, roomId, ownerId, 'encrypted-secret', Date.now() + 600000, 1);
+    await storage.exec('INSERT INTO room_pairing VALUES (?, 1, 1, ?, 1)', roomId, 'encrypted-fixed-code');
+  }
+  await rooms.getByName(offline[0].roomId).testFailOnlineProbe();
+  const extraRequest = client(instance), extra = await createSpace(extraRequest);
+  assert.equal((await extraRequest.raw(`/v1/spaces/${extra.roomId}/pair-code`, { token: extra.token })).body.enabled, true);
+  assert.equal((await request.raw(`/v1/spaces/${space.roomId}/pair-code`, { token: space.token })).body.offerId, locked.offerId);
+  assert.equal((await storage.exec('SELECT count(*) AS count FROM offers'))[0].count, 3);
+  const policy = await registry.currentInvite(offline[1].roomId);
+  assert.equal(policy.locked, true);
+  assert.equal(policy.enabled, true);
+  assert.equal(policy.fixedSecret, 'encrypted-fixed-code');
+  assert.equal(policy.offerId, undefined);
+  assert.ok((await registry.currentInvite(offline[0].roomId)).offerId);
+  assert.equal((await registry.currentInvite(offlineSpace.roomId)).offerId, undefined);
+  await authenticateSocket(offlineSpace, instance);
+  const restored = await offlineRequest(`/v1/spaces/${offlineSpace.roomId}/pair-code`, { method: 'POST', token: offlineSpace.token });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.body.code, offlineSpace.code);
+  assert.notEqual(restored.body.offerId, offlineLocked.offerId);
 });

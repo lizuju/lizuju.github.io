@@ -330,7 +330,35 @@ test('moves maintain only the requested game and reject its expired invitation w
   assert.equal(rejected.body.error, 'game_not_found');
   assert.deepEqual(await storage.exec('SELECT game_id FROM gomoku_games WHERE game_id = ?', game.id), []);
   assert.deepEqual(await storage.exec('SELECT client_id FROM messages WHERE client_id = ?', oldClientId), [{ client_id: oldClientId }]);
-  assert.deepEqual((await connected.next(frame => frame.type === 'history')).activeGames, []);
+  const pruned = await connected.next(frame => frame.type === 'history');
+  assert.deepEqual(pruned.activeGames, []);
+  assert.deepEqual(pruned.history.removedIds, [game.messageId]);
+  assert.equal(pruned.historyMode, 'prune');
+  assert.deepEqual(pruned.messages, []);
+  connected.socket.close();
+});
+
+test('expiry broadcasts only deleted IDs and clearing remains an explicit reset', async () => {
+  const { host, storage, path } = await room();
+  for (let index = 0; index < 100; index++) await storage.exec(
+    'INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?)', randomUUID(), host.deviceId, cipher(host.keyId), Date.now());
+  const connected = await connect(host);
+  assert.equal(connected.ready.messages.length, 50);
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id IN (1, 19, 44)', Date.now() - 7 * 86400000 - 1);
+  const roomObject = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(host.roomId);
+  await roomObject.pruneExpired();
+  const frame = await connected.next(frame => frame.type === 'history');
+  assert.equal(frame.historyMode, 'prune');
+  assert.deepEqual(frame.history.removedIds, [1, 19, 44]);
+  assert.deepEqual(frame.messages, []);
+  assert.equal(frame.history.oldestId, 2);
+  assert.equal(frame.history.latestId, 100);
+  assert.equal((await roomObject.messages()).length, 97);
+  await request(`${path}/messages`, host, { method: 'DELETE' });
+  const cleared = await connected.next(frame => frame.type === 'cleared');
+  assert.equal(cleared.historyMode, 'replace');
+  assert.deepEqual(cleared.messages, []);
+  assert.equal(cleared.history.oldestId, null);
   connected.socket.close();
 });
 

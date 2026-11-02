@@ -138,12 +138,20 @@ def draw_sticker(kind):
         heart(24, 36, 33)
         heart(71, 36, 33)
         arc((41, 70, 87, 98), 0, 180, width=6)
-    elif kind == 'like':
+    elif kind in ('like', 'dislike'):
         eye(42)
         eye(80)
-        arc((34, 62, 83, 94), 5, 175, width=6)
-        poly([(90,91),(90,74),(99,61),(100,46),(107,45),(112,52),(110,67),(121,68),(124,75),(118,100),(102,101)], '#FFD1A0', INK, 3)
-        round_rect((85, 86, 100, 105), 2, '#4F9DE1', INK, 3)
+        if kind == 'dislike':
+            line([(30, 34), (49, 40)], width=4)
+            line([(73, 40), (91, 34)], width=4)
+            arc((39, 79, 82, 103), 185, 355, width=6)
+        else:
+            arc((34, 62, 83, 94), 5, 175, width=6)
+        hand = [(90,91),(90,74),(99,61),(100,46),(107,45),(112,52),(110,67),(121,68),(124,75),(118,100),(102,101)]
+        if kind == 'dislike':
+            hand = [(x, 150-y) for x, y in hand]
+        poly(hand, '#FFD1A0', INK, 3)
+        round_rect((85, 45, 100, 64) if kind == 'dislike' else (85, 86, 100, 105), 2, '#4F9DE1', INK, 3)
     elif kind == 'sleepy':
         arc((28, 41, 53, 62), 0, 180, width=5)
         arc((75, 41, 100, 62), 0, 180, width=5)
@@ -233,7 +241,7 @@ def draw_sticker(kind):
     return image.quantize(colors=96, method=Image.Quantize.FASTOCTREE)
 
 
-KINDS = ['happy', 'laugh', 'cry', 'angry', 'wow', 'love', 'like', 'sleepy',
+KINDS = ['happy', 'laugh', 'cry', 'angry', 'wow', 'love', 'like', 'dislike', 'sleepy',
          'confused', 'awkward', 'fish', 'coffee', 'melt', 'broken', 'party', 'okay', 'doge']
 DESTINATION.mkdir(parents=True, exist_ok=True)
 sheet = Image.new('RGBA', (640, ((len(KINDS) + 3) // 4) * 160), '#F3F4EF')

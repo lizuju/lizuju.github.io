@@ -64,18 +64,6 @@
     text-overflow: ellipsis;
 }
 
-.sync-task-button > .sync-unread-badge[data-sync-unread] {
-    min-width: 16px;
-    flex: 0 0 auto;
-    margin-left: auto;
-    padding: 0 3px;
-    border: 1px inset #fff;
-    color: #fff;
-    background: #000080;
-    font: 700 10px/14px var(--font-system);
-    text-align: center;
-}
-
 .sync-content {
     position: relative;
     display: flex;
@@ -1626,17 +1614,6 @@ button.sync-attachment-info:focus-visible {
 
     .sync-task-button > [data-i18n] {
         width: 0;
-    }
-
-    .sync-task-button > .sync-unread-badge[data-sync-unread] {
-        position: absolute;
-        top: 0;
-        right: 0;
-        width: auto;
-        min-width: 12px;
-        padding: 0 2px;
-        font-size: 9px;
-        line-height: 11px;
     }
 
     .sync-setup {

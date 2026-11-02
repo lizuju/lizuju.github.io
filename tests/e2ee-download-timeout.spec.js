@@ -107,3 +107,39 @@ test('user cancellation stops a stalled request without waiting or retrying', as
     expect(transfer.requests).toEqual([0]);
     expect(transfer.timers.size).toBe(0);
 });
+
+test('retries a truncated batch from its first incomplete authenticated chunk', async () => {
+    const cipherSize = 512 * 1024;
+    const plainSize = cipherSize - 16;
+    const body = Buffer.concat(Array.from({ length: 16 }, (_, index) => {
+        const iv = Buffer.alloc(12);
+        iv.writeUInt32BE(index, 8);
+        const cipher = createCipheriv('aes-256-gcm', key, iv);
+        cipher.setAAD(Buffer.from(`gavin-sync-file-v2:batch:${index}`));
+        return Buffer.concat([cipher.update(Buffer.alloc(plainSize, index)), cipher.final(), cipher.getAuthTag()]);
+    }));
+    const requests = [];
+    const received = [];
+    const scope = createContext({
+        URL, Uint8Array, DataView, TextEncoder, AbortController, Response, crypto: webcrypto, setTimeout, clearTimeout,
+        self: { registration: { scope: 'https://local.test/chat/' }, addEventListener() {} },
+        fetch: async (_url, { headers }) => {
+            requests.push(headers.Range);
+            const start = Number(/^bytes=(\d+)-/.exec(headers.Range)[1]);
+            return new Response(body.subarray(start, requests.length === 1 ? 7 * cipherSize + 97 : body.length), {
+                status: 206, headers: { 'Content-Range': `bytes ${start}-${body.length - 1}/${body.length}` }
+            });
+        }
+    });
+    runInContext(`${source}\nglobalThis.read = fetchChunks;`, scope);
+    await scope.read({ url: 'https://local.test/download', cipherSize, plainSize,
+        metadata: { version: 2, size: 16 * plainSize, fileId: 'batch' }, noncePrefix: new Uint8Array(8),
+        key: await webcrypto.subtle.importKey('raw', key, 'AES-GCM', false, ['decrypt'])
+    }, 0, 16, new AbortController().signal, (index, bytes) => {
+        expect(bytes.byteLength).toBe(plainSize);
+        expect(bytes.every(value => value === index)).toBe(true);
+        received.push(index);
+    }, () => {});
+    expect(requests).toEqual([`bytes=0-${body.length - 1}`, `bytes=${7 * cipherSize}-${body.length - 1}`]);
+    expect(received).toEqual(Array.from({ length: 16 }, (_, index) => index));
+});
