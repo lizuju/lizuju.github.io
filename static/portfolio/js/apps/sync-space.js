@@ -970,6 +970,7 @@ import { pendingMessages } from './sync-outbox.js';
                 if (unread.size > 10) record.unreadPromptActive = true;
                 else if (!unread.size && !record.unread.size && !hasOlderUnread()) {
                     record.unreadPromptActive = false;
+                    record.unreadPromptDismissed = false;
                     record.unreadStartId = null;
                 }
             }
@@ -992,8 +993,9 @@ import { pendingMessages } from './sync-outbox.js';
                     lastFeedScrollTop = feed.scrollTop;
                 }
             }
-            find('first-unread').hidden = !showPrompt || !unread.size && !hasOlderUnread();
-            find('first-unread').textContent = translate('syncFirstUnread');
+            find('first-unread').hidden = !showPrompt || record.unreadPromptDismissed || !unread.size && !hasOlderUnread();
+            find('first-unread').textContent = unread.size
+                ? `${translate('syncUnread', { count: unread.size })} · ${translate('syncFirstUnread')}` : translate('syncFirstUnread');
             const mentions = unreadMentions();
             find('unread-mention').hidden = !mentions.length && !hasOlderUnread();
             find('unread-mention').textContent = translate(mentions.length ? 'syncUnreadMentions' : 'syncUnreadMentionsMore', { count: mentions.length });
@@ -1002,9 +1004,12 @@ import { pendingMessages } from './sync-outbox.js';
             badge.hidden = !unread.size;
             badge.textContent = unread.size > 99 ? '99+' : String(unread.size);
             badge.setAttribute('aria-label', translate('syncUnread', { count: unread.size }));
-            find('latest').hidden = !showPrompt || !unread.size;
-            find('latest').textContent = unread.size ? `${translate('syncUnread', { count: unread.size })} · ${translate('syncLatest')}` : translate('syncLatest');
-            find('latest').dataset.i18n = '';
+        };
+        const dismissUnreadPrompt = () => {
+            const record = credentials && connections.get(credentials.roomId);
+            if (!record?.unreadPromptActive || record.unreadPromptDismissed) return;
+            record.unreadPromptDismissed = true;
+            updateUnread();
         };
         const readableThrough = () => {
             if (!isReading() || interactionRevision < readAfterInteraction || hasOlderUnread() || catchingUp) return null;
@@ -1626,6 +1631,7 @@ import { pendingMessages } from './sync-outbox.js';
                 if (!reply) readAfterInteraction = interactionRevision + 1;
                 target.focus({ preventScroll: true });
                 if (mention) lastMentionId = original.id;
+                if (!reply && !mention) dismissUnreadPrompt();
                 replyHighlightTimer = setTimeout(() => target.classList.remove('is-reply-target'), 1800);
                 setNotice(reply ? 'syncReplyLocated' : 'syncUnreadLocated');
                 updateInlineImages();
@@ -1749,6 +1755,7 @@ import { pendingMessages } from './sync-outbox.js';
                         record.unread.add(message.id);
                         if (!live || credentials !== record.session || !isChatForeground()) {
                             record.unreadStartId = Math.min(record.unreadStartId ?? message.id, message.id);
+                            if (credentials !== record.session || !isChatForeground()) record.unreadPromptDismissed = false;
                         }
                     }
                 }
@@ -3120,6 +3127,17 @@ import { pendingMessages } from './sync-outbox.js';
                 saveDraft();
                 setNotice('syncSent');
             } catch (error) {
+                if (error.code === 'message_removed' && liveSession(session)) {
+                    outgoing.confirmed = true;
+                    outgoing.autoSend = false;
+                    const record = connections.get(session.roomId);
+                    record.queuedMessages.delete(outgoing.clientId);
+                    record.failedMessages.delete(outgoing.clientId);
+                    if (current()) reconcileUpload([{ deviceId: session.deviceId, clientId: outgoing.clientId }]);
+                    await persistQueued(record, outgoing, true);
+                    if (current()) setNotice('syncAlreadySentRemoved');
+                    return;
+                }
                 if (queuedRecord && liveSession(session) && !outgoing.confirmed && pending()) {
                     const retry = !navigator.onLine || queuedRecord.connectionState !== 'online' || ['network_error', 'rate_limited', 'storage_cleaning'].includes(error.code);
                     outgoing.sendState = retry ? 'queued' : 'failed';
@@ -3309,18 +3327,6 @@ import { pendingMessages } from './sync-outbox.js';
             find('search').dispatchEvent(new Event('input'));
             input.focus({ preventScroll: true });
         });
-        find('latest').addEventListener('click', () => {
-            replyNavigation?.abort();
-            replyNavigation = null;
-            find('search').value = '';
-            searchScrollTop = null;
-            searchAnchor = null;
-            applySearch();
-            followLatest = true;
-            feed.scrollTop = feed.scrollHeight;
-            scrollToLatest();
-            markRead();
-        });
         find('first-unread').addEventListener('click', () => jumpToMessage());
         find('unread-mention').addEventListener('click', () => jumpToMessage(null, true));
         find('history-more').addEventListener('click', () => loadOlder());
@@ -3333,9 +3339,13 @@ import { pendingMessages } from './sync-outbox.js';
                 .find(node => node && !node.hidden && node.getBoundingClientRect().bottom > top);
             readingAnchor = anchor ? { node: anchor, offset: anchor.getBoundingClientRect().top - top } : null;
         };
+        let draggingFeed = false;
+        feed.addEventListener('pointerdown', () => { draggingFeed = true; });
+        for (const type of ['pointerup', 'pointercancel']) document.addEventListener(type, () => { draggingFeed = false; });
         feed.addEventListener('scroll', () => {
             // A rotation can clamp scrollTop before ResizeObserver restores the reading anchor.
             if (mobileLayout.matches && feed.clientWidth !== feedWidth) return;
+            if (draggingFeed && feed.scrollTop !== lastFeedScrollTop) dismissUnreadPrompt();
             if (!find('search').value.trim()) {
                 if (atBottom()) followLatest = true;
                 else if (feed.scrollTop < lastFeedScrollTop) followLatest = false;
@@ -3344,7 +3354,15 @@ import { pendingMessages } from './sync-outbox.js';
             rememberReadingPosition();
             markRead();
         });
-        feed.addEventListener('wheel', event => { if (event.deltaY < 0) followLatest = false; }, { passive: true });
+        feed.addEventListener('wheel', event => {
+            if (event.deltaY) dismissUnreadPrompt();
+            if (event.deltaY < 0) followLatest = false;
+        }, { passive: true });
+        feed.addEventListener('touchmove', dismissUnreadPrompt, { passive: true });
+        feed.addEventListener('keydown', event => {
+            if (event.target.closest('button, input, textarea, select, audio, video, a')) return;
+            if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) dismissUnreadPrompt();
+        });
         new ResizeObserver(() => {
             if (followLatest) scrollToLatest();
             else markRead();

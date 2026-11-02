@@ -57,6 +57,43 @@ const openChat = async (page, { history, readId = 0, older = [], standalone = fa
 };
 const highlighted = page => page.locator('.sync-message.is-reply-target .sync-message-text');
 
+for (const action of ['wheel', 'touch', 'keyboard', 'scrollbar']) test(`dismisses the single unread prompt after ${action} without reading the backlog`, async ({ page, browserName, isMobile }) => {
+    const chat = await openChat(page, { history: Array.from({ length: 30 }, (_, i) => message(i + 1, `Backlog ${i + 1}`, otherId)), standalone: true });
+    const prompt = page.locator('[data-sync-first-unread]');
+    const feed = page.locator('[data-sync-feed]');
+    await expect(prompt).toHaveText('有 30 条新消息 · 首条未读');
+    await expect(page.locator('[data-sync-latest]')).toHaveCount(0);
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(prompt).toHaveText('30 new messages · First unread');
+    if (action === 'wheel') {
+        if (browserName === 'webkit' && isMobile) await feed.dispatchEvent('wheel', { deltaY: -20 });
+        else {
+            await feed.hover();
+            await page.mouse.wheel(0, -20);
+        }
+    } else if (action === 'touch') await feed.dispatchEvent('touchmove');
+    else if (action === 'keyboard') {
+        await feed.focus();
+        await page.keyboard.press('ArrowUp');
+    } else {
+        await feed.dispatchEvent('pointerdown');
+        await feed.evaluate(element => { element.scrollTop -= 20; });
+    }
+    await expect(prompt).toBeHidden();
+    if (action === 'scrollbar') await feed.dispatchEvent('pointerup');
+    await page.clock.runFor(800);
+    expect(chat.reads).toEqual([]);
+    await expect(page.locator('[data-sync-unread]')).toHaveText('30');
+    chat.frame({ type: 'message', message: message(31, 'Foreground addition', otherId), history: bounds(31) });
+    await expect(page.locator('.sync-message')).toHaveCount(31);
+    await expect(prompt).toBeHidden();
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    chat.frame({ type: 'message', message: message(32, 'New background arrival', otherId), history: bounds(32) });
+    await expect(page.locator('.sync-message')).toHaveCount(32);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(prompt).toBeVisible();
+});
+
 test('keeps a background backlog unread after automatic scrolling and reads only the messages actually viewed', async ({ page }) => {
     const chat = await openChat(page, { history: [message(1, 'Already read', otherId)], readId: 1, standalone: true });
     await page.evaluate(() => {
@@ -72,7 +109,7 @@ test('keeps a background backlog unread after automatic scrolling and reads only
     await page.mouse.move(2, 2);
     await page.clock.runFor(1600);
     expect(chat.reads).toEqual([]);
-    await expect(page.locator('[data-sync-latest]')).toContainText('25');
+    await expect(page.locator('[data-sync-first-unread]')).toContainText('25');
     await expect(page.locator('[data-sync-first-unread]')).toBeVisible();
     await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(1);
 
@@ -90,7 +127,6 @@ test('keeps a background backlog unread after automatic scrolling and reads only
         await page.clock.runFor(800);
     }
     expect(chat.reads.at(-1)).toBe(26);
-    await expect(page.locator('[data-sync-latest]')).toBeHidden();
     await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
 });
 
@@ -105,7 +141,6 @@ test('only shows backlog prompts above ten unread messages and keeps them until 
     for (let id = 13; id <= 22; id++) chat.frame({ type: 'message', message: message(id, `Background ${id}`, otherId), history: bounds(id) });
     await expect(page.locator('.sync-message')).toHaveCount(22);
     await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
-    await expect(page.locator('[data-sync-latest]')).toBeHidden();
     await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(0);
     chat.frame({ type: 'message', message: message(23, 'Eleventh unread message', otherId), history: bounds(23) });
     await expect(page.locator('.sync-message')).toHaveCount(23);
@@ -113,19 +148,17 @@ test('only shows backlog prompts above ten unread messages and keeps them until 
     await page.clock.runFor(1000);
     await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(1);
     await expect(page.locator('[data-sync-first-unread]')).toBeVisible();
-    await expect(page.locator('[data-sync-latest]')).toContainText('11');
+    await expect(page.locator('[data-sync-first-unread]')).toContainText('11');
     expect(chat.reads).toEqual([]);
     chat.frame({ type: 'read', deviceId, messageId: 13 });
-    await expect(page.locator('[data-sync-latest]')).toContainText('10');
+    await expect(page.locator('[data-sync-first-unread]')).toContainText('10');
     await expect(page.locator('[data-sync-first-unread]')).toBeVisible();
     await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(0);
     chat.frame({ type: 'read', deviceId, messageId: 23 });
     await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
-    await expect(page.locator('[data-sync-latest]')).toBeHidden();
     chat.frame({ type: 'message', message: message(24, 'A new small batch', otherId), history: bounds(24) });
     await expect(page.locator('.sync-message')).toHaveCount(24);
     await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
-    await expect(page.locator('[data-sync-latest]')).toBeHidden();
 });
 
 test('locates the first unread across history pages without reading newer messages', async ({ page }) => {
@@ -135,6 +168,7 @@ test('locates the first unread across history pages without reading newer messag
     });
     await page.locator('[data-sync-first-unread]').click();
     await expect(highlighted(page)).toHaveText('Message 21');
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
     expect(chat.historyRequests).toEqual(['51']);
     const divider = page.locator('[data-sync-unread-separator]');
     await expect(divider).toHaveText('从这里开始未读');
@@ -149,15 +183,9 @@ test('locates the first unread across history pages without reading newer messag
     await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
     await page.locator('[data-taskbar-lang]').click();
     await expect(divider).toHaveText('Unread messages start here');
-    await expect(page.locator('[data-sync-first-unread]')).toHaveText('First unread');
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
     const navigation = await page.locator('[data-sync-unread-navigation]').boundingBox();
-    const latest = await page.locator('[data-sync-latest]').boundingBox();
-    const area = await page.locator('.sync-message-area').boundingBox();
-    expect(navigation.y + navigation.height).toBeLessThanOrEqual(latest.y);
-    expect(navigation.x).toBeGreaterThanOrEqual(area.x);
-    expect(navigation.x + navigation.width).toBeLessThanOrEqual(area.x + area.width);
-    expect(latest.x).toBeGreaterThanOrEqual(area.x);
-    expect(latest.x + latest.width).toBeLessThanOrEqual(area.x + area.width);
+    expect(navigation).toBeNull();
     await page.clock.runFor(800);
     expect(chat.reads.at(-1)).toBeGreaterThanOrEqual(21);
     expect(chat.reads.at(-1)).toBeLessThan(100);
@@ -200,7 +228,7 @@ test('keeps the divider stable on incoming messages and removes unread navigatio
     chat.frame({ type: 'read', deviceId, messageId: 31 });
     await expect(divider).toHaveCount(0);
     await expect(page.locator('[data-sync-unread-navigation]')).toBeHidden();
-    await expect(page.locator('[data-sync-latest]')).toBeHidden();
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
     expect(chat.reads).toEqual([]);
 });
 
@@ -216,7 +244,7 @@ test('finds older unread mentions even when the latest page contains only own me
     expect(chat.reads).toEqual([]);
 });
 
-for (const action of ['latest', 'search']) test(`cancels a pending unread jump when the user chooses ${action}`, async ({ page }) => {
+test('cancels a pending unread jump when the user searches', async ({ page }) => {
     const history = Array.from({ length: 50 }, (_, i) => message(i + 51, `Message ${i + 51}`, otherId));
     await openChat(page, { history, readId: 20 });
     let release;
@@ -233,19 +261,13 @@ for (const action of ['latest', 'search']) test(`cancels a pending unread jump w
     try {
         await page.locator('[data-sync-first-unread]').click();
         await expect.poll(() => requested).toBe(true);
-        if (action === 'latest') await page.locator('[data-sync-latest]').click();
-        else {
-            const toggle = page.locator('[data-sync-tools-toggle]');
-            if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
-            await page.locator('[data-sync-search]').fill('Message 75');
-        }
+        const toggle = page.locator('[data-sync-tools-toggle]');
+        if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+        await page.locator('[data-sync-search]').fill('Message 75');
         release();
         await page.clock.runFor(1000);
         await expect(page.locator('.sync-message.is-reply-target')).toHaveCount(0);
-        if (action === 'latest') await expect.poll(() => page.locator('[data-sync-feed]').evaluate(feed => feed.scrollHeight - feed.clientHeight - feed.scrollTop)).toBeLessThan(3);
-        else {
-            await expect(page.locator('[data-sync-search]')).toHaveValue('Message 75');
-            await expect(page.locator('.sync-message:visible .sync-message-text')).toHaveText('Message 75');
-        }
+        await expect(page.locator('[data-sync-search]')).toHaveValue('Message 75');
+        await expect(page.locator('.sync-message:visible .sync-message-text')).toHaveText('Message 75');
     } finally { release(); }
 });

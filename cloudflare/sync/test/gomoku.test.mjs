@@ -351,7 +351,10 @@ test('clearing, seven-day expiry, capacity pruning and the 500-message cap delet
     if (mode === 'capacity') await (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(host.roomId).pruneOldest();
     if (mode === 'count') {
       retainedGame = (await invite(spectator)).body.game.id;
-      for (let index = 0; index < 498; index++) await storage.exec('INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?)', randomUUID(), host.deviceId, cipher(host.keyId), Date.now());
+      for (let index = 0; index < 498; index++) {
+        const seeded = await request(`${path}/messages`, host, { method: 'POST', json: { clientId: randomUUID(), text: cipher(host.keyId) } });
+        assert.equal(seeded.status, 201);
+      }
       const posted = await request(`${path}/messages`, host, { method: 'POST', json: { clientId: randomUUID(), text: cipher(host.keyId) } });
       assert.equal(posted.status, 201);
     }

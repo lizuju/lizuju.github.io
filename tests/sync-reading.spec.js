@@ -147,7 +147,7 @@ test('synchronizes a partial own-device read watermark without reading newer mes
     await expect(page.locator('[data-sync-unread]')).toHaveText('1');
     chat.receipt(deviceId, 3);
     await expect(page.locator('[data-sync-unread]')).toBeHidden();
-    await expect(page.locator('[data-sync-latest]')).toBeHidden();
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
     expect(chat.reads).toHaveLength(0);
 });
 
@@ -155,7 +155,7 @@ test('floats unread navigation without moving the feed or reading position when 
     const chat = await openChat(page, Array.from({ length: 40 }, (_, i) => message(i + 1, `History ${i + 1}`, otherId)),
         [{ deviceId, messageId: 40 }], false, true);
     const feed = page.locator('[data-sync-feed]');
-    const latest = page.locator('[data-sync-latest]');
+    const latest = page.locator('[data-sync-first-unread]');
     await expect.poll(() => atBottom(page)).toBeLessThan(3);
     if (browserName === 'webkit' && isMobile) await feed.evaluate(element => { element.scrollTop = 0; });
     else {
@@ -185,8 +185,8 @@ test('floats unread navigation without moving the feed or reading position when 
     expect((await page.locator('.sync-message').first().boundingBox()).y).toBe(anchor.y);
     for (let id = 53; id <= 63; id++) await chat.incoming(id);
     await latest.click();
-    await expect(latest).toBeVisible();
-    await expect.poll(() => atBottom(page)).toBeLessThan(3);
+    await expect(latest).toBeHidden();
+    await expect(page.locator('.sync-message.is-reply-target .sync-message-text')).toHaveText('Incoming 53');
     chat.receipt(deviceId, 63);
     await expect(latest).toBeHidden();
     expect(await feed.boundingBox()).toEqual(before);
@@ -286,10 +286,13 @@ test('preserves earlier reading, then follows the latest message through delayed
     const chat = await openChat(page, Array.from({ length: 60 }, (_, i) => message(i + 1, `History ${i + 1}`, otherId)), [], false, true);
     const feed = page.locator('[data-sync-feed]');
     await expect.poll(() => atBottom(page)).toBeLessThan(3);
-    if (isMobile && browserName === 'webkit') await feed.evaluate(element => new Promise(resolve => {
-        element.addEventListener('scroll', () => requestAnimationFrame(() => requestAnimationFrame(resolve)), { once: true });
-        element.scrollTop = 0;
-    }));
+    if (isMobile && browserName === 'webkit') {
+        await feed.dispatchEvent('touchmove');
+        await feed.evaluate(element => new Promise(resolve => {
+            element.addEventListener('scroll', () => requestAnimationFrame(() => requestAnimationFrame(resolve)), { once: true });
+            element.scrollTop = 0;
+        }));
+    }
     else {
         await feed.hover();
         await page.mouse.wheel(0, -100000);
@@ -297,8 +300,9 @@ test('preserves earlier reading, then follows the latest message through delayed
     await expect.poll(() => feed.evaluate(element => element.scrollTop)).toBeLessThan(3);
     await chat.incoming(61);
     expect(await feed.evaluate(element => element.scrollTop)).toBeLessThan(3);
-    await expect(page.locator('[data-sync-latest]')).toBeVisible();
-    await page.locator('[data-sync-latest]').click();
+    // Scrolling is a user acknowledgement even when the backlog is not yet read.
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
+    await feed.evaluate(element => { element.scrollTop = element.scrollHeight; });
     await expect.poll(() => atBottom(page)).toBeLessThan(3);
     await chat.incoming(62);
     await expect.poll(() => atBottom(page)).toBeLessThan(3);

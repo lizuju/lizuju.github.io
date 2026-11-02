@@ -98,7 +98,7 @@
                             </details>
                         </div>
                         <div class="sync-message-area">
-                            <div class="sync-message-feed" data-sync-feed>
+                            <div class="sync-message-feed" data-sync-feed tabindex="0">
                                 <button class="sync-button sync-history-more" type="button" data-sync-history-more
                                     data-i18n="syncLoadOlder" hidden>加载更早消息</button>
                                 <p class="sync-empty" data-sync-empty data-i18n="syncEmpty">这里还没有消息，发送一条试试。</p>
@@ -109,12 +109,9 @@
                             </div>
                             <div class="sync-message-navigation">
                                 <div class="sync-unread-navigation" data-sync-unread-navigation hidden>
-                                    <button class="sync-button" type="button" data-sync-first-unread hidden
-                                        data-i18n="syncFirstUnread">首条未读</button>
+                                    <button class="sync-button" type="button" data-sync-first-unread hidden></button>
                                     <button class="sync-button" type="button" data-sync-unread-mention hidden></button>
                                 </div>
-                                <button class="sync-button sync-latest" type="button" data-sync-latest hidden
-                                    data-i18n="syncLatest">回到最新消息</button>
                             </div>
                         </div>
                         <form class="sync-compose" data-sync-send-form>

@@ -1128,6 +1128,7 @@ export class E2eeSyncRoom extends DurableObject {
 
   initializeStorage() {
     this.shardBytes = null;
+    this.retainedMessageIds = null;
     this.sql.exec("CREATE TABLE IF NOT EXISTS devices (token_hash TEXT PRIMARY KEY, device_id TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '')");
     if (!this.sql.exec('PRAGMA table_info(devices)').toArray().some(column => column.name === 'name')) {
       this.sql.exec("ALTER TABLE devices ADD COLUMN name TEXT NOT NULL DEFAULT ''");
@@ -1150,6 +1151,13 @@ export class E2eeSyncRoom extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL, device_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, attachment TEXT, UNIQUE(device_id, client_id))');
     if (!this.sql.exec('PRAGMA table_info(messages)').toArray().some(column => column.name === 'attachment')) this.sql.exec('ALTER TABLE messages ADD COLUMN attachment TEXT');
     this.sql.exec('CREATE INDEX IF NOT EXISTS messages_expiry ON messages(created_at)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS message_tombstones (device_id TEXT NOT NULL, client_id TEXT NOT NULL, message_id INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(device_id, client_id))');
+    this.sql.exec('CREATE INDEX IF NOT EXISTS message_tombstones_expiry ON message_tombstones(created_at)');
+    // Keep only delivery identifiers when history is removed before the retry window ends.
+    this.sql.exec(`CREATE TRIGGER IF NOT EXISTS remember_deleted_message AFTER DELETE ON messages
+      WHEN OLD.created_at > unixepoch() * 1000 - ${MESSAGE_LIFETIME}
+      BEGIN INSERT INTO message_tombstones (device_id, client_id, message_id, created_at)
+        VALUES (OLD.device_id, OLD.client_id, OLD.id, OLD.created_at); END`);
     this.sql.exec('CREATE TABLE IF NOT EXISTS gomoku_games (game_id TEXT PRIMARY KEY, message_id INTEGER NOT NULL UNIQUE, host_device_id TEXT NOT NULL, guest_device_id TEXT, status TEXT NOT NULL, revision INTEGER NOT NULL, move_count INTEGER NOT NULL DEFAULT 0, board TEXT, last_move TEXT, last_command_id TEXT, last_command_device_id TEXT, result TEXT, updated_at INTEGER NOT NULL)');
     const gameColumns = this.sql.exec('PRAGMA table_info(gomoku_games)').toArray();
     for (const column of ['previous_game_id', 'next_game_id', 'rematch_requested_by', 'base_score']) {
@@ -1596,6 +1604,7 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   historyChanged(type = 'history') {
+    this.retainedMessageIds = null;
     this.downloadRevision++;
     this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
     const rows = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages ORDER BY id DESC LIMIT 50').toArray().reverse();
@@ -1637,7 +1646,8 @@ export class E2eeSyncRoom extends DurableObject {
     if (deleted.length) this.historyChanged();
     this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading' AND updated_at <= ?", Date.now() - UPLOAD_LIFETIME);
     this.sql.exec('DELETE FROM download_tickets WHERE expires_at <= ?', Date.now());
-    return deleted.length + expiredDevices.length;
+    const tombstones = this.sql.exec('DELETE FROM message_tombstones WHERE created_at <= ? RETURNING message_id', Date.now() - MESSAGE_LIFETIME).toArray();
+    return deleted.length + expiredDevices.length + tombstones.length;
   }
 
   async maintain(roomId, cleanFiles = true) {
@@ -1691,7 +1701,18 @@ export class E2eeSyncRoom extends DurableObject {
     }
     const existing = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages WHERE device_id = ? AND client_id = ?', deviceId, clientId).toArray()[0];
     if (existing) return { message: this.decorateMessages([existing])[0], created: false };
+    if (this.sql.exec('SELECT 1 FROM message_tombstones WHERE device_id = ? AND client_id = ? AND created_at > ?', deviceId, clientId, Date.now() - MESSAGE_LIFETIME).toArray().length) {
+      return { error: 'message_removed', status: 410 };
+    }
     return null;
+  }
+
+  pruneMessageLimit(newestId) {
+    this.retainedMessageIds ??= this.sql.exec('SELECT id FROM messages WHERE id < ? ORDER BY id', newestId).toArray().map(row => row.id);
+    const boundary = this.retainedMessageIds.at(-500);
+    if (boundary === undefined) return false;
+    this.sql.exec('DELETE FROM messages WHERE id <= ?', boundary);
+    return true;
   }
 
   uploadInfo(deviceId, clientId, identity = null) {
@@ -1700,7 +1721,7 @@ export class E2eeSyncRoom extends DurableObject {
     if (!file) return null;
     if (identity && (file.name !== identity.name || file.type !== identity.type || file.size !== identity.size || file.fingerprint !== (identity.fingerprint ?? null))) return { error: 'upload_conflict', status: 409 };
     if (file.status === 'complete') return this.findMessage(deviceId, clientId);
-    if (file.status !== 'uploading') return { error: 'upload_unavailable', status: 409 };
+    if (file.status !== 'uploading') return this.findMessage(deviceId, clientId) || { error: 'upload_unavailable', status: 409 };
     this.uploadProgress(file);
     return { uploadId: file.file_id, chunkSize: FILE_CHUNK_SIZE, receivedBytes: file.received_bytes };
   }
@@ -1790,9 +1811,10 @@ export class E2eeSyncRoom extends DurableObject {
         const denied = this.checkWrite(keyId);
         if (denied.error) return denied;
         const file = this.sql.exec('SELECT * FROM files WHERE file_id = ? AND device_id = ?', uploadId, deviceId).toArray()[0];
-        if (!file || file.status === 'deleting' || (file.status === 'uploading' && file.updated_at + UPLOAD_LIFETIME <= Date.now())) return { error: 'not_found', status: 404 };
+        if (!file) return { error: 'not_found', status: 404 };
         const existing = this.findMessage(deviceId, file.client_id);
         if (existing) return existing;
+        if (file.status === 'deleting' || (file.status === 'uploading' && file.updated_at + UPLOAD_LIFETIME <= Date.now())) return { error: 'not_found', status: 404 };
         const metadata = this.checkWrite(keyId, file.text);
         if (metadata.error) return metadata;
         this.uploadProgress(file);
@@ -1824,10 +1846,11 @@ export class E2eeSyncRoom extends DurableObject {
           });
           const created = this.sql.exec('INSERT INTO messages (client_id, device_id, text, created_at, attachment) VALUES (?, ?, ?, ?, ?) RETURNING id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment', file.client_id, deviceId, file.text, Date.now(), JSON.stringify(attachment)).one();
           this.sql.exec("UPDATE files SET status = 'complete', message_id = ?, created_at = ?, reserved_bytes = 0 WHERE file_id = ?", created.id, created.createdAt, uploadId);
-          pruned = this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500) RETURNING id').toArray().length > 0;
+          pruned = this.pruneMessageLimit(created.id);
           if (pruned) this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
           return publicMessage(created);
         });
+        this.retainedMessageIds = [...this.retainedMessageIds.slice(-499), message.id];
         this.shardBytes = null;
         if (pruned) this.downloadRevision++;
         this.broadcast({ type: 'message', message, history: this.historySnapshot(), ...(pruned ? { activeGames: this.activeGames() } : {}) });
@@ -1933,12 +1956,13 @@ export class E2eeSyncRoom extends DurableObject {
           score ? JSON.stringify({ host: score.guestScore, guest: score.hostScore }) : null);
         if (previous) this.sql.exec('UPDATE gomoku_games SET next_game_id = ?, revision = revision + 1 WHERE game_id = ?', clientId, previousGameId);
       }
-      pruned = this.sql.exec('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET 500) RETURNING id').toArray().length > 0;
+      pruned = this.pruneMessageLimit(created.id);
       if (pruned) this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
       return { message: this.decorateMessages([created])[0] };
     });
     if (saved.error) return saved;
     const { message } = saved;
+    this.retainedMessageIds = [...this.retainedMessageIds.slice(-499), message.id];
     if (pruned) this.downloadRevision++;
     this.broadcast({ type: 'message', message, history: this.historySnapshot(), ...(pruned ? { activeGames: this.activeGames() } : {}) });
     if (gameType) this.broadcast({ type: 'gomoku', game: this.gameSnapshot(this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', clientId).one()) });
@@ -2219,6 +2243,8 @@ export class E2eeSyncRoom extends DurableObject {
       .filter(Boolean);
     const oldest = this.sql.exec('SELECT min(created_at) AS oldest_at FROM messages').one().oldest_at;
     if (oldest !== null) deadlines.push(oldest + MESSAGE_LIFETIME);
+    const oldestTombstone = this.sql.exec('SELECT min(created_at) AS oldest_at FROM message_tombstones').one().oldest_at;
+    if (oldestTombstone !== null) deadlines.push(oldestTombstone + MESSAGE_LIFETIME);
     const oldestDevice = this.sql.exec('SELECT min(last_active_at) AS oldest_at FROM devices').one().oldest_at;
     if (oldestDevice !== null) deadlines.push(oldestDevice + DEVICE_IDLE_LIFETIME);
     const uploading = this.sql.exec("SELECT min(updated_at) AS oldest_at FROM files WHERE status = 'uploading'").one().oldest_at;
