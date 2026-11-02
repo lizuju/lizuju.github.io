@@ -146,6 +146,7 @@ test('locates the first unread across history pages without reading newer messag
     const target = await page.locator('.sync-message').filter({ has: page.getByText('Message 21', { exact: true }) }).boundingBox();
     expect(target.y).toBeGreaterThanOrEqual(feed.y);
     expect(target.y).toBeLessThan(feed.y + feed.height);
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
     await page.locator('[data-taskbar-lang]').click();
     await expect(divider).toHaveText('Unread messages start here');
     await expect(page.locator('[data-sync-first-unread]')).toHaveText('First unread');
@@ -157,6 +158,10 @@ test('locates the first unread across history pages without reading newer messag
     expect(navigation.x + navigation.width).toBeLessThanOrEqual(area.x + area.width);
     expect(latest.x).toBeGreaterThanOrEqual(area.x);
     expect(latest.x + latest.width).toBeLessThanOrEqual(area.x + area.width);
+    await page.clock.runFor(800);
+    expect(chat.reads.at(-1)).toBeGreaterThanOrEqual(21);
+    expect(chat.reads.at(-1)).toBeLessThan(100);
+    await expect(divider).toHaveCount(0);
 });
 
 test('cycles unread mentions and never marks a bottom target read from the jump alone', async ({ page }) => {
