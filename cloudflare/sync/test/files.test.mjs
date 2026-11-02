@@ -183,7 +183,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   storageUsage() {
                     const usage = super.storageUsage();
-                    usage.bytes += ${virtualBaseBytes} + this.sql.exec('SELECT count(*) AS count FROM messages').one().count * ${virtualMessageBytes};
+                    usage.bytes += ${virtualBaseBytes} + ${virtualMessageBytes ? `this.sql.exec('SELECT count(*) AS count FROM messages').one().count * ${virtualMessageBytes}` : '0'};
                     return usage;
                   }
                 }`
@@ -1000,11 +1000,76 @@ test('expired messages delete their shards while live attachments remain downloa
   assert.deepEqual((await request(`/v1/spaces/${space.roomId}/files/${survivor.body.id}`, { token: space.token })).body, survivorBytes);
 });
 
+test('trimmed text retries stay deduplicated and warm sends avoid scanning retained history', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const path = `/v1/spaces/${space.roomId}/messages`;
+  const clientId = randomUUID();
+  const original = await request(path, { method: 'POST', token: space.token, json: { clientId, text: 'Already delivered' } });
+  assert.equal(original.status, 201);
+  const storage = await roomStorage(space);
+  const room = await roomObject(space);
+  await storage.exec(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 499)
+    INSERT INTO messages (id, client_id, device_id, text, created_at) SELECT 2 * n + 1, 'seed-' || n, ?, 'encrypted seed', ? FROM seq`, space.deviceId, Date.now());
+  await runtime.unsafeEvictDurableObject('sync-files-test', 'SyncRoom', { name: space.roomId });
+  const append = () => request(path, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'New message' } });
+  assert.equal((await append()).status, 201);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count, min(id) AS first FROM messages'), [{ count: 500, first: 3 }]);
+  await runtime.unsafeEvictDurableObject('sync-files-test', 'SyncRoom', { name: space.roomId });
+  const retry = await request(path, { method: 'POST', token: space.token, json: { clientId, text: 'Already delivered' } });
+  assert.equal(retry.status, 410);
+  assert.equal(retry.body.error, 'message_removed');
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count, max(id) AS last FROM messages'), [{ count: 500, last: 1000 }]);
+  assert.equal((await append()).status, 201);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count, min(id) AS first FROM messages'), [{ count: 500, first: 5 }]);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count, max(id) AS last FROM messages'), [{ count: 500, last: 1001 }]);
+  await room.testBeginReads();
+  assert.equal((await append()).status, 201);
+  assert.ok(await room.testReadCount() < 100, 'A warm send must not scan 500 retained messages');
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count, min(id) AS first FROM messages'), [{ count: 500, first: 7 }]);
+  const other = await createSpace(request);
+  assert.equal((await request(`/v1/spaces/${other.roomId}/messages`, { method: 'POST', token: other.token, json: { clientId, text: 'Different space' } })).status, 201);
+});
+
+for (const removal of ['clear', 'capacity']) test(`${removal} cleanup retains content-free delivery identifiers and expires them after seven days`, async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const path = `/v1/spaces/${space.roomId}/messages`;
+  const clientId = randomUUID();
+  const sent = await request(path, { method: 'POST', token: space.token, json: { clientId, text: 'Private content' } });
+  const storage = await roomStorage(space);
+  const room = await roomObject(space);
+  if (removal === 'clear') assert.equal((await request(path, { method: 'DELETE', token: space.token })).status, 200);
+  else await room.pruneOldest();
+  assert.deepEqual(await storage.exec('SELECT * FROM message_tombstones'), [{ device_id: space.deviceId, client_id: clientId, message_id: sent.body.id, created_at: sent.body.createdAt }]);
+  const retry = await request(path, { method: 'POST', token: space.token, json: { clientId, text: 'Private content' } });
+  assert.equal(retry.status, 410);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 0 }]);
+  await storage.exec('UPDATE devices SET last_active_at = ?', sent.body.createdAt + 1000);
+  await room.scheduleAlarm();
+  assert.equal(await room.testReadAlarm(), sent.body.createdAt + sevenDays);
+  await storage.exec('UPDATE message_tombstones SET created_at = ?', Date.now() - sevenDays - 1000);
+  await room.pruneExpired();
+  assert.deepEqual(await storage.exec('SELECT * FROM message_tombstones'), []);
+  assert.equal((await request(path, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'A new message after cleanup' } })).status, 201);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 1 }]);
+});
+
+test('expired history does not create new delivery tombstones', async () => {
+  const request = client();
+  const space = await createSpace(request);
+  const storage = await roomStorage(space);
+  await storage.exec('INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?)', randomUUID(), space.deviceId, 'expired ciphertext', Date.now() - sevenDays - 1000);
+  await (await roomObject(space)).pruneExpired();
+  assert.deepEqual(await storage.exec('SELECT * FROM message_tombstones'), []);
+});
+
 test('the 500-message limit marks an evicted attachment for bounded shard cleanup', async () => {
   const request = client();
   const space = await createSpace(request);
   const previous = await runtime.listDurableObjectIds('E2EE_FILE_SHARDS');
-  const expired = await upload(request, space, { bytes: randomBytes(MiB + 31) });
+  const clientId = randomUUID();
+  const expired = await upload(request, space, { clientId, bytes: randomBytes(MiB + 31) });
   assert.equal(expired.status, 201);
   const expiredShards = (await runtime.listDurableObjectIds('E2EE_FILE_SHARDS')).filter(id => !previous.includes(id));
   const storage = await roomStorage(space);
@@ -1013,6 +1078,7 @@ test('the 500-message limit marks an evicted attachment for bounded shard cleanu
     await storage.exec('INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?)',
       randomUUID(), space.deviceId, `retained text ${index}`, timestamp);
   }
+  await runtime.unsafeEvictDurableObject('sync-files-test', 'SyncRoom', { name: space.roomId });
   const survivingBytes = Buffer.from('latest attachment');
   const latest = await upload(request, space, { bytes: survivingBytes });
   assert.equal(latest.status, 201);
@@ -1022,6 +1088,38 @@ test('the 500-message limit marks an evicted attachment for bounded shard cleanu
   assert.deepEqual(await shardRows(expiredShards), []);
   assert.equal((await request(`/v1/spaces/${space.roomId}/files/${expired.body.id}`, { token: space.token })).status, 404);
   assert.deepEqual((await request(`/v1/spaces/${space.roomId}/files/${latest.body.id}`, { token: space.token })).body, survivingBytes);
+  const retry = await initiate(request, space, { clientId, size: MiB + 31 });
+  assert.equal(retry.status, 410);
+  assert.equal(retry.body.error, 'message_removed');
+  const started = await initiate(request, space, { size: 16 });
+  await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(16));
+  const room = await roomObject(space);
+  await room.testBeginReads();
+  assert.equal((await complete(request, space, started.body.uploadId)).status, 201);
+  assert.ok(await room.testReadCount() < 150, 'A warm attachment commit must not scan 500 retained messages');
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 500 }]);
+});
+
+test('removed attachment retries settle while shard deletion is still pending', async () => {
+  const request = client(), space = await createSpace(request);
+  const clientId = randomUUID();
+  const sent = await upload(request, space, { clientId, bytes: Buffer.from('delivered attachment') });
+  const storage = await roomStorage(space);
+  const room = await roomObject(space);
+  const [{ file_id: uploadId }] = await storage.exec('SELECT file_id FROM files WHERE message_id = ?', sent.body.id);
+  await storage.exec('DELETE FROM messages WHERE id = ?', sent.body.id);
+  assert.deepEqual(await storage.exec('SELECT status FROM files WHERE file_id = ?', uploadId), [{ status: 'deleting' }]);
+  const info = await room.uploadInfo(space.deviceId, clientId);
+  assert.equal(await info.error, 'message_removed');
+  assert.equal(await info.status, 410);
+  const { keyring } = request.state.sessions.get(space.token);
+  const completion = await room.completeUpload(space.deviceId, uploadId, keyring.currentKeyId);
+  assert.equal(await completion.error, 'message_removed');
+  assert.equal(await completion.status, 410);
+  const retry = await initiate(request, space, { clientId, size: Buffer.byteLength('delivered attachment') });
+  assert.equal(retry.status, 410);
+  assert.equal(retry.body.error, 'message_removed');
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 0 }]);
 });
 
 test('cancelling and expiring unfinished uploads release uploaded shards and their reservations', async () => {

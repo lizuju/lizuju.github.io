@@ -549,6 +549,70 @@ test('reuses the same client id when a lost response moves an online text into t
     await expect(page.locator('[data-sync-input]')).toHaveValue('');
 });
 
+test('settles a retry whose delivered message was removed without restoring it or losing the new draft', async ({ page }) => {
+    const submissions = [];
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        submissions.push(route.request().postDataJSON());
+        if (submissions.length === 1) await route.abort('failed');
+        else {
+            await gate;
+            await route.fulfill({ status: 410, headers, json: { error: 'message_removed' } });
+        }
+        return true;
+    });
+    try {
+        await chat.send('Delivered before history cleanup');
+        await expect.poll(() => submissions.length).toBe(2);
+        expect(submissions[1].clientId).toBe(submissions[0].clientId);
+        await page.locator('[data-sync-input]').fill('Keep this new draft');
+        release();
+        await expect(page.locator('.sync-message')).toHaveCount(0);
+        await expect(page.locator('[data-sync-notice]')).toHaveText('消息已发送，历史记录已清理。');
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Keep this new draft');
+        await expect(spaceDot(page)).toBeHidden();
+        await page.reload();
+        if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+        await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+        await expect(page.locator('[data-sync-input]')).toHaveValue('Keep this new draft');
+        await expect(page.locator('.sync-message')).toHaveCount(0);
+        expect(submissions).toHaveLength(2);
+    } finally { release(); }
+});
+
+test('clears an already-delivered attachment retry without uploading it again', async ({ page }) => {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    let started = false;
+    let chunks = 0;
+    const chat = await openChat(page, async route => {
+        if (route.request().url().includes('/chunks/')) chunks++;
+        if (!route.request().url().endsWith('/files/uploads')) return false;
+        started = true;
+        await gate;
+        await route.fulfill({ status: 410, headers, json: { error: 'message_removed' } });
+        return true;
+    });
+    try {
+        await page.locator('[data-sync-file-input]').setInputFiles({ name: 'already-sent.txt', mimeType: 'text/plain', buffer: Buffer.from('Original attachment') });
+        await chat.send('Original caption');
+        await expect.poll(() => started).toBe(true);
+        await page.locator('[data-sync-input]').fill('New text draft');
+        release();
+        await expect(page.locator('[data-sync-notice]')).toHaveText('消息已发送，历史记录已清理。');
+        await expect(page.locator('.sync-message')).toHaveCount(0);
+        await expect(page.locator('[data-sync-selected-file]')).toBeHidden();
+        await expect(page.locator('[data-sync-file-input]')).toBeEnabled();
+        await expect(page.locator('[data-sync-input]')).toHaveValue('New text draft');
+        await expect(page.locator('[data-sync-send]')).toBeEnabled();
+        expect(chunks).toBe(0);
+        await page.locator('[data-taskbar-lang]').click();
+        await expect(page.locator('[data-sync-notice]')).toHaveText('Message was sent; its history has been removed.');
+    } finally { release(); }
+});
+
 
 test('restores encrypted pending text after closing the original tab and deduplicates two recovering tabs', async ({ page, context }) => {
     const submissions = [];

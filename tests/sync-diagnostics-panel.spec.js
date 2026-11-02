@@ -68,9 +68,11 @@ test('asks notification permission only when testing and reports denial without 
     await expect(view.locator('[data-sync-diagnostics-notice]')).toHaveText('Notification permission not granted');
 });
 
-test('downloads diagnostics through a native link inside the immersive iframe', async ({ page }) => {
+test('downloads diagnostics inside the immersive iframe with the shell security policy', async ({ page, request }) => {
+    const shell = await (await request.get('/')).text();
+    const policy = shell.match(/<meta[^>]+http-equiv="Content-Security-Policy"[^>]*>/i)[0];
     await page.route('**/__diagnostics-shell__/', route => route.fulfill({ contentType: 'text/html',
-        body: '<iframe id="computer-screen" src="/portfolio/" style="width:900px;height:680px;border:0"></iframe>' }));
+        body: `${policy}<iframe id="computer-screen" src="/portfolio/" style="width:900px;height:680px;border:0"></iframe>` }));
     await page.goto('/__diagnostics-shell__/');
     const frame = page.frameLocator('#computer-screen');
     const view = await openDiagnostics(frame);
@@ -80,6 +82,8 @@ test('downloads diagnostics through a native link inside the immersive iframe', 
         const download = await downloaded;
         expect(download.suggestedFilename()).toBe('gavin-connection-diagnostics.json');
         expect(await download.failure()).toBeNull();
+        await expect(page).toHaveURL(/\/__diagnostics-shell__\/$/);
+        await expect(frame.locator('[data-control-panel-window]')).toBeVisible();
         await expect(view.locator('[data-sync-diagnostics-notice]')).toHaveText('已发起下载，请查看浏览器下载列表。');
     }
 });

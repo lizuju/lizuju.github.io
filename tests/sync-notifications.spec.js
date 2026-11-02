@@ -55,15 +55,15 @@ test('denied permission remains off and a foreground tab does not notify', async
     expect(await page.evaluate(() => delivered.length)).toBe(0);
 });
 
-test('the service worker suppresses notifications when another tab is focused and opens the original room on click', async () => {
+for (const path of ['portfolio', 'chat']) test(`the ${path} service worker sets the hub icon, suppresses focused notifications and opens the original room`, async () => {
     const handlers = new Map();
     const shown = [];
     const posted = [];
     let focused = true;
     let activated = false;
-    const client = { id: 'client', type: 'window', url: 'https://example.test/chat/', focus: async () => { activated = true; }, postMessage: value => posted.push(value) };
-    const worker = { location: new URL('https://example.test/chat/sync-e2ee-worker.js'),
-        registration: { scope: 'https://example.test/chat/', showNotification: async (title, options) => shown.push({ title, ...options }) },
+    const client = { id: 'client', type: 'window', url: `https://example.test/${path}/`, focus: async () => { activated = true; }, postMessage: value => posted.push(value) };
+    const worker = { location: new URL(`https://example.test/${path}/sync-e2ee-worker.js`),
+        registration: { scope: `https://example.test/${path}/`, showNotification: async (title, options) => shown.push({ title, ...options }) },
         clients: { matchAll: async () => [{ focused, visibilityState: 'visible' }], get: async () => client },
         addEventListener(name, handler) { handlers.set(name, [...(handlers.get(name) || []), handler]); }
     };
@@ -79,6 +79,7 @@ test('the service worker suppresses notifications when another tab is focused an
     await deliver();
     expect(shown).toHaveLength(1);
     expect(shown[0].body).toBe('有新消息');
+    expect(shown[0].icon).toBe('https://example.test/portfolio/assets/sync-notification.png');
     let clicked;
     handlers.get('notificationclick')[0]({ notification: { data: shown[0].data, close() {} }, waitUntil: promise => { clicked = promise; } });
     await clicked;
@@ -89,6 +90,7 @@ test('the service worker suppresses notifications when another tab is focused an
     expect(shown).toHaveLength(2);
     expect(shown[1].tag).toMatch(/^sync:test:/);
     expect(shown[1].silent).toBe(false);
+    expect(shown[1].icon).toBe(shown[0].icon);
     expect(shown[1].data).toEqual({ clientId: 'client' });
     handlers.get('notificationclick')[0]({ notification: { data: shown[1].data, close() {} }, waitUntil: promise => { clicked = promise; } });
     await clicked;

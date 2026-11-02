@@ -23,7 +23,8 @@ const contentSecurityPolicy = [
     "font-src 'self' data:",
     `connect-src 'self' ${syncOrigin} ${socketOrigin} https://formsubmit.co https://celestrak.org`,
     "worker-src 'self' blob:",
-    `frame-src 'self' ${syncOrigin}`,
+    // Safari checks the parent frame policy before downloading an iframe's Blob URL.
+    `frame-src 'self' blob: ${syncOrigin}`,
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",

@@ -1136,8 +1136,7 @@ button.sync-attachment-info:focus-visible {
     max-width: 100%;
 }
 
-.sync-unread-navigation .sync-button,
-.sync-latest {
+.sync-unread-navigation .sync-button {
     max-width: 100%;
     margin: 0;
     pointer-events: auto;

@@ -473,6 +473,7 @@ const showSystemNotification = event => {
         if (!testing && windows.some(client => client.focused && client.visibilityState === 'visible')) { reply('foreground'); return; }
         await self.registration.showNotification(event.data.title, {
             body: event.data.body, tag: testing ? `sync:test:${crypto.randomUUID()}` : `sync:${event.data.roomId}`, silent: !testing,
+            icon: new URL('../portfolio/assets/sync-notification.png', self.location.href).href,
             data: testing ? { clientId: event.source.id } : { clientId: event.source.id, roomId: event.data.roomId }
         });
         reply('shown');
