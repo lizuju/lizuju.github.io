@@ -57,6 +57,77 @@ const openChat = async (page, { history, readId = 0, older = [], standalone = fa
 };
 const highlighted = page => page.locator('.sync-message.is-reply-target .sync-message-text');
 
+test('keeps a background backlog unread after automatic scrolling and reads only the messages actually viewed', async ({ page }) => {
+    const chat = await openChat(page, { history: [message(1, 'Already read', otherId)], readId: 1, standalone: true });
+    await page.evaluate(() => {
+        Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false });
+        window.dispatchEvent(new Event('blur'));
+    });
+    for (let id = 2; id <= 26; id++) chat.frame({ type: 'message', message: message(id, `Backlog ${id}`, otherId), history: bounds(id) });
+    await expect(page.locator('.sync-message')).toHaveCount(26);
+    await page.evaluate(() => {
+        Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => true });
+        window.dispatchEvent(new Event('focus'));
+    });
+    await page.mouse.move(2, 2);
+    await page.clock.runFor(1600);
+    expect(chat.reads).toEqual([]);
+    await expect(page.locator('[data-sync-latest]')).toContainText('25');
+    await expect(page.locator('[data-sync-first-unread]')).toBeVisible();
+    await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(1);
+
+    const feed = page.locator('[data-sync-feed]');
+    await feed.evaluate(element => { element.scrollTop = 0; });
+    await page.mouse.move(4, 4);
+    await page.clock.runFor(800);
+    expect(chat.reads.at(-1)).toBeGreaterThan(1);
+    expect(chat.reads.at(-1)).toBeLessThan(26);
+    await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(0);
+    await expect(page.locator('[data-sync-first-unread]')).toBeVisible();
+    for (let step = 0; step < 26 && chat.reads.at(-1) < 26; step++) {
+        await feed.evaluate(element => { element.scrollTop += element.clientHeight / 2; });
+        await page.mouse.move(5 + step, 5);
+        await page.clock.runFor(800);
+    }
+    expect(chat.reads.at(-1)).toBe(26);
+    await expect(page.locator('[data-sync-latest]')).toBeHidden();
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
+});
+
+test('only shows backlog prompts above ten unread messages and keeps them until the backlog is read', async ({ page }) => {
+    const chat = await openChat(page, { history: [message(1, 'Already read', otherId)], readId: 1, standalone: true });
+    for (let id = 2; id <= 12; id++) chat.frame({ type: 'message', message: message(id, `Foreground ${id}`, otherId), history: bounds(id) });
+    await expect(page.locator('.sync-message')).toHaveCount(12);
+    await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(0);
+    chat.frame({ type: 'read', deviceId, messageId: 12 });
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    for (let id = 13; id <= 22; id++) chat.frame({ type: 'message', message: message(id, `Background ${id}`, otherId), history: bounds(id) });
+    await expect(page.locator('.sync-message')).toHaveCount(22);
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
+    await expect(page.locator('[data-sync-latest]')).toBeHidden();
+    await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(0);
+    chat.frame({ type: 'message', message: message(23, 'Eleventh unread message', otherId), history: bounds(23) });
+    await expect(page.locator('.sync-message')).toHaveCount(23);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.clock.runFor(1000);
+    await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(1);
+    await expect(page.locator('[data-sync-first-unread]')).toBeVisible();
+    await expect(page.locator('[data-sync-latest]')).toContainText('11');
+    expect(chat.reads).toEqual([]);
+    chat.frame({ type: 'read', deviceId, messageId: 13 });
+    await expect(page.locator('[data-sync-latest]')).toContainText('10');
+    await expect(page.locator('[data-sync-first-unread]')).toBeVisible();
+    await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(0);
+    chat.frame({ type: 'read', deviceId, messageId: 23 });
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
+    await expect(page.locator('[data-sync-latest]')).toBeHidden();
+    chat.frame({ type: 'message', message: message(24, 'A new small batch', otherId), history: bounds(24) });
+    await expect(page.locator('.sync-message')).toHaveCount(24);
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
+    await expect(page.locator('[data-sync-latest]')).toBeHidden();
+});
+
 test('locates the first unread across history pages without reading newer messages', async ({ page }) => {
     const chat = await openChat(page, {
         history: Array.from({ length: 50 }, (_, i) => message(i + 51, `Message ${i + 51}`, otherId)),
@@ -72,9 +143,10 @@ test('locates the first unread across history pages without reading newer messag
     expect(chat.reads).toEqual([]);
     await expect(page.locator('[data-sync-unread]')).toHaveText('80');
     const feed = await page.locator('[data-sync-feed]').boundingBox();
-    const target = await page.locator('.sync-message.is-reply-target').boundingBox();
+    const target = await page.locator('.sync-message').filter({ has: page.getByText('Message 21', { exact: true }) }).boundingBox();
     expect(target.y).toBeGreaterThanOrEqual(feed.y);
     expect(target.y).toBeLessThan(feed.y + feed.height);
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
     await page.locator('[data-taskbar-lang]').click();
     await expect(divider).toHaveText('Unread messages start here');
     await expect(page.locator('[data-sync-first-unread]')).toHaveText('First unread');
@@ -86,6 +158,10 @@ test('locates the first unread across history pages without reading newer messag
     expect(navigation.x + navigation.width).toBeLessThanOrEqual(area.x + area.width);
     expect(latest.x).toBeGreaterThanOrEqual(area.x);
     expect(latest.x + latest.width).toBeLessThanOrEqual(area.x + area.width);
+    await page.clock.runFor(800);
+    expect(chat.reads.at(-1)).toBeGreaterThanOrEqual(21);
+    expect(chat.reads.at(-1)).toBeLessThan(100);
+    await expect(divider).toHaveCount(0);
 });
 
 test('cycles unread mentions and never marks a bottom target read from the jump alone', async ({ page }) => {

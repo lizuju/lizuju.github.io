@@ -170,8 +170,10 @@
                 <div class="sync-storage-body">
                     <div class="sync-diagnostics-actions">
                         <button class="sync-button" type="button" data-sync-diagnostics-test data-i18n="syncDiagnosticsTest">测试通知</button>
-                        <button class="sync-button" type="button" data-sync-diagnostics-export data-i18n="syncDiagnosticsExport">导出诊断</button>
+                        <a class="sync-button" href="#" download="gavin-connection-diagnostics.json" data-sync-diagnostics-export data-i18n="syncDiagnosticsExport">导出诊断</a>
+                        <button class="sync-button" type="button" data-sync-diagnostics-open data-i18n="syncDiagnosticsOpen">打开联络站</button>
                     </div>
+                    <p class="sync-notice" role="status" aria-live="polite" data-sync-diagnostics-notice></p>
                     <p data-i18n="syncDiagnosticsLocal">仅本页面的诊断，不含聊天内容或凭据。</p>
                     <dl class="sync-storage-metrics" data-sync-diagnostics-metrics></dl>
                     <h3 data-i18n="syncDiagnosticsNotification">最近通知耗时</h3>
@@ -180,7 +182,6 @@
                     <h3 data-i18n="syncDiagnosticsEvents">最近记录</h3>
                     <ol class="sync-diagnostics-events" data-sync-diagnostics-events></ol>
                 </div>
-                <p class="sync-notice" role="status" aria-live="polite" data-sync-diagnostics-notice></p>
             </div>
             <button class="window-resize-handle" type="button" data-control-panel-resize data-i18n-aria="controlPanelResize" aria-label="调整控制面板窗口大小"></button>
         </section>

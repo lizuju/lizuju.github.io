@@ -79,10 +79,8 @@ test('shows a read check only after a different trusted paired device reads a se
 });
 
 test('follows a new message while unfocused but leaves it unread until the user returns and interacts', async ({ page }) => {
-    const chat = await openChat(page, Array.from({ length: 40 }, (_, i) => message(i + 1, `History ${i + 1}`, otherId)));
-    await page.locator('[data-sync-input]').click();
-    await page.clock.runFor(800);
-    await expect.poll(() => chat.reads.at(-1)).toBe(40);
+    const chat = await openChat(page, Array.from({ length: 40 }, (_, i) => message(i + 1, `History ${i + 1}`, otherId)),
+        [{ deviceId, messageId: 40 }]);
     const baseline = chat.reads.length;
     await page.evaluate(() => {
         Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false });
@@ -112,10 +110,8 @@ test('follows a new message while unfocused but leaves it unread until the user 
 });
 
 test('does not mark new messages read behind another desktop window or while minimized', async ({ page }) => {
-    const chat = await openChat(page, Array.from({ length: 30 }, (_, i) => message(i + 1, `History ${i + 1}`, otherId)));
-    await page.locator('[data-sync-input]').click();
-    await page.clock.runFor(800);
-    await expect.poll(() => chat.reads.at(-1)).toBe(30);
+    const chat = await openChat(page, Array.from({ length: 30 }, (_, i) => message(i + 1, `History ${i + 1}`, otherId)),
+        [{ deviceId, messageId: 30 }]);
     const baseline = chat.reads.length;
     await page.locator('[data-start-toggle]').click();
     await page.locator('[data-open-control-panel]').click();
@@ -170,7 +166,7 @@ test('floats unread navigation without moving the feed or reading position when 
     const before = await feed.boundingBox();
     const compose = await page.locator('[data-sync-send-form]').boundingBox();
     const anchor = await page.locator('.sync-message').first().boundingBox();
-    await chat.incoming(41);
+    for (let id = 41; id <= 51; id++) await chat.incoming(id);
     await expect(latest).toBeVisible();
     expect(await feed.boundingBox()).toEqual(before);
     expect(await page.locator('[data-sync-send-form]').boundingBox()).toEqual(compose);
@@ -180,17 +176,19 @@ test('floats unread navigation without moving the feed or reading position when 
     expect(floating.y).toBeGreaterThanOrEqual(before.y);
     expect(floating.x + floating.width).toBeLessThanOrEqual(before.x + before.width);
     expect(floating.y + floating.height).toBeLessThanOrEqual(before.y + before.height);
-    await chat.incoming(42);
-    await expect(latest).toContainText('2');
-    chat.receipt(deviceId, 42);
+    await chat.incoming(52);
+    await expect(latest).toContainText('12');
+    chat.receipt(deviceId, 52);
     await expect(latest).toBeHidden();
     expect(await feed.boundingBox()).toEqual(before);
     expect(await page.locator('[data-sync-send-form]').boundingBox()).toEqual(compose);
     expect((await page.locator('.sync-message').first().boundingBox()).y).toBe(anchor.y);
-    await chat.incoming(43);
+    for (let id = 53; id <= 63; id++) await chat.incoming(id);
     await latest.click();
-    await expect(latest).toBeHidden();
+    await expect(latest).toBeVisible();
     await expect.poll(() => atBottom(page)).toBeLessThan(3);
+    chat.receipt(deviceId, 63);
+    await expect(latest).toBeHidden();
     expect(await feed.boundingBox()).toEqual(before);
     expect(await page.locator('[data-sync-send-form]').boundingBox()).toEqual(compose);
 });

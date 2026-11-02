@@ -929,11 +929,11 @@ import { pendingMessages } from './sync-outbox.js';
             inlineImages.forEach((image, id) => visible && !messageNodes.get(id)?.hidden ? image.start() : image.pause());
             if (!visible) imageResources.forEach(resource => resource.clear());
         };
-        const isReading = () => !room.hidden && active && browserFocused && document.hasFocus() && !document.hidden
-            && performance.now() - lastInteraction < 60000 && app.classList.contains('is-active')
-            && !app.classList.contains('is-minimized') && !find('search').value.trim()
+        const isChatForeground = () => !room.hidden && active && viewingDesktop && browserFocused && document.hasFocus() && !document.hidden
+            && app.classList.contains('is-active') && !app.classList.contains('is-minimized')
             && !app.closest('[inert]') && !devicesDialog.open && !confirmation.open && !stickerDialog.open && !spaceNameDialog.open && !replyNavigation
             && !(app.clientWidth <= 640 && (!app.classList.contains('is-tools-collapsed') || !app.classList.contains('is-spaces-collapsed')));
+        const isReading = () => isChatForeground() && performance.now() - lastInteraction < 60000 && !find('search').value.trim();
         const updateReadReceipts = () => {
             const otherReadId = Math.max(0, ...[...readReceipts].filter(([id]) => id !== deviceId
                 && credentials?.trustedDevices[id] && !credentials.revokedDevices.includes(id)).map(([, id]) => id));
@@ -949,8 +949,14 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const mergeReadReceipts = (receipts) => {
             for (const receipt of receipts) readReceipts.set(receipt.deviceId, Math.max(readReceipts.get(receipt.deviceId) || 0, receipt.messageId));
-            const ownReadId = readReceipts.get(deviceId) || 0;
+            const ownReadId = readReceipts.get(credentials?.deviceId) || 0;
             for (const id of unread) if (id <= ownReadId) unread.delete(id);
+            const record = credentials && connections.get(credentials.roomId);
+            if (record) {
+                record.readReceipts.set(record.session.deviceId, ownReadId);
+                for (const id of record.unread) if (id <= ownReadId) record.unread.delete(id);
+                if (record.unreadStartId <= ownReadId) record.unreadStartId = null;
+            }
             updateReadReceipts();
             updateUnread();
         };
@@ -959,7 +965,17 @@ import { pendingMessages } from './sync-outbox.js';
         const unreadMentions = () => history.filter(message => unread.has(message.id)
             && message.mentions?.some(mention => mention.deviceId === deviceId));
         const updateUnread = () => {
-            const first = !find('search').value.trim() && history.find(message => unread.has(message.id));
+            const record = credentials && connections.get(credentials.roomId);
+            if (record) {
+                if (unread.size > 10) record.unreadPromptActive = true;
+                else if (!unread.size && !record.unread.size && !hasOlderUnread()) {
+                    record.unreadPromptActive = false;
+                    record.unreadStartId = null;
+                }
+            }
+            const showPrompt = record?.unreadPromptActive === true;
+            const first = showPrompt && record.unreadStartId && !find('search').value.trim()
+                && history.find(message => message.id >= record.unreadStartId && unread.has(message.id));
             const firstNode = first && messageNodes.get(first.id);
             const dividerLabel = translate('syncUnreadStart');
             if (unreadDivider.textContent !== dividerLabel) unreadDivider.textContent = dividerLabel;
@@ -976,7 +992,7 @@ import { pendingMessages } from './sync-outbox.js';
                     lastFeedScrollTop = feed.scrollTop;
                 }
             }
-            find('first-unread').hidden = !unread.size && !hasOlderUnread();
+            find('first-unread').hidden = !showPrompt || !unread.size && !hasOlderUnread();
             find('first-unread').textContent = translate('syncFirstUnread');
             const mentions = unreadMentions();
             find('unread-mention').hidden = !mentions.length && !hasOlderUnread();
@@ -986,34 +1002,46 @@ import { pendingMessages } from './sync-outbox.js';
             badge.hidden = !unread.size;
             badge.textContent = unread.size > 99 ? '99+' : String(unread.size);
             badge.setAttribute('aria-label', translate('syncUnread', { count: unread.size }));
-            find('latest').hidden = !unread.size;
+            find('latest').hidden = !showPrompt || !unread.size;
             find('latest').textContent = unread.size ? `${translate('syncUnread', { count: unread.size })} · ${translate('syncLatest')}` : translate('syncLatest');
             find('latest').dataset.i18n = '';
         };
-        const markRead = () => {
-            const latest = history.at(-1);
-            const rect = latest && messageNodes.get(latest.id)?.getBoundingClientRect();
+        const readableThrough = () => {
+            if (!isReading() || interactionRevision < readAfterInteraction || hasOlderUnread() || catchingUp) return null;
+            const readId = Math.max(sentReadId, readReceipts.get(deviceId) || 0);
             const viewport = feed.getBoundingClientRect();
-            const visible = rect && Math.min(rect.bottom, viewport.bottom, innerHeight) - Math.max(rect.top, viewport.top, 0) >= Math.min(40, rect.height)
-                && Math.min(rect.right, viewport.right, innerWidth) > Math.max(rect.left, viewport.left, 0);
-            if (!isReading() || interactionRevision < readAfterInteraction || !atBottom() || !visible || latest.decryptionFailed) {
+            let candidate = null;
+            for (const message of history) {
+                if (message.id <= readId) continue;
+                const node = messageNodes.get(message.id);
+                const rect = node?.getBoundingClientRect();
+                const visible = rect && !node.hidden && Math.min(rect.bottom, viewport.bottom, innerHeight) - Math.max(rect.top, viewport.top, 0) >= Math.min(40, rect.height)
+                    && rect.bottom <= Math.min(viewport.bottom, innerHeight) + 1
+                    && Math.min(rect.right, viewport.right, innerWidth) > Math.max(rect.left, viewport.left, 0);
+                if (message.decryptionFailed || !visible && message.deviceId !== deviceId) break;
+                if (visible) candidate = message.id;
+            }
+            return candidate;
+        };
+        const markRead = () => {
+            const candidate = readableThrough();
+            if (candidate === null) {
                 clearTimeout(readTimer);
                 readTimer = null;
                 readCandidate = null;
                 return;
             }
-            if (!unread.size && latest.id <= Math.max(sentReadId, readReceipts.get(deviceId) || 0)) return;
-            if (readCandidate === latest.id && readTimer) return;
+            if (readCandidate === candidate && readTimer) return;
             clearTimeout(readTimer);
-            readCandidate = latest.id;
+            readCandidate = candidate;
             readTimer = setTimeout(() => {
                 readTimer = null;
-                if (!isReading() || interactionRevision < readAfterInteraction || !atBottom() || history.at(-1)?.id !== latest.id) return;
-                unread.clear();
-                updateUnread();
-                if (online && socket?.readyState === WebSocket.OPEN && latest.id > Math.max(sentReadId, readReceipts.get(deviceId) || 0)) {
-                    sentReadId = latest.id;
-                    socket.send(JSON.stringify({ type: 'read', messageId: latest.id }));
+                const current = readableThrough();
+                if (current === null || current < candidate) { markRead(); return; }
+                if (online && socket?.readyState === WebSocket.OPEN && candidate > Math.max(sentReadId, readReceipts.get(deviceId) || 0)) {
+                    sentReadId = candidate;
+                    mergeReadReceipts([{ deviceId, messageId: candidate }]);
+                    socket.send(JSON.stringify({ type: 'read', messageId: candidate }));
                 }
             }, 600);
         };
@@ -1486,6 +1514,8 @@ import { pendingMessages } from './sync-outbox.js';
                 if (!known.has(message.id) && message.deviceId !== deviceId && message.id > (readReceipts.get(deviceId) || 0)) {
                     unread.add(message.id);
                     readAfterInteraction = interactionRevision + 1;
+                    const record = connections.get(credentials.roomId);
+                    if (record?.unreadStartId) record.unreadStartId = Math.min(record.unreadStartId, message.id);
                 }
             }
             const scrollTop = feed.scrollTop;
@@ -1715,7 +1745,12 @@ import { pendingMessages } from './sync-outbox.js';
                 if (!live || !record.historyState?.hasNewer) record.reconnectCursor = metadata?.continuationId ?? incoming.at(-1)?.id ?? record.reconnectCursor;
                 for (const message of incoming) {
                     if (!known.has(message.id) && message.deviceId !== record.session.deviceId
-                        && message.id > (record.readReceipts.get(record.session.deviceId) || 0)) record.unread.add(message.id);
+                        && message.id > (record.readReceipts.get(record.session.deviceId) || 0)) {
+                        record.unread.add(message.id);
+                        if (!live || credentials !== record.session || !isChatForeground()) {
+                            record.unreadStartId = Math.min(record.unreadStartId ?? message.id, message.id);
+                        }
+                    }
                 }
             }
             const retained = new Set(record.history.map(message => message.id));
@@ -3347,8 +3382,14 @@ import { pendingMessages } from './sync-outbox.js';
             else feed.scrollTop += change;
             lastFeedScrollTop = feed.scrollTop;
         }).observe(find('pairing-dock'));
+        let lastPointerPosition = null;
         const recordInteraction = (event) => {
             if (!event.isTrusted || !browserFocused || !document.hasFocus() || document.hidden || !app.classList.contains('is-active') || app.closest('[inert]')) return;
+            if (event.type === 'pointerdown' || event.type === 'pointermove') {
+                const position = `${event.pointerId}:${event.clientX}:${event.clientY}`;
+                if (event.type === 'pointermove' && position === lastPointerPosition) return;
+                lastPointerPosition = position;
+            }
             lastInteraction = performance.now();
             interactionRevision++;
             markRead();
@@ -3541,6 +3582,7 @@ import { pendingMessages } from './sync-outbox.js';
             if (event.origin !== window.location.origin || event.source !== window.parent
                 || event.data?.source !== 'gavin-shell' || event.data?.type !== 'portfolio-view-state') return;
             viewingDesktop = event.data.active === true;
+            markRead();
             updateVoiceVisibility();
             updateInlineImages();
         });

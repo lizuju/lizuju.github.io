@@ -55,6 +55,12 @@
     gap: 8px;
 }
 
+.sync-diagnostics-actions a {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+}
+
 .sync-diagnostics-events {
     padding-left: 20px;
     overflow-wrap: anywhere;

@@ -35,7 +35,8 @@ export function setupSyncDiagnostics(view) {
         const latest = notifications.at(-1);
         fields(find('metrics'), [
             ['syncDiagnosticsNetwork', t(navigator.onLine ? 'syncDiagnosticsBrowserOnline' : 'syncDiagnosticsDisconnected')],
-            ['syncDiagnosticsConnections', t('syncDiagnosticsCounts', connection.connections)],
+            ['syncDiagnosticsConnections', connection.connections.online + connection.connections.connecting + connection.connections.offline
+                ? t('syncDiagnosticsCounts', connection.connections) : t('syncDiagnosticsNoConnections')],
             ['syncDiagnosticsShared', String(connection.connections.shared)],
             ['syncDiagnosticsReconnects', String(connection.reconnects)],
             ['syncDiagnosticsLastConnected', time(connection.lastConnectedAt)],
@@ -71,7 +72,9 @@ export function setupSyncDiagnostics(view) {
             list.append(item);
         }
         testButton.disabled = testing || !permission.supported;
-        notice.textContent = testing ? t('syncDiagnosticsTesting') : result ? status(result) : '';
+        notice.textContent = testing ? t('syncDiagnosticsTesting') : result === 'exported' ? t('syncDiagnosticsExported')
+            : result === 'shown' ? t('syncDiagnosticsTestSubmitted') : result ? status(result) : '';
+        notice.hidden = !notice.textContent;
         notice.dataset.state = ['error', 'denied', 'timeout', 'unsupported'].includes(result) ? 'error' : '';
     };
     testButton.addEventListener('click', async () => {
@@ -83,19 +86,18 @@ export function setupSyncDiagnostics(view) {
         } catch { result = 'error'; }
         finally { testing = false; render(); }
     });
-    find('export').addEventListener('click', () => {
+    find('open').addEventListener('click', () => document.querySelector('[data-open-sync-space]').click());
+    find('export').addEventListener('click', event => {
         const report = {
             exportedAt: Date.now(), connection: getConnectionDiagnostics(),
             notificationState: getNotificationState(), notifications: readNotificationDiagnostics()
         };
         const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
-        const link = document.createElement('a');
+        const link = event.currentTarget;
         link.href = url;
-        link.download = 'gavin-connection-diagnostics.json';
-        document.body.append(link);
-        link.click();
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        result = 'exported';
+        render();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
     });
     for (const event of ['sync-diagnostics-change', 'portfolio-language-change', 'online', 'offline', 'focus']) window.addEventListener(event, render);
     document.addEventListener('visibilitychange', render);

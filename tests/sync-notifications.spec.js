@@ -67,7 +67,7 @@ test('the service worker suppresses notifications when another tab is focused an
         clients: { matchAll: async () => [{ focused, visibilityState: 'visible' }], get: async () => client },
         addEventListener(name, handler) { handlers.set(name, [...(handlers.get(name) || []), handler]); }
     };
-    vm.runInNewContext(await readFile('static/portfolio/sync-e2ee-worker.js', 'utf8'), { self: worker, URL, Map, Set, Date });
+    vm.runInNewContext(await readFile('static/portfolio/sync-e2ee-worker.js', 'utf8'), { self: worker, URL, Map, Set, Date, crypto: require('node:crypto').webcrypto });
     const deliver = async (type = 'show') => {
         const waits = [];
         for (const handler of handlers.get('message')) handler({ source: client, data: { source: 'gavin-sync-notification', type, roomId: 'room', title: '联络站', body: '有新消息' }, ports: [{ postMessage() {} }], waitUntil: promise => waits.push(promise) });
@@ -87,11 +87,15 @@ test('the service worker suppresses notifications when another tab is focused an
     focused = true;
     await deliver('test');
     expect(shown).toHaveLength(2);
-    expect(shown[1].tag).toBe('sync:test');
+    expect(shown[1].tag).toMatch(/^sync:test:/);
+    expect(shown[1].silent).toBe(false);
     expect(shown[1].data).toEqual({ clientId: 'client' });
     handlers.get('notificationclick')[0]({ notification: { data: shown[1].data, close() {} }, waitUntil: promise => { clicked = promise; } });
     await clicked;
     expect(posted).toHaveLength(1);
+    await deliver('test');
+    expect(shown[2].tag).not.toBe(shown[1].tag);
+    expect(shown[0].silent).toBe(true);
 });
 
 
