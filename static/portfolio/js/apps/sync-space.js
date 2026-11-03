@@ -99,6 +99,7 @@ import { pendingMessages } from './sync-outbox.js';
         const keyRefreshes = new WeakMap();
         const rotations = new WeakMap();
         const downloads = new Map();
+        const idleDownloadFrames = [];
         const fingerprints = new WeakMap();
         let switchingSpace = false;
         let savingSpaceName = false;
@@ -892,12 +893,15 @@ import { pendingMessages } from './sync-outbox.js';
                     capability.dispose(); return;
                 }
                 downloading.capability = capability;
-                const frame = document.createElement('iframe');
+                const frame = idleDownloadFrames.pop() || document.createElement('iframe');
                 frame.hidden = true;
                 frame.src = capability.url;
-                document.body.append(frame);
-                capability.closed.then(() => frame.remove());
+                if (!frame.isConnected) document.body.append(frame);
                 const result = await capability.result;
+                // Stream delivery can precede WebKit's native download handoff.
+                // Keep completed frames for reuse instead of destroying that context.
+                if (result.status === 'delivered') idleDownloadFrames.push(frame);
+                else capability.closed.then(() => frame.remove());
                 if (result.status === 'failed' && credentials === session && messageNodes.has(message.id)) showAttachmentError(new Error('encrypted_file_unavailable'));
             } catch (error) {
                 if (downloads.get(message.id) === downloading && credentials === session && messageNodes.has(message.id) && error.name !== 'AbortError') showAttachmentError(error);

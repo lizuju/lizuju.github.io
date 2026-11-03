@@ -179,11 +179,11 @@ test('keeps a slow native download alive after iframe load, ten minutes and back
     await frame.evaluate(element => element.dispatchEvent(new Event('load')));
     await expect(frame).toHaveCount(1);
     await page.clock.fastForward(10 * 60 * 1000 + 1000);
-    await expect(frame).toHaveCount(1);
+    await expect(row(page, 'background-transfer.bin').locator('[data-sync-cancel-download]')).toBeVisible();
     holdDownload = false;
     pendingDownloads.splice(0).forEach(send => send());
     expect(await readFile(await download.path())).toEqual(originalDownload);
-    await expect(frame).toHaveCount(0);
+    await expect(frame).toHaveCount(1);
     await foreground(page);
     await expect(page.locator('[data-sync-notice]')).not.toHaveAttribute('data-state', 'error');
     expect(ticketRequests).toBe(1);
