@@ -30,3 +30,11 @@ require FFmpeg.
 
 Four seconds leave time to seek and verify playback before the media ends,
 without enabling native looping during the preview lifecycle checks.
+
+# Word preview fixture
+
+`preview-long.docx` is a synthetic document with 10,000 paragraphs, numbered
+`Paragraph 0` through `Paragraph 9999`. It uses the package structure of
+`preview-document.docx` with a generated `word/document.xml`, compressed with
+Python's `zipfile.ZIP_DEFLATED`. It checks worker parsing and yielding DOM updates
+without personal documents or an Office dependency.

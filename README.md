@@ -65,6 +65,7 @@ Then open `http://127.0.0.1:3090/`. The direct portfolio is also available at `h
 
 ```bash
 npm run build
+npm run test:unit
 npm run test:smoke
 npm test --prefix cloudflare/sync
 node --check static/portfolio/js/main.js
@@ -76,7 +77,7 @@ node --check static/portfolio/js/gomoku-game.js
 
 Webpack bundles the desktop modules and styles into `docs/portfolio/js/main.js` and `docs/portfolio/css/main.css`; edit their source files under `static/portfolio/`. `docs/` and the Gomoku and satellite bundles in `build/` are ignored by Git: run `npm run build` before previewing or running the browser tests. Run `npm ci --prefix cloudflare/sync` once before the backend tests.
 
-CI assigns whole browser test files using the measured durations in `scripts/browser-test-durations.json` (baseline run `40828775124`), so shared servers and hooks stay together. Run a shard locally with `node scripts/run-browser-shard.cjs webkit-desktop 1/4`; `node --test scripts/browser-shards.test.cjs` checks coverage and balance, including new files. Chromium desktop uses two shards, WebKit desktop four, Chromium mobile one and WebKit mobile two. Failed-attempt traces and reports are uploaded even when a retry succeeds. Update the timing baseline from a completed CI run when test costs change.
+CI assigns whole browser test files using the measured durations in `scripts/browser-test-durations.json` (baseline run `40828775124`), so shared servers and hooks stay together. Run a shard locally with `node scripts/run-browser-shard.cjs webkit-desktop 1/4`; `node --test scripts/browser-shards.test.cjs` checks coverage and balance, including new files. Chromium desktop uses two shards, WebKit desktop four, Chromium mobile one and WebKit mobile two. Failed-attempt traces and reports are uploaded even when a retry succeeds. The split smoke files start with the previous CI total apportioned by local per-file timings; successful CI runs recalibrate these weights. Browser-independent download tests run once via `npm run test:unit`.
 
 ## Release
 

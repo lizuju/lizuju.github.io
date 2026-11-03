@@ -38,20 +38,35 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
         } else if (kind === 'word') {
             const arrayBuffer = await response.arrayBuffer();
             if (signal.aborted) return cleanup;
-            const [{ default: mammoth }, { default: DOMPurify }] = await Promise.all([
-                import(/* webpackChunkName: "sync-word" */ 'mammoth/mammoth.browser'),
-                import(/* webpackChunkName: "sync-word" */ 'dompurify')
+            worker = new Worker(new URL('./sync-word-worker.js', import.meta.url), { type: 'module', name: 'word-preview' });
+            let timeout;
+            const conversion = new Promise((resolve, reject) => {
+                pending.set(1, { reject });
+                timeout = setTimeout(() => { worker.terminate(); reject(new Error('Word preview timed out')); }, 15000);
+                worker.onmessage = ({ data }) => data.error ? reject(new Error(data.error)) : resolve(data.chunks);
+                worker.onerror = () => reject(new Error('Word preview could not be loaded'));
+                worker.postMessage(arrayBuffer, [arrayBuffer]);
+            }).finally(() => { clearTimeout(timeout); pending.delete(1); worker.terminate(); });
+            const [chunks, { default: DOMPurify }] = await Promise.all([
+                conversion, import(/* webpackChunkName: "sync-word" */ 'dompurify')
             ]);
             if (signal.aborted) return cleanup;
-            const result = await mammoth.convertToHtml({ arrayBuffer }, { externalFileAccess: false });
-            if (signal.aborted) return cleanup;
             root.className = 'sync-document-word';
-            root.append(DOMPurify.sanitize(result.value, {
-                ALLOWED_TAGS: ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'strong', 'em', 'b', 'i', 'u', 's', 'br', 'hr', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'sup', 'sub', 'img', 'span'],
-                ALLOWED_ATTR: ['alt', 'src', 'colspan', 'rowspan', 'scope'],
-                ALLOWED_URI_REGEXP: /^data:image\/(?:png|jpeg|gif|webp|bmp);base64,/i,
-                RETURN_DOM_FRAGMENT: true
-            }));
+            container.replaceChildren(root);
+            let sliceStarted = performance.now();
+            for (const chunk of chunks) {
+                signal.throwIfAborted();
+                root.append(DOMPurify.sanitize(chunk, {
+                    ALLOWED_TAGS: ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'strong', 'em', 'b', 'i', 'u', 's', 'br', 'hr', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'sup', 'sub', 'img', 'span'],
+                    ALLOWED_ATTR: ['alt', 'src', 'colspan', 'rowspan', 'scope'],
+                    ALLOWED_URI_REGEXP: /^data:image\/(?:png|jpeg|gif|webp|bmp);base64,/i,
+                    RETURN_DOM_FRAGMENT: true
+                }));
+                if (performance.now() - sliceStarted >= 8) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                    sliceStarted = performance.now();
+                }
+            }
             if (!root.textContent.trim() && !root.querySelector('img')) {
                 refreshLanguage = () => { root.textContent = translate('syncPreviewDocumentEmpty'); };
             }

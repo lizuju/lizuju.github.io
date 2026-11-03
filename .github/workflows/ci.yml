@@ -28,13 +28,15 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: cloudflare/sync/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            cloudflare/sync/package-lock.json
       - name: Install sync dependencies
-        run: npm ci
+        run: npm ci --prefer-offline --no-audit
       - name: Audit sync dependencies
         run: npm audit --audit-level=moderate
       - name: Install client encryption dependencies
-        run: npm ci --prefix ../..
+        run: npm ci --prefix ../.. --prefer-offline --no-audit
       - name: Validate sync worker
         run: npm run check
       - name: Test pairing and realtime sync
@@ -58,14 +60,14 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --prefer-offline --no-audit
 
       - name: Read installed browser version
         id: browser-version
         run: node -p "'version=' + require('@playwright/test/package.json').version" >> "$GITHUB_OUTPUT"
 
-      - name: Validate browser shard allocation
-        run: node --test scripts/browser-shards.test.cjs
+      - name: Run browser-independent regressions and validate shard allocation
+        run: npm run test:unit
 
       - name: Find the latest measured browser timings
         if: github.event_name == 'pull_request'
@@ -161,7 +163,16 @@ jobs:
             cloudflare/sync/package-lock.json
 
       - name: Install dependencies
-        run: npm ci && npm ci --prefix cloudflare/sync
+        run: |
+          npm ci --prefer-offline --no-audit &
+          client_install=$!
+          npm ci --prefix cloudflare/sync --prefer-offline --no-audit &
+          worker_install=$!
+          client_status=0
+          worker_status=0
+          wait "$client_install" || client_status=$?
+          wait "$worker_install" || worker_status=$?
+          test "$client_status" -eq 0 && test "$worker_status" -eq 0
 
       - name: Download production site
         uses: actions/download-artifact@v8

@@ -65,6 +65,7 @@ npm run preview
 
 ```bash
 npm run build
+npm run test:unit
 npm run test:smoke
 npm test --prefix cloudflare/sync
 node --check static/portfolio/js/main.js

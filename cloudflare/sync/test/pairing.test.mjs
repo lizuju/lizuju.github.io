@@ -2294,7 +2294,7 @@ test('reservation migration refreshes existing room accounting without deleting 
   assert.deepEqual(await roomStorage.exec('SELECT status FROM files WHERE file_id = ?', upload.uploadId), [{ status: 'uploading' }]);
 });
 
-test('public status coalesces diagnostics, caches healthy snapshots for fifteen seconds and retries failures', async t => {
+test('public status coalesces diagnostics and caches failed probes briefly without hiding recovery', async t => {
   const instance = await createRuntime(); t.after(() => instance.dispose());
   const request = client(instance), space = await createSpace(request);
   const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
@@ -2318,11 +2318,19 @@ test('public status coalesces diagnostics, caches healthy snapshots for fifteen 
   await room.testFailDatabaseProbe();
   const failed = await request('/v1/status');
   assert.equal(failed.body.ok, false); assert.equal(failed.body.database.sampledRoom.ok, false);
+  assert.equal(failed.body.lastHealthyCheckAt, cached.body.checkedAt);
+  assert.equal(await registry.testDiagnosticsCacheUntil(), failed.body.checkedAt + 5000);
+  for (let index = 0; index < 10; index++) assert.deepEqual((await request('/v1/status')).body, failed.body);
+  assert.equal(await room.testProbeCount(), 2, 'Repeated failed status reads reuse the short negative cache');
+  await registry.testExpireDiagnosticsCache();
   assert.equal((await request('/v1/status')).body.ok, true);
-  assert.equal(await room.testProbeCount(), 3, 'A failed database probe must not leave a cached failure');
+  assert.equal(await room.testProbeCount(), 3);
   await registry.testExpireDiagnosticsCache();
   await registry.testFailDiagnostics();
   assert.equal((await request('/v1/status')).status, 500);
+  assert.equal((await request('/v1/status')).status, 500);
+  assert.equal(await room.testProbeCount(), 3);
+  await registry.testExpireDiagnosticsCache();
   assert.equal((await request('/v1/status')).body.ok, true);
   assert.equal(await room.testProbeCount(), 4, 'A rejected diagnostic collection must not leave an in-flight promise');
 });
@@ -2490,6 +2498,8 @@ test('a slow health probe returns a partial snapshot before the control panel ti
   assert.equal(snapshots[0].storage.roomCount, 1);
   assert.equal(snapshots[0].dailyUsage.status, 'not_configured');
   await room.testReleaseDatabaseProbe();
+  assert.equal((await (await instance.dispatchFetch('https://sync.test/v1/status')).json()).ok, false);
+  await registry.testExpireDiagnosticsCache();
   assert.equal((await (await instance.dispatchFetch('https://sync.test/v1/status')).json()).ok, true);
 });
 

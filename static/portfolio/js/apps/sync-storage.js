@@ -33,6 +33,7 @@ export function setupSyncStorage(app) {
         if (!data) return;
         const probe = (value) => value ? t()[value.ok ? 'syncStorageHealthy' : 'syncStorageUnhealthy'] : t().syncStorageNoSample;
         const fields = [
+            ['syncStorageLastHealthy', timestamp(data.lastHealthyCheckAt)],
             ['syncStorageProbeMain', probe(data.database.registry)],
             ['syncStorageProbeRoom', probe(data.database.sampledRoom)],
             ['syncStorageProbeShard', probe(data.database.sampledShard)],

@@ -1,4 +1,4 @@
-const { test, expect, authorize, deviceId, otherId, keyId, profile } = require('./fixtures/sync-e2ee.cjs');
+const { test, expect, authorize, deviceId, otherId, keyId, profile, message } = require('./fixtures/sync-e2ee.cjs');
 
 test.use({ serviceWorkers: 'block' });
 
@@ -113,6 +113,9 @@ test('shows live connection and reconnect state without fetching diagnostics fro
     await page.locator('[data-control-panel-task]').click();
     const metrics = view.locator('[data-sync-diagnostics-metrics]');
     await expect(metrics).toContainText('在线 1 · 连接中 0 · 离线 0');
+    connection.send(JSON.stringify({ type: 'message', message: message(1, 'diagnostic fixture', otherId) }));
+    await expect(metrics.locator('dt', { hasText: '本页解密与处理' }).locator('+ dd')).toHaveText(/^\d+ ms$/);
+    await expect(metrics.locator('dt', { hasText: '接收至处理完成' }).locator('+ dd')).toHaveText(/^\d+ ms$/);
     await connection.close({ code: 1012, reason: 'Restart' });
     await expect(metrics).toContainText('离线 1');
     await expect(metrics).toContainText('在线 1 · 连接中 0 · 离线 0');

@@ -17,7 +17,8 @@
         "verify:release": "node cloudflare/sync/scripts/verify-release.mjs",
         "check:sync-api": "node cloudflare/sync/scripts/check-api-version.mjs",
         "images:check": "node scripts/strip-image-metadata.cjs --check static",
-        "images:strip": "node scripts/strip-image-metadata.cjs static"
+        "images:strip": "node scripts/strip-image-metadata.cjs static",
+        "test:unit": "node --test scripts/*.test.cjs tests/unit/*.test.cjs"
     },
     "dependencies": {
         "@algorithm.ts/gomoku": "^4.0.5",

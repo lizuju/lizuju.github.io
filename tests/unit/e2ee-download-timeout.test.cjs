@@ -1,9 +1,10 @@
-const { test, expect } = require('@playwright/test');
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { createContext, runInContext } = require('node:vm');
 const { createCipheriv, webcrypto } = require('node:crypto');
 
-const source = readFileSync(require.resolve('../static/portfolio/sync-e2ee-worker.js'), 'utf8');
+const source = readFileSync(require.resolve('../../static/portfolio/sync-e2ee-worker.js'), 'utf8');
 const clear = Buffer.from('encrypted slow transfer');
 const key = Buffer.alloc(32, 7);
 const nonce = Buffer.alloc(12, 0);
@@ -74,15 +75,15 @@ for (const stage of ['headers', 'body']) test(`retries a ${stage} stall after th
             : new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
     });
     await transfer.advance(29999);
-    expect(transfer.requests).toEqual([0]);
-    expect(transfer.settled()).toBe(false);
+    assert.deepEqual(transfer.requests, [0]);
+    assert.equal(transfer.settled(), false);
     await transfer.advance(501);
-    expect(await transfer.result).toEqual({ bytes: clear });
-    expect(transfer.requests).toEqual([0, 30500]);
-    expect(transfer.waits).toHaveLength(2);
-    expect(transfer.waits[0]).toBeGreaterThan(0);
-    expect(transfer.waits[1]).toBeNull();
-    expect(transfer.timers.size).toBe(0);
+    assert.deepEqual(await transfer.result, { bytes: clear });
+    assert.deepEqual(transfer.requests, [0, 30500]);
+    assert.equal((transfer.waits).length, 2);
+    assert.ok(transfer.waits[0] > 0);
+    assert.equal(transfer.waits[1], null);
+    assert.equal(transfer.timers.size, 0);
 });
 
 test('keeps a slow progressing chunk alive beyond the total idle deadline', async () => {
@@ -94,18 +95,18 @@ test('keeps a slow progressing chunk alive beyond the total idle deadline', asyn
         await transfer.advance(0);
     }
     output.close();
-    expect(await transfer.result).toEqual({ bytes: clear });
-    expect(transfer.requests).toEqual([0]);
-    expect(transfer.timers.size).toBe(0);
+    assert.deepEqual(await transfer.result, { bytes: clear });
+    assert.deepEqual(transfer.requests, [0]);
+    assert.equal(transfer.timers.size, 0);
 });
 
 test('user cancellation stops a stalled request without waiting or retrying', async () => {
     const transfer = await scenario(({ signal }) => response(stalledBody(signal)));
     transfer.controller.abort();
-    expect(await transfer.result).toEqual({ error: 'AbortError' });
+    assert.deepEqual(await transfer.result, { error: 'AbortError' });
     await transfer.advance(120000);
-    expect(transfer.requests).toEqual([0]);
-    expect(transfer.timers.size).toBe(0);
+    assert.deepEqual(transfer.requests, [0]);
+    assert.equal(transfer.timers.size, 0);
 });
 
 test('retries a truncated batch from its first incomplete authenticated chunk', async () => {
@@ -136,10 +137,10 @@ test('retries a truncated batch from its first incomplete authenticated chunk', 
         metadata: { version: 2, size: 16 * plainSize, fileId: 'batch' }, noncePrefix: new Uint8Array(8),
         key: await webcrypto.subtle.importKey('raw', key, 'AES-GCM', false, ['decrypt'])
     }, 0, 16, new AbortController().signal, (index, bytes) => {
-        expect(bytes.byteLength).toBe(plainSize);
-        expect(bytes.every(value => value === index)).toBe(true);
+        assert.equal(bytes.byteLength, plainSize);
+        assert.equal(bytes.every(value => value === index), true);
         received.push(index);
     }, () => {});
-    expect(requests).toEqual([`bytes=0-${body.length - 1}`, `bytes=${7 * cipherSize}-${body.length - 1}`]);
-    expect(received).toEqual(Array.from({ length: 16 }, (_, index) => index));
+    assert.deepEqual(requests, [`bytes=0-${body.length - 1}`, `bytes=${7 * cipherSize}-${body.length - 1}`]);
+    assert.deepEqual(received, Array.from({ length: 16 }, (_, index) => index));
 });
