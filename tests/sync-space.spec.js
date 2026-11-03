@@ -102,6 +102,9 @@ test('caches image previews, renews expired download tickets and authenticates r
     } finally { await site.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
 
+test.describe('reclaimed room with a mocked endpoint', () => {
+test.use({ serviceWorkers: 'block' });
+
 test('a reclaimed room returns to pairing instead of repeatedly reconnecting with expired credentials', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
     const server = createServer((request, response) => {
@@ -125,4 +128,6 @@ test('a reclaimed room returns to pairing instead of repeatedly reconnecting wit
     } finally {
         await new Promise(resolve => server.close(resolve));
     }
+});
+
 });
