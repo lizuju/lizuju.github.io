@@ -61,15 +61,15 @@ test.beforeAll(async () => {
     await new Promise(resolve => api.listen(0, '127.0.0.1', resolve));
     apiBase = `http://127.0.0.1:${api.address().port}`;
     site = createServer((request, response) => {
-        const source = text => shortExpiry ? text.replace('DOWNLOAD_IDLE_MS = 60000;', 'DOWNLOAD_IDLE_MS = 300;') : text;
-        if (/^\/(portfolio|chat)\/sync-e2ee-worker.js$/.test(request.url)) {
+        const source = text => (shortExpiry ? text.replace('DOWNLOAD_IDLE_MS = 60000;', 'DOWNLOAD_IDLE_MS = 300;') : text).replace('ORPHAN_CHECK_MS = 30000;', 'ORPHAN_CHECK_MS = 300;');
+        if (request.url === '/sync-e2ee-worker.js') {
             response.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-store' });
             response.end(`${source(worker)}\n// ${workerRevision}`);
         } else if (/^\/(portfolio|chat)\/client.js$/.test(request.url)) {
             response.writeHead(200, { 'Content-Type': 'application/javascript' }); response.end(source(helper));
         } else if (/^\/(portfolio|chat)\/sync-config.json$/.test(request.url)) {
             response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ apiBase }));
-        } else if (/^\/(portfolio|chat)\/client.html$/.test(request.url)) {
+        } else if (/^\/(portfolio|chat)\/index.html$/.test(request.url)) {
             response.writeHead(200, { 'Content-Type': 'text/html' });
             response.end('<script type="module">import {openEncryptedFile, prepareEncryptedFiles} from "./client.js"; window.openEncryptedFile = openEncryptedFile; window.prepareEncryptedFiles = prepareEncryptedFiles;</script>');
         } else { response.writeHead(404); response.end(); }
@@ -88,7 +88,7 @@ test.afterAll(async () => {
 });
 
 const open = async (page, download = true, options = {}, path = 'portfolio') => {
-    await page.goto(`${origin}/${path}/client.html`);
+    await page.goto(`${origin}/${path}/index.html`);
     await page.waitForFunction(() => typeof window.openEncryptedFile === 'function');
     return page.evaluate(async ({ apiBase, metadata, download, options }) => {
         window.capability = await window.openEncryptedFile({ url: `${apiBase}/v1/spaces/room/downloads/ticket`, metadata, download, ...options });
@@ -117,11 +117,11 @@ test('completes a range download as soon as all non-overlapping bytes have been 
     expect(requests).toBe(2);
 });
 
-for (const path of ['portfolio', 'chat']) test(`shares authenticated chunks across ${path} tabs without sharing capability ownership or cancellation`, async ({ page, context }) => {
+for (const [path, otherPath] of [['portfolio', 'portfolio'], ['chat', 'chat'], ['portfolio', 'chat']]) test(`shares authenticated chunks across ${path} and ${otherPath} tabs without sharing capability ownership or cancellation`, async ({ page, context }) => {
     const cacheScope = 'device:room-key';
     const other = await context.newPage();
     const firstUrl = await open(page, false, { cacheScope }, path);
-    await open(other, false, { cacheScope }, path);
+    await open(other, false, { cacheScope }, otherPath);
     expect(await other.evaluate(async url => (await fetch(url)).status, firstUrl)).toBe(404);
     const read = target => target.evaluate(async () => {
         const response = await fetch(window.capability.url, { headers: { Range: 'bytes=0-31' } });
@@ -142,7 +142,7 @@ test('one tab cancelling a pending transfer leaves the other tab downloading', a
     holdFirst = true;
     const other = await context.newPage();
     await open(page, false, { cacheScope: 'device:key' });
-    await open(other, false, { cacheScope: 'device:key' });
+    await open(other, false, { cacheScope: 'device:key' }, 'chat');
     for (const target of [page, other]) await target.evaluate(() => {
         window.pendingRead = fetch(window.capability.url, { headers: { Range: 'bytes=0-31' } })
             .then(response => { const reading = response.arrayBuffer(); window.readStarted = true; return reading; })
@@ -166,7 +166,7 @@ test('one tab cancelling a pending transfer leaves the other tab downloading', a
 test('keeps another device or encryption scope out of a tab cache', async ({ page, context }) => {
     const other = await context.newPage();
     await open(page, false, { cacheScope: 'first-device:key' });
-    await open(other, false, { cacheScope: 'second-device:key' });
+    await open(other, false, { cacheScope: 'second-device:key' }, 'chat');
     for (const target of [page, other]) await target.evaluate(async () => {
         await (await fetch(window.capability.url, { headers: { Range: 'bytes=0-31' } })).arrayBuffer();
     });
@@ -401,7 +401,7 @@ for (const [name, fault] of [['revoked authorization', { status: 403 }], ['incor
 
 test('rejects ticket renewal into a different space before making another upstream request', async ({ page }) => {
     faults = [{ status: 404 }];
-    await page.goto(`${origin}/portfolio/client.html`);
+    await page.goto(`${origin}/portfolio/index.html`);
     await page.waitForFunction(() => typeof window.openEncryptedFile === 'function');
     const result = await page.evaluate(async ({ apiBase, metadata }) => {
         let renewals = 0;
@@ -434,4 +434,22 @@ test('returns the current worker after an update replaces a prepared controller'
         return { changed: worker !== oldWorker, current: worker === navigator.serviceWorker.controller, oldState: oldWorker.state };
     });
     expect(current).toEqual({ changed: true, current: true, oldState: 'redundant' });
+});
+
+
+test('releases a closed owner cache while preserving another live preview', async ({ page, context, browserName }) => {
+    test.skip(browserName !== 'chromium', 'Worker heap inspection uses Chromium CDP.');
+    await open(page, false, { cacheScope: 'first-device:key' });
+    await page.evaluate(async () => (await fetch(window.capability.url, { headers: { Range: 'bytes=0-31' } })).arrayBuffer());
+    const other = await context.newPage();
+    await open(other, false, { cacheScope: 'other-device:key' }, 'chat');
+    await other.evaluate(async () => (await fetch(window.capability.url, { headers: { Range: 'bytes=0-31' } })).arrayBuffer());
+    const worker = context.serviceWorkers().find(worker => worker.url().endsWith('/sync-e2ee-worker.js'));
+    expect(await worker.evaluate(() => entries.size)).toBe(2);
+    await page.close();
+    await expect.poll(() => worker.evaluate(() => ({ entries: entries.size, sources: sources.size, bytes: cachedBytes })))
+        .toEqual({ entries: 1, sources: 1, bytes: clearChunk });
+    const before = requests;
+    expect(await other.evaluate(async () => [...new Uint8Array(await (await fetch(window.capability.url, { headers: { Range: 'bytes=0-31' } })).arrayBuffer())])).toEqual(Array(32).fill(7));
+    expect(requests).toBe(before);
 });

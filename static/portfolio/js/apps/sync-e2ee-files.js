@@ -1,4 +1,4 @@
-const root = new URL('.', document.baseURI);
+const root = new URL('/', document.baseURI);
 const workerUrl = new URL('sync-e2ee-worker.js', root);
 const entries = new Map();
 const DOWNLOAD_IDLE_MS = 60000;
@@ -6,7 +6,8 @@ let workerPromise;
 
 navigator.serviceWorker?.addEventListener('message', (event) => {
     if (event.source?.scriptURL !== workerUrl.href || event.data?.source !== 'gavin-sync-e2ee') return;
-    if (event.data.type === 'released') entries.get(event.data.token)?.release(event.data.status);
+    if (event.data.type === 'can-claim') event.ports[0]?.postMessage(true);
+    else if (event.data.type === 'released') entries.get(event.data.token)?.release(event.data.status);
     else if (event.data.type === 'download-progress') entries.get(event.data.token)?.onProgress?.(event.data);
     else if (event.data.type === 'download-state') entries.get(event.data.token)?.update(event.data);
     else if (event.data.type === 'resolve' && event.ports[0]) event.ports[0].postMessage(entries.get(event.data.token)?.descriptor || null);
@@ -24,6 +25,13 @@ export const prepareEncryptedFiles = () => {
     if (!workerPromise) {
         workerPromise = (async () => {
             if (!navigator.serviceWorker) throw new Error('encrypted_file_unavailable');
+            const migrating = navigator.serviceWorker.controller
+                && /^\/(portfolio|chat)\/sync-e2ee-worker\.js$/.test(new URL(navigator.serviceWorker.controller.scriptURL).pathname);
+            for (const previous of await navigator.serviceWorker.getRegistrations()) {
+                const scope = new URL(previous.scope).pathname;
+                const script = previous.active?.scriptURL || previous.waiting?.scriptURL || previous.installing?.scriptURL;
+                if (['/portfolio/', '/chat/'].includes(scope) && script === new URL('sync-e2ee-worker.js', previous.scope).href) await previous.unregister();
+            }
             const registration = await navigator.serviceWorker.register(workerUrl.href, { scope: root.pathname, updateViaCache: 'none' });
             if (registration.active) await registration.update();
             const installing = registration.installing || registration.waiting;
@@ -43,30 +51,29 @@ export const prepareEncryptedFiles = () => {
                     check();
                 });
             }
+            // Chromium keeps the old scope's controller until this document navigates.
+            if (migrating) throw new Error('encrypted_file_reload_required');
             if (navigator.serviceWorker.controller !== registration.active) {
-                await new Promise((resolve, reject) => {
-                    const check = () => {
-                        if (navigator.serviceWorker.controller !== registration.active) return;
-                        clearTimeout(timer);
-                        navigator.serviceWorker.removeEventListener('controllerchange', check);
-                        resolve();
-                    };
-                    const timer = setTimeout(() => {
-                        navigator.serviceWorker.removeEventListener('controllerchange', check);
-                        reject(new Error('encrypted_file_unavailable'));
-                    }, 15000);
-                    navigator.serviceWorker.addEventListener('controllerchange', check);
-                    check();
+                const claimed = await new Promise((resolve, reject) => {
+                    const channel = new MessageChannel();
+                    const timer = setTimeout(() => { channel.port1.close(); reject(new Error('encrypted_file_unavailable')); }, 15000);
+                    channel.port1.onmessage = ({ data }) => { clearTimeout(timer); channel.port1.close(); resolve(data?.claimed); };
+                    registration.active.postMessage({ source: 'gavin-sync-e2ee', type: 'claim' }, [channel.port2]);
                 });
+                if (!claimed) throw new Error('encrypted_file_reload_required');
             }
             return navigator.serviceWorker.controller;
         })().catch((error) => { workerPromise = null; throw error; });
     }
-    return workerPromise.then(() => {
+    const ready = workerPromise.then(() => {
         const current = navigator.serviceWorker.controller;
         if (current?.scriptURL === workerUrl.href && current.state !== 'redundant') return current;
         workerPromise = null;
         return prepareEncryptedFiles();
+    });
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('encrypted_file_unavailable')), 15000);
+        ready.then(resolve, reject).finally(() => clearTimeout(timer));
     });
 };
 

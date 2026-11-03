@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { MessageChannel } from 'node:worker_threads';
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
+
+const timers = new Set();
+afterEach(() => { for (const timer of timers) clearTimeout(timer); timers.clear(); });
 import vm from 'node:vm';
 
 const source = await readFile(new URL('../../../static/portfolio/sync-e2ee-worker.js', import.meta.url), 'utf8');
@@ -53,12 +56,14 @@ const worker = (descriptor, getBytes, Stream = ReadableStream, refresh) => {
       ports[0].postMessage(descriptors.get(`${this.id}:${message.token}`) || null);
     }
   };
-  const scope = 'https://site.test/portfolio/';
+  const scope = 'https://site.test/';
   vm.runInNewContext(source, {
-    self: { registration: { scope }, location: new URL(scope), addEventListener: (name, callback) => handlers.set(name, callback), clients: { get: async id => id === owner || id === 'browser-two' ? { ...client, id } : null } },
-    URL, crypto: webcrypto, atob, TextEncoder, Response, Headers, ReadableStream: Stream, AbortController, MessageChannel, setTimeout, clearTimeout,
+    self: { registration: { scope }, location: new URL(scope), addEventListener: (name, callback) => handlers.set(name, callback), clients: { matchAll: async () => [client, { ...client, id: 'browser-two' }], get: async id => id === owner || id === 'browser-two' ? { ...client, id } : null } },
+    URL, crypto: webcrypto, atob, TextEncoder, Response, Headers, ReadableStream: Stream, AbortController, MessageChannel,
+    setTimeout: (callback, delay) => { const timer = setTimeout(() => { timers.delete(timer); callback(); }, delay); timers.add(timer); return timer; },
+    clearTimeout: timer => { timers.delete(timer); clearTimeout(timer); },
     async fetch(url, options) {
-      if (String(url) === `${scope}sync-config.json`) return Response.json({ apiBase: 'https://sync.test' });
+      if (String(url) === `${scope}portfolio/sync-config.json`) return Response.json({ apiBase: 'https://sync.test' });
       assert.equal(new URL(url).origin, new URL(apiUrl).origin);
       assert.equal(options.credentials, 'omit');
       const range = /^bytes=(\d+)-(\d+)$/.exec(options.headers.Range);

@@ -6,7 +6,25 @@ const entries = new Map();
 const sources = new Map();
 const cache = new Map();
 const CACHE_BYTES = 32 * 1024 * 1024;
+const ORPHAN_CHECK_MS = 30000;
 let cachedBytes = 0;
+let orphanTimer;
+let orphanCheck;
+const pruneOrphans = () => {
+    if (!orphanCheck) orphanCheck = self.clients.matchAll({ type: 'window' }).then(clients => {
+        const owners = new Set(clients.filter(trustedClient).map(client => client.id));
+        for (const entry of entries.values()) if (!owners.has(entry.owner)) detach(entry);
+        for (const capability of revoked) if (!owners.has(capability.split(':')[0])) revoked.delete(capability);
+    }).finally(() => { orphanCheck = null; });
+    return orphanCheck;
+};
+const scheduleOrphanCheck = () => {
+    if (orphanTimer || !entries.size) return;
+    orphanTimer = setTimeout(async () => {
+        orphanTimer = null;
+        try { await pruneOrphans(); } finally { scheduleOrphanCheck(); }
+    }, ORPHAN_CHECK_MS);
+};
 const evictChunk = (source, index) => {
     const key = `${source.id}:${index}`;
     const bytes = source.cachedChunks.get(index);
@@ -26,11 +44,13 @@ const attach = entry => {
     source.members.add(entry);
     entry.source = source;
     entries.set(entry.token, entry);
+    scheduleOrphanCheck();
 };
 const detach = entry => {
     clearTimeout(entry.expiryTimer);
     entry.controllers.forEach(controller => controller.abort());
     entries.delete(entry.token);
+    if (!entries.size) { clearTimeout(orphanTimer); orphanTimer = null; }
     const source = entry.source;
     source.members.delete(entry);
     if (source.members.size) return;
@@ -43,7 +63,6 @@ const revoked = new Set();
 let configPromise;
 
 self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 
 const bytes = (value, length) => {
     const decoded = typeof value === 'string'
@@ -53,7 +72,7 @@ const bytes = (value, length) => {
     return decoded;
 };
 const getApi = () => {
-    if (!configPromise) configPromise = fetch(new URL('sync-config.json', self.registration.scope), { cache: 'no-store' })
+    if (!configPromise) configPromise = fetch(new URL('portfolio/sync-config.json', self.registration.scope), { cache: 'no-store' })
         .then(async response => {
             if (!response.ok) throw new Error('unavailable');
             const { apiBase } = await response.json();
@@ -86,12 +105,28 @@ const prepare = async (descriptor, owner, token) => {
     return { owner, token, url: url.href, metadata, download, cipherSize, plainSize: cipherSize - 16, key, noncePrefix, cacheKey, controllers: new Set(), deliveredRanges: [], receivedBytes: 0, streamCount: 0, expiresAt: download ? descriptor.expiresAt : null, expiryTimer: null };
 };
 const trustedClient = (client) => client?.type === 'window' && new URL(client.url).origin === self.location.origin
-    && new URL(client.url).pathname.startsWith(new URL(self.registration.scope).pathname);
+    && /^\/(portfolio|chat)\/(index\.html)?$/.test(new URL(client.url).pathname);
 
 self.addEventListener('message', (event) => {
     if (event.data?.source === 'gavin-sync-notification') { showSystemNotification(event); return; }
     if (event.data?.source !== 'gavin-sync-e2ee' || !trustedClient(event.source)) return;
     const { type, token, descriptor } = event.data;
+    if (type === 'claim') {
+        event.waitUntil((async () => {
+            const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+            const ready = await Promise.all(clients.filter(client => trustedClient(client) && client.id !== event.source.id).map(client => new Promise(resolve => {
+                const channel = new MessageChannel();
+                const timer = setTimeout(() => { channel.port1.close(); resolve(false); }, 1000);
+                channel.port1.onmessage = ({ data }) => { clearTimeout(timer); channel.port1.close(); resolve(data === true); };
+                client.postMessage({ source: 'gavin-sync-e2ee', type: 'can-claim' }, [channel.port2]);
+            })));
+            // Older pages cannot recover capabilities through this worker. Leave their controller intact.
+            const claimed = ready.every(Boolean);
+            if (claimed) await self.clients.claim();
+            event.ports[0]?.postMessage({ claimed });
+        })());
+        return;
+    }
     if (typeof token !== 'string' || !/^[a-f0-9]{48}$/.test(token)) return;
     if (type === 'close') {
         const entry = entries.get(token);
@@ -100,6 +135,7 @@ self.addEventListener('message', (event) => {
         if (entry) detach(entry);
     } else if (type === 'open') event.waitUntil((async () => {
         try {
+            await pruneOrphans();
             const entry = await prepare(descriptor, event.source.id, token);
             if (revoked.has(`${event.source.id}:${token}`)) throw new Error('encrypted_file_unavailable');
             attach(entry);
@@ -114,7 +150,11 @@ const resolve = async (owner, token) => {
     const capability = `${owner}:${token}`;
     if (revoked.has(capability)) return null;
     const client = await self.clients.get(owner);
-    if (!trustedClient(client)) return null;
+    if (!trustedClient(client)) {
+        const orphan = entries.get(token);
+        if (orphan?.owner === owner) detach(orphan);
+        return null;
+    }
     let entry = entries.get(token);
     if (entry) {
         if (entry.owner !== owner) return null;
@@ -471,7 +511,7 @@ const showSystemNotification = event => {
     const reply = status => event.ports[0]?.postMessage({ status, workerMs: Date.now() - receivedAt });
     event.waitUntil((async () => {
         const windows = await self.clients.matchAll({ type: 'window' });
-        if (!testing && windows.some(client => client.focused && client.visibilityState === 'visible')) { reply('foreground'); return; }
+        if (!testing && windows.some(client => trustedClient(client) && client.focused && client.visibilityState === 'visible')) { reply('foreground'); return; }
         await self.registration.showNotification(event.data.title, {
             body: event.data.body, tag: testing ? `sync:test:${crypto.randomUUID()}` : `sync:${event.data.roomId}`, silent: !testing,
             icon: new URL('../portfolio/assets/sync-notification.png', self.location.href).href,
@@ -487,6 +527,10 @@ self.addEventListener('notificationclick', event => {
         if (client) {
             await client.focus();
             if (event.notification.data.roomId) client.postMessage({ source: 'gavin-sync-notification', roomId: event.notification.data.roomId });
-        } else await self.clients.openWindow(new URL('.', self.location.href).href);
+        } else {
+            const url = new URL('chat/', self.registration.scope);
+            if (event.notification.data.roomId) url.hash = new URLSearchParams({ space: event.notification.data.roomId }).toString();
+            await self.clients.openWindow(url.href);
+        }
     })());
 });

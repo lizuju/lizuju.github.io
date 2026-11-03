@@ -17,8 +17,8 @@ const health = { ok: true, service: 'portfolio-sync', apiVersion: API_VERSION, e
 // docs/ is a build output that is not committed, so release checks run against a stand-in build.
 const docsDirectory = await mkdtemp(join(tmpdir(), 'release-docs-'));
 after(() => rm(docsDirectory, { recursive: true, force: true }));
-for (const path of ['portfolio/index.html', 'portfolio/sync-config.json', 'portfolio/js/main.js', 'portfolio/css/main.css', 'portfolio/sync-e2ee-worker.js',
-  'chat/index.html', 'chat/sync-config.json', 'chat/sync-e2ee-worker.js', 'portfolio/js/chat.js', 'portfolio/css/chat.css']) {
+for (const path of ['portfolio/index.html', 'portfolio/sync-config.json', 'portfolio/js/main.js', 'portfolio/css/main.css', 'sync-e2ee-worker.js',
+  'chat/index.html', 'chat/sync-config.json', 'portfolio/js/chat.js', 'portfolio/css/chat.css']) {
   await mkdir(dirname(join(docsDirectory, path)), { recursive: true });
   await writeFile(join(docsDirectory, path), path.endsWith('sync-config.json') ? JSON.stringify(config) : `build of ${path}`);
 }
@@ -36,8 +36,8 @@ test('release verification matches Worker sources and actual frontend content wi
     }
   });
   assert.deepEqual(result, health);
-  assert.deepEqual(requests, ['/health', '/portfolio/index.html', '/portfolio/sync-config.json', '/portfolio/js/main.js', '/portfolio/css/main.css', '/portfolio/sync-e2ee-worker.js',
-    '/chat/index.html', '/chat/sync-config.json', '/chat/sync-e2ee-worker.js', '/portfolio/js/chat.js', '/portfolio/css/chat.css']);
+  assert.deepEqual(requests, ['/health', '/portfolio/index.html', '/portfolio/sync-config.json', '/portfolio/js/main.js', '/portfolio/css/main.css', '/sync-e2ee-worker.js',
+    '/chat/index.html', '/chat/sync-config.json', '/portfolio/js/chat.js', '/portfolio/css/chat.css']);
 });
 
 test('frontend-only and merge commits verify unchanged Worker sources while stale sources still fail', async () => {

@@ -50,6 +50,29 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                 export default { fetch(request, env) { return worker.fetch(request, observe(env)); } };
                 export { E2eeFileShard as FileShard } from './index.js';
                 export class PairingRegistry extends ProductionRegistry {
+                  testPendingReads(roomId, deviceId) {
+                    const sql = this.sql;
+                    let reads = 0;
+                    this.sql = new Proxy(sql, { get: (target, key) => key === 'exec' ? (...args) => {
+                      const cursor = target.exec(...args); reads += cursor.rowsRead; return cursor;
+                    } : Reflect.get(target, key, target) });
+                    try { return { result: this.pendingPairings(roomId, deviceId), reads }; }
+                    finally { this.sql = sql; }
+                  }
+                  testPruneReads() {
+                    const sql = this.sql;
+                    let reads = 0;
+                    this.sql = new Proxy(sql, { get: (target, key) => key === 'exec' ? (...args) => {
+                      const cursor = target.exec(...args); reads += cursor.rowsRead; return cursor;
+                    } : Reflect.get(target, key, target) });
+                    this.nextPairingPruneAt = 0;
+                    try {
+                      this.prunePairings();
+                      const first = reads;
+                      for (let i = 0; i < 20; i++) this.prunePairings();
+                      return { first, repeated: reads - first };
+                    } finally { this.sql = sql; }
+                  }
                   testRestartCapacity() { this.accountedBytes = null; }
                   constructor(ctx, env) {
                     const legacy = ${JSON.stringify(legacyUsage)};
@@ -2569,4 +2592,91 @@ test('offline fixed invitations free active slots without losing their saved cod
   assert.equal(restored.status, 200);
   assert.equal(restored.body.code, offlineSpace.code);
   assert.notEqual(restored.body.offerId, offlineLocked.offerId);
+});
+
+
+test('pairing cleanup uses the expiry index and skips repeated scans without admitting expired requests', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  await registry.testPruneReads();
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  for (let i = 0; i < 100; i++) await storage.exec('INSERT INTO pair_requests (request_id, token_hash, expires_at) VALUES (?, ?, ?)', `pending-${i}`, 'token', Date.now() + 60000);
+  const counts = await registry.testPruneReads();
+  assert.equal(counts.repeated, 0);
+  assert.ok(counts.first < 10, JSON.stringify(counts));
+  const plan = await storage.exec('EXPLAIN QUERY PLAN SELECT request_id FROM pair_requests WHERE expires_at <= ?', Date.now());
+  assert.ok(plan.some(row => row.detail.includes('pair_requests_expiry')));
+  await storage.exec('UPDATE pair_requests SET expires_at = ? WHERE request_id = ?', Date.now() - 1, 'pending-0');
+  const expired = await registry.pairRequest('pending-0', 'token');
+  assert.equal(expired.error, 'code_expired');
+  assert.equal(expired.status, 404);
+});
+
+
+test('pending pairing reads stay within the target room and reject expired requests and offers before cleanup', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const invite = await registry.currentInvite(space.roomId);
+  const offers = [{ roomId: space.roomId, owner: space.deviceId, offer: invite.offerId }];
+  for (let i = 1; i < 30; i++) {
+    const row = { roomId: randomUUID(), owner: randomUUID(), offer: randomUUID() };
+    offers.push(row);
+    await storage.exec('INSERT INTO offers (offer_id, room_id, owner_device_id, secret, expires_at, locked) VALUES (?, ?, ?, ?, ?, 1)', row.offer, row.roomId, row.owner, 'test', Date.now() + 600000);
+  }
+  const requests = [];
+  for (let i = 0; i < 20; i++) {
+    const id = randomUUID();
+    requests.push(id);
+    await storage.exec('INSERT INTO pair_requests (request_id, token_hash, expires_at) VALUES (?, ?, ?)', id, 'token', Date.now() + 600000);
+    for (const offer of offers) await storage.exec('INSERT INTO pair_candidates (request_id, offer_id, start_request, owner_device_id, source_id) VALUES (?, ?, ?, ?, ?)', id, offer.offer, 'test', offer.owner, 'test-source');
+  }
+  await registry.prunePairings(true);
+  const measured = await registry.testPendingReads(space.roomId, space.deviceId);
+  assert.equal(measured.result.requests.length, 20);
+  assert.ok(measured.reads < 100, JSON.stringify(measured));
+  assert.ok(measured.result.requests.every(row => row.offerId === invite.offerId));
+  await storage.exec('UPDATE pair_requests SET expires_at = ? WHERE request_id = ?', Date.now() - 1, requests[0]);
+  const pending = await registry.pendingPairings(space.roomId, space.deviceId);
+  assert.equal(pending.requests.length, 19);
+  assert.ok(pending.requests.every(row => row.requestId !== requests[0]));
+  assert.equal((await registry.challengePairing(space.roomId, space.deviceId, requests[0], invite.offerId, 'response')).error, 'code_expired');
+  assert.equal((await registry.challengePairing(space.roomId, space.deviceId, requests[1], invite.offerId, 'response')).accepted, true);
+  assert.equal((await registry.pairRequest(requests[0], 'token')).error, 'code_expired');
+  await storage.exec('UPDATE offers SET expires_at = ? WHERE offer_id = ?', Date.now() - 1, invite.offerId);
+  assert.deepEqual((await registry.pendingPairings(space.roomId, space.deviceId)).requests, []);
+  await storage.exec('UPDATE offers SET locked = 1 WHERE offer_id = ?', invite.offerId);
+  assert.equal((await registry.pendingPairings(space.roomId, space.deviceId)).requests.length, 19);
+});
+
+test('offline receipts acknowledge pruned history across reconnect without reading future messages or duplicate writes', async () => {
+  const request = client(), space = await createSpace(request);
+  const sent = [];
+  for (let i = 0; i < 3; i++) sent.push((await request(`/v1/spaces/${space.roomId}/messages`, {
+    method: 'POST', token: space.token, json: { clientId: randomUUID(), text: `message ${i}` }
+  })).body);
+  const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  const room = (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  await storage.exec('CREATE TABLE receipt_writes (message_id INTEGER)');
+  await storage.exec('CREATE TRIGGER count_receipt_writes AFTER UPDATE OF read_message_id ON devices BEGIN INSERT INTO receipt_writes VALUES (NEW.read_message_id); END');
+  await storage.exec('DELETE FROM messages WHERE id <= ?', sent[1].id);
+  const reader = await authenticateSocket(space);
+  const ack = socketEvent(reader.socket);
+  reader.socket.send(JSON.stringify({ type: 'read', messageId: sent[1].id }));
+  assert.deepEqual(JSON.parse((await ack).data), { type: 'read', deviceId: space.deviceId, messageId: sent[1].id });
+  const restored = await authenticateSocket(space);
+  assert.deepEqual(restored.frame.readReceipts, [{ deviceId: space.deviceId, messageId: sent[1].id }]);
+  await storage.exec('DELETE FROM messages');
+  await room.markRead(space.deviceId, sent[2].id);
+  await room.markRead(space.deviceId, sent[1].id);
+  await room.markRead(space.deviceId, Number.MAX_SAFE_INTEGER);
+  assert.deepEqual(await storage.exec('SELECT message_id FROM receipt_writes'), sent.slice(1).map(message => ({ message_id: message.id })));
+  const next = (await request(`/v1/spaces/${space.roomId}/messages`, {
+    method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'still unread' }
+  })).body;
+  assert.ok(next.id > sent[2].id);
+  assert.deepEqual(await room.readReceipts(), [{ deviceId: space.deviceId, messageId: sent[2].id }]);
 });

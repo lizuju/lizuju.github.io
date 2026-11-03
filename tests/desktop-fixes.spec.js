@@ -1,5 +1,7 @@
 const { test, expect } = require('@playwright/test');
 
+test.use({ serviceWorkers: 'block' });
+
 test('places mobile navigation targets below the sticky header after closing the menu', async ({ page, isMobile }) => {
     test.skip(!isMobile, 'this regression concerns the mobile navigation layout');
     await page.setViewportSize({ width: 390, height: 844 });

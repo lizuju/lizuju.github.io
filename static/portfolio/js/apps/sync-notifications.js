@@ -102,7 +102,7 @@ export function createSystemNotifications({ button, translate, onError, onOpen }
         update();
     });
     navigator.serviceWorker?.addEventListener('message', event => {
-        const expected = new URL('sync-e2ee-worker.js', document.baseURI).href;
+        const expected = new URL('/sync-e2ee-worker.js', document.baseURI).href;
         if (event.source?.scriptURL === expected && event.data?.source === 'gavin-sync-notification') onOpen(event.data.roomId);
     });
     window.addEventListener('storage', event => { if (event.key === preference || event.key === null) update(); });

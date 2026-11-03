@@ -13,6 +13,7 @@ import { VoiceRecorder } from './sync-voice-recorder.js';
 import { createVoicePlayer } from './sync-voice-player.js';
 import { STICKERS, stickerById } from './sync-stickers.js';
 import { createGomokuWindow } from './sync-gomoku.js';
+import { pendingReads } from './sync-read-receipts.js';
 import { createSystemNotifications } from './sync-notifications.js';
 import { pendingMessages } from './sync-outbox.js';
 
@@ -98,6 +99,7 @@ import { pendingMessages } from './sync-outbox.js';
         const keyRefreshes = new WeakMap();
         const rotations = new WeakMap();
         const downloads = new Map();
+        const idleDownloadFrames = [];
         const fingerprints = new WeakMap();
         let switchingSpace = false;
         let savingSpaceName = false;
@@ -143,7 +145,6 @@ import { pendingMessages } from './sync-outbox.js';
         let scrollFrame = null;
         let readTimer = null;
         let readCandidate = null;
-        let sentReadId = 0;
         let lastInteraction = -Infinity;
         let interactionRevision = 0;
         let readAfterInteraction = 0;
@@ -594,11 +595,20 @@ import { pendingMessages } from './sync-outbox.js';
                 return result;
             };
             const transport = session && connections.get(session.roomId)?.transport;
-            const shared = !options.unshared && !options.method && !options.signal
-                && [ `/v1/spaces/${session?.roomId}/devices`, `/v1/spaces/${session?.roomId}/pair-code` ].includes(path);
-            const result = shared && transport ? await transport.request(path, perform) : await perform();
+            const ticket = options.method === 'POST' && path.startsWith(`/v1/spaces/${session?.roomId}/files/`) && /\/files\/[1-9][0-9]*\/download$/.test(path);
+            const shared = !options.unshared && !options.signal && (ticket || !options.method
+                && [ `/v1/spaces/${session?.roomId}/devices`, `/v1/spaces/${session?.roomId}/pair-code` ].includes(path));
+            const result = shared && transport ? await transport.request(path, perform, options.refresh).catch(error => {
+                if (!ticket || error.code !== 'network_error' || !liveSession(session)) throw error;
+                return transport.request(path, perform, options.refresh);
+            }) : await perform();
             if (options.method && options.method !== 'GET'
-                && /\/(devices(?:\/[^/]+)?|device|pair-code|pair-accept|key-rotation|key-grants)$/.test(path)) transport?.invalidateResults();
+                && /\/(devices(?:\/[^/]+)?|device|pair-code|pair-accept|key-rotation|key-grants)$/.test(path)) {
+                const paths = path.endsWith('/pair-code') ? ['/pair-code']
+                    : options.method === 'PATCH' && /\/devices\/[^/]+$/.test(path) ? ['/devices']
+                        : path.endsWith('/key-grants') ? ['/devices', '/pair-code'] : null;
+                transport?.invalidateResults(true, paths);
+            }
             if (result === null || options.raw) return result;
             if (session?.keyring) {
                 if (result.messages) result.messages = await Promise.all(result.messages.map(message => decodeMessage(message, session)));
@@ -804,14 +814,15 @@ import { pendingMessages } from './sync-outbox.js';
             return null;
         };
         const showAttachmentError = (error) => {
-            setNotice(['attachment_expired', 'not_found'].includes(error.code) ? 'syncAttachmentExpired' : 'syncDownloadFailed', true);
+            setNotice(error.message === 'encrypted_file_reload_required' ? 'syncAttachmentReload'
+                : ['attachment_expired', 'not_found'].includes(error.code) ? 'syncAttachmentExpired' : 'syncDownloadFailed', true);
         };
-        const attachmentTicket = async (message, session) => {
+        const attachmentTicket = async (message, session, refresh = false) => {
             let entry = downloadTickets.get(message.id);
             if (!entry || entry.session !== session || (entry.expiresAt && entry.expiresAt <= Date.now() + 60000)) {
                 entry = { session };
-                entry.promise = api(`/v1/spaces/${session.roomId}/files/${message.id}/download`, { method: 'POST' }, session)
-                    .then((result) => { entry.expiresAt = result.expiresAt; return result; })
+                entry.promise = api(`/v1/spaces/${session.roomId}/files/${message.id}/download`, { method: 'POST', refresh }, session)
+                    .then((result) => { entry.expiresAt = result.expiresAt; entry.ticket = result.ticket; return result; })
                     .catch((error) => {
                         if (downloadTickets.get(message.id) === entry) downloadTickets.delete(message.id);
                         throw error;
@@ -820,9 +831,9 @@ import { pendingMessages } from './sync-outbox.js';
             }
             return entry.promise;
         };
-        const attachmentUrl = async (message, session) => {
+        const attachmentUrl = async (message, session, refresh = false) => {
             const base = await loadConfig();
-            const result = await attachmentTicket(message, session);
+            const result = await attachmentTicket(message, session, refresh);
             return `${base}/v1/spaces/${session.roomId}/downloads/${encodeURIComponent(result.ticket)}`;
         };
         const encryptedFile = async (message, session, download, onProgress) => {
@@ -832,8 +843,9 @@ import { pendingMessages } from './sync-outbox.js';
                     .then(([url]) => openEncryptedFile({ url, metadata: message.attachment, download, onProgress,
                         cacheScope: `${session.deviceId}:${session.keyring.currentKeyId}`, refresh: async () => {
                         if (credentials !== session || !messageNodes.has(message.id)) throw new DOMException('Session ended', 'AbortError');
+                        const previousTicket = downloadTickets.get(message.id)?.ticket || true;
                         downloadTickets.delete(message.id);
-                        const nextUrl = await attachmentUrl(message, session);
+                        const nextUrl = await attachmentUrl(message, session, previousTicket);
                         if (credentials !== session || !messageNodes.has(message.id)) throw new DOMException('Session ended', 'AbortError');
                         return nextUrl;
                     } }))
@@ -881,12 +893,15 @@ import { pendingMessages } from './sync-outbox.js';
                     capability.dispose(); return;
                 }
                 downloading.capability = capability;
-                const frame = document.createElement('iframe');
+                const frame = idleDownloadFrames.pop() || document.createElement('iframe');
                 frame.hidden = true;
                 frame.src = capability.url;
-                document.body.append(frame);
-                capability.closed.then(() => frame.remove());
+                if (!frame.isConnected) document.body.append(frame);
                 const result = await capability.result;
+                // Stream delivery can precede WebKit's native download handoff.
+                // Keep completed frames for reuse instead of destroying that context.
+                if (result.status === 'delivered') idleDownloadFrames.push(frame);
+                else capability.closed.then(() => frame.remove());
                 if (result.status === 'failed' && credentials === session && messageNodes.has(message.id)) showAttachmentError(new Error('encrypted_file_unavailable'));
             } catch (error) {
                 if (downloads.get(message.id) === downloading && credentials === session && messageNodes.has(message.id) && error.name !== 'AbortError') showAttachmentError(error);
@@ -947,12 +962,33 @@ import { pendingMessages } from './sync-outbox.js';
                 receipt.setAttribute('aria-label', receipt.title);
             }
         };
-        const mergeReadReceipts = (receipts) => {
+        const confirmRead = (record, receipts) => {
+            if (!record) return;
+            for (const receipt of receipts) if (receipt.deviceId === record.session.deviceId) {
+                if (receipt.messageId > record.confirmedReadId) {
+                    record.confirmedReadId = receipt.messageId;
+                    pendingReads.confirm(record.session, receipt.messageId).catch(() => {});
+                }
+            }
+            if (record.pendingReadId && record.confirmedReadId >= record.pendingReadId) {
+                record.pendingReadId = 0;
+            }
+        };
+        const flushRead = record => {
+            if (record?.connectionState !== 'online' || record.transport.socket.readyState !== WebSocket.OPEN
+                || !record.pendingReadId || record.pendingReadId <= record.sentReadId) return;
+            record.transport.socket.send(JSON.stringify({ type: 'read', messageId: record.pendingReadId }));
+            record.sentReadId = record.pendingReadId;
+        };
+        const mergeReadReceipts = (receipts, confirmed = true) => {
             for (const receipt of receipts) readReceipts.set(receipt.deviceId, Math.max(readReceipts.get(receipt.deviceId) || 0, receipt.messageId));
+            const record = credentials && connections.get(credentials.roomId);
+            if (record?.pendingReadId) readReceipts.set(record.session.deviceId,
+                Math.max(readReceipts.get(record.session.deviceId) || 0, record.pendingReadId));
             const ownReadId = readReceipts.get(credentials?.deviceId) || 0;
             for (const id of unread) if (id <= ownReadId) unread.delete(id);
-            const record = credentials && connections.get(credentials.roomId);
             if (record) {
+                if (confirmed) confirmRead(record, receipts);
                 record.readReceipts.set(record.session.deviceId, ownReadId);
                 for (const id of record.unread) if (id <= ownReadId) record.unread.delete(id);
                 if (record.unreadStartId <= ownReadId) record.unreadStartId = null;
@@ -960,6 +996,13 @@ import { pendingMessages } from './sync-outbox.js';
             updateReadReceipts();
             updateUnread();
             renderSpaces();
+        };
+        const queueRead = messageId => {
+            const record = connections.get(credentials.roomId);
+            record.pendingReadId = Math.max(record.pendingReadId, messageId);
+            const saved = pendingReads.save(record.session, record.pendingReadId);
+            mergeReadReceipts([{ deviceId, messageId }], false);
+            saved.catch(() => {}).then(() => flushRead(record));
         };
         const hasOlderUnread = () => history.length && historyState?.oldestId !== null
             && history[0].id > Math.max(historyState?.oldestId || history[0].id, (readReceipts.get(deviceId) || 0) + 1);
@@ -1010,7 +1053,7 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const readableThrough = () => {
             if (!isReading() || interactionRevision < readAfterInteraction || hasOlderUnread() || catchingUp) return null;
-            const readId = Math.max(sentReadId, readReceipts.get(deviceId) || 0);
+            const readId = readReceipts.get(deviceId) || 0;
             const viewport = feed.getBoundingClientRect();
             let candidate = null;
             for (const message of history) {
@@ -1040,23 +1083,17 @@ import { pendingMessages } from './sync-outbox.js';
                 readTimer = null;
                 const current = readableThrough();
                 if (current === null || current < candidate) { markRead(); return; }
-                if (online && socket?.readyState === WebSocket.OPEN && candidate > Math.max(sentReadId, readReceipts.get(deviceId) || 0)) {
-                    sentReadId = candidate;
-                    mergeReadReceipts([{ deviceId, messageId: candidate }]);
-                    socket.send(JSON.stringify({ type: 'read', messageId: candidate }));
-                }
+                if (candidate > (readReceipts.get(deviceId) || 0)) queueRead(candidate);
             }, 600);
         };
         const markAllRead = event => {
-            if (!event.isTrusted || !isChatForeground() || find('search').value.trim() || !online || socket?.readyState !== WebSocket.OPEN) return;
+            if (!event.isTrusted || !isChatForeground() || find('search').value.trim()) return;
             const latestId = Math.max(historyState?.latestId || 0, history.at(-1)?.id || 0);
-            if (latestId <= Math.max(sentReadId, readReceipts.get(deviceId) || 0)) return;
+            if (latestId <= (readReceipts.get(deviceId) || 0)) return;
             clearTimeout(readTimer);
             readTimer = null;
             readCandidate = null;
-            sentReadId = latestId;
-            mergeReadReceipts([{ deviceId, messageId: latestId }]);
-            socket.send(JSON.stringify({ type: 'read', messageId: latestId }));
+            queueRead(latestId);
         };
         const scrollToLatest = () => {
             if (scrollFrame !== null) return;
@@ -1737,6 +1774,7 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const disposeConnection = record => {
             if (!record) return;
+            pendingReads.clear(record.session).catch(() => {});
             clearTimeout(record.queueTimer);
             connections.delete(record.session.roomId);
             record.transport?.close();
@@ -1806,6 +1844,11 @@ import { pendingMessages } from './sync-outbox.js';
             if (data.spaceProfile) record.spaceProfile = data.spaceProfile;
             if (data.profile) record.spaceProfile = data.profile;
             if (data.type === 'ready') {
+                const pending = await pendingReads.load(session).catch(() => 0);
+                if (!valid()) return;
+                record.pendingReadId = Math.max(record.pendingReadId, pending);
+                if (record.pendingReadId) record.readReceipts.set(session.deviceId,
+                    Math.max(record.readReceipts.get(session.deviceId) || 0, record.pendingReadId));
                 record.devicesLoaded = false;
                 const revision = record.pairingRevision;
                 await refreshKeys(session, data.currentKeyId);
@@ -1858,10 +1901,13 @@ import { pendingMessages } from './sync-outbox.js';
                 }
             }
             const receipts = data.type === 'read' ? [data] : data.readReceipts || [];
+            confirmRead(record, receipts);
             for (const receipt of receipts) record.readReceipts.set(receipt.deviceId,
                 Math.max(record.readReceipts.get(receipt.deviceId) || 0, receipt.messageId));
             for (const id of record.unread) if (id <= (record.readReceipts.get(session.deviceId) || 0)) record.unread.delete(id);
             if (data.type === 'cleared') {
+                pendingReads.confirm(session, Math.max(record.pendingReadId, record.readReceipts.get(session.deviceId) || 0)).catch(() => {});
+                record.pendingReadId = 0;
                 record.outboxEpoch++;
                 await pendingMessages.clear(session);
                 record.history = [];
@@ -1883,7 +1929,6 @@ import { pendingMessages } from './sync-outbox.js';
             if (credentials !== session) { renderSpaces(); return; }
             mergeReadReceipts(receipts);
             if (data.type === 'ready') {
-                sentReadId = 0;
                 const initial = deviceId === null;
                 deviceId = data.deviceId;
                 receiveHistory(incoming, initial, data.historyMode, data.history);
@@ -1923,26 +1968,34 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const createConnection = session => {
             const record = { session, history: [], historyState: null, reconnectCursor: null, readReceipts: new Map(),
-                unread: new Set(), failedMessages: new Set(), queuedMessages: new Map(), outboxEpoch: 0, devices: [], activeGames: [], pairingRevision: 0, pairingData: session.pairing || null };
+                unread: new Set(), failedMessages: new Set(), queuedMessages: new Map(), outboxEpoch: 0, devices: [], activeGames: [], pairingRevision: 0, pairingData: session.pairing || null,
+                pendingReadId: 0, confirmedReadId: 0, sentReadId: 0 };
+            record.readReady = pendingReads.load(session).then(saved => {
+                record.pendingReadId = saved;
+                if (saved) record.readReceipts.set(session.deviceId, saved);
+            }).catch(() => {});
             connections.set(session.roomId, record);
             record.pairing = createPairing(session);
             return record;
         };
-        const connect = (record = credentials && connections.get(credentials.roomId)) => {
+        const connect = async (record = credentials && connections.get(credentials.roomId)) => {
+            await record?.readReady;
             if ((!active && !needsGameConnection()) || !record || connections.get(record.session.roomId) !== record) return;
             if (!record.transport) {
                 const session = record.session;
                 const transport = new SharedSyncConnection({ session,
                     request: (path, signal) => {
-                        if (![ `/v1/spaces/${session.roomId}/devices`, `/v1/spaces/${session.roomId}/pair-code` ].includes(path)) throw new Error('invalid_request');
-                        return api(path, { unshared: true, raw: true, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) }, session);
+                        const ticket = path.startsWith(`/v1/spaces/${session.roomId}/files/`) && /\/files\/[1-9][0-9]*\/download$/.test(path);
+                        if (!ticket && ![ `/v1/spaces/${session.roomId}/devices`, `/v1/spaces/${session.roomId}/pair-code` ].includes(path)) throw new Error('invalid_request');
+                        return api(path, { ...(ticket ? { method: 'POST' } : {}), unshared: true, raw: true, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) }, session);
                     },
                     snapshot: () => {
                         if (credentials === session) cacheCurrentView();
                         const messages = record.history.slice(-50).map(message => message.wire);
                         return { type: 'ready', deviceId: session.deviceId, currentKeyId: session.keyring.currentKeyId, messages, historyMode: 'replace',
                             history: record.historyState, pairing: record.pairingData, spaceProfile: record.spaceProfile,
-                            readReceipts: [...record.readReceipts].map(([deviceId, messageId]) => ({ deviceId, messageId })),
+                            readReceipts: [...record.readReceipts].map(([deviceId, messageId]) => ({ deviceId,
+                                messageId: deviceId === session.deviceId ? record.confirmedReadId : messageId })),
                             activeGames: record.activeGames };
                     },
                     getUrl: async () => {
@@ -1961,6 +2014,8 @@ import { pendingMessages } from './sync-outbox.js';
                     onState: state => {
                         if (connections.get(session.roomId) !== record) return;
                         record.connectionState = state;
+                        if (state !== 'online') record.sentReadId = 0;
+                        else flushRead(record);
                         if (state === 'online') record.disconnected = false;
                         else if (state === 'offline' && !record.transport?.stopped) record.disconnected = true;
                         if (credentials !== session) { renderSpaces(); if (state === 'online') flushQueued(record); return; }
@@ -2083,7 +2138,6 @@ import { pendingMessages } from './sync-outbox.js';
             clearTimeout(readTimer);
             readTimer = null;
             readCandidate = null;
-            sentReadId = 0;
             readAfterInteraction = 0;
             readReceipts.clear();
             inlineImages.forEach(image => image.dispose());
@@ -2195,6 +2249,7 @@ import { pendingMessages } from './sync-outbox.js';
                 } else if (session.revision !== record.session.revision && Object.hasOwn(session.keyring.keys, record.session.keyring.currentKeyId)) {
                     Object.assign(record.session, session);
                 }
+                await record.readReady;
                 credentials = session = record.session;
                 pairing = record.pairing;
                 setup.hidden = !addingSpace;
@@ -3643,7 +3698,15 @@ import { pendingMessages } from './sync-outbox.js';
             onOpen: roomId => { entry.show(); if (credentials?.roomId !== roomId) switchSpace(roomId); }
         });
         desktopApi.notificationDiagnostics = () => systemNotifications.diagnostics();
-        reconcileSession().then(recoverPendingPairing);
+        reconcileSession().then(async () => {
+            const target = new URLSearchParams(location.hash.slice(1)).get('space');
+            if (target && savedSpaces.list().some(space => space.roomId === target)) {
+                window.history.replaceState(null, '', location.pathname + location.search);
+                entry.show();
+                if (credentials?.roomId !== target) await switchSpace(target);
+            }
+            await recoverPendingPairing();
+        });
         updateSoundToggle();
         updateControls();
         return entry;

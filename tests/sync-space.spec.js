@@ -1,5 +1,6 @@
 const { test, expect, allowSyncOrigin } = require('./fixtures/sync-e2ee.cjs');
 const { createServer } = require('node:http');
+const { readFile } = require('node:fs/promises');
 
 const { roomId, deviceId, token, keyId, authorize, message, profile, file, startSite } = require('./fixtures/sync-e2ee.cjs');
 
@@ -88,7 +89,8 @@ test('caches image previews, renews expired download tickets and authenticates r
     }
     const downloaded = page.waitForEvent('download');
     await page.locator('[data-sync-download-file]').click();
-    await downloaded;
+    const firstDownload = await downloaded;
+    expect(await readFile(await firstDownload.path())).toEqual(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64'));
     expect(tickets).toBe(1);
     await page.clock.setFixedTime(new Date(Date.now() + 24 * 60 * 60 * 1000));
     await page.locator('[data-sync-preview-file]').click();
@@ -97,10 +99,15 @@ test('caches image previews, renews expired download tickets and authenticates r
     await page.locator('[data-sync-preview-action="close"]').click();
     const renewedDownload = page.waitForEvent('download');
     await page.locator('[data-sync-download-file]').click();
-    await renewedDownload;
+    const secondDownload = await renewedDownload;
+    expect(await readFile(await secondDownload.path())).toEqual(await readFile(await firstDownload.path()));
     expect(tickets).toBe(2);
+    await expect(page.locator('iframe[src*="__sync-e2ee__"]')).toHaveCount(1);
     } finally { await site.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
+
+test.describe('reclaimed room with a mocked endpoint', () => {
+test.use({ serviceWorkers: 'block' });
 
 test('a reclaimed room returns to pairing instead of repeatedly reconnecting with expired credentials', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the sync application is a desktop window');
@@ -125,4 +132,6 @@ test('a reclaimed room returns to pairing instead of repeatedly reconnecting wit
     } finally {
         await new Promise(resolve => server.close(resolve));
     }
+});
+
 });

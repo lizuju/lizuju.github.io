@@ -93,7 +93,7 @@ test.beforeEach(async ({ page, isMobile }) => {
     const apiBase = `http://127.0.0.1:${server.address().port}`;
     site = await startSite(apiBase);
     await authorize(page, `${site.origin}/portfolio/`);
-    await page.routeWebSocket(`${apiBase.replace('http:', 'ws:')}/**`, socket => { connection = socket; socket.onMessage(raw => {
+    await page.context().routeWebSocket(`${apiBase.replace('http:', 'ws:')}/**`, socket => { connection = socket; socket.onMessage(raw => {
         if (raw === 'ping') return socket.send('pong');
         if (JSON.parse(raw).type === 'auth') socket.send(JSON.stringify({
             type: 'ready', deviceId, pairing: null,
@@ -179,11 +179,11 @@ test('keeps a slow native download alive after iframe load, ten minutes and back
     await frame.evaluate(element => element.dispatchEvent(new Event('load')));
     await expect(frame).toHaveCount(1);
     await page.clock.fastForward(10 * 60 * 1000 + 1000);
-    await expect(frame).toHaveCount(1);
+    await expect(row(page, 'background-transfer.bin').locator('[data-sync-cancel-download]')).toBeVisible();
     holdDownload = false;
     pendingDownloads.splice(0).forEach(send => send());
     expect(await readFile(await download.path())).toEqual(originalDownload);
-    await expect(frame).toHaveCount(0);
+    await expect(frame).toHaveCount(1);
     await foreground(page);
     await expect(page.locator('[data-sync-notice]')).not.toHaveAttribute('data-state', 'error');
     expect(ticketRequests).toBe(1);
@@ -276,4 +276,43 @@ test('download progress shows retry waiting and resumes in the background', asyn
     await foreground(page);
     await expect(attachment.locator('[data-sync-download-progress]')).toBeHidden();
     await expect(attachment.locator('[data-sync-download-file]')).toBeEnabled();
+});
+
+
+test('desktop and standalone tabs share one download ticket for the same encrypted video', async ({ page, context }) => {
+    const other = await context.newPage();
+    await other.goto(`${site.origin}/chat/`);
+    await expect(other.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    await expect(row(other, 'delayed-video.mp4')).toBeVisible();
+    holdTicket = true;
+    await row(page, 'delayed-video.mp4').locator('.sync-attachment-name').click();
+    await expect.poll(() => pendingTickets.length).toBe(1);
+    await row(other, 'delayed-video.mp4').locator('.sync-attachment-name').click();
+    holdTicket = false;
+    pendingTickets.splice(0).forEach(send => send());
+    for (const tab of [page, other]) await expect.poll(() => tab.locator('[data-sync-preview-window] video').evaluate(video => video.videoWidth)).toBeGreaterThan(0);
+    expect(ticketRequests).toBe(1);
+    await page.close();
+    await other.locator('[data-sync-preview-action="close"]').click();
+    await row(other, 'delayed-video.mp4').locator('.sync-attachment-name').click();
+    await expect.poll(() => other.locator('[data-sync-preview-window] video').evaluate(video => video.videoWidth)).toBeGreaterThan(0);
+    expect(ticketRequests).toBe(1);
+    await other.close();
+});
+
+
+test('a follower finishes ticket acquisition when the connection owner closes during the request', async ({ page, context }) => {
+    const other = await context.newPage();
+    await other.goto(`${site.origin}/chat/`);
+    await expect(other.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    holdTicket = true;
+    await row(other, 'delayed-video.mp4').locator('.sync-attachment-name').click();
+    await expect.poll(() => pendingTickets.length).toBe(1);
+    await page.close();
+    await expect.poll(() => pendingTickets.length).toBe(2);
+    holdTicket = false;
+    pendingTickets.splice(0).forEach(send => send());
+    await expect.poll(() => other.locator('[data-sync-preview-window] video').evaluate(video => video.videoWidth)).toBeGreaterThan(0);
+    expect(ticketRequests).toBe(2);
+    await other.close();
 });

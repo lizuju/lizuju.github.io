@@ -58,10 +58,8 @@ module.exports = {
                     from: path.resolve(rootDirectory, 'node_modules/pdfjs-dist', folder),
                     to: `portfolio/assets/pdfjs/${folder}`,
                 })),
-                ...['sync-e2ee-worker.js', 'sync-config.json'].map((file) => ({
-                    from: path.resolve(rootDirectory, 'static/portfolio', file),
-                    to: `chat/${file}`,
-                })),
+                { from: path.resolve(rootDirectory, 'static/portfolio/sync-config.json'), to: 'chat/sync-config.json' },
+                { from: path.resolve(rootDirectory, 'static/portfolio/sync-e2ee-worker.js'), to: 'sync-e2ee-worker.js' },
                 // Gomoku and satellite bundles from build:gomoku / build:satellite. build/ is absent when
                 // the browser tests start the dev server without them; the production build always creates it.
                 { from: path.resolve(rootDirectory, 'build'), noErrorOnMissing: true },
@@ -72,6 +70,7 @@ module.exports = {
                         'static/portfolio/assets/robomaster-match-records/*.jpg',
                         'static/portfolio/js/main.js',
                         'static/portfolio/js/chat.js',
+                        'static/portfolio/sync-e2ee-worker.js',
                         'static/portfolio/js/desktop/**',
                         'static/portfolio/js/apps/**',
                         'static/portfolio/css/**',

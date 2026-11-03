@@ -428,3 +428,27 @@ test('keeps both spaces created concurrently by two empty tabs and follows their
         await other.close();
     }
 });
+
+
+test('a notification deep link opens its saved space after the original tab closes', async ({ page, context, browserName }) => {
+    if (browserName === 'chromium') await context.grantPermissions(['local-network-access']);
+    await page.goto(`${siteOrigin}/chat/`);
+    await page.locator('[data-sync-create]').click();
+    await awaitOnline(page);
+    const first = await readSession(page);
+    await sendText(page, 'Notification target room');
+    await expandSpaces(page);
+    await page.locator('[data-sync-add-space]').click();
+    await page.locator('[data-sync-create]').click();
+    await expect.poll(async () => (await readSession(page)).roomId).not.toBe(first.roomId);
+    await awaitOnline(page);
+    await sendText(page, 'Last selected room');
+    const reopened = await context.newPage();
+    await page.close();
+    await reopened.goto(`${siteOrigin}/chat/#space=${first.roomId}`);
+    await expect.poll(async () => (await readSession(reopened)).roomId).toBe(first.roomId);
+    await expect(reopened.locator('[data-sync-messages]')).toContainText('Notification target room');
+    await expect(reopened.locator('[data-sync-messages]')).not.toContainText('Last selected room');
+    expect(new URL(reopened.url()).hash).toBe('');
+    await reopened.close();
+});

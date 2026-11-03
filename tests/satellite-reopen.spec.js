@@ -1,5 +1,7 @@
 const { test, expect } = require('@playwright/test');
 
+test.use({ serviceWorkers: 'block' });
+
 const satelliteRecords = [{
     OBJECT_NAME: 'ISS (ZARYA)',
     OBJECT_ID: '1998-067A',

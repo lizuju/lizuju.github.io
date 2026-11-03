@@ -1,5 +1,7 @@
 const { test, expect } = require('@playwright/test');
 
+test.use({ serviceWorkers: 'block' });
+
 test('keeps project video ready when minimized and releases playback when closed', async ({ page, isMobile }) => {
     test.skip(isMobile, 'this regression exercises the desktop video window');
     await page.route('**/music-portfolio/last-christmas-solo.mp4', route => route.fulfill({

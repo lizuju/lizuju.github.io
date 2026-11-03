@@ -29,8 +29,8 @@ export async function verifyRelease({ expectedRevision, apiBase, siteBase = 'htt
     await access(docsDirectory).catch(() => {
       throw new Error(`No production build at ${docsDirectory}. Run npm run build from the repository root first.`);
     });
-    for (const path of ['portfolio/index.html', 'portfolio/sync-config.json', 'portfolio/js/main.js', 'portfolio/css/main.css', 'portfolio/sync-e2ee-worker.js',
-      'chat/index.html', 'chat/sync-config.json', 'chat/sync-e2ee-worker.js', 'portfolio/js/chat.js', 'portfolio/css/chat.css']) {
+    for (const path of ['portfolio/index.html', 'portfolio/sync-config.json', 'portfolio/js/main.js', 'portfolio/css/main.css', 'sync-e2ee-worker.js',
+      'chat/index.html', 'chat/sync-config.json', 'portfolio/js/chat.js', 'portfolio/css/chat.css']) {
       const local = await readFile(resolve(docsDirectory, path));
       if (path.endsWith('sync-config.json')) {
         assert.equal(JSON.parse(local).apiBase.replace(/\/$/, ''), apiBase.replace(/\/$/, ''), 'The frontend build uses another API address.');

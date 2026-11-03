@@ -1,5 +1,7 @@
 const { test, expect } = require('@playwright/test');
 
+test.use({ serviceWorkers: 'block' });
+
 const sampleRate = 8000;
 const sampleBytes = sampleRate * 20 * 2;
 const wav = Buffer.alloc(44 + sampleBytes);

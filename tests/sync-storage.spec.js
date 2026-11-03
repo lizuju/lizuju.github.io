@@ -1,5 +1,7 @@
 const { test, expect } = require('./fixtures/sync-e2ee.cjs');
 
+test.use({ serviceWorkers: 'block' });
+
 test('keeps the scene return link clear of window controls at short and narrow sizes', async ({ page }) => {
     for (const viewport of [{ width: 980, height: 320 }, { width: 1366, height: 768 }, { width: 320, height: 568 }]) {
         await page.setViewportSize(viewport);

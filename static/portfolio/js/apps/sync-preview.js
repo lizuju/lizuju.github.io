@@ -221,11 +221,11 @@ import { stickerById } from './sync-stickers.js';
                     state.cleanup = await renderDocumentPreview({ container: body, url: state.url, name: file.name, kind: file.kind, signal: state.controller.signal, translate });
                     if (current === state) setStatus('syncPreviewDocumentHint');
                 }
-            } catch {
+            } catch (error) {
                 state.imageLease?.release();
                 state.imageLease = null;
                 (state.imageResource || state.ownedImageResource)?.clear();
-                fail(state);
+                fail(state, error.message === 'encrypted_file_reload_required' ? 'syncAttachmentReload' : 'syncPreviewFailed');
             }
         };
         new ResizeObserver(() => {

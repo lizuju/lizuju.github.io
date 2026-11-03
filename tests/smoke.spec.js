@@ -1,4 +1,6 @@
 const { test, expect } = require('@playwright/test');
+
+test.use({ serviceWorkers: 'block' });
 const path = require('path');
 const { createBuildMetadata } = require('../bundler/build-metadata');
 
