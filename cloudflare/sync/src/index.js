@@ -196,8 +196,8 @@ export default {
       if (!pending) {
         pending = (async () => {
           const status = await registry.publicStatus();
-          const ttl = Math.floor((status.checkedAt + 15000 - Date.now()) / 1000);
-          if (status.ok && ttl > 0) await caches.default.put(cacheKey, json(status, 200, { 'Cache-Control': `public, max-age=${ttl}` }));
+          const ttl = Math.floor((status.checkedAt + (status.ok ? 15000 : 5000) - Date.now()) / 1000);
+          if (ttl > 0) await caches.default.put(cacheKey, json(status, 200, { 'Cache-Control': `public, max-age=${ttl}` }));
           return status;
         })().finally(() => { if (statusRefreshes.get(cacheKey.url) === pending) statusRefreshes.delete(cacheKey.url); });
         statusRefreshes.set(cacheKey.url, pending);
@@ -670,14 +670,21 @@ export class E2eePairingRegistry extends DurableObject {
   }
 
   diagnostics() {
-    if (this.diagnosticsCacheUntil > Date.now()) return this.diagnosticsCache;
+    if (this.diagnosticsCacheUntil > Date.now()) {
+      if (this.diagnosticsError) return Promise.reject(this.diagnosticsError);
+      return this.diagnosticsCache;
+    }
     if (this.diagnosticsRefresh) return this.diagnosticsRefresh;
-    this.diagnosticsRefresh = this.collectDiagnostics().then(status => {
-      if (status.ok) {
-        this.diagnosticsCache = status;
-        this.diagnosticsCacheUntil = status.checkedAt + 15000;
-      }
-      return status;
+    this.diagnosticsRefresh = Promise.resolve().then(() => this.collectDiagnostics()).then(status => {
+      this.diagnosticsError = null;
+      if (status.ok) this.lastHealthyCheckAt = status.checkedAt;
+      this.diagnosticsCache = { ...status, lastHealthyCheckAt: this.lastHealthyCheckAt || null };
+      this.diagnosticsCacheUntil = status.checkedAt + (status.ok ? 15000 : 5000);
+      return this.diagnosticsCache;
+    }, error => {
+      this.diagnosticsError = error;
+      this.diagnosticsCacheUntil = Date.now() + 5000;
+      throw error;
     }).finally(() => { this.diagnosticsRefresh = null; });
     return this.diagnosticsRefresh;
   }
@@ -1939,6 +1946,7 @@ export class E2eeSyncRoom extends DurableObject {
     const ticket = credential();
     const expiresAt = Date.now() + DOWNLOAD_LIFETIME;
     this.sql.exec('INSERT INTO download_tickets (ticket, file_id, device_id, expires_at) VALUES (?, ?, ?, ?)', ticket, file.file_id, deviceId, expiresAt);
+    if (this.nextPruneAt !== undefined) this.nextPruneAt = Math.min(this.nextPruneAt, expiresAt);
     return { ticket, expiresAt };
   }
 
@@ -1947,7 +1955,10 @@ export class E2eeSyncRoom extends DurableObject {
     if (!deviceId) return { error: 'unauthorized', status: 401 };
     const denied = this.checkWrite(keyId, text);
     if (denied.error) return denied;
-    if (this.pruneExpired()) await this.scheduleAlarm();
+    if (!(this.nextPruneAt > Date.now())) {
+      this.pruneExpired();
+      await this.scheduleAlarm();
+    }
     return { deviceId, existing: this.findMessage(deviceId, clientId), usage: this.storageUsage() };
   }
 
@@ -2004,7 +2015,7 @@ export class E2eeSyncRoom extends DurableObject {
       const previous = this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', previousGameId).toArray()[0];
       if (previous) this.broadcast({ type: 'gomoku', game: this.gameSnapshot(previous) });
     }
-    await this.scheduleAlarm();
+    if (pruned || !(this.nextPruneAt > Date.now()) || this.nextPruneAt > message.createdAt + MESSAGE_LIFETIME) await this.scheduleAlarm();
     return { message, created: true, usage: this.storageUsage() };
   }
 
@@ -2278,9 +2289,11 @@ export class E2eeSyncRoom extends DurableObject {
     const expiry = this.sql.exec(`SELECT
       (SELECT min(created_at) FROM messages) AS message,
       (SELECT min(created_at) FROM message_tombstones) AS tombstone,
+      (SELECT min(expires_at) FROM download_tickets) AS ticket,
       (SELECT min(last_active_at) FROM devices) AS device,
       (SELECT min(updated_at) FROM files WHERE status = 'uploading') AS upload,
       EXISTS (SELECT 1 FROM files WHERE status = 'deleting') AS deleting`).one();
+    if (expiry.ticket !== null) deadlines.push(expiry.ticket);
     const oldest = expiry.message;
     if (oldest !== null) deadlines.push(oldest + MESSAGE_LIFETIME);
     const oldestTombstone = expiry.tombstone;
@@ -2290,7 +2303,8 @@ export class E2eeSyncRoom extends DurableObject {
     const uploading = expiry.upload;
     if (uploading !== null) deadlines.push(uploading + UPLOAD_LIFETIME);
     if (expiry.deleting) deadlines.push(Date.now() + 1000);
-    const nextAlarm = deadlines.length ? Math.min(...deadlines) : null;
+    this.nextPruneAt = deadlines.length ? Math.min(...deadlines) : Infinity;
+    const nextAlarm = deadlines.length ? this.nextPruneAt : null;
     if (nextAlarm === await this.ctx.storage.getAlarm()) return;
     if (nextAlarm !== null) await this.ctx.storage.setAlarm(nextAlarm);
     else await this.ctx.storage.deleteAlarm();

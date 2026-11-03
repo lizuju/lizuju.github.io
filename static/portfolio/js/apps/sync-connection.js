@@ -32,7 +32,6 @@ export class SyncConnection {
                 attempt.socket = socket;
                 this.socket = socket;
                 this.authenticated = false;
-                let incoming = Promise.resolve();
                 attempt.deadline = setTimeout(() => {
                     this.disconnected(attempt, { code: 1006, reason: 'Connection initialization timed out' });
                 }, 30000);
@@ -50,9 +49,8 @@ export class SyncConnection {
                         attempt.authenticated = true;
                         this.authenticated = true;
                     }
-                    incoming = incoming.then(async () => {
-                        if (!current()) return;
-                        await this.receive(data, current);
+                    // The receiver queues local work; dispatch every wire frame immediately.
+                    new Promise(resolve => resolve(this.receive(data, current))).then(() => {
                         if (!current() || data.type !== 'ready') return;
                         attempt.initialized = true;
                         this.retryDelay = 1000;

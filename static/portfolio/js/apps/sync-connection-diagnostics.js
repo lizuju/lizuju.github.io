@@ -1,5 +1,6 @@
 const connections = new Map();
 const events = [];
+const processing = [];
 let reconnects = 0;
 let lastConnectedAt = null;
 let lastConnectMs = null;
@@ -35,11 +36,24 @@ export function removeConnectionDiagnostics(connection) {
     window.dispatchEvent(new Event('sync-diagnostics-change'));
 }
 
+export function recordMessageProcessing({ receivedAt, forwardedAt, arrivedAt, startedAt, role }) {
+    const finishedAt = Date.now();
+    processing.push({ at: finishedAt, role,
+        forwardingMs: Math.max(0, forwardedAt - receivedAt),
+        deliveryMs: role === 'shared' ? Math.max(0, arrivedAt - forwardedAt) : 0,
+        queueMs: Math.max(0, startedAt - arrivedAt),
+        processingMs: Math.max(0, finishedAt - startedAt),
+        totalMs: Math.max(0, finishedAt - receivedAt)
+    });
+    if (processing.length > 50) processing.shift();
+    window.dispatchEvent(new Event('sync-diagnostics-change'));
+}
+
 export function getConnectionDiagnostics() {
     const counts = { online: 0, connecting: 0, offline: 0, shared: 0 };
     for (const entry of connections.values()) {
         counts[entry.state]++;
         if (entry.role === 'shared' && entry.state === 'online') counts.shared++;
     }
-    return { connections: counts, reconnects, lastConnectedAt, lastConnectMs, events: structuredClone(events) };
+    return { connections: counts, reconnects, lastConnectedAt, lastConnectMs, events: structuredClone(events), processing: structuredClone(processing) };
 }

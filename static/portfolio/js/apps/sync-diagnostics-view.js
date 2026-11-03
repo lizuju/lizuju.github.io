@@ -33,6 +33,7 @@ export function setupSyncDiagnostics(view) {
         const notifications = readNotificationDiagnostics();
         const permission = getNotificationState();
         const latest = notifications.at(-1);
+        const message = connection.processing.at(-1);
         fields(find('metrics'), [
             ['syncDiagnosticsNetwork', t(navigator.onLine ? 'syncDiagnosticsBrowserOnline' : 'syncDiagnosticsDisconnected')],
             ['syncDiagnosticsConnections', connection.connections.online + connection.connections.connecting + connection.connections.offline
@@ -41,6 +42,12 @@ export function setupSyncDiagnostics(view) {
             ['syncDiagnosticsReconnects', String(connection.reconnects)],
             ['syncDiagnosticsLastConnected', time(connection.lastConnectedAt)],
             ['syncDiagnosticsConnectTime', duration(connection.lastConnectMs)],
+            ['syncDiagnosticsMessageAt', time(message?.at)],
+            ['syncDiagnosticsForwarding', duration(message?.forwardingMs)],
+            ['syncDiagnosticsDelivery', duration(message?.deliveryMs)],
+            ['syncDiagnosticsMessageQueue', duration(message?.queueMs)],
+            ['syncDiagnosticsProcessing', duration(message?.processingMs)],
+            ['syncDiagnosticsMessageTotal', duration(message?.totalMs)],
             ['syncDiagnosticsPermission', t(!permission.supported ? 'syncDiagnosticsUnsupported'
                 : permission.permission === 'granted' ? 'syncDiagnosticsGranted'
                     : permission.permission === 'denied' ? 'syncDiagnosticsDenied' : 'syncDiagnosticsNotAsked')],

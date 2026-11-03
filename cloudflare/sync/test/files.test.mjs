@@ -192,6 +192,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   }
                   testReadCount() { return this.readCursors.reduce((sum, cursor) => sum + cursor.rowsRead, 0); }
                   testQueryCount() { return this.readCursors.length; }
+                  testDropExpiryHint() { this.nextPruneAt = undefined; }
                   testArmUploadAuthorization() { this.uploadAuthorizationArmed = true; this.uploadAuthorized = false; }
                   testUploadAuthorized() { return !!this.uploadAuthorized; }
                   checkWrite(...args) {
@@ -1507,7 +1508,7 @@ test('public diagnostics rotates existing shard samples without creating missing
   assert.deepEqual(await storage.exec('SELECT file_id FROM files ORDER BY file_id'), files);
 });
 
-test('a stalled shard health probe preserves the healthy room result and recovers without a cached failure', async t => {
+test('a stalled shard health probe preserves the healthy room result and recovers after the negative cache', async t => {
   const instance = await createRuntime(); t.after(() => instance.dispose());
   const request = client(instance), space = await createSpace(request);
   await upload(request, space, { bytes: Buffer.from('probe fixture') });
@@ -1524,6 +1525,8 @@ test('a stalled shard health probe preserves the healthy room result and recover
   assert.equal(partial.body.database.sampledShard.ok, false);
   assert.equal(partial.body.storage.roomCount, 1);
   await shard.testReleaseDatabaseProbe();
+  assert.equal((await request('/v1/status')).body.ok, false);
+  await (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry').testExpireDiagnosticsCache();
   const recovered = await request('/v1/status');
   assert.equal(recovered.body.ok, true);
   assert.equal(recovered.body.database.sampledShard.ok, true);
@@ -1907,7 +1910,7 @@ test('download tickets do not depend on cleanup and still reject expired and del
   } finally { await room.testFailCleanup(false); }
 });
 
-test('warm text sends keep SQL operations bounded while scheduling history expiration', async () => {
+test('warm text sends keep SQL operations bounded while scheduling history expiration', async t => {
   const request = client(), space = await createSpace(request);
   const path = `/v1/spaces/${space.roomId}/messages`;
   await request(path, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'warm-up' } });
@@ -1920,8 +1923,24 @@ test('warm text sends keep SQL operations bounded while scheduling history expir
   const result = await registry.storeMessage(space.roomId, space.token, clientId, text, session.keyring.currentKeyId);
   const queries = await room.testQueryCount();
   const reads = await room.testReadCount();
+  t.diagnostic(`Warm text send: ${queries} SQL calls, ${reads} rows read in the room`);
   assert.equal(result.created, true);
-  assert.ok(queries <= 23, `expected <= 23 SQL calls, got ${queries}`);
-  assert.ok(reads < 40, `expected fewer than 40 read rows, got ${reads}`);
+  assert.ok(queries <= 16, `expected <= 16 SQL calls, got ${queries}`);
+  assert.ok(reads < 30, `expected fewer than 30 read rows, got ${reads}`);
+  assert.ok(await room.testReadAlarm() <= Date.now() + sevenDays);
+});
+
+test('expiry hints skip warm sweeps but cold recovery and overdue messages still prune history', async () => {
+  const request = client(), space = await createSpace(request);
+  const path = `/v1/spaces/${space.roomId}/messages`;
+  const send = () => request(path, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'retained' } });
+  const first = await send();
+  const room = await roomObject(space), storage = await roomStorage(space);
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - sevenDays - 1, first.body.id);
+  await room.testDropExpiryHint();
+  const next = await send();
+  assert.equal(next.status, 201);
+  const rows = await storage.exec('SELECT id FROM messages ORDER BY id');
+  assert.deepEqual(rows, [{ id: next.body.id }]);
   assert.ok(await room.testReadAlarm() <= Date.now() + sevenDays);
 });

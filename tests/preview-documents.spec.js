@@ -37,10 +37,12 @@ const encodedTextDocuments = [
     ['utf16be.txt', Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from('中文测试', 'utf16le').swap16()])]
 ];
 
-test.beforeEach(async ({ page, isMobile }) => {
+test.beforeEach(async ({ page, isMobile }, testInfo) => {
     test.skip(isMobile, 'document previews are desktop windows');
     beforeServe = () => {};
     await page.addInitScript(() => {
+        window.wordWorkers = 0;
+        window.closedWordWorkers = 0;
         window.spreadsheetWorkers = 0;
         window.closedSpreadsheetWorkers = 0;
         window.workerWaitTicks = 0;
@@ -48,6 +50,18 @@ test.beforeEach(async ({ page, isMobile }) => {
         window.Worker = class extends NativeWorker {
             constructor(url, options) {
                 super(url, options);
+                if (options?.name === 'word-preview') {
+                    window.wordWorkers++;
+                    const terminate = this.terminate.bind(this);
+                    let terminated = false;
+                    this.terminate = () => {
+                        if (!terminated) window.closedWordWorkers++;
+                        terminated = true;
+                        terminate();
+                    };
+                    if (window.holdWord) this.postMessage = () => {};
+                    return;
+                }
                 if (options?.name !== 'spreadsheet-preview') return;
                 window.spreadsheetWorkers++;
                 let timer;
@@ -72,7 +86,7 @@ test.beforeEach(async ({ page, isMobile }) => {
         { id: 1, ...file('sample.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xlsx) },
         { id: 2, ...file('sample.csv', 'text/csv', csv) },
         ...[...encodedDocuments, ...encodedTextDocuments,
-            ['sample.docx', readFileSync(join(__dirname, 'fixtures/preview-document.docx'))]]
+            ['sample.docx', readFileSync(join(__dirname, testInfo.title.includes('long Word') ? 'fixtures/preview-long.docx' : 'fixtures/preview-document.docx'))]]
             .map(([name, bytes], index) => ({ id: index + 3, ...file(name, 'application/octet-stream', bytes) }))
     ];
     const headers = {
@@ -232,6 +246,8 @@ test('loads the Word parser only for a Word preview and renders a real DOCX safe
     await expect(document).toContainText('<script>alert(1)</script>');
     await expect(document.locator('script')).toHaveCount(0);
     expect(wordRequests.length).toBeGreaterThan(0);
+    expect(await page.evaluate(() => wordWorkers)).toBe(1);
+    expect(await page.evaluate(() => closedWordWorkers)).toBe(1);
 });
 
 test('closing while the Word parser loads cannot replace the next text preview', async ({ page }) => {
@@ -257,4 +273,40 @@ test('closing while the Word parser loads cannot replace the next text preview',
         await expect(preview.locator('.sync-document-text')).toHaveText('中文测试');
         await expect(preview.locator('.sync-document-word')).toHaveCount(0);
     } finally { releaseParser(); }
+});
+
+
+test('renders a long Word document in yielding batches without blocking interaction', async ({ page }) => {
+    await page.evaluate(() => {
+        window.wordRenderTicks = 0;
+        window.wordTickTimer = setInterval(() => {
+            const count = document.querySelectorAll('.sync-document-word > p').length;
+            if (count > 0 && count < 10000) wordRenderTicks++;
+        }, 0);
+    });
+    await page.locator('[data-sync-preview-file]').last().click();
+    const document = page.locator('.sync-document-word');
+    await expect(document.locator(':scope > p')).toHaveCount(10000);
+    await expect(document.locator('p').last()).toHaveText('Paragraph 9999');
+    expect(await page.evaluate(() => wordRenderTicks)).toBeGreaterThan(0);
+    expect(await page.evaluate(() => wordWorkers)).toBe(1);
+    await page.evaluate(() => clearInterval(wordTickTimer));
+});
+
+test('cancels a stalled Word conversion on close, enforces its time budget and allows retry', async ({ page }) => {
+    await page.clock.install();
+    await page.evaluate(() => { window.holdWord = true; });
+    await page.locator('[data-sync-preview-file]').last().click();
+    await expect.poll(() => page.evaluate(() => wordWorkers)).toBe(1);
+    await page.locator('[data-sync-preview-action="close"]').click();
+    await expect.poll(() => page.evaluate(() => closedWordWorkers)).toBe(1);
+    await page.locator('[data-sync-preview-file]').last().click();
+    await expect.poll(() => page.evaluate(() => wordWorkers)).toBe(2);
+    await page.clock.fastForward(15001);
+    await expect.poll(() => page.evaluate(() => closedWordWorkers)).toBe(2);
+    await expect(page.locator('.sync-document-word')).toHaveCount(0);
+    await page.locator('[data-sync-preview-action="close"]').click();
+    await page.evaluate(() => { window.holdWord = false; });
+    await page.locator('[data-sync-preview-file]').last().click();
+    await expect(page.locator('.sync-document-word')).toContainText('联络站 Word 预览');
 });

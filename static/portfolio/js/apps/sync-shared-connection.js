@@ -1,5 +1,5 @@
 import { SyncConnection } from './sync-connection.js';
-import { recordConnectionState, removeConnectionDiagnostics } from './sync-connection-diagnostics.js';
+import { recordConnectionState, recordMessageProcessing, removeConnectionDiagnostics } from './sync-connection-diagnostics.js';
 
 // A Web Lock elects one socket owner per saved device; closing that page releases it automatically.
 export class SharedSyncConnection {
@@ -139,15 +139,23 @@ export class SharedSyncConnection {
             this.post({ type: 'owner' });
             this.transport = new SyncConnection({ ...this.options,
                 receive: (data, current) => {
+                    if (!current() || this.stopped) return;
+                    if (data.type === 'devices') this.invalidateResults(false, ['/devices']);
+                    else if (data.type === 'pairing') this.invalidateResults(false, ['/pair-code']);
+                    else if (['ready', 'key-rotation', 'rekey-required', 'cleared', 'history'].includes(data.type)) this.invalidateResults(false);
+                    const forwarded = new Set(this.welcomed);
+                    const forwardedAt = Date.now();
+                    if (data.type !== 'ready') this.post({ type: 'frame', recipients: [...forwarded], data, forwardedAt });
                     const delivery = this.incoming.then(async () => {
                         if (!current() || this.stopped) return;
-                        if (data.type === 'devices') this.invalidateResults(false, ['/devices']);
-                        else if (data.type === 'pairing') this.invalidateResults(false, ['/pair-code']);
-                        else if (['ready', 'key-rotation', 'rekey-required', 'cleared', 'history'].includes(data.type)) this.invalidateResults(false);
+                        // A welcome queued before this frame contains only the preceding messages.
+                        if (data.type !== 'ready') this.post({ type: 'frame',
+                            recipients: [...this.welcomed].filter(member => !forwarded.has(member)), data, forwardedAt: Date.now() });
+                        const startedAt = Date.now();
                         await this.options.receive(data, current);
-                        if (current() && !this.stopped && data.type !== 'ready') {
-                            this.post({ type: 'frame', recipients: [...this.welcomed], data });
-                        }
+                        if (current() && !this.stopped && data.type === 'message') recordMessageProcessing({
+                            receivedAt: data.receivedAt, arrivedAt: data.receivedAt, forwardedAt, startedAt, role: 'owner'
+                        });
                     });
                     this.incoming = delivery.catch(() => {});
                     return delivery;
@@ -218,7 +226,8 @@ export class SharedSyncConnection {
             this.post({ type: 'hello' });
             return;
         }
-        if (event.type === 'welcome' && event.recipient === this.id) {
+        if (event.type === 'welcome' && event.recipient !== this.id) return;
+        if (event.type === 'welcome') {
             this.owner = event.sender;
             this.joined = true;
             this.generation++;
@@ -249,9 +258,14 @@ export class SharedSyncConnection {
         if (!this.joined || !['welcome', 'frame'].includes(event.type) || event.type === 'frame' && !event.recipients.includes(this.id)) return;
         const generation = this.generation;
         const current = () => !this.stopped && !this.isLeader && generation === this.generation;
+        const arrivedAt = Date.now();
         this.incoming = this.incoming.then(async () => {
             if (!current()) return;
+            const startedAt = Date.now();
             await this.options.receive(event.data, current);
+            if (current() && event.data.type === 'message') recordMessageProcessing({
+                receivedAt: event.data.receivedAt, forwardedAt: event.forwardedAt, arrivedAt, startedAt, role: 'shared'
+            });
             if (current() && event.type === 'welcome') this.setState('online');
         }).catch(error => {
             if (!current()) return;
