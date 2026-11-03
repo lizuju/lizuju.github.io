@@ -62,12 +62,12 @@ for (const path of ['portfolio', 'chat']) test(`the ${path} service worker sets 
     let focused = true;
     let activated = false;
     const client = { id: 'client', type: 'window', url: `https://example.test/${path}/`, focus: async () => { activated = true; }, postMessage: value => posted.push(value) };
-    const worker = { location: new URL(`https://example.test/${path}/sync-e2ee-worker.js`),
-        registration: { scope: `https://example.test/${path}/`, showNotification: async (title, options) => shown.push({ title, ...options }) },
-        clients: { matchAll: async () => [{ focused, visibilityState: 'visible' }], get: async () => client },
+    const worker = { location: new URL('https://example.test/sync-e2ee-worker.js'),
+        registration: { scope: 'https://example.test/', showNotification: async (title, options) => shown.push({ title, ...options }) },
+        clients: { matchAll: async () => [{ ...client, focused, visibilityState: 'visible' }], get: async () => client },
         addEventListener(name, handler) { handlers.set(name, [...(handlers.get(name) || []), handler]); }
     };
-    vm.runInNewContext(await readFile('static/portfolio/sync-e2ee-worker.js', 'utf8'), { self: worker, URL, Map, Set, Date, crypto: require('node:crypto').webcrypto });
+    vm.runInNewContext(await readFile('static/portfolio/sync-e2ee-worker.js', 'utf8'), { self: worker, URL, URLSearchParams, Map, Set, Date, crypto: require('node:crypto').webcrypto });
     const deliver = async (type = 'show') => {
         const waits = [];
         for (const handler of handlers.get('message')) handler({ source: client, data: { source: 'gavin-sync-notification', type, roomId: 'room', title: '联络站', body: '有新消息' }, ports: [{ postMessage() {} }], waitUntil: promise => waits.push(promise) });
@@ -98,6 +98,15 @@ for (const path of ['portfolio', 'chat']) test(`the ${path} service worker sets 
     await deliver('test');
     expect(shown[2].tag).not.toBe(shown[1].tag);
     expect(shown[0].silent).toBe(true);
+    worker.clients.matchAll = async () => [{ ...client, url: 'https://example.test/', focused: true, visibilityState: 'visible' }];
+    await deliver();
+    expect(shown).toHaveLength(4);
+    let reopened;
+    worker.clients.get = async () => null;
+    worker.clients.openWindow = async url => { reopened = url; };
+    handlers.get('notificationclick')[0]({ notification: { data: shown[3].data, close() {} }, waitUntil: promise => { clicked = promise; } });
+    await clicked;
+    expect(reopened).toBe('https://example.test/chat/#space=room');
 });
 
 

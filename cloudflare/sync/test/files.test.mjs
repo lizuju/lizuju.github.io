@@ -85,13 +85,24 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   testReadRequests() { return this.readRequests || []; }
                 }
                 export default {
-                  fetch(request, env, ctx) {
+                  async fetch(request, env, ctx) {
                     const declared = request.headers.get('X-Test-Content-Length');
                     if (declared !== null) {
                       const headers = new Headers(request.headers);
                       if (declared === 'omit') headers.delete('Content-Length');
                       else headers.set('Content-Length', declared);
-                      request = new Request(request, { headers });
+                      let remaining = ${chunkSize} + 1;
+                      // Generate the body inside workerd so a deliberate early rejection cannot
+                      // race the Node-to-Miniflare HTTP upload and hide the 413 response.
+                      const body = new ReadableStream({
+                        pull(controller) {
+                          if (!remaining) { controller.close(); return; }
+                          const size = Math.min(65536, remaining);
+                          remaining -= size;
+                          controller.enqueue(new Uint8Array(size));
+                        }
+                      }, { highWaterMark: 0 });
+                      return worker.fetch(new Request(request, { headers, body }), env, ctx);
                     }
                     return worker.fetch(request, env, ctx);
                   }
@@ -118,6 +129,12 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
 
                   hasRoom(roomId) { this.roomLookups = (this.roomLookups || 0) + 1; return super.hasRoom(roomId); }
                   testRoomLookups() { return this.roomLookups || 0; }
+                  testCleanupCandidates() {
+                    return [
+                      this.sql.exec('SELECT room_id FROM room_usage WHERE (deleting_files IS NULL OR deleting_files > 0) AND room_id NOT IN (SELECT room_id FROM maintenance_failures) ORDER BY oldest_at, room_id LIMIT 1'),
+                      this.sql.exec('SELECT room_id, oldest_at FROM room_usage WHERE oldest_at IS NOT NULL AND room_id NOT IN (SELECT room_id FROM maintenance_failures) ORDER BY oldest_at, room_id LIMIT 2')
+                    ].map(cursor => ({ rows: cursor.toArray(), reads: cursor.rowsRead }));
+                  }
                   async testExpireDiagnosticsCache() { this.diagnosticsCacheUntil = Date.now() - 1; await caches.default.delete('https://sync.test/v1/status?release=local'); }
                   testSizeStart() {
                     this.sizeCalls = (this.sizeCalls || 0) + 1;
@@ -729,19 +746,8 @@ test('chunk streams reject bytes beyond 8 MiB even when Content-Length lies or i
   const space = await createSpace(request);
   const started = await initiate(request, space, { size: chunkSize });
   assert.equal(started.status, 201);
-  // The Worker answers 413 and closes as soon as the body passes the limit, which can reset
-  // the connection before the client finishes sending; retry only that transport failure.
-  const putOversized = async (declared) => {
-    for (let attempt = 1; ; attempt++) {
-      try {
-        return await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(chunkSize + 1), { 'X-Test-Content-Length': declared });
-      } catch (error) {
-        if (attempt === 3 || error.message !== 'fetch failed') throw error;
-      }
-    }
-  };
   for (const declared of ['1', 'omit']) {
-    const result = await putOversized(declared);
+    const result = await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(0), { 'X-Test-Content-Length': declared });
     assert.equal(result.status, 413, JSON.stringify(result.body));
   }
   const retry = await initiate(request, space, { clientId: randomUUID(), size: 0 });
@@ -1617,6 +1623,44 @@ test('upload chunks bypass the global registry while retaining device authentica
   }
   assert.equal(await registry.testRoomLookups(), before);
   assert.equal((await complete(request, space, started.body.uploadId)).status, 201);
+});
+
+test('ticket ranges bypass the registry while expired tickets, missing rooms and revoked devices stay denied', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const sent = await upload(request, space, { bytes: Buffer.alloc(4096, 23) });
+  const issued = await request(`/v1/spaces/${space.roomId}/files/${sent.body.id}/download`, { method: 'POST', token: space.token });
+  const path = `/v1/spaces/${space.roomId}/downloads/${issued.body.ticket}`;
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const before = await registry.testRoomLookups();
+  for (let index = 0; index < 20; index++) {
+    const response = await request.raw(path, { headers: { Range: `bytes=${index * 16}-${index * 16 + 15}` } });
+    assert.equal(response.status, 206);
+    assert.deepEqual(response.body, Buffer.alloc(16, 23));
+  }
+  assert.equal((await request.raw(path, { method: 'HEAD' })).status, 200);
+  assert.equal(await registry.testRoomLookups(), before);
+  assert.equal((await request.raw(path.replace(space.roomId, randomUUID()))).status, 404);
+  const storage = await roomStorage(space, instance);
+  await storage.exec('UPDATE download_tickets SET expires_at = ?', Date.now() - 1);
+  assert.equal((await request.raw(path)).status, 404);
+  await storage.exec('UPDATE download_tickets SET expires_at = ?', Date.now() + 60000);
+  await storage.exec('DELETE FROM devices');
+  assert.equal((await request.raw(path)).status, 401);
+});
+
+test('oldest-room cleanup reads stay bounded with a thousand rooms and failed-room exclusions', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  await registry.hasRoom('initialize');
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-files-test', 'PairingRegistry', { name: 'registry' });
+  await storage.exec(`WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 1000)
+    INSERT INTO room_usage (room_id, bytes, oldest_at, deleting_files) SELECT 'room-' || n, 100, n, CASE WHEN n = 900 THEN 1 ELSE 0 END FROM numbers`);
+  await storage.exec("INSERT INTO maintenance_failures (room_id, retry_at) VALUES ('room-1', ?)", Date.now() + 60000);
+  const [pending, oldest] = await registry.testCleanupCandidates();
+  assert.deepEqual(pending.rows, [{ room_id: 'room-900' }]);
+  assert.deepEqual(oldest.rows.map(row => row.room_id), ['room-2', 'room-3']);
+  assert.ok(pending.reads < 10 && oldest.reads < 10, JSON.stringify({ pending, oldest }));
 });
 
 

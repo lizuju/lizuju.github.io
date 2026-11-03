@@ -36,14 +36,16 @@ export class SharedSyncConnection {
 
     post(value) { this.channel?.postMessage({ ...value, sender: this.id }); }
 
-    invalidateResults(broadcast = true) {
-        this.results.clear();
-        if (broadcast) this.post({ type: 'invalidate-results' });
+    invalidateResults(broadcast = true, paths = null) {
+        if (paths) {
+            for (const key of this.results.keys()) if (paths.some(path => key.endsWith(path))) this.results.delete(key);
+        } else this.results.clear();
+        if (broadcast) this.post({ type: 'invalidate-results', paths });
     }
 
-    request(key, load) {
+    request(key, load, refresh = false) {
         if (this.stopped || !this.channel || !this.isLeader && !this.joined) return load();
-        if (this.isLeader) return this.loadResult(key);
+        if (this.isLeader) return this.loadResult(key, refresh);
         const id = crypto.randomUUID();
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
@@ -51,11 +53,13 @@ export class SharedSyncConnection {
                 reject(Object.assign(new Error('network_error'), { code: 'network_error' }));
             }, key.endsWith('/devices') ? 155000 : 16000);
             this.requests.set(id, { resolve, reject, timer });
-            this.post({ type: 'request', owner: this.owner, id, key });
+            this.post({ type: 'request', owner: this.owner, id, key, refresh });
         });
     }
 
-    loadResult(key) {
+    loadResult(key, refresh = false) {
+        const previous = this.results.get(key);
+        if (refresh && previous?.expiresAt !== Infinity && (refresh === true || previous?.ticket === refresh)) this.results.delete(key);
         const cached = this.results.get(key);
         if (cached && cached.expiresAt > Date.now()) return cached.promise.then(value => structuredClone(value));
         const entry = { expiresAt: Infinity, controller: new AbortController() };
@@ -78,7 +82,8 @@ export class SharedSyncConnection {
                 }
             }
         }).then(value => {
-            entry.expiresAt = Date.now() + 2000;
+            entry.ticket = value?.ticket;
+            entry.expiresAt = /\/files\/[1-9][0-9]*\/download$/.test(key) ? value.expiresAt - 60000 : Date.now() + 2000;
             return value;
         }, error => {
             if (this.results.get(key) === entry) this.results.delete(key);
@@ -136,7 +141,9 @@ export class SharedSyncConnection {
                 receive: (data, current) => {
                     const delivery = this.incoming.then(async () => {
                         if (!current() || this.stopped) return;
-                        if (['ready', 'devices', 'pairing', 'key-rotation', 'rekey-required'].includes(data.type)) this.invalidateResults(false);
+                        if (data.type === 'devices') this.invalidateResults(false, ['/devices']);
+                        else if (data.type === 'pairing') this.invalidateResults(false, ['/pair-code']);
+                        else if (['ready', 'key-rotation', 'rekey-required', 'cleared', 'history'].includes(data.type)) this.invalidateResults(false);
                         await this.options.receive(data, current);
                         if (current() && !this.stopped && data.type !== 'ready') {
                             this.post({ type: 'frame', recipients: [...this.welcomed], data });
@@ -184,7 +191,7 @@ export class SharedSyncConnection {
 
     message(event) {
         if (this.stopped || event.sender === this.id) return;
-        if (event.type === 'invalidate-results') { this.invalidateResults(false); return; }
+        if (event.type === 'invalidate-results') { this.invalidateResults(false, event.paths); return; }
         if (event.type === 'hello') {
             if (this.isLeader) { this.members.add(event.sender); this.welcome(event.sender); }
             return;
@@ -194,10 +201,10 @@ export class SharedSyncConnection {
             if (event.owner !== this.id || !this.welcomed.has(event.sender)) return;
             if (event.type === 'send' && this.transport?.socket?.readyState === WebSocket.OPEN) this.transport.socket.send(event.data);
             if (event.type === 'reconnect') this.transport?.socket?.close();
-            if (event.type === 'request') this.loadResult(event.key).then(
+            if (event.type === 'request') this.loadResult(event.key, event.refresh).then(
                 value => this.post({ type: 'result', recipient: event.sender, id: event.id, value }),
                 error => this.post({ type: 'result', recipient: event.sender, id: event.id,
-                    error: { message: error.message, code: error.code, status: error.status } })
+                    error: { message: error.message, code: error.code, status: error.status, retryAfter: error.retryAfter } })
             );
             return;
         }

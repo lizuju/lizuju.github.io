@@ -4,6 +4,112 @@ const path = require('node:path');
 
 test.use({ serviceWorkers: 'block' });
 
+test('pairing and device updates preserve shared tickets, while security and history updates invalidate them', async ({ page, context }) => {
+    await context.route('**/__ticket-events__/**', async route => {
+        const filename = new URL(route.request().url()).pathname.split('/').at(-1);
+        return route.fulfill({ contentType: filename ? 'text/javascript' : 'text/html', body: filename
+            ? await readFile(path.join(__dirname, '../static/portfolio/js/apps', filename)) : '<!doctype html>' });
+    });
+    let socket;
+    await context.routeWebSocket(/\/__ticket-events-socket__$/, ws => {
+        socket = ws;
+        ws.onMessage(raw => {
+            if (raw === 'ping') return ws.send('pong');
+            if (JSON.parse(raw).type === 'auth') ws.send(JSON.stringify({ type: 'ready' }));
+        });
+    });
+    const follower = await context.newPage();
+    for (const tab of [page, follower]) {
+        await tab.goto('/__ticket-events__/');
+        await tab.evaluate(async () => {
+            const { SharedSyncConnection } = await import('./sync-shared-connection.js');
+            window.calls = 0;
+            window.frames = [];
+            window.connection = new SharedSyncConnection({
+                session: { roomId: 'room', token: 'device' },
+                getUrl: () => `ws://${location.host}/__ticket-events-socket__`,
+                receive: data => window.frames.push(data.type), snapshot: () => ({ type: 'ready' }),
+                onState() {}, onClose() {},
+                request: async () => {
+                    const ticket = `ticket-${++window.calls}`;
+                    if (window.hold) await new Promise(resolve => { window.release = resolve; });
+                    return { ticket, expiresAt: Date.now() + 600000 };
+                }
+            });
+            window.ticket = () => connection.request('/v1/spaces/room/files/1/download');
+            connection.connect();
+        });
+        await expect.poll(() => tab.evaluate(() => connection.state)).toBe('online');
+    }
+    await page.evaluate(() => { window.hold = true; window.first = ticket(); });
+    await page.waitForFunction(() => !!window.release);
+    for (const type of ['pairing', 'devices']) {
+        socket.send(JSON.stringify({ type }));
+        await page.waitForFunction(type => frames.includes(type), type);
+    }
+    await follower.evaluate(() => {
+        connection.invalidateResults(true, ['/pair-code']);
+        connection.invalidateResults(true, ['/devices']);
+        window.second = ticket();
+    });
+    await page.waitForFunction(() => connection.results.has('/v1/spaces/room/files/1/download'));
+    await page.evaluate(() => { window.hold = false; window.release(); });
+    expect(await page.evaluate(() => first)).toEqual(await follower.evaluate(() => second));
+    expect(await page.evaluate(() => calls)).toBe(1);
+    expect((await follower.evaluate(() => ticket())).ticket).toBe('ticket-1');
+    for (const [index, type] of ['key-rotation', 'rekey-required', 'cleared', 'history'].entries()) {
+        socket.send(JSON.stringify({ type }));
+        await page.waitForFunction(type => frames.includes(type), type);
+        expect((await follower.evaluate(() => ticket())).ticket).toBe(`ticket-${index + 2}`);
+    }
+});
+
+test('ticket sharing coalesces renewal, ignores a stale refresh and isolates another device', async ({ page, context }) => {
+    await context.route('**/__ticket-connection__/**', async route => {
+        const filename = new URL(route.request().url()).pathname.split('/').at(-1);
+        return route.fulfill(filename ? { contentType: 'text/javascript', body: await readFile(path.join(__dirname, '../static/portfolio/js/apps', filename)) }
+            : { contentType: 'text/html', body: '<!doctype html>' });
+    });
+    await context.routeWebSocket(/\/__ticket-socket__$/, socket => socket.onMessage(raw => {
+        if (raw === 'ping') return socket.send('pong');
+        if (JSON.parse(raw).type === 'auth') socket.send(JSON.stringify({ type: 'ready' }));
+    }));
+    const follower = await context.newPage();
+    const isolated = await context.newPage();
+    for (const [index, tab] of [page, follower, isolated].entries()) {
+        await tab.goto('/__ticket-connection__/');
+        await tab.evaluate(async index => {
+            const { SharedSyncConnection } = await import('./sync-shared-connection.js');
+            window.calls = 0;
+            window.connection = new SharedSyncConnection({
+                session: { roomId: 'room', token: index === 2 ? 'other-device' : 'same-device' },
+                getUrl: () => `ws://${location.host}/__ticket-socket__`, receive() {}, onState() {}, onClose() {},
+                snapshot: () => ({ type: 'ready' }),
+                request: async path => {
+                    if (path.endsWith('/pair-code')) return null;
+                    const ticket = `ticket-${index}-${++window.calls}`;
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    return { ticket, expiresAt: Date.now() + 600000 };
+                }
+            });
+            window.ticket = refresh => connection.request('/v1/spaces/room/files/1/download', () => { throw new Error('unexpected fallback'); }, refresh);
+            connection.connect();
+        }, index);
+        await expect.poll(() => tab.evaluate(() => connection.state)).toBe('online');
+    }
+    const first = await Promise.all([page, follower].map(tab => tab.evaluate(() => ticket())));
+    expect(first[0].ticket).toBe(first[1].ticket);
+    expect(await page.evaluate(() => calls)).toBe(1);
+    const renewed = await Promise.all([page, follower].map(tab => tab.evaluate(old => ticket(old), first[0].ticket)));
+    expect(renewed[0].ticket).toBe(renewed[1].ticket);
+    expect(renewed[0].ticket).not.toBe(first[0].ticket);
+    expect((await follower.evaluate(old => ticket(old), first[0].ticket)).ticket).toBe(renewed[0].ticket);
+    expect(await page.evaluate(() => calls)).toBe(2);
+    expect((await isolated.evaluate(() => ticket())).ticket).not.toBe(renewed[0].ticket);
+    expect(await isolated.evaluate(() => calls)).toBe(1);
+    expect(await follower.evaluate(() => connection.request('/v1/spaces/room/pair-code'))).toBeNull();
+});
+
 test('reflects a closing owner socket before its asynchronous close event', async ({ page }) => {
     await page.route('**/__shared-connection__/**', async route => {
         const filename = new URL(route.request().url()).pathname.split('/').at(-1);

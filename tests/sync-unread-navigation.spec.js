@@ -13,9 +13,9 @@ const mentionMessage = id => {
 const openChat = async (page, { history, readId = 0, older = [], standalone = false } = {}) => {
     await page.clock.install();
     await authorize(page);
-    await page.route('**/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
+    await page.context().route('**/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
     const historyRequests = [];
-    await page.route('https://sync.test/**', route => {
+    await page.context().route('https://sync.test/**', route => {
         const request = route.request();
         if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
         const url = new URL(request.url());
@@ -28,7 +28,7 @@ const openChat = async (page, { history, readId = 0, older = [], standalone = fa
     });
     let connection;
     const reads = [];
-    await page.routeWebSocket('wss://sync.test/**', socket => {
+    await page.context().routeWebSocket('wss://sync.test/**', socket => {
         connection = socket;
         socket.onMessage(raw => {
             if (raw === 'ping') return socket.send('pong');
@@ -38,7 +38,7 @@ const openChat = async (page, { history, readId = 0, older = [], standalone = fa
             if (data.type === 'read') reads.push(data.messageId);
         });
     });
-    if (standalone) await page.route('**/chat/', async route => {
+    if (standalone) await page.context().route('**/chat/', async route => {
         const response = await route.fetch();
         const production = require('../static/portfolio/sync-config.json').apiBase;
         const html = (await response.text()).replaceAll(production, 'https://sync.test')
@@ -53,9 +53,57 @@ const openChat = async (page, { history, readId = 0, older = [], standalone = fa
     }
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
     await expect(page.locator('.sync-message')).toHaveCount(history.length);
-    return { reads, historyRequests, frame: data => connection.send(JSON.stringify(data)) };
+    return { reads, historyRequests, frame: data => connection.send(JSON.stringify(data)),
+        disconnect: () => connection.close({ code: 1012, reason: 'Restart' }),
+        acknowledge: id => { readId = id; connection.send(JSON.stringify({ type: 'read', deviceId, messageId: id })); } };
 };
 const highlighted = page => page.locator('.sync-message.is-reply-target .sync-message-text');
+
+test('resends an unconfirmed read after disconnect and reload, then stops after acknowledgement', async ({ page }) => {
+    const chat = await openChat(page, { history: Array.from({ length: 13 }, (_, i) => message(i + 1, `Unread ${i + 1}`, otherId)), standalone: true });
+    const pending = () => page.evaluate(() => new Promise((resolve, reject) => {
+        const request = indexedDB.open('gavin-sync-read-receipts', 1);
+        request.onsuccess = () => {
+            const db = request.result;
+            const rows = db.transaction('receipts').objectStore('receipts').getAll();
+            rows.onsuccess = () => { db.close(); resolve(rows.result.filter(row => row.readId > row.confirmedId).map(row => String(row.readId))); };
+            rows.onerror = () => reject(rows.error);
+        };
+        request.onerror = () => reject(request.error);
+    }));
+    await expect(page.locator('[data-sync-first-unread]')).toBeVisible();
+    await page.locator('[data-sync-feed]').focus();
+    await page.keyboard.press('PageUp');
+    await expect.poll(() => chat.reads).toEqual([13]);
+    expect(await pending()).toEqual(['13']);
+    await chat.disconnect();
+    await expect(page.locator('[data-sync-status]')).not.toHaveAttribute('data-state', 'online');
+    await page.clock.runFor(2000);
+    await expect.poll(() => chat.reads).toEqual([13, 13]);
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
+    await page.reload();
+    await expect.poll(() => chat.reads).toEqual([13, 13, 13]);
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
+    chat.acknowledge(13);
+    await expect.poll(pending).toEqual([]);
+    await page.reload();
+    await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
+    await page.clock.runFor(2000);
+    expect(chat.reads).toEqual([13, 13, 13]);
+});
+
+test('keeps a foreground scroll read pending while offline and sends it on reconnection', async ({ page }) => {
+    const chat = await openChat(page, { history: Array.from({ length: 13 }, (_, i) => message(i + 1, `Unread ${i + 1}`, otherId)), standalone: true });
+    await chat.disconnect();
+    await expect(page.locator('[data-sync-status]')).not.toHaveAttribute('data-state', 'online');
+    await page.locator('[data-sync-feed]').focus();
+    await page.keyboard.press('PageUp');
+    await expect(page.locator('[data-sync-first-unread]')).toBeHidden();
+    expect(chat.reads).toEqual([]);
+    await page.clock.runFor(2000);
+    await expect.poll(() => chat.reads).toEqual([13]);
+});
 
 test('pruning removes only deleted messages and preserves the loaded reading position', async ({ page }) => {
     const all = Array.from({ length: 100 }, (_, i) => message(i + 1, `Reading ${i + 1}`, otherId));
@@ -158,7 +206,7 @@ test('keeps a background backlog unread after automatic scrolling and reads only
     await feed.evaluate(element => { element.scrollTop = 0; });
     await page.mouse.move(4, 4);
     await page.clock.runFor(800);
-    expect(chat.reads.at(-1)).toBeGreaterThan(1);
+    await expect.poll(() => chat.reads.at(-1)).toBeGreaterThan(1);
     expect(chat.reads.at(-1)).toBeLessThan(26);
     await expect(page.locator('[data-sync-unread-separator]')).toHaveCount(0);
     await expect(page.locator('[data-sync-first-unread]')).toBeVisible();
@@ -241,7 +289,7 @@ test('locates the first unread across history pages without reading newer messag
     const navigation = await page.locator('[data-sync-unread-navigation]').boundingBox();
     expect(navigation).toBeNull();
     await page.clock.runFor(800);
-    expect(chat.reads.at(-1)).toBeGreaterThanOrEqual(21);
+    await expect.poll(() => chat.reads.at(-1)).toBeGreaterThanOrEqual(21);
     expect(chat.reads.at(-1)).toBeLessThan(100);
     await expect(divider).toHaveCount(0);
 });
@@ -324,4 +372,39 @@ test('cancels a pending unread jump when the user searches', async ({ page }) =>
         await expect(page.locator('[data-sync-search]')).toHaveValue('Message 75');
         await expect(page.locator('.sync-message:visible .sync-message-text')).toHaveText('Message 75');
     } finally { release(); }
+});
+
+
+test('recovers an unconfirmed read after closing the tab without another interaction', async ({ page, context }) => {
+    const chat = await openChat(page, { history: Array.from({ length: 13 }, (_, i) => message(i + 1, `Unread ${i + 1}`, otherId)), standalone: true });
+    await page.locator('[data-sync-feed]').focus();
+    await page.keyboard.press('PageUp');
+    await expect.poll(() => chat.reads).toEqual([13]);
+    const reopened = await context.newPage();
+    await page.close();
+    await reopened.goto('/chat/');
+    await expect.poll(() => chat.reads).toEqual([13, 13]);
+    await expect(reopened.locator('.sync-message')).toHaveCount(13);
+    await expect(reopened.locator('[data-sync-first-unread]')).toBeHidden();
+    chat.acknowledge(13);
+    await expect(reopened.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    await reopened.reload();
+    await expect(reopened.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    expect(chat.reads).toEqual([13, 13]);
+});
+
+test('a tab already open recovers the previous owner unconfirmed read on connection handoff', async ({ page, context }) => {
+    const chat = await openChat(page, { history: Array.from({ length: 13 }, (_, i) => message(i + 1, `Unread ${i + 1}`, otherId)), standalone: true });
+    const follower = await context.newPage();
+    await follower.goto('/chat/');
+    await expect(follower.locator('.sync-message')).toHaveCount(13);
+    await expect(follower.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    await page.bringToFront();
+    await page.locator('[data-sync-feed]').focus();
+    await page.keyboard.press('PageUp');
+    await expect.poll(() => chat.reads).toEqual([13]);
+    await page.close();
+    await expect.poll(() => chat.reads).toEqual([13, 13]);
+    await expect(follower.locator('[data-sync-first-unread]')).toBeHidden();
+    await follower.close();
 });

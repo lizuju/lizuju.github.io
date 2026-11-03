@@ -28,6 +28,7 @@ import './apps/recycle-bin.js';
 import './apps/sync-space.js';
 import './apps/sync-preview.js';
 import './apps/control-panel.js';
+import { prepareEncryptedFiles } from './apps/sync-e2ee-files.js';
 
 // Boots the retro desktop. Shared helpers live in js/desktop/, each window in js/apps/.
 // To add an app: create js/apps/<name>.js that registers GavinDesktop.apps.<name>, call
@@ -137,6 +138,7 @@ import './apps/control-panel.js';
     }
 
     document.addEventListener('DOMContentLoaded', () => {
+        prepareEncryptedFiles().catch(() => {});
         const directReturn = document.querySelector('[data-direct-return]');
         const mobileHomepage = new URLSearchParams(window.location.search).get('view') === 'mobile-homepage';
         document.body.classList.toggle('mobile-homepage', mobileHomepage);

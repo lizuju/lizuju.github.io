@@ -10,8 +10,10 @@ import './desktop/core.js';
 import './desktop/window-manager.js';
 import './apps/sync-preview.js';
 import './apps/sync-space.js';
+import { prepareEncryptedFiles } from './apps/sync-e2ee-files.js';
 
 document.addEventListener('DOMContentLoaded', () => {
+    prepareEncryptedFiles().catch(() => {});
     const desktopApi = window.GavinDesktop;
     const manager = desktopApi.createWindowManager({
         desktop: document.querySelector('[data-retro-desktop]'),

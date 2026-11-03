@@ -250,6 +250,7 @@ export default {
     const roomId = match[1];
     const uploadChunk = match[2]?.match(/^\/files\/uploads\/([0-9a-f-]{36})\/chunks\/(0|[1-9][0-9]*)$/i);
     if (request.method === 'PUT' && uploadChunk && ROOM_ID.test(uploadChunk[1])) return env.E2EE_SYNC_ROOMS.getByName(roomId).fetch(request);
+    if (['GET', 'HEAD'].includes(request.method) && match[2]?.startsWith('/downloads/')) return env.E2EE_SYNC_ROOMS.getByName(roomId).fetch(request);
     const gamePath = /^\/gomoku\/([^/]+)(?:\/(join|move|leave))?$/.exec(match[2] || '');
     if (!gamePath && match[2] !== '/profile' && !await registry.hasRoom(roomId)) return json({ error: 'not_found' }, 404);
     const room = env.E2EE_SYNC_ROOMS.getByName(roomId);
@@ -264,7 +265,6 @@ export default {
       headers.set('X-Sync-Device', deviceId || '');
       return room.fetch(new Request(request, { headers }));
     }
-    if (['GET', 'HEAD'].includes(request.method) && match[2]?.startsWith('/downloads/')) return room.fetch(request);
     const token = request.headers.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
     if (request.method === 'POST' && match[2] === '/messages') {
       if (!token) return json({ error: 'unauthorized' }, 401);
@@ -441,6 +441,7 @@ export class E2eePairingRegistry extends DurableObject {
     this.sql.exec('CREATE INDEX IF NOT EXISTS offers_expiry ON offers(expires_at)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS room_pairing (room_id TEXT PRIMARY KEY, locked INTEGER NOT NULL, enabled INTEGER NOT NULL, fixed_secret TEXT, revision INTEGER NOT NULL)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS pair_requests (request_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, selected_offer TEXT, finish_request TEXT, client_data TEXT, grant TEXT, accepted_device TEXT)');
+    this.sql.exec('CREATE INDEX IF NOT EXISTS pair_requests_expiry ON pair_requests(expires_at)');
     const pairColumns = this.sql.exec('PRAGMA table_info(pair_requests)').toArray();
     if (!pairColumns.some(column => column.name === 'room_id')) {
       this.sql.exec('ALTER TABLE pair_requests ADD COLUMN room_id TEXT');
@@ -448,6 +449,7 @@ export class E2eePairingRegistry extends DurableObject {
     }
     if (!pairColumns.some(column => column.name === 'committing_until')) this.sql.exec('ALTER TABLE pair_requests ADD COLUMN committing_until INTEGER');
     this.sql.exec("CREATE TABLE IF NOT EXISTS pair_candidates (request_id TEXT NOT NULL, offer_id TEXT NOT NULL, start_request TEXT NOT NULL, challenge TEXT, owner_device_id TEXT NOT NULL, source_id TEXT NOT NULL DEFAULT 'legacy', PRIMARY KEY(request_id, offer_id))");
+    this.sql.exec('CREATE INDEX IF NOT EXISTS pair_candidates_owner ON pair_candidates(offer_id, owner_device_id, request_id)');
     if (!this.sql.exec('PRAGMA table_info(pair_candidates)').toArray().some(column => column.name === 'source_id')) {
       this.sql.exec("ALTER TABLE pair_candidates ADD COLUMN source_id TEXT NOT NULL DEFAULT 'legacy'");
     }
@@ -457,6 +459,8 @@ export class E2eePairingRegistry extends DurableObject {
     if (!this.sql.exec('PRAGMA table_info(room_usage)').toArray().some(column => column.name === 'deleting_files')) {
       this.sql.exec('ALTER TABLE room_usage ADD COLUMN deleting_files INTEGER');
     }
+    this.sql.exec('CREATE INDEX IF NOT EXISTS room_usage_oldest ON room_usage(oldest_at, room_id) WHERE oldest_at IS NOT NULL');
+    this.sql.exec('CREATE INDEX IF NOT EXISTS room_usage_deleting ON room_usage(oldest_at, room_id) WHERE deleting_files IS NULL OR deleting_files > 0');
     const migrateReservations = !this.sql.exec('PRAGMA table_info(room_usage)').toArray().some(column => column.name === 'reserved_bytes');
     if (migrateReservations) this.sql.exec('ALTER TABLE room_usage ADD COLUMN reserved_bytes INTEGER NOT NULL DEFAULT 0');
     this.sql.exec('CREATE TABLE IF NOT EXISTS cleanup (id INTEGER PRIMARY KEY CHECK(id = 1), phase TEXT NOT NULL, cursor TEXT NOT NULL, target_bytes INTEGER)');
@@ -819,8 +823,10 @@ export class E2eePairingRegistry extends DurableObject {
     return { ok: true };
   }
 
-  prunePairings() {
+  prunePairings(force = false) {
     const now = Date.now();
+    if (!force && this.nextPairingPruneAt > now) return;
+    this.nextPairingPruneAt = now + 30000;
     this.sql.exec('DELETE FROM offers WHERE locked = 0 AND expires_at <= ?', now);
     const active = [...this.pairingQueues.keys()];
     const expired = `expires_at <= ? AND (committing_until IS NULL OR committing_until <= ?)${active.length ? ` AND request_id NOT IN (${active.map(() => '?').join(',')})` : ''}`;
@@ -835,7 +841,7 @@ export class E2eePairingRegistry extends DurableObject {
     if (attempts >= 10 || (!attempts && this.discoveryWindow.attempts.size >= 1024)) return { error: 'rate_limited', status: 429, retryAfter: Math.max(1, Math.ceil((this.discoveryWindow.expiresAt - now) / 1000)) };
     this.discoveryWindow.attempts.set(ipHash, attempts + 1);
     this.prunePairings();
-    const offers = this.sql.exec('SELECT offer_id AS offerId, room_id AS roomId, owner_device_id AS ownerDeviceId, CASE WHEN locked = 1 THEN NULL ELSE expires_at END AS expiresAt FROM offers ORDER BY expires_at, offer_id LIMIT ?', PAIR_CANDIDATE_LIMIT).toArray();
+    const offers = this.sql.exec('SELECT offer_id AS offerId, room_id AS roomId, owner_device_id AS ownerDeviceId, CASE WHEN locked = 1 THEN NULL ELSE expires_at END AS expiresAt FROM offers WHERE locked = 1 OR expires_at > ? ORDER BY expires_at, offer_id LIMIT ?', now, PAIR_CANDIDATE_LIMIT).toArray();
     const snapshot = JSON.stringify(offers);
     if (this.discoveryCache?.snapshot === snapshot && this.discoveryCache.expiresAt > now) return this.discoveryCache.result;
     if (this.discoveryRefresh?.snapshot === snapshot) return this.discoveryRefresh.promise;
@@ -933,7 +939,7 @@ export class E2eePairingRegistry extends DurableObject {
         const current = this.currentInvite(roomId);
         if (current?.offerId === existing.offerId) return current;
       }
-      this.prunePairings();
+      this.prunePairings(true);
       if (!this.currentInvite(roomId)?.offerId && this.sql.exec('SELECT count(*) AS count FROM offers').one().count >= PAIR_CANDIDATE_LIMIT) {
         await this.reclaimOfflineOffers();
         const currentKey = await room.checkWrite(keyId, secret);
@@ -977,7 +983,7 @@ export class E2eePairingRegistry extends DurableObject {
   }
 
   async startPairing(requestId, requestToken, requests, ipHash) {
-    this.prunePairings();
+    this.prunePairings(true);
     const tokenHash = await hash(requestToken);
     const sourceIds = await Promise.all(requests.map(value => hash(`${value.offerId}:${ipHash}`)));
     const existing = this.sql.exec('SELECT token_hash FROM pair_requests WHERE request_id = ?', requestId).toArray()[0];
@@ -1080,7 +1086,7 @@ export class E2eePairingRegistry extends DurableObject {
   candidateForOwner(roomId, deviceId, requestId, offerId) {
     this.prunePairings();
     const offer = this.sql.exec('SELECT * FROM offers WHERE offer_id = ? AND room_id = ? AND owner_device_id = ? AND (locked = 1 OR expires_at > ?)', offerId, roomId, deviceId, Date.now()).toArray()[0];
-    const candidate = this.sql.exec('SELECT * FROM pair_candidates WHERE request_id = ? AND offer_id = ? AND owner_device_id = ?', requestId, offerId, deviceId).toArray()[0];
+    const candidate = this.sql.exec('SELECT c.* FROM pair_candidates c JOIN pair_requests r ON r.request_id = c.request_id WHERE c.request_id = ? AND c.offer_id = ? AND c.owner_device_id = ? AND r.expires_at > ?', requestId, offerId, deviceId, Date.now()).toArray()[0];
     if (!offer || !candidate) return { error: 'code_expired', status: 404 };
     return candidate;
   }
@@ -1095,7 +1101,8 @@ export class E2eePairingRegistry extends DurableObject {
 
   pendingPairings(roomId, deviceId) {
     this.prunePairings();
-    const rows = this.sql.exec('SELECT r.request_id, r.selected_offer, r.finish_request, r.client_data, c.offer_id, c.start_request, c.source_id FROM pair_candidates c JOIN pair_requests r ON r.request_id = c.request_id JOIN offers o ON o.offer_id = c.offer_id WHERE o.room_id = ? AND c.owner_device_id = ? AND r.grant IS NULL ORDER BY r.expires_at, r.request_id', roomId, deviceId).toArray();
+    const now = Date.now();
+    const rows = this.sql.exec('SELECT r.request_id, r.selected_offer, r.finish_request, r.client_data, c.offer_id, c.start_request, c.source_id FROM pair_candidates c JOIN pair_requests r ON r.request_id = c.request_id JOIN offers o ON o.offer_id = c.offer_id WHERE o.room_id = ? AND c.owner_device_id = ? AND r.grant IS NULL AND r.expires_at > ? AND (o.locked = 1 OR o.expires_at > ?) ORDER BY r.expires_at, r.request_id', roomId, deviceId, now, now).toArray();
     return { requests: rows.map(row => row.selected_offer === row.offer_id ? { type: 'pair-finish', requestId: row.request_id, offerId: row.offer_id, finishLoginRequest: row.finish_request, clientData: row.client_data } : { type: 'pair-request', requestId: row.request_id, offerId: row.offer_id, startLoginRequest: row.start_request, sourceId: row.source_id }) };
   }
 
@@ -1589,8 +1596,9 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   markRead(deviceId, messageId) {
-    const latestId = this.sql.exec('SELECT max(id) AS id FROM messages WHERE id <= ?', messageId).one().id;
-    if (latestId === null) return;
+    // Keep receipts valid after history pruning, without ever acknowledging future messages.
+    const latestId = this.sql.exec("SELECT min(?, seq) AS id FROM sqlite_sequence WHERE name = 'messages'", messageId).toArray()[0]?.id;
+    if (!latestId) return;
     if (this.sql.exec('UPDATE devices SET read_message_id = ? WHERE device_id = ? AND read_message_id < ? RETURNING device_id', latestId, deviceId, latestId).toArray().length) {
       this.broadcast({ type: 'read', deviceId, messageId: latestId });
     }

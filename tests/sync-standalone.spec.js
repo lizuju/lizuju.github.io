@@ -78,6 +78,45 @@ test.afterEach(async () => {
     if (api) { api.closeAllConnections(); await new Promise(resolve => api.close(resolve)); }
 });
 
+for (const path of ['portfolio', 'chat']) test(`the ${path} controls remain usable during slow worker preparation`, async ({ page }) => {
+    await page.addInitScript(() => {
+        const register = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+        const gate = new Promise(resolve => { window.releaseRegistration = resolve; });
+        navigator.serviceWorker.register = async (...args) => { await gate; return register(...args); };
+    });
+    await page.goto(`${site.origin}/${path}/`);
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(page.locator('[data-retro-desktop]')).toHaveJSProperty('inert', false);
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    if (path === 'chat') await expect(page.locator('[data-sync-setup]')).toBeVisible();
+    await page.evaluate(() => window.releaseRegistration());
+    await page.waitForFunction(() => navigator.serviceWorker.controller?.scriptURL.endsWith('/sync-e2ee-worker.js'));
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+});
+
+test('sends encrypted text while attachment registration is stalled and keeps the next draft', async ({ page }) => {
+    await page.addInitScript(() => {
+        const register = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+        navigator.serviceWorker.register = async (...args) => {
+            await new Promise(resolve => { window.releaseRegistration = resolve; });
+            return register(...args);
+        };
+    });
+    await authorize(page, `${site.origin}/chat/`);
+    await page.reload();
+    await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    const input = page.locator('[data-sync-input]');
+    await input.fill('Text stays available');
+    await input.press('Enter');
+    await expect(page.locator('.sync-message-text').filter({ hasText: /^Text stays available$/ })).toBeVisible();
+    await expect.poll(() => posted.length).toBe(1);
+    expect(posted[0].text).toMatch(/^e2ee1\./);
+    await input.fill('Keep this next draft');
+    await page.evaluate(() => window.releaseRegistration());
+    await page.waitForFunction(() => navigator.serviceWorker.controller?.scriptURL.endsWith('/sync-e2ee-worker.js'));
+    await expect(input).toHaveValue('Keep this next draft');
+});
+
 test('opens the standalone chat at every viewport with only its own assets and translated controls', async ({ page }) => {
     const errors = [];
     const missing = [];
@@ -161,9 +200,9 @@ test('reuses a portfolio session, exchanges encrypted messages and previews and 
     const download = await downloading;
     expect(download.suggestedFilename()).toBe('notes.txt');
     expect(await readFile(await download.path())).toEqual(text);
-    expect(await page.evaluate(() => navigator.serviceWorker.controller.scriptURL)).toBe(`${site.origin}/chat/sync-e2ee-worker.js`);
+    expect(await page.evaluate(() => navigator.serviceWorker.controller.scriptURL)).toBe(`${site.origin}/sync-e2ee-worker.js`);
     const registrations = await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).map(entry => entry.scope));
-    expect(registrations).toContain(`${site.origin}/chat/`);
+    expect(registrations).toEqual([`${site.origin}/`]);
     await page.reload();
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
     await expect(page.locator('.sync-message')).toHaveCount(4);
