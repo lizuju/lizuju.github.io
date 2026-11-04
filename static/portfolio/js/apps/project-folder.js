@@ -156,6 +156,7 @@ import { PreviewZoom } from './preview-zoom.js';
             show: () => {
                 loadVideo();
                 manager.showWindow(videoPreviewWindow, videoPreviewTask, { revealTask: true });
+                if (video.paused && videoPosition > 0 && videoPosition < video.duration) video.currentTime = videoPosition;
             },
             hide: (state) => {
                 saveVideoPosition();
