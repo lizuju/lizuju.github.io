@@ -97,15 +97,18 @@ async function createRuntime() {
               return worker.fetch(request, env);
             }
           };
-          let calls = 0, fail = false;
+          let calls = 0, fail = false, analyticsGate, releaseAnalytics;
           globalThis.fetch = async () => {
             calls += 1;
+            if (analyticsGate) await analyticsGate;
             await new Promise(resolve => setTimeout(resolve, 10));
             if (fail) throw new Error('private-provider-error');
             return Response.json(${JSON.stringify(payload(account))});
           };
           export class E2eePairingRegistry extends ProductionRegistry {
             testAnalyticsCalls() { return calls; }
+            testHoldAnalytics() { analyticsGate = new Promise(resolve => { releaseAnalytics = resolve; }); }
+            testReleaseAnalytics() { releaseAnalytics(); analyticsGate = null; }
             testAnalyticsCacheUntil() { return this.dailyUsageCacheUntil; }
             maintainRooms() { this.maintenanceCalls = (this.maintenanceCalls || 0) + 1; return super.maintainRooms(); }
             testMaintenanceCalls() { return this.maintenanceCalls || 0; }
@@ -137,17 +140,17 @@ async function createRuntime() {
   return instance;
 }
 
-test('public status coalesces collection, restores persistent cache and isolates stale failures across UTC rollover', async t => {
+test('on-demand usage coalesces collection, restores persistent cache and isolates stale failures across UTC rollover', async t => {
   const runtime = await createRuntime(); t.after(() => runtime.dispose());
   const registry = (await runtime.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   const status = async () => {
-    const response = await runtime.dispatchFetch('https://sync.test/v1/status');
+    const response = await runtime.dispatchFetch('https://sync.test/v1/usage');
     assert.equal(response.status, 200);
-    return response.json();
+    return { dailyUsage: await response.json() };
   };
   const results = await Promise.all(Array.from({ length: 5 }, status));
   assert.equal(await registry.testAnalyticsCalls(), 1);
-  assert.ok(results.every(result => result.ok && result.dailyUsage.status === 'ready'));
+  assert.ok(results.every(result => result.dailyUsage.status === 'ready'));
   const cacheRemaining = await registry.testAnalyticsCacheUntil() - Date.now();
   assert.ok(cacheRemaining > 14 * 60 * 1000 && cacheRemaining <= 15 * 60 * 1000);
   const persisted = { ...results[0].dailyUsage, checkedAt: Date.now() - 20000 };
@@ -157,7 +160,7 @@ test('public status coalesces collection, restores persistent cache and isolates
   await registry.testSeedCache(persisted);
   await registry.testFailAnalytics();
   const failed = await status();
-  assert.equal(failed.ok, true); assert.equal(failed.dailyUsage.status, 'stale'); assert.equal(failed.dailyUsage.available, true);
+  assert.equal(failed.dailyUsage.status, 'stale'); assert.equal(failed.dailyUsage.available, true);
   assert.equal(failed.dailyUsage.checkedAt, persisted.checkedAt); assert.deepEqual(failed.dailyUsage.metrics, persisted.metrics);
   const failedCalls = await registry.testAnalyticsCalls();
   await status(); assert.equal(await registry.testAnalyticsCalls(), failedCalls);
@@ -184,4 +187,28 @@ test('daily maintenance never collects account analytics in the background', asy
   assert.equal(await registry.testAnalyticsCalls(), 0); assert.equal(await registry.testMaintenanceCalls(), 1);
   const config = JSON.parse(await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   assert.deepEqual(config.triggers.crons, ['17 0 * * *']);
+});
+
+
+test('health and storage return while analytics is stalled and concurrent usage requests share one collection', async t => {
+  const runtime = await createRuntime(); t.after(() => runtime.dispose());
+  const registry = (await runtime.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const initial = await runtime.dispatchFetch('https://sync.test/v1/status');
+  assert.equal((await initial.json()).ok, true);
+  assert.equal(await registry.testAnalyticsCalls(), 0);
+  await registry.testHoldAnalytics();
+  const requests = Array.from({ length: 5 }, () => runtime.dispatchFetch('https://sync.test/v1/usage'));
+  try {
+    while (!await registry.testAnalyticsCalls()) await new Promise(resolve => setTimeout(resolve, 10));
+    await registry.testDropMemory();
+    const status = await runtime.dispatchFetch('https://sync.test/v1/status', { signal: AbortSignal.timeout(1500) });
+    const body = await status.json();
+    assert.equal(status.status, 200);
+    assert.equal(body.ok, true);
+    assert.ok(body.database && body.storage && body.maintenance);
+    assert.equal(body.dailyUsage, undefined);
+    assert.equal(await registry.testAnalyticsCalls(), 1);
+  } finally { await registry.testReleaseAnalytics(); }
+  for (const response of await Promise.all(requests)) assert.equal((await response.json()).status, 'ready');
+  assert.equal(await registry.testAnalyticsCalls(), 1);
 });

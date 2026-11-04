@@ -11,6 +11,7 @@ export function setupSyncStorage(app) {
     const refreshInterval = 15 * 60 * 1000;
     let request;
     let data;
+    let dailyLoading = false;
     let refreshTimer;
     let lastLoadAt = 0;
     let viewingDesktop = window.parent === window;
@@ -62,11 +63,11 @@ export function setupSyncStorage(app) {
             metrics.append(term, detail);
         }
         const daily = data.dailyUsage;
-        dailyNotice.dataset.state = daily?.status || 'unavailable';
-        dailyNotice.textContent = t()[{
+        dailyNotice.dataset.state = dailyLoading ? 'loading' : daily?.status || 'unavailable';
+        dailyNotice.textContent = dailyLoading ? t().syncDailyLoading : t()[{
             ready: 'syncDailyReady', stale: 'syncDailyStale', not_configured: 'syncDailyNotConfigured', unavailable: 'syncDailyUnavailable'
         }[daily?.status || 'unavailable']];
-        if (!daily) return;
+        if (!daily?.day) return;
         dailyChecked.textContent = t().syncDailyChecked.replace('{day}', daily.day).replace('{time}', timestamp(daily.checkedAt)).replace('{reset}', timestamp(daily.resetsAt));
         if (!daily.available || !daily.metrics) return;
         dailyMetrics.hidden = false;
@@ -95,6 +96,7 @@ export function setupSyncStorage(app) {
             if (request) lastLoadAt = 0;
             request?.abort();
             request = null;
+            dailyLoading = false;
             button.disabled = false;
             if (noticeKey === 'syncStorageLoading') {
                 noticeKey = data ? '' : 'syncStorageReady';
@@ -127,11 +129,32 @@ export function setupSyncStorage(app) {
             if (request !== controller) return;
             const result = await response.json();
             if (!response.ok && !result.database) throw new Error('unavailable');
-            data = result;
+            data = { ...result, dailyUsage: data?.dailyUsage };
             noticeKey = '';
+            dailyLoading = true;
+            render();
+            try {
+                const usageResponse = await fetch(`${base.href.replace(/\/$/, '')}/v1/usage`, {
+                    cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)])
+                });
+                if (!usageResponse.ok) throw new Error('unavailable');
+                const usage = await usageResponse.json();
+                if (request !== controller) return;
+                data.dailyUsage = usage;
+            } catch {
+                if (request !== controller || controller.signal.aborted) return;
+                data.dailyUsage = data.dailyUsage?.available
+                    ? { ...data.dailyUsage, status: 'stale', stale: true }
+                    : { status: 'unavailable' };
+            }
+            dailyLoading = false;
             render();
         } catch {
-            if (request === controller && !controller.signal.aborted) setNotice('syncStorageFailed');
+            if (request === controller && !controller.signal.aborted) {
+                if (data?.dailyUsage?.available) data.dailyUsage = { ...data.dailyUsage, status: 'stale', stale: true };
+                noticeKey = 'syncStorageFailed';
+                render();
+            }
         } finally {
             if (request === controller) {
                 button.disabled = false;
@@ -158,6 +181,7 @@ export function setupSyncStorage(app) {
             request?.abort();
             request = null;
             data = null;
+            dailyLoading = false;
             lastLoadAt = 0;
             noticeKey = 'syncStorageReady';
             button.disabled = false;

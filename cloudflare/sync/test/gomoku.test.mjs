@@ -443,3 +443,49 @@ test('either rematch player can cancel and request again without overwriting a f
   assert.equal((await create()).status, 201);
   assert.equal((await read(host, game.id)).body.game.status, 'finished');
 });
+
+test('history pressure preserves waiting and playing games while removing other old messages, then expires them after seven days', async () => {
+  for (const status of ['waiting', 'playing']) {
+    const { host, peers: [guest], storage, path } = await room();
+    const invitation = await invite(host);
+    let game = invitation.body.game;
+    if (status === 'playing') game = (await act(guest, game.id, 'join')).body.game;
+    const createdAt = Date.now();
+    for (let index = 0; index < 499; index++) await storage.exec(
+      'INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?)',
+      randomUUID(), host.deviceId, cipher(host.keyId), createdAt);
+    await runtime.unsafeEvictDurableObject(workerName, 'E2eeSyncRoom', { name: host.roomId });
+    const connected = await connect(guest);
+    for (const removedId of [2, 3]) {
+      const posted = await request(`${path}/messages`, host, { method: 'POST', json: { clientId: randomUUID(), text: cipher(host.keyId) } });
+      assert.equal(posted.status, 201);
+      const frame = await connected.next(frame => frame.type === 'message' && frame.message.id === posted.body.id);
+      assert.deepEqual(frame.history.removedIds, [removedId]);
+      assert.equal(frame.history.oldestId, game.messageId);
+      assert.equal(frame.activeGames.find(value => value.id === game.id).status, status);
+      assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 500 }]);
+      assert.deepEqual(await storage.exec('SELECT id FROM messages WHERE id = ?', removedId), []);
+      assert.equal((await read(host, game.id)).body.game.status, status);
+    }
+    if (status === 'playing') assert.equal((await move(host, game, 7, 7)).status, 200);
+    await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - 7 * 86400000 - 1, game.messageId);
+    assert.equal((await read(host, game.id)).status, 404);
+    assert.deepEqual((await connected.next(frame => frame.type === 'history')).history.removedIds, [game.messageId]);
+    connected.socket.close();
+  }
+});
+
+test('a protected game becomes eligible for the message cap after it finishes', async () => {
+  const { host, guest, storage, path, game } = await playing();
+  for (let index = 0; index < 499; index++) await storage.exec(
+    'INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?)',
+    randomUUID(), host.deviceId, cipher(host.keyId), Date.now());
+  await runtime.unsafeEvictDurableObject(workerName, 'E2eeSyncRoom', { name: host.roomId });
+  const send = () => request(`${path}/messages`, host, { method: 'POST', json: { clientId: randomUUID(), text: cipher(host.keyId) } });
+  assert.equal((await send()).status, 201);
+  assert.equal((await read(host, game.id)).body.game.status, 'playing');
+  assert.equal((await act(guest, game.id, 'leave')).body.game.status, 'finished');
+  assert.equal((await send()).status, 201);
+  assert.equal((await read(host, game.id)).status, 404);
+  assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 500 }]);
+});

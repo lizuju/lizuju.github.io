@@ -10,11 +10,29 @@ function startMobilePortfolio() {
 
     if (!enterButton || !portfolio) return;
 
+    const updateVisibility = () => {
+        // Returning this cross-frame call makes WebKit misidentify MessageEvent.source.
+        portfolio.contentWindow?.postMessage({
+            source: 'gavin-shell',
+            type: 'portfolio-view-state',
+            active: document.body.classList.contains('mobile-portfolio-started') && !document.hidden,
+        }, window.location.origin);
+    };
+    portfolio.addEventListener('load', updateVisibility);
+    document.addEventListener('visibilitychange', updateVisibility);
+    window.addEventListener('pageshow', updateVisibility);
+    window.addEventListener('pagehide', () => {
+        portfolio.contentWindow?.postMessage({
+            source: 'gavin-shell', type: 'portfolio-view-state', active: false,
+        }, window.location.origin);
+    });
+
     enterButton.addEventListener('click', () => {
         if (!portfolio.getAttribute('src')) {
             portfolio.src = portfolio.dataset.src || 'portfolio/';
         }
         document.body.classList.add('mobile-portfolio-started');
+        updateVisibility();
     });
 }
 

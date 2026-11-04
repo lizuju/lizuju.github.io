@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import eventBus from '../EventBus';
 
 type LoadingFailure = {
@@ -33,6 +33,28 @@ const LoadingScreen: React.FC = () => {
     const [loadingTextVisible, setLoadingTextVisible] = useState(true);
     const [startPopupVisible, setStartPopupVisible] = useState(false);
     const [started, setStarted] = useState(false);
+    const overlayRef = useRef<HTMLDivElement>(null);
+
+    useLayoutEffect(() => {
+        if (started) return;
+        const background = Array.from(document.querySelectorAll<HTMLElement>(
+            '#css, #webgl, #overlay, #ui-interactive, .direct-entry'
+        )).map(element => ({ element, inert: element.hasAttribute('inert') }));
+        background.forEach(({ element }) => element.setAttribute('inert', ''));
+        return () => background.forEach(({ element, inert }) => element.toggleAttribute('inert', inert));
+    }, [started]);
+
+    useLayoutEffect(() => {
+        const overlay = overlayRef.current;
+        if (started) {
+            if (overlay?.contains(document.activeElement)) {
+                document.querySelector<HTMLElement>('.direct-entry')?.focus({ preventScroll: true });
+            }
+            return;
+        }
+        const action = failure || startPopupVisible ? overlay?.querySelector<HTMLButtonElement>(failure ? '[data-resource-retry]' : '[data-start-scene]') : null;
+        (action || overlay)?.focus({ preventScroll: true });
+    }, [started, failure, startPopupVisible]);
 
     const start = useCallback(() => {
         setStarted(true);
@@ -103,6 +125,17 @@ const LoadingScreen: React.FC = () => {
 
     return (
         <div
+            ref={overlayRef}
+            tabIndex={-1}
+            role={started ? undefined : 'dialog'}
+            aria-modal={started ? undefined : true}
+            aria-label="启动沉浸式场景 / Start immersive scene"
+            onKeyDown={event => {
+                if (started || event.key !== 'Tab') return;
+                event.preventDefault();
+                const action = failure || startPopupVisible ? overlayRef.current?.querySelector<HTMLButtonElement>(failure ? '[data-resource-retry]' : '[data-start-scene]') : null;
+                (action || overlayRef.current)?.focus({ preventScroll: true });
+            }}
             style={Object.assign({}, styles.overlay, {
                 opacity: started ? 0 : 1,
                 transform: `scale(${started ? 1.1 : 1})`,

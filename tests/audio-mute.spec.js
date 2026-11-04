@@ -23,7 +23,15 @@ test.beforeEach(async ({ page, isMobile }) => {
     test.setTimeout(60000);
     await page.addInitScript(() => {
         const NativeAudioContext = window.AudioContext || window.webkitAudioContext;
-        window.__sceneAudio = { contexts: [], sources: [], errors: [], heldTransitions: [] };
+        window.__sceneAudio = { contexts: [], sources: [], panners: [], errors: [], heldTransitions: [], buffers: 0 };
+        for (const Context of [window.WebGLRenderingContext, window.WebGL2RenderingContext]) {
+            if (!Context || !Object.hasOwn(Context.prototype, 'createBuffer')) continue;
+            const createBuffer = Context.prototype.createBuffer;
+            Context.prototype.createBuffer = function (...args) {
+                window.__sceneAudio.buffers++;
+                return createBuffer.apply(this, args);
+            };
+        }
         window.addEventListener('unhandledrejection', (event) => {
             window.__sceneAudio.errors.push(String(event.reason));
         });
@@ -47,10 +55,15 @@ test.beforeEach(async ({ page, isMobile }) => {
                 const createBufferSource = context.createBufferSource.bind(context);
                 context.createBufferSource = () => {
                     const node = createBufferSource();
-                    const record = { node, starts: [], stops: 0 };
+                    const record = { node, starts: [], stops: 0, disconnects: 0 };
                     window.__sceneAudio.sources.push(record);
                     const start = node.start.bind(node);
                     const stop = node.stop.bind(node);
+                    const disconnect = node.disconnect.bind(node);
+                    node.disconnect = (...parameters) => {
+                        record.disconnects++;
+                        return disconnect(...parameters);
+                    };
                     node.start = (...parameters) => {
                         record.starts.push(parameters);
                         return start(...parameters);
@@ -58,6 +71,18 @@ test.beforeEach(async ({ page, isMobile }) => {
                     node.stop = (...parameters) => {
                         record.stops += 1;
                         return stop(...parameters);
+                    };
+                    return node;
+                };
+                const createPanner = context.createPanner.bind(context);
+                context.createPanner = () => {
+                    const node = createPanner();
+                    const record = { node, disconnects: 0 };
+                    window.__sceneAudio.panners.push(record);
+                    const disconnect = node.disconnect.bind(node);
+                    node.disconnect = (...parameters) => {
+                        record.disconnects++;
+                        return disconnect(...parameters);
                     };
                     return node;
                 };
@@ -280,5 +305,55 @@ test('keeps native media playback and volume independent of both background mute
         expect(mediaAfter[index].muted).toBe(mediaBefore[index].muted);
         expect(mediaAfter[index].paused).toBe(false);
     }
+    expect(await page.evaluate(() => window.__sceneAudio.errors)).toEqual([]);
+});
+
+
+test('releases positional audio without growing GPU buffers or losing overlapping sounds from the pool', async ({ page }) => {
+    await startScene(page);
+    const taskbarAudio = page.frameLocator('#computer-screen').locator('[data-audio-toggle]');
+    const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await frames();
+    const baseline = await page.evaluate(() => window.__sceneAudio.buffers);
+    const play = () => page.evaluate(() => {
+        const index = window.__sceneAudio.sources.length;
+        const event = new MouseEvent('mousedown');
+        event.inComputer = true;
+        document.dispatchEvent(event);
+        return index;
+    });
+    const first = await play();
+    const second = await play();
+    await frames();
+    expect(await page.evaluate(() => window.__sceneAudio.buffers)).toBe(baseline);
+    await expect.poll(() => page.evaluate(() => {
+        const panner = window.__sceneAudio.panners.at(-1).node;
+        return [panner.positionX.value, panner.positionY.value, panner.positionZ.value];
+    })).toEqual([800, -300, 1200]);
+
+    // End the older sound first, then start another while the second is still playing.
+    // A pool keyed by its current length would overwrite the second sound here.
+    await page.evaluate(index => window.__sceneAudio.sources[index].node.stop(), first);
+    await expect.poll(() => page.evaluate(index => window.__sceneAudio.sources[index].disconnects, first)).toBe(1);
+    const third = await play();
+    await taskbarAudio.evaluate(button => button.click());
+    await expect.poll(() => page.evaluate(() => window.__sceneAudio.contexts[0].state)).toBe('suspended');
+    for (const index of [first, second, third]) {
+        expect(await page.evaluate(index => {
+            const { stops, disconnects } = window.__sceneAudio.sources[index];
+            return { stops, disconnects };
+        }, index)).toEqual({ stops: 1, disconnects: 1 });
+    }
+    expect(await page.evaluate(() => window.__sceneAudio.panners.map(record => record.disconnects))).toEqual([1, 1, 1]);
+    await taskbarAudio.evaluate(button => button.click());
+    await expect.poll(() => page.evaluate(() => window.__sceneAudio.contexts[0].state)).toBe('running');
+
+    const batch = [];
+    for (let index = 0; index < 30; index++) batch.push(await play());
+    await frames();
+    expect(await page.evaluate(() => window.__sceneAudio.buffers)).toBe(baseline);
+    await page.evaluate(indices => indices.forEach(index => window.__sceneAudio.sources[index].node.stop()), batch);
+    await expect.poll(() => page.evaluate(() => window.__sceneAudio.panners.every(record => record.disconnects === 1))).toBe(true);
+    expect(await page.evaluate(() => window.__sceneAudio.sources.filter(({ node }) => node.loop).map(({ starts, stops }) => ({ starts: starts.length, stops })))).toEqual([{ starts: 1, stops: 0 }]);
     expect(await page.evaluate(() => window.__sceneAudio.errors)).toEqual([]);
 });

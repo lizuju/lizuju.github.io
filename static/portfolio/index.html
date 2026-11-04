@@ -720,7 +720,12 @@
                 </div>
             </div>
 
+            <div class="project-folder-search">
+                <input type="search" data-project-folder-search data-i18n-placeholder="folderSearch"
+                    placeholder="搜索此文件夹" aria-label="搜索此文件夹" autocomplete="off">
+            </div>
             <div class="project-folder-scroll">
+                <p class="project-folder-empty" data-project-folder-empty data-i18n="folderSearchEmpty" role="status" hidden>没有匹配的文件。</p>
                 <div class="project-folder-grid" data-project-folder-root>
                     <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
                         data-open-robomaster-folder data-folder="photos">
@@ -1319,7 +1324,7 @@
                             <span data-gomoku-i18n="newGame">新游戏</span><kbd>F2</kbd>
                         </button>
                         <button type="button" role="menuitem" data-gomoku-undo>
-                            <span data-gomoku-i18n="undo">悔棋</span><kbd>Ctrl+Z</kbd>
+                            <span data-gomoku-i18n="undo">悔棋</span><kbd>Ctrl/Cmd+Z</kbd>
                         </button>
                         <div class="window-menu-separator gomoku-menu-separator" role="separator"></div>
                         <button type="button" role="menuitem" data-gomoku-window-action="close"
@@ -1586,7 +1591,6 @@
         </section>
     </div>
 
-    <script src="js/gomoku-engine.js?v=__ASSET_VERSION__"></script>
     <script src="js/gomoku-game.js?v=__ASSET_VERSION__"></script>
     <script src="js/content.js?v=__ASSET_VERSION__"></script>
     <script src="js/main.js?v=__ASSET_VERSION__"></script>

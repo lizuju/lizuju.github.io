@@ -4,7 +4,6 @@ import { AmbienceAudio, ComputerAudio } from './AudioSources';
 import UIEventBus from '../UI/EventBus';
 import { getMuteState } from './MuteState';
 
-const POS_DEBUG = false;
 const DEFAULT_REF_DISTANCE = 10000;
 export default class Audio {
     application: Application;
@@ -17,6 +16,7 @@ export default class Audio {
         ambience: AmbienceAudio;
     };
     scene: THREE.Scene;
+    nextAudioId = 0;
 
     constructor() {
         this.application = new Application();
@@ -46,10 +46,7 @@ export default class Audio {
                 this.application.camera.instance.remove(this.listener);
                 for (const [key, audio] of Object.entries(this.audioPool)) {
                     if (audio.loop) continue;
-                    if (audio.isPlaying) audio.stop();
-                    delete this.audioPool[key];
-                    const positionalObject = this.scene.getObjectByName(key);
-                    if (positionalObject) this.scene.remove(positionalObject);
+                    this.releaseAudio(key);
                 }
             } else {
                 this.application.camera.instance.add(this.listener);
@@ -99,37 +96,16 @@ export default class Audio {
         // Setup
         const buffer = this.loadedAudio[sourceName];
         if (!sourceName || !buffer) return '';
-        const poolKey = sourceName + '_' + Object.keys(this.audioPool).length;
+        const poolKey = `${sourceName}_${this.nextAudioId++}`;
 
-        let audio: THREE.Audio<any> | THREE.PositionalAudio = new THREE.Audio(
-            this.listener
-        );
+        const audio = options.position
+            ? new THREE.PositionalAudio(this.listener)
+            : new THREE.Audio(this.listener);
 
-        if (options.position) {
-            audio = new THREE.PositionalAudio(this.listener);
-
-            // @ts-ignore
+        if (audio instanceof THREE.PositionalAudio && options.position) {
             audio.setRefDistance(options.refDistance || DEFAULT_REF_DISTANCE);
-            // @ts-ignore
-            // audio.setDistanceModel('linear');
-
-            const extraMaterialOptions = !POS_DEBUG
-                ? {
-                      transparent: true,
-                      opacity: 0,
-                  }
-                : {};
-
-            const sphere = new THREE.SphereGeometry(100, 8, 8);
-            const material = new THREE.MeshBasicMaterial({
-                color: 0xff0000,
-                ...extraMaterialOptions,
-            });
-            const mesh = new THREE.Mesh(sphere, material);
-
-            mesh.position.copy(options.position);
-            mesh.name = poolKey;
-            this.scene.add(mesh);
+            audio.position.copy(options.position);
+            this.scene.add(audio);
         }
         audio.setBuffer(buffer);
 
@@ -169,18 +145,23 @@ export default class Audio {
         // Add to pool
         if (audio.source) {
             audio.source.onended = () => {
-                delete this.audioPool[poolKey];
-                if (options.position) {
-                    const positionalObject =
-                        this.scene.getObjectByName(poolKey);
-                    if (positionalObject) {
-                        this.scene.remove(positionalObject);
-                    }
-                }
+                audio.onEnded();
+                this.releaseAudio(poolKey);
             };
             this.audioPool[poolKey] = audio;
         }
         return poolKey;
+    }
+
+    private releaseAudio(key: string) {
+        const audio = this.audioPool[key];
+        delete this.audioPool[key];
+        audio.source!.onended = null;
+        if (audio.isPlaying) audio.stop();
+        audio.disconnect();
+        if (audio instanceof THREE.PositionalAudio) audio.panner.disconnect();
+        audio.gain.disconnect();
+        audio.removeFromParent();
     }
 
     setAudioFilterFrequency(audio: string, frequency: number) {
@@ -222,9 +203,7 @@ export default class Audio {
     }
 
     destroy() {
-        for (const audio of Object.values(this.audioPool)) {
-            if (audio.isPlaying) audio.stop();
-        }
+        for (const key of Object.keys(this.audioPool)) this.releaseAudio(key);
         this.application.camera.instance.remove(this.listener);
         this.context.suspend().catch(() => undefined);
     }

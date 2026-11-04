@@ -1,4 +1,4 @@
-const { test, expect, deviceId, otherId, keyId, profile, message, authorize } = require('./fixtures/sync-e2ee.cjs');
+const { test, expect, roomId, session, deviceId, otherId, keyId, profile, message, authorize } = require('./fixtures/sync-e2ee.cjs');
 
 test.use({ serviceWorkers: 'block' });
 
@@ -9,26 +9,29 @@ const headers = {
 const bounds = latestId => ({ generation: '1', oldestId: 1, latestId, continuationId: latestId, hasNewer: false });
 const atBottom = page => page.locator('[data-sync-feed]').evaluate(feed => feed.scrollHeight - feed.clientHeight - feed.scrollTop);
 
-const openChat = async (page, history, receipts = [], background = false, realClock = false) => {
+const openChat = async (page, history, receipts = [], background = false, realClock = false, prepare = async () => {}) => {
     if (!realClock) await page.clock.install();
     await authorize(page);
+    await prepare();
     await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
     await page.route('https://sync.test/**', route => {
         if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
         return route.fulfill({ headers, json: {
-            deviceId, devices: [profile('Local'), profile('Paired', otherId)], grants: [], hasMore: false, keyId
+            deviceId, devices: route.request().url().includes(roomId) ? [profile('Local'), profile('Paired', otherId)] : [], grants: [], hasMore: false, keyId
         } });
     });
-    let connection;
+    const connections = new Map();
     const reads = [];
     await page.routeWebSocket('wss://sync.test/**', socket => {
-        connection = socket;
+        const room = new URL(socket.url()).pathname.split('/')[3];
+        connections.set(room, socket);
+        const initial = room === roomId ? history : [];
         socket.onMessage(raw => {
             if (raw === 'ping') return socket.send('pong');
             const data = JSON.parse(raw);
             if (data.type === 'auth') socket.send(JSON.stringify({
-                type: 'ready', deviceId, messages: history, pairing: null, readReceipts: receipts,
-                history: bounds(history.at(-1)?.id ?? null), historyMode: 'replace'
+                type: 'ready', deviceId, messages: initial, pairing: null, readReceipts: receipts,
+                history: bounds(initial.at(-1)?.id ?? null), historyMode: 'replace'
             }));
             else if (data.type === 'read') {
                 reads.push(data.messageId);
@@ -48,12 +51,13 @@ const openChat = async (page, history, receipts = [], background = false, realCl
     await expect(page.locator('.sync-message')).toHaveCount(history.length);
     return {
         reads,
+        publish: (message, metadata) => connections.get(roomId).send(JSON.stringify({ type: 'message', message, history: metadata })),
         incoming: async (id, metadata = bounds(id)) => {
-            connection.send(JSON.stringify({ type: 'message', message: message(id, `Incoming ${id}`, otherId), history: metadata }));
+            connections.get(roomId).send(JSON.stringify({ type: 'message', message: message(id, `Incoming ${id}`, otherId), history: metadata }));
             await expect(page.locator('.sync-message-text').last()).toHaveText(`Incoming ${id}`);
         },
-        receipt: (sender, id) => connection.send(JSON.stringify({ type: 'read', deviceId: sender, messageId: id })),
-        snapshot: receipts => connection.send(JSON.stringify({ type: 'history', messages: history,
+        receipt: (sender, id) => connections.get(roomId).send(JSON.stringify({ type: 'read', deviceId: sender, messageId: id })),
+        snapshot: receipts => connections.get(roomId).send(JSON.stringify({ type: 'history', messages: history,
             history: bounds(history.at(-1)?.id ?? null), historyMode: 'replace', readReceipts: receipts }))
     };
 };
@@ -346,3 +350,96 @@ for (const sidebar of ['tools', 'spaces']) {
         await expect.poll(() => chat.reads.at(-1)).toBe(1);
     });
 }
+
+
+test('preserves an older protected message when the server trims later messages', async ({ page }) => {
+    const chat = await openChat(page, Array.from({ length: 500 }, (_, index) => message(index + 1, `History ${index + 1}`, otherId)),
+        [{ deviceId, messageId: 500 }], false, true);
+    await chat.incoming(501, { ...bounds(501), generation: '2', removedIds: [2] });
+    await expect(page.locator('.sync-message')).toHaveCount(500);
+    await expect(page.locator('.sync-message-text').first()).toHaveText('History 1');
+    await expect(page.locator('.sync-message-text').nth(1)).toHaveText('History 3');
+    await expect(page.locator('.sync-message-text').filter({ hasText: /^History 2$/ })).toHaveCount(0);
+});
+
+
+test('keeps protected history while multiple HTTP acknowledgments precede pruning frames', async ({ page }) => {
+    const chat = await openChat(page, Array.from({ length: 500 }, (_, index) => message(index + 1, `History ${index + 1}`, otherId)),
+        [{ deviceId, messageId: 500 }], false, true);
+    const sent = [];
+    await page.route('https://sync.test/**/messages', route => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        const acknowledged = { ...route.request().postDataJSON(), id: 501 + sent.length, deviceId, createdAt: Date.now() };
+        sent.push(acknowledged);
+        return route.fulfill({ headers, json: acknowledged });
+    });
+    for (const text of ['First acknowledgment', 'Second acknowledgment']) {
+        await page.locator('[data-sync-input]').fill(text);
+        await page.locator('[data-sync-send]').click();
+        await expect(page.locator('.sync-message').filter({ has: page.getByText(text, { exact: true }) })).toHaveAttribute('data-state', 'sent');
+    }
+    await expect(page.locator('.sync-message-text').first()).toHaveText('History 1');
+    await expect(page.locator('.sync-message')).toHaveCount(502);
+    chat.publish(sent[0], { ...bounds(501), generation: '2', removedIds: [2] });
+    await expect(page.locator('.sync-message')).toHaveCount(501);
+    await expect(page.locator('.sync-message-text').first()).toHaveText('History 1');
+    chat.publish(sent[1], { ...bounds(502), generation: '3', removedIds: [3] });
+    await expect(page.locator('.sync-message')).toHaveCount(500);
+    await expect(page.locator('.sync-message-text').first()).toHaveText('History 1');
+    await expect(page.locator('.sync-message-text').nth(1)).toHaveText('History 4');
+});
+
+test('keeps protected history when an HTTP acknowledgment arrives after switching spaces', async ({ page }) => {
+    const otherRoom = '11111111-1111-4111-8111-111111111111';
+    const chat = await openChat(page, Array.from({ length: 500 }, (_, index) => message(index + 1, `History ${index + 1}`, otherId)),
+        [{ deviceId, messageId: 500 }], false, false, async () => {
+            await page.route('**/__history-setup__/*', async route => route.fulfill({ contentType: 'text/javascript',
+                body: await require('node:fs/promises').readFile(require('node:path').join(__dirname, '../static/portfolio/js/apps',
+                    new URL(route.request().url()).pathname.split('/').at(-1)), 'utf8') }));
+            await page.evaluate(async ({ session, otherRoom }) => {
+                const { SavedSpaces } = await import('/__history-setup__/sync-spaces.js');
+                const spaces = new SavedSpaces();
+                await spaces.importActive();
+                await spaces.save({ ...session, roomId: otherRoom }, { activate: true });
+                await spaces.select(session.roomId);
+            }, { session, otherRoom });
+        });
+    let acknowledgment;
+    let attempts = 0;
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    await page.route('https://sync.test/**/messages', async route => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        if (++attempts === 1) return route.fulfill({ status: 503, headers: { ...headers, 'Retry-After': '5' }, json: { error: 'storage_cleaning' } });
+        acknowledgment = { ...route.request().postDataJSON(), id: 501, deviceId, createdAt: Date.now() };
+        await pending;
+        return route.fulfill({ headers, json: acknowledgment });
+    });
+    const select = async id => {
+        const room = page.locator(`[data-sync-space-id="${id}"]`);
+        if (!await room.isVisible()) await page.locator('[data-sync-spaces-toggle]').click();
+        await room.click();
+        await expect(page.locator('[data-sync-space-title]')).toHaveText(id === roomId ? '空间 1' : '空间 2');
+        await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+    };
+    await page.locator('[data-sync-input]').fill('Acknowledged in the background');
+    await page.locator('[data-sync-send]').click();
+    await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(1);
+    await select(otherRoom);
+    await page.clock.runFor(5100);
+    await expect.poll(() => !!acknowledgment).toBe(true);
+    release();
+    await expect.poll(() => page.evaluate(async () => {
+        const database = await new Promise(resolve => { const request = indexedDB.open('gavin-sync-outbox', 1); request.onsuccess = () => resolve(request.result); });
+        const entries = await new Promise(resolve => { const request = database.transaction('messages').objectStore('messages').getAll(); request.onsuccess = () => resolve(request.result); });
+        database.close();
+        return entries.length;
+    })).toBe(0);
+    await select(roomId);
+    await expect(page.locator('.sync-message')).toHaveCount(501);
+    await expect(page.locator('.sync-message-text').first()).toHaveText('History 1');
+    chat.publish(acknowledgment, { ...bounds(501), generation: '2', removedIds: [2] });
+    await expect(page.locator('.sync-message')).toHaveCount(500);
+    await expect(page.locator('.sync-message-text').first()).toHaveText('History 1');
+    await expect(page.locator('.sync-message-text').nth(1)).toHaveText('History 3');
+});

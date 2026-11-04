@@ -1315,7 +1315,7 @@ import { pendingMessages } from './sync-outbox.js';
                     retry.className = 'sync-message-copy';
                     retry.dataset.syncRetryMessage = '';
                     retry.hidden = true;
-                    retry.addEventListener('click', () => sendOutgoing(message));
+                    retry.addEventListener('click', () => message.attachment || message.sticker || message.gomoku ? sendOutgoing(message) : queueText(message));
                     meta.append(sendStatus, retry);
                     const text = document.createElement('p');
                     text.className = 'sync-message-text';
@@ -1725,9 +1725,11 @@ import { pendingMessages } from './sync-outbox.js';
             const openInvitation = !!message.gomoku && !message.game?.previousGameId && outbox.has(message.clientId);
             reconcileUpload([message]);
             const known = history.some((item) => item.id === message.id);
-            const trimming = metadata?.oldestId > history[0]?.id || !known && history.length >= 500;
+            const removed = new Set(metadata?.removedIds);
+            const trimming = removed.size || metadata?.oldestId > history[0]?.id;
             const top = feed.getBoundingClientRect().top;
             const anchor = trimming && !followLatest && history.find((item) => item.id >= (metadata?.oldestId || 0)
+                && !removed.has(item.id)
                 && !messageNodes.get(item.id)?.hidden && messageNodes.get(item.id)?.getBoundingClientRect().bottom > top);
             const offset = anchor ? messageNodes.get(anchor.id).getBoundingClientRect().top - top : 0;
             if (metadata) {
@@ -1741,7 +1743,7 @@ import { pendingMessages } from './sync-outbox.js';
                 historyState = historyState?.hasNewer
                     ? { ...metadata, generation: historyState.generation, hasNewer: true, continuationId: historyState.continuationId }
                     : metadata;
-                history = history.filter((item) => item.id >= metadata.oldestId);
+                history = history.filter((item) => item.id >= metadata.oldestId && !removed.has(item.id));
             }
             if (advanceCursor && !catchingUp) reconnectCursor = Math.max(reconnectCursor || 0, message.id);
             if (!known) {
@@ -1750,7 +1752,8 @@ import { pendingMessages } from './sync-outbox.js';
                     readAfterInteraction = interactionRevision + 1;
                     if (notify) notifyMessage(message, credentials, receivedAt);
                 }
-                history = [...history, message].sort((a, b) => a.id - b.id).slice(-500);
+                // HTTP acknowledgments can precede pruning frames; only the server decides which messages expire.
+                history = [...history, message].sort((a, b) => a.id - b.id);
             }
             render();
             if (openInvitation) readGame(message.gomoku, true).catch(showError);
@@ -1771,6 +1774,12 @@ import { pendingMessages } from './sync-outbox.js';
             record.failedMessages = new Set([...outbox.values()].filter(message => message.sendState === 'failed').map(message => message.clientId));
             record.devices = devices;
             record.activeGames = [...games.values()].filter(isGameActive);
+            const top = feed.getBoundingClientRect().top;
+            const anchor = [...history, ...outbox.values()].map(message => [message.id, messageNodes.get(message.id)])
+                .find(([, node]) => !node.hidden && node.getBoundingClientRect().bottom > top);
+            record.view = { followLatest, search: find('search').value, scrollTop: feed.scrollTop,
+                anchor: anchor ? { id: anchor[0], offset: anchor[1].getBoundingClientRect().top - top } : null,
+                searchScrollTop, searchAnchor };
         };
         const disposeConnection = record => {
             if (!record) return;
@@ -1781,7 +1790,7 @@ import { pendingMessages } from './sync-outbox.js';
             record.pairing.reset();
         };
         const disconnect = () => {
-            cacheCurrentView();
+            if (!switchingSpace) cacheCurrentView();
             searchController?.abort();
             catchupController?.abort();
             catchupController = null;
@@ -1799,7 +1808,7 @@ import { pendingMessages } from './sync-outbox.js';
             record.history = (mode === 'replace' ? incoming : [...record.history, ...incoming.filter(message => !known.has(message.id))])
                 .filter(message => !removed.has(message.id))
                 .filter(message => !metadata?.oldestId || message.id >= metadata.oldestId)
-                .sort((a, b) => a.id - b.id).slice(-500);
+                .sort((a, b) => a.id - b.id);
             if (metadata) record.historyState = mode === 'prune' ? { ...record.historyState, ...metadata }
                 : live && record.historyState?.hasNewer
                 ? { ...metadata, generation: record.historyState.generation, hasNewer: true, continuationId: record.historyState.continuationId }
@@ -1831,7 +1840,23 @@ import { pendingMessages } from './sync-outbox.js';
             history = record.history;
             historyState = record.historyState;
             reconnectCursor = record.reconnectCursor;
-            render(true);
+            const view = record.view;
+            if (view) {
+                followLatest = view.followLatest;
+                followOnRestore = view.followLatest && !view.search.trim();
+                find('search').value = view.search;
+                searchScrollTop = view.searchScrollTop;
+                searchAnchor = view.searchAnchor;
+            }
+            render(!view);
+            if (view && (!view.followLatest || view.search.trim())) {
+                const anchor = messageNodes.get(view.anchor?.id)
+                    || history.filter(message => message.id >= view.anchor?.id).map(message => messageNodes.get(message.id)).find(node => !node.hidden);
+                feed.scrollTop = view.scrollTop;
+                if (anchor && !anchor.hidden) feed.scrollTop += anchor.getBoundingClientRect().top - feed.getBoundingClientRect().top - view.anchor.offset;
+                lastFeedScrollTop = feed.scrollTop;
+            }
+            if (view?.search.trim()) searchTimer = setTimeout(searchHistory, 180);
             renderDevices();
             if (record.transport?.state === 'online' && !record.devicesLoaded) loadDevices(record.session);
             if (record.historyState?.hasNewer) catchUp(record.historyState);
@@ -1911,6 +1936,7 @@ import { pendingMessages } from './sync-outbox.js';
                 record.outboxEpoch++;
                 await pendingMessages.clear(session);
                 record.history = [];
+                record.view = null;
                 record.unread.clear();
                 record.failedMessages.clear();
                 record.queuedMessages.clear();
@@ -1990,7 +2016,7 @@ import { pendingMessages } from './sync-outbox.js';
                         return api(path, { ...(ticket ? { method: 'POST' } : {}), unshared: true, raw: true, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) }, session);
                     },
                     snapshot: () => {
-                        if (credentials === session) cacheCurrentView();
+                        if (credentials === session && !switchingSpace) cacheCurrentView();
                         const messages = record.history.slice(-50).map(message => message.wire);
                         return { type: 'ready', deviceId: session.deviceId, currentKeyId: session.keyring.currentKeyId, messages, historyMode: 'replace',
                             history: record.historyState, pairing: record.pairingData, spaceProfile: record.spaceProfile,
@@ -1999,7 +2025,7 @@ import { pendingMessages } from './sync-outbox.js';
                             activeGames: record.activeGames };
                     },
                     getUrl: async () => {
-                        if (credentials === session) cacheCurrentView();
+                        if (credentials === session && !switchingSpace) cacheCurrentView();
                         const base = await loadConfig();
                         if (!base) throw Object.assign(new Error('unavailable'), { code: 'unavailable' });
                         const url = new URL(`${base}/v1/spaces/${session.roomId}/socket`);
@@ -2153,7 +2179,9 @@ import { pendingMessages } from './sync-outbox.js';
             if (confirmation.open) confirmation.close();
             if (devicesDialog.open) devicesDialog.close();
             if (spaceNameDialog.open) spaceNameDialog.close();
+            clearTimeout(searchTimer);
             searchController?.abort();
+            searchController = null;
             catchupController?.abort();
             catchupController = null;
             socket = null;
@@ -3150,6 +3178,42 @@ import { pendingMessages } from './sync-outbox.js';
             } catch { if (credentials === record.session) setNotice('syncStorageError', true); }
             finally { record.flushing = false; }
         };
+        const queueText = async outgoing => {
+            const session = credentials;
+            const record = session && connections.get(session.roomId);
+            if (!record || busy || sendingText || switchingSpace || !outbox.has(outgoing.clientId)) return;
+            sendingText = true;
+            sending = true;
+            outgoing.autoSend = true;
+            outgoing.queuedAt = Date.now();
+            outgoing.nextAttemptAt = 0;
+            outgoing.sendState = online ? 'sending' : 'queued';
+            render(true);
+            try {
+                if (!await enqueuePending(record, outgoing)) return;
+                if (credentials === session) {
+                    let saving = saveDraft();
+                    let saved = await saving;
+                    while (saving !== draftSave && credentials === session) { saving = draftSave; saved = await saving; }
+                    if (credentials === session && !saved) throw new Error('draft_not_saved');
+                }
+                if (credentials === session && !online) setNotice('syncMessageQueued');
+            } catch {
+                outgoing.sendState = 'failed';
+                outgoing.autoSend = false;
+                record.queuedMessages.delete(outgoing.clientId);
+                await pendingMessages.save(session, outgoing).catch(() => {});
+                if (credentials === session) { setNotice('syncStorageError', true); saveDraft(); }
+            } finally {
+                if (credentials === session) {
+                    sendingText = false;
+                    sending = !!uploadController;
+                    render();
+                    updateSelectedFile();
+                }
+                flushQueued(record);
+            }
+        };
         const sendOutgoing = async (outgoing, queuedRecord = null) => {
             const session = queuedRecord?.session || credentials;
             const current = () => credentials === session;
@@ -3218,7 +3282,7 @@ import { pendingMessages } from './sync-outbox.js';
                     outgoing.nextAttemptAt = Date.now() + Math.max(5000, (error.retryAfter || 0) * 1000);
                     if (!retry) { outgoing.autoSend = false; queuedRecord.queuedMessages.delete(outgoing.clientId); queuedRecord.failedMessages.add(outgoing.clientId); }
                     await persistQueued(queuedRecord, outgoing);
-                    if (current() && !retry) showError(error);
+                    if (current()) { if (retry) setNotice('syncMessageQueued'); else showError(error); }
                     renderSpaces();
                     return;
                 }
@@ -3228,17 +3292,9 @@ import { pendingMessages } from './sync-outbox.js';
                         if (error.code === 'upload_conflict') discardUpload(true);
                         else { upload.uploadId = null; upload.receivedBytes = 0; }
                     }
-                    if (outbox.has(outgoing.clientId)) {
-                        outgoing.sendState = 'failed';
-                        if (!upload && !outgoing.gomoku && !outgoing.sticker && error.code === 'network_error') {
-                            outgoing.sendState = 'queued'; outgoing.autoSend = true;
-                            try { await enqueuePending(connections.get(session.roomId), outgoing); }
-                            catch { outgoing.sendState = 'failed'; outgoing.autoSend = false; setNotice('syncStorageError', true); }
-                        }
-                    }
+                    if (outbox.has(outgoing.clientId)) outgoing.sendState = 'failed';
                     saveDraft();
-                    if (outgoing.sendState === 'queued') setNotice('syncMessageQueued');
-                    else if (error.code === 'history_cleared') setNotice('syncCleared');
+                    if (error.code === 'history_cleared') setNotice('syncCleared');
                     else if (error.code === 'upload_cancelled') return;
                     else if (upload && !error.code) setNotice('syncUploadFailed', true);
                     else showError(error);
@@ -3277,24 +3333,8 @@ import { pendingMessages } from './sync-outbox.js';
             };
             outbox.set(clientId, outgoing);
             if (!resuming) { input.value = ''; selectedReply = null; mentionComposer.restore(); }
-            if (!file && !online) {
-                outgoing.sendState = 'queued';
-                outgoing.autoSend = true;
-                const record = connections.get(credentials.roomId);
-                render(true);
-                try { if (!await enqueuePending(record, outgoing)) return; }
-                catch { outgoing.sendState = 'failed'; outgoing.autoSend = false; record.queuedMessages.delete(clientId); setNotice('syncStorageError', true); saveDraft(); render(); return; }
-                let saving = saveDraft();
-                let saved = await saving;
-                while (saving !== draftSave) { saving = draftSave; saved = await saving; }
-                if (!saved) {
-                    outgoing.sendState = 'failed'; outgoing.autoSend = false; record.queuedMessages.delete(clientId);
-                    await pendingMessages.save(record.session, outgoing); render();
-                    return;
-                }
-                setNotice('syncMessageQueued');
-                flushQueued(record);
-            } else sendOutgoing(outgoing);
+            if (!file) queueText(outgoing);
+            else sendOutgoing(outgoing);
         });
         const updateStickerLabels = () => {
             find('sticker-close').setAttribute('aria-label', translate('syncStickerClose'));
