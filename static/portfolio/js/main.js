@@ -77,7 +77,6 @@ import { prepareEncryptedFiles } from './apps/sync-e2ee-files.js';
         });
         if (desktopApi.isMobileHomepage()) {
             portfolio.showMobileHomepage();
-            window.addEventListener('pageshow', portfolio.showMobileHomepage);
         } else if (restoredActiveEntry) {
             manager.focusWindow(restoredActiveEntry.element);
         } else {

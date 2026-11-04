@@ -36,14 +36,14 @@ export const pendingMessages = {
         const loaded = await Promise.all(entries.map(entry => decryptPayload(session.keyring, session.roomId, `outbox:${session.deviceId}:${entry.clientId}`, entry.encrypted)));
         return loaded.sort((a, b) => a.createdAt - b.createdAt).map(message => ({ ...message,
             // An uncertain send older than server retention must not be silently replayed.
-            autoSend: message.autoSend && Date.now() - message.createdAt < 7 * 86400000
+            autoSend: message.autoSend && Date.now() - (message.queuedAt ?? message.createdAt) < 7 * 86400000
         }));
     },
     async get(session, clientId) {
         const entry = await store('readonly', messages => messages.get([scope(session), clientId]));
         if (!entry) return null;
         const message = await decryptPayload(session.keyring, session.roomId, `outbox:${session.deviceId}:${clientId}`, entry.encrypted);
-        return { ...message, autoSend: message.autoSend && Date.now() - message.createdAt < 7 * 86400000 };
+        return { ...message, autoSend: message.autoSend && Date.now() - (message.queuedAt ?? message.createdAt) < 7 * 86400000 };
     },
     remove(session, clientId) {
         return change(session, () => store('readwrite', messages => messages.delete([scope(session), clientId])));

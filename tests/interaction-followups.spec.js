@@ -4,10 +4,14 @@ test.use({ serviceWorkers: 'block' });
 
 test('keeps project video ready when minimized and releases playback when closed', async ({ page, isMobile }) => {
     test.skip(isMobile, 'this regression exercises the desktop video window');
-    await page.route('**/music-portfolio/last-christmas-solo.mp4', route => route.fulfill({
-        path: require('node:path').join(__dirname, '../static/textures/monitor/video/static-texture-layer.mp4'),
-        contentType: 'video/mp4'
-    }));
+    const bytes = await require('node:fs/promises').readFile(require('node:path').join(__dirname, '../static/textures/monitor/video/static-texture-layer.mp4'));
+    await page.route('**/music-portfolio/last-christmas-solo.mp4', route => {
+        const range = /bytes=(\d+)-(\d*)/.exec(route.request().headers().range || '');
+        const start = range ? Number(range[1]) : 0;
+        const end = range?.[2] ? Number(range[2]) : bytes.length - 1;
+        return route.fulfill({ status: range ? 206 : 200, contentType: 'video/mp4', body: bytes.subarray(start, end + 1),
+            headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${bytes.length}` } : {}) } });
+    });
     await page.goto('/portfolio/');
     await page.locator('[data-window-action="minimize"]').click();
     await page.locator('.desktop-shortcut[data-open-project-folder]').click();
@@ -18,6 +22,7 @@ test('keeps project video ready when minimized and releases playback when closed
     await video.evaluate(async element => { element.muted = true; await element.play(); });
     await expect.poll(() => video.evaluate(element => element.currentTime)).toBeGreaterThan(0.2);
     await video.evaluate(element => element.pause());
+    const position = await video.evaluate(element => element.currentTime);
     const source = await video.getAttribute('src');
     await page.locator('[data-video-preview-action="minimize"]').click();
     await page.locator('[data-video-preview-task]').click();
@@ -28,7 +33,8 @@ test('keeps project video ready when minimized and releases playback when closed
         .toEqual({ state: 0, source: null, paused: true });
     await page.locator('[data-music-video]').click();
     await expect.poll(() => video.evaluate(element => element.readyState)).toBeGreaterThanOrEqual(1);
-    await expect(video).toHaveJSProperty('currentTime', 0);
+    await expect.poll(() => video.evaluate(element => element.currentTime)).toBeCloseTo(position, 1);
+    await expect(video).toHaveJSProperty('paused', true);
 });
 
 test('preserves the mail draft when the service rejects delivery with HTTP 200', async ({ page, isMobile }) => {

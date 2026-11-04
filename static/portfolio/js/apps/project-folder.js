@@ -13,6 +13,8 @@ import { PreviewZoom } from './preview-zoom.js';
         const projectFolderTitle = document.querySelector('[data-project-folder-window-title]');
         const projectFolderAddress = document.querySelector('[data-project-folder-address]');
         const projectFolderStatus = document.querySelector('[data-project-folder-status]');
+        const folderSearch = document.querySelector('[data-project-folder-search]');
+        const folderEmpty = document.querySelector('[data-project-folder-empty]');
         const projectFolderRoot = document.querySelector('[data-project-folder-root]');
         const robomasterFolderView = document.querySelector('[data-robomaster-folder-view]');
         const robomasterFolderButton = document.querySelector('[data-open-robomaster-folder]');
@@ -54,10 +56,22 @@ import { PreviewZoom } from './preview-zoom.js';
         let currentFolder = 'root';
         let selectedFolderButton = robomasterFolderButton;
         let selectedImageButton;
+        let previewImageButton;
         let selectedPaperButton = paperButtons[0];
         let previewPaperButton;
         let pendingPaperScrollTop;
         const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
+        const folderItems = { root: folderButtons, photos: robomasterImageButtons, music: [musicVideoButton], papers: paperButtons };
+        let videoPosition = 0;
+        try {
+            const saved = Number(localStorage.getItem('portfolio-music-position'));
+            if (Number.isFinite(saved) && saved > 0) videoPosition = saved;
+        } catch {}
+        const saveVideoPosition = () => {
+            if (!video.readyState) return;
+            videoPosition = video.ended ? 0 : video.currentTime;
+            try { localStorage.setItem('portfolio-music-position', String(videoPosition)); } catch {}
+        };
 
         const layoutImage = () => {
             if (!imagePreviewBody.clientWidth || !imagePreviewImage.naturalWidth) return;
@@ -86,6 +100,11 @@ import { PreviewZoom } from './preview-zoom.js';
         const paperZoom = new PreviewZoom({ toolbar: document.querySelector('[data-paper-preview-toolbar]'), onChange: layoutPaper });
         imagePreviewImage.addEventListener('load', layoutImage);
         video.addEventListener('loadedmetadata', layoutVideo);
+        video.addEventListener('loadedmetadata', () => {
+            if (videoPosition > 0 && videoPosition < video.duration) video.currentTime = videoPosition;
+        });
+        for (const event of ['pause', 'seeked', 'ended']) video.addEventListener(event, saveVideoPosition);
+        window.addEventListener('pagehide', saveVideoPosition);
         new ResizeObserver(layoutImage).observe(imagePreviewBody);
         new ResizeObserver(layoutVideo).observe(videoPreviewBody);
         new ResizeObserver(layoutPaper).observe(paperPreviewPages);
@@ -137,8 +156,10 @@ import { PreviewZoom } from './preview-zoom.js';
             show: () => {
                 loadVideo();
                 manager.showWindow(videoPreviewWindow, videoPreviewTask, { revealTask: true });
+                if (video.paused && videoPosition > 0 && videoPosition < video.duration) video.currentTime = videoPosition;
             },
             hide: (state) => {
+                saveVideoPosition();
                 video.pause();
                 if (state === 'is-closed') {
                     video.removeAttribute('src');
@@ -183,8 +204,19 @@ import { PreviewZoom } from './preview-zoom.js';
             paperPreviewPages.querySelectorAll('img').forEach((image, index) => {
                 image.alt = `${name} — ${index + 1} / ${previewPaperButton.dataset.paperPages}`;
             });
+            paperPreviewPages.querySelectorAll('[data-paper-retry]').forEach(button => {
+                button.textContent = copy.paperPreviewRetry;
+                button.previousElementSibling.textContent = copy.paperPreviewFailed;
+            });
         };
 
+        const retryPaperPage = image => {
+            image.parentElement.classList.remove('has-error');
+            image.nextElementSibling.hidden = true;
+            const src = image.getAttribute('src');
+            image.removeAttribute('src');
+            image.src = src;
+        };
         const updatePaperPreview = (button) => {
             if (previewPaperButton !== button) {
                 previewPaperButton = button;
@@ -198,14 +230,28 @@ import { PreviewZoom } from './preview-zoom.js';
                     image.height = 2263;
                     image.loading = index === 0 ? 'eager' : 'lazy';
                     image.decoding = 'async';
+                    const error = document.createElement('div');
+                    error.className = 'paper-preview-error';
+                    error.hidden = true;
+                    const notice = document.createElement('p');
+                    const retry = document.createElement('button');
+                    retry.type = 'button';
+                    retry.className = 'folder-up-button';
+                    retry.dataset.paperRetry = '';
+                    retry.addEventListener('click', () => retryPaperPage(image));
+                    error.append(notice, retry);
+                    image.addEventListener('error', () => { figure.classList.add('has-error'); error.hidden = false; });
+                    image.addEventListener('load', () => { figure.classList.remove('has-error'); error.hidden = true; });
                     image.src = `${button.dataset.paperPreview}/page-${String(index + 1).padStart(2, '0')}.webp`;
                     const caption = document.createElement('figcaption');
                     caption.textContent = `${index + 1} / ${count}`;
-                    figure.append(image, caption);
+                    figure.append(image, error, caption);
                     return figure;
                 }));
                 paperZoom.reset();
                 paperPreviewPages.scrollLeft = 0;
+            } else {
+                paperPreviewPages.querySelectorAll('.has-error img').forEach(retryPaperPage);
             }
             updatePaperCopy();
         };
@@ -223,7 +269,6 @@ import { PreviewZoom } from './preview-zoom.js';
         };
 
         const selectPhoto = (button) => {
-            if (!button) return;
             selectedImageButton = button;
             robomasterImageButtons.forEach((candidate) => {
                 candidate.classList.toggle('is-selected', candidate === button);
@@ -232,13 +277,11 @@ import { PreviewZoom } from './preview-zoom.js';
 
         const selectAllFolderItems = () => {
             if (currentFolder === 'photos') {
-                robomasterImageButtons.forEach((button) => button.classList.add('is-selected'));
-                selectedImageButton = robomasterImageButtons[0];
+                robomasterImageButtons.filter(button => !button.hidden).forEach((button) => button.classList.add('is-selected'));
+                selectedImageButton = robomasterImageButtons.find(button => !button.hidden);
                 return;
             }
-            if (currentFolder === 'music') musicVideoButton.classList.add('is-selected');
-            else if (currentFolder === 'papers') paperButtons.forEach((button) => button.classList.add('is-selected'));
-            else folderButtons.forEach((button) => button.classList.add('is-selected'));
+            folderItems[currentFolder].filter(button => !button.hidden).forEach(button => button.classList.add('is-selected'));
         };
 
         const clearFolderSelection = () => {
@@ -249,44 +292,45 @@ import { PreviewZoom } from './preview-zoom.js';
             selectedImageButton = undefined;
         };
 
-        const getPhotoColumnCount = () => {
-            if (!robomasterImageButtons.length) return 1;
+        const getPhotoColumnCount = (buttons) => {
+            if (!buttons.length) return 1;
 
-            const firstRowTop = robomasterImageButtons[0].offsetTop;
-            const nextRowIndex = robomasterImageButtons.findIndex((button, index) => (
+            const firstRowTop = buttons[0].offsetTop;
+            const nextRowIndex = buttons.findIndex((button, index) => (
                 index > 0 && button.offsetTop !== firstRowTop
             ));
-            return nextRowIndex === -1 ? robomasterImageButtons.length : nextRowIndex;
+            return nextRowIndex === -1 ? buttons.length : nextRowIndex;
         };
 
-        const getPhotoNavigationTarget = (key) => {
-            if (!robomasterImageButtons.length) return null;
-            if (!selectedImageButton) return robomasterImageButtons[0];
+        const getPhotoNavigationTarget = (key, selected = selectedImageButton) => {
+            const buttons = robomasterImageButtons.filter(button => !button.hidden);
+            if (!buttons.length) return null;
+            if (!selected) return buttons[0];
 
-            const currentIndex = robomasterImageButtons.indexOf(selectedImageButton);
-            const columnCount = getPhotoColumnCount();
-            if (currentIndex < 0) return robomasterImageButtons[0];
+            const currentIndex = buttons.indexOf(selected);
+            const columnCount = getPhotoColumnCount(buttons);
+            if (currentIndex < 0) return buttons[0];
 
             if (key === 'ArrowLeft') {
                 return currentIndex % columnCount === 0
-                    ? selectedImageButton
-                    : robomasterImageButtons[currentIndex - 1];
+                    ? selected
+                    : buttons[currentIndex - 1];
             }
             if (key === 'ArrowRight') {
                 return currentIndex % columnCount === columnCount - 1
-                    || currentIndex === robomasterImageButtons.length - 1
-                    ? selectedImageButton
-                    : robomasterImageButtons[currentIndex + 1];
+                    || currentIndex === buttons.length - 1
+                    ? selected
+                    : buttons[currentIndex + 1];
             }
             if (key === 'ArrowUp') {
                 return currentIndex < columnCount
-                    ? selectedImageButton
-                    : robomasterImageButtons[currentIndex - columnCount];
+                    ? selected
+                    : buttons[currentIndex - columnCount];
             }
             if (key === 'ArrowDown') {
-                return currentIndex + columnCount >= robomasterImageButtons.length
-                    ? selectedImageButton
-                    : robomasterImageButtons[currentIndex + columnCount];
+                return currentIndex + columnCount >= buttons.length
+                    ? selected
+                    : buttons[currentIndex + columnCount];
             }
             return null;
         };
@@ -301,22 +345,38 @@ import { PreviewZoom } from './preview-zoom.js';
                 button.querySelector('[data-robomaster-thumbnail]').alt = alt;
             });
 
-            if (!selectedImageButton) {
+            if (!previewImageButton) {
                 imagePreviewTitle.textContent = copy.previewWindowTitle;
                 imagePreviewTaskTitle.textContent = copy.previewTaskTitle;
                 imagePreviewStatus.textContent = copy.previewStatus;
                 return;
             }
 
-            const label = getPhotoCopy(selectedImageButton, 'photoLabel');
+            const label = getPhotoCopy(previewImageButton, 'photoLabel');
             imagePreviewTitle.textContent = `${copy.previewWindowTitle} - ${label}`;
             imagePreviewTaskTitle.textContent = `${copy.previewTaskTitle}: ${label}`;
             imagePreviewCaption.textContent = label;
             imagePreviewStatus.textContent = copy.previewImageType;
-            imagePreviewImage.alt = getPhotoCopy(selectedImageButton, 'photoAlt');
+            imagePreviewImage.alt = getPhotoCopy(previewImageButton, 'photoAlt');
         };
 
+        const filterFolder = () => {
+            const query = folderSearch.value.trim().toLocaleLowerCase();
+            const items = folderItems[currentFolder];
+            for (const button of items) {
+                const name = button.querySelector('strong');
+                const translations = name.dataset.i18n ? Object.values(window.PORTFOLIO_DATA.CONTENT).map(copy => copy[name.dataset.i18n]) : [];
+                const names = [name.textContent, button.dataset.photoLabelZh, button.dataset.photoLabelEn, ...translations];
+                button.hidden = !!query && !names.some(name => name?.toLocaleLowerCase().includes(query));
+            }
+            folderEmpty.hidden = items.some(button => !button.hidden);
+            folderSearch.setAttribute('aria-label', t().folderSearch);
+            if (selectedFolderButton?.hidden) selectedFolderButton = folderButtons.find(button => !button.hidden);
+            if (selectedPaperButton?.hidden) selectedPaperButton = paperButtons.find(button => !button.hidden);
+            if (selectedImageButton?.hidden) selectedImageButton = robomasterImageButtons.find(button => !button.hidden);
+        };
         const setProjectFolderView = (folder) => {
+            if (folder !== currentFolder) folderSearch.value = '';
             currentFolder = folder;
             const copy = t();
             projectFolderRoot.hidden = folder !== 'root';
@@ -341,6 +401,7 @@ import { PreviewZoom } from './preview-zoom.js';
             }
 
             updatePhotoCopy();
+            filterFolder();
         };
 
         const openRoboMasterFolder = () => {
@@ -351,6 +412,7 @@ import { PreviewZoom } from './preview-zoom.js';
         const updateImagePreview = (button) => {
             const changed = imagePreviewImage.getAttribute('src') !== button.dataset.imageSrc;
             selectPhoto(button);
+            previewImageButton = button;
             imagePreviewSource.srcset = button.dataset.imageSrc.replace(/\.jpg$/i, '.webp');
             imagePreviewImage.decoding = 'async';
             imagePreviewImage.src = button.dataset.imageSrc;
@@ -373,14 +435,15 @@ import { PreviewZoom } from './preview-zoom.js';
         };
 
         const openSelectedFolderItem = () => {
+            if (!folderItems[currentFolder].some(button => !button.hidden)) return;
             if (currentFolder === 'root') {
-                setProjectFolderView(selectedFolderButton.dataset.folder);
+                setProjectFolderView((selectedFolderButton || folderButtons.find(button => !button.hidden)).dataset.folder);
                 folderEntry.show();
                 return;
             }
             if (currentFolder === 'music') videoEntry.show();
-            else if (currentFolder === 'papers') openPaperPreview(selectedPaperButton);
-            else openImagePreview(selectedImageButton || robomasterImageButtons[0]);
+            else if (currentFolder === 'papers') openPaperPreview(selectedPaperButton || paperButtons.find(button => !button.hidden));
+            else openImagePreview(selectedImageButton || robomasterImageButtons.find(button => !button.hidden));
         };
 
         manager.addMenuActions({
@@ -389,7 +452,7 @@ import { PreviewZoom } from './preview-zoom.js';
             'folder-open': openSelectedFolderItem,
             'folder-up': () => {
                 setProjectFolderView('root');
-                selectedFolderButton.focus({ preventScroll: true });
+                selectedFolderButton?.focus({ preventScroll: true });
             },
             'folder-close': () => folderEntry.hide('is-closed'),
             'folder-select-all': selectAllFolderItems,
@@ -404,6 +467,7 @@ import { PreviewZoom } from './preview-zoom.js';
         document.querySelectorAll('[data-open-project-folder]').forEach((button) => {
             button.addEventListener('click', openProjectFolder);
         });
+        folderSearch.addEventListener('input', filterFolder);
         folderButtons.forEach((button) => {
             button.addEventListener('focus', () => { selectedFolderButton = button; });
             button.addEventListener('click', () => {
@@ -413,7 +477,7 @@ import { PreviewZoom } from './preview-zoom.js';
         });
         projectFolderBack.addEventListener('click', () => {
             setProjectFolderView('root');
-            selectedFolderButton.focus({ preventScroll: true });
+            selectedFolderButton?.focus({ preventScroll: true });
         });
         musicVideoButton.addEventListener('click', () => {
             musicVideoButton.classList.add('is-selected');
@@ -459,7 +523,7 @@ import { PreviewZoom } from './preview-zoom.js';
                 return;
             }
 
-            const targetPhoto = getPhotoNavigationTarget(event.key);
+            const targetPhoto = getPhotoNavigationTarget(event.key, previewActive ? previewImageButton : selectedImageButton);
             if (!targetPhoto) return;
             event.preventDefault();
 
@@ -488,13 +552,15 @@ import { PreviewZoom } from './preview-zoom.js';
                 selectedPaperIndex: paperButtons.indexOf(selectedPaperButton),
                 previewPaperIndex: paperButtons.indexOf(previewPaperButton),
                 paperScrollTop: pendingPaperScrollTop ?? paperPreviewPages.scrollTop,
-                selectedImageIndex: selectedImageButton ? robomasterImageButtons.indexOf(selectedImageButton) : null
+                selectedImageIndex: selectedImageButton ? robomasterImageButtons.indexOf(selectedImageButton) : null,
+                previewImageIndex: previewImageButton ? robomasterImageButtons.indexOf(previewImageButton) : null
             }),
             restore: (savedState) => {
                 selectedPaperButton = paperButtons[savedState.selectedPaperIndex] || paperButtons[0];
                 setProjectFolderView(savedState.folderView || 'root');
-                const selectedImage = robomasterImageButtons[savedState.selectedImageIndex];
-                if (selectedImage) updateImagePreview(selectedImage);
+                const previewImage = robomasterImageButtons[savedState.previewImageIndex];
+                if (previewImage) updateImagePreview(previewImage);
+                selectPhoto(robomasterImageButtons[savedState.selectedImageIndex]);
                 if (manager.isWindowVisible(videoPreviewWindow)) loadVideo();
                 if (!paperPreviewWindow.classList.contains('is-closed')) {
                     updatePaperPreview(paperButtons[savedState.previewPaperIndex] || selectedPaperButton);

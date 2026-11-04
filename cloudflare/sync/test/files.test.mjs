@@ -1193,6 +1193,7 @@ test('file tables initialize around encrypted messages without changing their sh
   const triggers = await storage.exec("SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'messages'");
   for (const trigger of triggers) await storage.exec(`DROP TRIGGER "${trigger.name}"`);
   for (const table of ['download_tickets', 'file_upload_chunks', 'file_shards', 'files']) await storage.exec(`DROP TABLE ${table}`);
+  await storage.exec("DELETE FROM metadata WHERE key = 'schemaVersion'");
   await instance.unsafeEvictDurableObject('sync-files-test', 'SyncRoom', { name: space.roomId });
   const state = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
   assert.equal(state.status, 200);

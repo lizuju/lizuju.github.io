@@ -4,6 +4,9 @@
     const COMPUTER = 1;
     const EMPTY = -1;
     const AI_DELAY = 260;
+    const AI_TIMEOUT = 15000;
+    const aiWorkerUrl = new URL('gomoku-engine.js', document.currentScript.src);
+    aiWorkerUrl.search = new URL(document.currentScript.src).search;
     const SESSION_STORAGE_KEY = 'gavin-gomoku-session';
 
     const getSessionContext = () => window.parent === window ? 'direct' : 'embedded';
@@ -63,8 +66,8 @@
             computerWins: '电脑获胜，再来一局吧。',
             draw: '棋盘已满，本局平局。',
             helpTitle: '玩法说明',
-            helpCopy: '你执黑棋先手，电脑执白棋。\n在棋盘交叉点落子，横、竖或斜线率先连成五子即可获胜。\nF2：新游戏　Ctrl+Z：悔棋　F：最大化',
-            localHelpCopy: '两位玩家在本设备轮流落子，黑棋先手。\n在棋盘交叉点落子，横、竖或斜线率先连成五子即可获胜。\nF2：新游戏　Ctrl+Z：悔棋　F：最大化',
+            helpCopy: '你执黑棋先手，电脑执白棋。\n在棋盘交叉点落子，横、竖或斜线率先连成五子即可获胜。\nF2：新游戏　Ctrl/Cmd+Z：悔棋　F：最大化',
+            localHelpCopy: '两位玩家在本设备轮流落子，黑棋先手。\n在棋盘交叉点落子，横、竖或斜线率先连成五子即可获胜。\nF2：新游戏　Ctrl/Cmd+Z：悔棋　F：最大化',
             aboutTitle: '关于五子棋',
             aboutCopy: 'GavinOS 五子棋 1.0\n采用经典 Windows 扫雷式界面。\n电脑棋力由 Gomoku minimax 引擎提供。',
             launchLines: [
@@ -116,8 +119,8 @@
             computerWins: 'Computer wins. Try another round.',
             draw: 'The board is full. Draw game.',
             helpTitle: 'How to Play',
-            helpCopy: 'You play black and move first. The computer plays white.\nPlace stones on intersections. The first to connect five horizontally, vertically, or diagonally wins.\nF2: New game　Ctrl+Z: Undo　F: Maximize',
-            localHelpCopy: 'Two players take turns on this device. Black moves first.\nPlace stones on intersections. The first to connect five horizontally, vertically, or diagonally wins.\nF2: New game　Ctrl+Z: Undo　F: Maximize',
+            helpCopy: 'You play black and move first. The computer plays white.\nPlace stones on intersections. The first to connect five horizontally, vertically, or diagonally wins.\nF2: New game　Ctrl/Cmd+Z: Undo　F: Maximize',
+            localHelpCopy: 'Two players take turns on this device. Black moves first.\nPlace stones on intersections. The first to connect five horizontally, vertically, or diagonally wins.\nF2: New game　Ctrl/Cmd+Z: Undo　F: Maximize',
             aboutTitle: 'About Gomoku',
             aboutCopy: 'GavinOS Gomoku 1.0\nA classic Windows Minesweeper-inspired interface.\nComputer moves use a Gomoku minimax engine.',
             launchLines: [
@@ -154,11 +157,10 @@
         const launcher = document.querySelector('[data-gomoku-launcher]');
         const launchLog = document.querySelector('[data-gomoku-launch-log]');
         const modeHome = document.querySelector('[data-gomoku-mode-home]');
-        const Engine = window.GomokuEngine?.GomokuSolution;
 
         if (!desktop || !gameWindow || !gameTask || !titlebar
             || !resizeHandle || !canvas || !boardFrame || !status || !movesOutput || !scoreOutput
-            || !faceButton || !dialog || !dialogTitle || !dialogCopy || !launcher || !launchLog || !modeHome || !Engine) return;
+            || !faceButton || !dialog || !dialogTitle || !dialogCopy || !launcher || !launchLog || !modeHome) return;
 
         const context = canvas.getContext('2d');
         let canvasSize = 480;
@@ -180,8 +182,8 @@
         let hoverPosition = null;
         let keyboardPosition = { row: 7, col: 7 };
         let keyboardMode = false;
-        let engine;
         let aiTimer;
+        let aiTask;
         let restoreGeometry;
         let pointerInteraction;
         let launchTimers = [];
@@ -191,16 +193,6 @@
 
         function createBoard() {
             return Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(EMPTY));
-        }
-
-        function createEngine() {
-            engine = new Engine({
-                MAX_ROW: BOARD_SIZE,
-                MAX_COL: BOARD_SIZE,
-                MAX_ADJACENT: 5,
-                MAX_DISTANCE_OF_NEIGHBOR: 2
-            });
-            engine.init(history.map((move) => ({ r: move.row, c: move.col, p: move.player })));
         }
 
         function findWinningLine(row, col, player) {
@@ -271,7 +263,7 @@
             canvas.classList.toggle('is-locked', phase !== 'playing');
             canvas.classList.toggle('is-thinking', phase === 'thinking');
             document.querySelectorAll('[data-gomoku-undo]').forEach((button) => {
-                button.disabled = history.length === 0 || phase === 'thinking';
+                button.disabled = history.length === 0;
             });
             const point = board[keyboardPosition.row][keyboardPosition.col];
             const pointState = point === EMPTY ? copy().emptyPoint
@@ -407,16 +399,20 @@
             document.dispatchEvent(new CustomEvent('gavin:close-window-menus'));
         }
 
-        function clearAiTimer() {
+        function cancelComputerMove() {
             window.clearTimeout(aiTimer);
             aiTimer = undefined;
+            if (!aiTask) return;
+            window.clearTimeout(aiTask.timeout);
+            aiTask.worker?.terminate();
+            aiTask.resolve();
+            aiTask = null;
         }
 
         function placeMove(row, col, player) {
             if (!Number.isInteger(row) || !Number.isInteger(col) || board[row]?.[col] !== EMPTY) return false;
             board[row][col] = player;
             history.push({ row, col, player });
-            engine.forward(row, col, player);
             return true;
         }
 
@@ -434,30 +430,45 @@
 
         function runComputerMove() {
             if (mode !== 'computer' || phase !== 'thinking') return;
-            clearAiTimer();
-
-            let move;
+            if (aiTask) return aiTask.promise;
+            window.clearTimeout(aiTimer);
+            aiTimer = undefined;
+            let resolve;
+            const promise = new Promise(done => { resolve = done; });
+            const task = { promise, resolve, worker: null, timeout: null };
+            aiTask = task;
+            const finish = (move) => {
+                if (aiTask !== task || mode !== 'computer' || phase !== 'thinking') return;
+                cancelComputerMove();
+                if (!Array.isArray(move) || !Number.isInteger(move[0]) || !Number.isInteger(move[1])
+                    || board[move[0]]?.[move[1]] !== EMPTY) move = findFallbackMove();
+                if (!placeMove(move[0], move[1], COMPUTER)) {
+                    phase = 'draw';
+                    currentPlayer = null;
+                } else if (!updateGameResult(move[0], move[1], COMPUTER)) {
+                    phase = 'playing';
+                    currentPlayer = HUMAN;
+                }
+                render();
+            };
             try {
-                move = engine.minimaxSearch(COMPUTER);
-            } catch (error) {
-                console.error('Gomoku engine could not select a move.', error);
-                move = findFallbackMove();
+                task.worker = new Worker(aiWorkerUrl);
+                task.worker.onmessage = ({ data }) => finish(data.move);
+                task.worker.onerror = event => { event.preventDefault(); finish(); };
+                task.worker.onmessageerror = () => finish();
+                task.timeout = window.setTimeout(() => finish(), AI_TIMEOUT);
+                task.worker.postMessage({ history });
+            } catch {
+                finish();
             }
-            if (board[move[0]]?.[move[1]] !== EMPTY) move = findFallbackMove();
-            if (!placeMove(move[0], move[1], COMPUTER)) return;
-
-            if (!updateGameResult(move[0], move[1], COMPUTER)) {
-                phase = 'playing';
-                currentPlayer = HUMAN;
-            }
-            render();
+            return promise;
         }
 
         function scheduleComputerMove() {
             phase = 'thinking';
             currentPlayer = COMPUTER;
             render();
-            clearAiTimer();
+            cancelComputerMove();
             aiTimer = window.setTimeout(runComputerMove, AI_DELAY);
         }
 
@@ -474,7 +485,7 @@
         }
 
         function newGame() {
-            clearAiTimer();
+            cancelComputerMove();
             board = createBoard();
             history = [];
             phase = 'playing';
@@ -484,7 +495,6 @@
             roundScored = false;
             hoverPosition = null;
             keyboardPosition = { row: 7, col: 7 };
-            createEngine();
             closeMenus();
             render();
         }
@@ -502,8 +512,8 @@
         }
 
         function undoMove() {
-            if (history.length === 0 || phase === 'thinking') return;
-            clearAiTimer();
+            if (history.length === 0) return;
+            cancelComputerMove();
             if (roundScored) {
                 if (winner === HUMAN) humanScore -= 1;
                 else computerScore -= 1;
@@ -520,13 +530,12 @@
             currentPlayer = nextPlayer;
             winner = null;
             winningLine = [];
-            createEngine();
             closeMenus();
             render();
         }
 
         function loadPosition(moves, nextPlayer = HUMAN) {
-            clearAiTimer();
+            cancelComputerMove();
             board = createBoard();
             history = [];
             moves.forEach((move) => {
@@ -541,7 +550,6 @@
             roundScored = false;
             const lastMove = history.at(-1);
             if (lastMove) updateGameResult(lastMove.row, lastMove.col, lastMove.player, false);
-            createEngine();
             render();
         }
 
@@ -659,7 +667,7 @@
 
         function closeGame() {
             closeDialog();
-            clearAiTimer();
+            cancelComputerMove();
             clearLaunchSequence();
             humanScore = 0;
             computerScore = 0;
@@ -787,7 +795,6 @@
                 };
             }
             keyboardMode = Boolean(savedSession.keyboardMode);
-            createEngine();
 
             if (window.innerWidth > 900 && savedSession.desktop) {
                 if (savedSession.desktop.maximized) {
@@ -1051,7 +1058,7 @@
                 event.preventDefault();
                 newGame();
             }
-            if (event.ctrlKey && event.key.toLowerCase() === 'z') {
+            if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
                 event.preventDefault();
                 undoMove();
             }
@@ -1106,25 +1113,24 @@
                 'arrow keys move keyboard cursor',
                 'Enter or Space places stone',
                 'F2 new game',
-                'Ctrl+Z undo',
+                'Ctrl/Cmd+Z undo',
                 'F maximize'
             ]
         });
-        window.advanceTime = (milliseconds) => {
-            if (phase === 'thinking' && milliseconds >= 0) runComputerMove();
+        window.advanceTime = async (milliseconds) => {
+            if (phase === 'thinking' && milliseconds >= 0) await runComputerMove();
             render();
         };
         window.GomokuGame = { open: openGame, newGame, undo: undoMove, playMove: playHumanMove, loadPosition };
 
         const restoredSession = restoreGameSession();
-        if (!restoredSession) createEngine();
         applyLanguage();
         render();
         if (restoredSession && phase === 'choosing' && gameWindow.classList.contains('is-active')) {
             modeHome.querySelector('[data-gomoku-mode]')?.focus();
         }
         if (restoredSession && phase === 'thinking') {
-            clearAiTimer();
+            cancelComputerMove();
             aiTimer = window.setTimeout(runComputerMove, AI_DELAY);
         }
     }

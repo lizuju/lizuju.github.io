@@ -2,15 +2,12 @@ const path = require('path')
 
 module.exports = {
     mode: 'production',
+    target: 'webworker',
     devtool: false,
-    entry: require.resolve('@algorithm.ts/gomoku'),
+    entry: path.resolve(__dirname, '../src/Gomoku/worker.js'),
     output: {
         path: path.resolve(__dirname, '../build/portfolio/js'),
         filename: 'gomoku-engine.js',
-        library: {
-            name: 'GomokuEngine',
-            type: 'window',
-        },
         clean: false,
     },
 }

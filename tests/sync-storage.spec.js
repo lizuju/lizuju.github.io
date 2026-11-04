@@ -2,6 +2,12 @@ const { test, expect } = require('./fixtures/sync-e2ee.cjs');
 
 test.use({ serviceWorkers: 'block' });
 
+test.beforeEach(async ({ page }) => {
+    await page.route('https://sync.test/v1/usage', route => route.fulfill({
+        headers: { 'Access-Control-Allow-Origin': '*' }, json: { status: 'not_configured', available: false }
+    }));
+});
+
 test('keeps the scene return link clear of window controls at short and narrow sizes', async ({ page }) => {
     for (const viewport of [{ width: 980, height: 320 }, { width: 1366, height: 768 }, { width: 320, height: 568 }]) {
         await page.setViewportSize(viewport);
@@ -221,9 +227,11 @@ test('keeps failed checks visible across language changes and distinguishes samp
         ok: false, checkedAt: collectedAt,
         database: { registry: { ok: true }, sampledRoom: { ok: true }, sampledShard: { ok: false } },
         storage: { bytes: 1200000000, storedBytes: 1200000000, highWaterBytes: 4800000000, roomCount: 3, reservedBytes: 0 },
-        maintenance: { status: 'overdue', phase: null, scannedRooms: null, lastSuccessAt: collectedAt - 48 * 3600000, lastFailureAt: null, nextAlarmAt: null },
-        dailyUsage: { status: quotaStatus, available: quotaStatus !== 'not_configured', day: '2026-10-24', checkedAt: quotaStatus === 'not_configured' ? null : collectedAt,
-            resetsAt: Date.UTC(2026, 9, 25), metrics: quotaStatus === 'not_configured' ? null : dailyMetrics, estimated: true }
+        maintenance: { status: 'overdue', phase: null, scannedRooms: null, lastSuccessAt: collectedAt - 48 * 3600000, lastFailureAt: null, nextAlarmAt: null }
+    } }));
+    await page.route('https://sync.test/v1/usage', route => route.fulfill({ headers: { 'Access-Control-Allow-Origin': '*' }, json: {
+        status: quotaStatus, available: quotaStatus !== 'not_configured', day: '2026-10-24', checkedAt: quotaStatus === 'not_configured' ? null : collectedAt,
+        resetsAt: Date.UTC(2026, 9, 25), metrics: quotaStatus === 'not_configured' ? null : dailyMetrics, estimated: true
     } }));
     await page.goto('/portfolio/');
     await page.locator('[data-start-toggle]').click();
@@ -280,24 +288,28 @@ test('refreshes storage every fifteen minutes only while its detail page is visi
     const notice = panel.locator('[data-sync-storage-notice]');
     await item.click();
     await expect(notice).toContainText('检查时间');
+    await expect(page.locator('[data-sync-storage-refresh]')).toBeEnabled();
     expect(requests).toBe(1);
     await page.clock.fastForward('14:59');
     expect(requests).toBe(1);
     await page.clock.fastForward('00:01');
     await expect.poll(() => requests).toBe(2);
     await expect(notice).toContainText('检查时间');
+    await expect(page.locator('[data-sync-storage-refresh]')).toBeEnabled();
     await panel.locator('[data-control-panel-action="minimize"]').click();
     await page.clock.fastForward('15:00');
     expect(requests).toBe(2);
     await page.locator('[data-control-panel-task]').click();
     await expect.poll(() => requests).toBe(3);
     await expect(notice).toContainText('检查时间');
+    await expect(page.locator('[data-sync-storage-refresh]')).toBeEnabled();
     await panel.locator('[data-control-panel-back]').click();
     await page.clock.fastForward('30:00');
     expect(requests).toBe(3);
     await item.click();
     await expect.poll(() => requests).toBe(4);
     await expect(notice).toContainText('检查时间');
+    await expect(page.locator('[data-sync-storage-refresh]')).toBeEnabled();
     await panel.locator('[data-control-panel-action="close"]').click();
     await page.clock.fastForward('15:00');
     expect(requests).toBe(4);
@@ -306,6 +318,7 @@ test('refreshes storage every fifteen minutes only while its detail page is visi
     await item.click();
     await expect.poll(() => requests).toBe(5);
     await expect(notice).toContainText('检查时间');
+    await expect(page.locator('[data-sync-storage-refresh]')).toBeEnabled();
     await page.evaluate(() => {
         Object.defineProperty(document, 'hidden', { configurable: true, value: true });
         document.dispatchEvent(new Event('visibilitychange'));
@@ -345,12 +358,100 @@ test('pauses storage collection when leaving the immersive monitor', async ({ pa
     await setMonitorActive(true);
     await expect.poll(() => requests).toBe(1);
     await expect(frame.locator('[data-sync-storage-notice]')).toContainText('检查时间');
+    await expect(frame.locator('[data-sync-storage-refresh]')).toBeEnabled();
     await setMonitorActive(false);
     await page.clock.fastForward('30:00');
     expect(requests).toBe(1);
     await setMonitorActive(true);
     await expect.poll(() => requests).toBe(2);
     await expect(frame.locator('[data-sync-storage-notice]')).toContainText('检查时间');
+    await expect(frame.locator('[data-sync-storage-refresh]')).toBeEnabled();
     await page.clock.fastForward('15:00');
     await expect.poll(() => requests).toBe(3);
+});
+
+test('shows health before slow analytics and keeps the last quota sample visibly stale after a failed refresh', async ({ page }) => {
+    let release;
+    let fail = false;
+    const collectedAt = Date.now() - 60000;
+    await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
+    await page.route('https://sync.test/v1/status', route => route.fulfill({ headers: { 'Access-Control-Allow-Origin': '*' }, json: {
+        ok: true, checkedAt: Date.now(), database: { registry: { ok: true } },
+        storage: { bytes: 1200000000, storedBytes: 1200000000, highWaterBytes: 4800000000, roomCount: 3, reservedBytes: 0 },
+        maintenance: { phase: null, scannedRooms: null, lastSuccessAt: Date.now(), nextAlarmAt: null }
+    } }));
+    await page.route('https://sync.test/v1/usage', async route => {
+        if (!fail) await new Promise(resolve => { release = resolve; });
+        await route.fulfill({ status: fail ? 503 : 200, headers: { 'Access-Control-Allow-Origin': '*' }, json: fail ? { error: 'unavailable' } : {
+            status: 'ready', available: true, checkedAt: collectedAt, day: new Date(collectedAt).toISOString().slice(0, 10),
+            metrics: Object.fromEntries(['workersRequests', 'durableRequests', 'rowsRead', 'rowsWritten', 'duration'].map(key => [key, { used: 1234, limit: 100000, level: 'normal' }]))
+        } });
+    });
+    await page.goto('/portfolio/');
+    await page.locator('[data-start-toggle]').click();
+    await page.locator('[data-open-control-panel]').click();
+    await page.locator('[data-open-sync-storage]').click();
+    await expect(page.locator('[data-sync-storage-metrics]')).toContainText('1.200 GB / 4.800 GB');
+    await expect(page.locator('[data-sync-storage-notice]')).toContainText('检查时间');
+    await expect(page.locator('[data-sync-daily-notice]')).toHaveText('正在更新额度…');
+    await expect.poll(() => Boolean(release)).toBe(true);
+    release();
+    const quota = page.locator('[data-sync-daily-metrics]');
+    await expect(quota).toContainText('1,234 / 100,000');
+    const checked = await page.locator('[data-sync-daily-checked]').textContent();
+    fail = true;
+    await page.locator('[data-sync-storage-refresh]').click();
+    await expect(page.locator('[data-sync-daily-notice]')).toHaveAttribute('data-state', 'stale');
+    await expect(quota).toContainText('1,234 / 100,000');
+    await expect(page.locator('[data-sync-daily-checked]')).toHaveText(checked);
+    await expect(page.locator('[data-sync-storage-metrics]')).toContainText('1.200 GB / 4.800 GB');
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(page.locator('[data-sync-daily-notice]')).toContainText('last successful snapshot');
+    await page.reload();
+    await expect(page.locator('[data-sync-storage-view]')).toBeVisible();
+    await expect(page.locator('[data-sync-daily-notice]')).toHaveAttribute('data-state', 'unavailable');
+    await expect(page.locator('[data-sync-daily-checked]')).toBeEmpty();
+    await expect(quota).toBeHidden();
+    await expect(page.locator('[data-sync-storage-metrics]')).toContainText('1.200 GB / 4.800 GB');
+});
+
+test('cancels pending analytics when the storage detail is hidden and does not collect in the background', async ({ page }) => {
+    let requests = 0;
+    const releases = [];
+    await page.clock.install();
+    await page.addInitScript(() => {
+        const fetch = window.fetch;
+        window.__cancelledUsage = 0;
+        window.fetch = (input, options) => {
+            if (String(input).endsWith('/v1/usage')) options.signal.addEventListener('abort', () => window.__cancelledUsage++);
+            return fetch(input, options);
+        };
+    });
+    await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
+    await page.route('https://sync.test/v1/status', route => route.fulfill({ headers: { 'Access-Control-Allow-Origin': '*' }, json: {
+        ok: true, checkedAt: Date.now(), database: { registry: { ok: true } },
+        storage: { bytes: 0, storedBytes: 0, highWaterBytes: 4800000000, roomCount: 0, reservedBytes: 0 },
+        maintenance: { phase: null, scannedRooms: null, lastSuccessAt: Date.now(), nextAlarmAt: null }
+    } }));
+    await page.route('https://sync.test/v1/usage', async route => {
+        requests++;
+        await new Promise(resolve => releases.push(resolve));
+        await route.fulfill({ headers: { 'Access-Control-Allow-Origin': '*' }, json: { status: 'not_configured', available: false } });
+    });
+    await page.goto('/portfolio/');
+    await page.locator('[data-start-toggle]').click();
+    await page.locator('[data-open-control-panel]').click();
+    await page.locator('[data-open-sync-storage]').click();
+    await expect.poll(() => requests).toBe(1);
+    await page.locator('[data-control-panel-back]').click();
+    await expect.poll(() => page.evaluate(() => window.__cancelledUsage)).toBe(1);
+    await page.clock.fastForward('30:00');
+    expect(requests).toBe(1);
+    await page.locator('[data-open-sync-storage]').click();
+    await expect.poll(() => requests).toBe(2);
+    await page.locator('[data-control-panel-action="close"]').click();
+    await expect.poll(() => page.evaluate(() => window.__cancelledUsage)).toBe(2);
+    await page.clock.fastForward('30:00');
+    expect(requests).toBe(2);
+    for (const release of releases) release();
 });

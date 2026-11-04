@@ -49,10 +49,13 @@
 
             mailSendButton.disabled = true;
             setMailStatus('mailStatusSending', 'sending');
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 30000);
 
             try {
                 const response = await fetch(mailForm.dataset.mailEndpoint, {
                     method: 'POST',
+                    signal: controller.signal,
                     headers: {
                         'Content-Type': 'application/json',
                         Accept: 'application/json'
@@ -69,8 +72,10 @@
                 }
                 setMailStatus('mailStatusSuccess', 'success');
             } catch {
-                if (mailStatusKey !== 'mailStatusUnconfirmed') setMailStatus('mailStatusError', 'error');
+                if (controller.signal.aborted) setMailStatus('mailStatusUnconfirmed', '');
+                else if (mailStatusKey !== 'mailStatusUnconfirmed') setMailStatus('mailStatusError', 'error');
             } finally {
+                clearTimeout(timeout);
                 mailSendButton.disabled = false;
             }
         };

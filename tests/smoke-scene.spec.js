@@ -340,8 +340,9 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
         expect(movedFolderBox.y).toBeGreaterThan(resizedFolderBox.y);
 
         await mobilePortfolio.locator('body').evaluate(() => window.dispatchEvent(new Event('pageshow')));
-        await expect(mobilePortfolio.locator('[data-app-window]')).toBeVisible();
-        await expect(mobilePortfolio.locator('[data-app-window]')).not.toHaveClass(/is-minimized|is-closed|is-maximized/);
+        await expect(mobilePortfolio.locator('[data-app-window]')).toHaveClass(/is-minimized/);
+        await expect(folderWindow).toBeVisible();
+        await expect(folderWindow).toHaveClass(/is-active/);
         expect(immersiveChunkRequests).toHaveLength(0);
         expect(videoRequests).toHaveLength(0);
         return;
