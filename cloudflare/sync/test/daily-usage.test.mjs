@@ -112,10 +112,10 @@ async function createRuntime() {
             testAnalyticsCacheUntil() { return this.dailyUsageCacheUntil; }
             maintainRooms() { this.maintenanceCalls = (this.maintenanceCalls || 0) + 1; return super.maintainRooms(); }
             testMaintenanceCalls() { return this.maintenanceCalls || 0; }
-            async testFailAnalytics() { await caches.default.delete('https://sync.test/v1/status?release=local'); fail = true; this.dailyUsageCacheUntil = 0; }
-            async testDropMemory() { await caches.default.delete('https://sync.test/v1/status?release=local'); this.dailyUsageSnapshotLoaded = false; this.dailyUsageCache = null; this.dailyUsageSnapshot = null; this.dailyUsageCacheUntil = 0; }
+            async testFailAnalytics() { await caches.default.delete('https://sync.test/v1/status?release=local'); await caches.default.delete('https://sync.test/v1/usage?day=' + new Date().toISOString().slice(0, 10) + '&release=local'); fail = true; this.dailyUsageCacheUntil = 0; }
+            async testDropMemory() { await caches.default.delete('https://sync.test/v1/status?release=local'); await caches.default.delete('https://sync.test/v1/usage?day=' + new Date().toISOString().slice(0, 10) + '&release=local'); this.dailyUsageSnapshotLoaded = false; this.dailyUsageCache = null; this.dailyUsageSnapshot = null; this.dailyUsageCacheUntil = 0; }
             async testSeedCache(value, expiresAt = 0) {
-              await caches.default.delete('https://sync.test/v1/status?release=local');
+              await caches.default.delete('https://sync.test/v1/status?release=local'); await caches.default.delete('https://sync.test/v1/usage?day=' + new Date().toISOString().slice(0, 10) + '&release=local');
               this.dailyUsageSnapshot = value;
               this.dailyUsageSnapshotLoaded = true;
               this.dailyUsageCache = value;

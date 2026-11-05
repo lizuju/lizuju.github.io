@@ -42,6 +42,10 @@ import { PreviewZoom } from './preview-zoom.js';
         const imagePreviewTaskTitle = document.querySelector('[data-image-preview-task-title]');
         const imagePreviewBody = imagePreviewWindow.querySelector('.image-preview-body');
         const imagePreviewFigure = imagePreviewWindow.querySelector('figure');
+        const imagePrevious = imagePreviewWindow.querySelector('[data-image-previous]');
+        const imageNext = imagePreviewWindow.querySelector('[data-image-next]');
+        const imageCounter = imagePreviewWindow.querySelector('[data-image-counter]');
+        const imageError = imagePreviewWindow.querySelector('[data-image-error]');
         const videoPreviewWindow = document.querySelector('[data-video-preview-window]');
         const videoPreviewTask = document.querySelector('[data-video-preview-task]');
         const videoPreviewBody = videoPreviewWindow.querySelector('.video-preview-body');
@@ -61,6 +65,7 @@ import { PreviewZoom } from './preview-zoom.js';
         let previewPaperButton;
         let pendingPaperScrollTop;
         const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
+        let previewImages = robomasterImageButtons;
         const folderItems = { root: folderButtons, photos: robomasterImageButtons, music: [musicVideoButton], papers: paperButtons };
         let videoPosition = 0;
         try {
@@ -98,7 +103,15 @@ import { PreviewZoom } from './preview-zoom.js';
         const imageZoom = new PreviewZoom({ toolbar: document.querySelector('[data-image-preview-toolbar]'), onChange: layoutImage });
         const videoZoom = new PreviewZoom({ toolbar: document.querySelector('[data-video-preview-toolbar]'), onChange: layoutVideo });
         const paperZoom = new PreviewZoom({ toolbar: document.querySelector('[data-paper-preview-toolbar]'), onChange: layoutPaper });
-        imagePreviewImage.addEventListener('load', layoutImage);
+        imagePreviewImage.addEventListener('load', () => {
+            imageError.hidden = true;
+            imagePreviewFigure.hidden = false;
+            layoutImage();
+        });
+        imagePreviewImage.addEventListener('error', () => {
+            imagePreviewFigure.hidden = true;
+            imageError.hidden = false;
+        });
         video.addEventListener('loadedmetadata', layoutVideo);
         video.addEventListener('loadedmetadata', () => {
             if (videoPosition > 0 && videoPosition < video.duration) video.currentTime = videoPosition;
@@ -358,6 +371,10 @@ import { PreviewZoom } from './preview-zoom.js';
             imagePreviewCaption.textContent = label;
             imagePreviewStatus.textContent = copy.previewImageType;
             imagePreviewImage.alt = getPhotoCopy(previewImageButton, 'photoAlt');
+            const index = previewImages.indexOf(previewImageButton);
+            imageCounter.textContent = `${index + 1} / ${previewImages.length}`;
+            imagePrevious.disabled = index <= 0;
+            imageNext.disabled = index >= previewImages.length - 1;
         };
 
         const filterFolder = () => {
@@ -370,10 +387,13 @@ import { PreviewZoom } from './preview-zoom.js';
                 button.hidden = !!query && !names.some(name => name?.toLocaleLowerCase().includes(query));
             }
             folderEmpty.hidden = items.some(button => !button.hidden);
+            const count = items.filter(button => !button.hidden).length;
+            projectFolderStatus.textContent = t()[query ? 'folderSearchCount' : 'folderObjectCount']
+                .replace('{count}', count).replace('{total}', items.length);
             folderSearch.setAttribute('aria-label', t().folderSearch);
             if (selectedFolderButton?.hidden) selectedFolderButton = folderButtons.find(button => !button.hidden);
             if (selectedPaperButton?.hidden) selectedPaperButton = paperButtons.find(button => !button.hidden);
-            if (selectedImageButton?.hidden) selectedImageButton = robomasterImageButtons.find(button => !button.hidden);
+            if (selectedImageButton?.hidden) selectPhoto(robomasterImageButtons.find(button => !button.hidden));
         };
         const setProjectFolderView = (folder) => {
             if (folder !== currentFolder) folderSearch.value = '';
@@ -413,6 +433,12 @@ import { PreviewZoom } from './preview-zoom.js';
             const changed = imagePreviewImage.getAttribute('src') !== button.dataset.imageSrc;
             selectPhoto(button);
             previewImageButton = button;
+            imageError.hidden = true;
+            imagePreviewFigure.hidden = false;
+            if (!changed && imagePreviewImage.complete && !imagePreviewImage.naturalWidth) {
+                imagePreviewSource.removeAttribute('srcset');
+                imagePreviewImage.removeAttribute('src');
+            }
             imagePreviewSource.srcset = button.dataset.imageSrc.replace(/\.jpg$/i, '.webp');
             imagePreviewImage.decoding = 'async';
             imagePreviewImage.src = button.dataset.imageSrc;
@@ -425,9 +451,18 @@ import { PreviewZoom } from './preview-zoom.js';
         };
 
         const openImagePreview = (button) => {
+            previewImages = robomasterImageButtons.filter(candidate => !candidate.hidden);
+            if (!previewImages.includes(button)) previewImages = robomasterImageButtons;
             updateImagePreview(button);
             previewEntry.show();
         };
+        const movePreview = (direction) => {
+            const button = previewImages[previewImages.indexOf(previewImageButton) + direction];
+            if (button) updateImagePreview(button);
+        };
+        imagePrevious.addEventListener('click', () => movePreview(-1));
+        imageNext.addEventListener('click', () => movePreview(1));
+        imageError.querySelector('button').addEventListener('click', () => updateImagePreview(previewImageButton));
 
         const openProjectFolder = () => {
             setProjectFolderView('root');
@@ -494,6 +529,7 @@ import { PreviewZoom } from './preview-zoom.js';
             if (document.hidden) video.pause();
         });
         robomasterImageButtons.forEach((button) => {
+            button.addEventListener('focus', () => selectPhoto(button));
             button.addEventListener('click', () => openImagePreview(button));
         });
 
@@ -501,7 +537,7 @@ import { PreviewZoom } from './preview-zoom.js';
         // window the arrows switch photos instead.
         document.addEventListener('keydown', (event) => {
             if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
-            if (currentFolder !== 'photos' || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter'].includes(event.key)) {
+            if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter'].includes(event.key)) {
                 return;
             }
             if (event.target instanceof HTMLElement && event.target.matches('input, textarea, select, [contenteditable="true"]')) {
@@ -510,10 +546,10 @@ import { PreviewZoom } from './preview-zoom.js';
 
             const previewActive = manager.isWindowVisible(imagePreviewWindow)
                 && imagePreviewWindow.classList.contains('is-active');
-            const folderActive = manager.isWindowVisible(projectFolderWindow)
+            const folderActive = currentFolder === 'photos' && manager.isWindowVisible(projectFolderWindow)
                 && projectFolderWindow.classList.contains('is-active');
             if (!previewActive && !folderActive) return;
-            if (previewActive && !imagePreviewWindow.contains(event.target)) return;
+            if (previewActive && !imagePreviewWindow.contains(event.target) && event.target !== document.body) return;
             if (folderActive && !event.target.closest('[data-robomaster-image]')) return;
 
             if (event.key === 'Enter') {
@@ -523,14 +559,14 @@ import { PreviewZoom } from './preview-zoom.js';
                 return;
             }
 
-            const targetPhoto = getPhotoNavigationTarget(event.key, previewActive ? previewImageButton : selectedImageButton);
-            if (!targetPhoto) return;
-            event.preventDefault();
-
             if (previewActive) {
-                updateImagePreview(targetPhoto);
+                event.preventDefault();
+                movePreview(['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1);
                 return;
             }
+            const targetPhoto = getPhotoNavigationTarget(event.key);
+            if (!targetPhoto) return;
+            event.preventDefault();
 
             selectPhoto(targetPhoto);
             targetPhoto.focus({ preventScroll: true });

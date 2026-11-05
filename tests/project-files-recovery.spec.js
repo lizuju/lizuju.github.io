@@ -122,3 +122,75 @@ test('resumes the project video after closing or refreshing without autoplaying 
     await expect.poll(() => video.evaluate(video => video.currentTime)).toBeCloseTo(18, 0);
     await expect(video).toHaveJSProperty('paused', true);
 });
+
+test('photo focus, search selection and opening refer to the same file', async ({ page }) => {
+    await openFolder(page);
+    await page.locator('[data-folder="photos"]').click();
+    const photos = page.locator('[data-robomaster-image]');
+    await photos.first().click();
+    await page.locator('[data-image-preview-action="close"]').click();
+    const search = page.locator('[data-project-folder-search]');
+    await search.fill('02');
+    await expect(photos.nth(1)).toHaveClass(/is-selected/);
+    await expect(page.locator('[data-project-folder-status]')).toHaveText('1 / 13 个对象');
+    await search.fill('');
+    await page.locator('[data-window-menu="folder-file"]').click();
+    await page.locator('[data-menu-action="folder-open"]').click();
+    await expect(page.locator('[data-image-preview-title]')).toContainText('02');
+    await page.locator('[data-image-preview-action="close"]').click();
+    await photos.nth(2).focus();
+    await expect(photos.nth(2)).toHaveClass(/is-selected/);
+    await page.keyboard.press('Enter');
+    await expect(page.locator('[data-image-preview-title]')).toContainText('03');
+});
+
+test('photo preview keeps its filtered sequence when the folder changes and supports navigation controls', async ({ page }) => {
+    await openFolder(page);
+    await page.locator('[data-folder="photos"]').click();
+    await page.locator('[data-project-folder-search]').fill('service');
+    await page.locator('[data-robomaster-image]:visible').first().click();
+    await expect(page.locator('[data-image-counter]')).toHaveText('1 / 2');
+    await expect(page.locator('[data-image-previous]')).toBeDisabled();
+    await page.locator('[data-image-preview-action="minimize"]').click();
+    await page.locator('[data-project-folder-back]').click();
+    await page.locator('[data-image-preview-task]').click();
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('[data-image-counter]')).toHaveText('2 / 2');
+    await expect(page.locator('[data-image-preview-title]')).toContainText('12');
+    await expect(page.locator('[data-image-next]')).toBeDisabled();
+    await page.locator('[data-image-previous]').click();
+    await expect(page.locator('[data-image-preview-title]')).toContainText('05');
+    await page.locator('[data-image-next]').click();
+    await page.keyboard.press('ArrowLeft');
+    await expect(page.locator('[data-image-counter]')).toHaveText('1 / 2');
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(page.locator('[data-image-previous]')).toHaveAttribute('aria-label', 'Previous image');
+    await expect(page.locator('[data-image-counter]')).toHaveText('1 / 2');
+    const toolbar = await page.locator('[data-image-preview-toolbar]').evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth }));
+    expect(toolbar.scroll).toBeLessThanOrEqual(toolbar.width + 1);
+});
+
+test('photo errors expose a bilingual retry and successful reopen does not reset zoom', async ({ page }) => {
+    let fail = true;
+    let requests = 0;
+    await page.route('**/previews/01-match-multi-robot.*', route => {
+        requests++;
+        return fail ? route.abort() : route.continue();
+    });
+    await openFolder(page);
+    await page.locator('[data-folder="photos"]').click();
+    await page.locator('[data-robomaster-image]').first().click();
+    const error = page.locator('[data-image-error]');
+    await expect(error).toBeVisible();
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(error).toContainText('Image could not be loaded');
+    fail = false;
+    await error.getByRole('button', { name: 'Reload image' }).click();
+    await expect(error).toBeHidden();
+    await expect.poll(() => page.locator('[data-image-preview-image]').evaluate(image => image.naturalWidth)).toBeGreaterThan(0);
+    expect(requests).toBeGreaterThan(1);
+    await page.locator('[data-image-preview-toolbar] [data-preview-zoom-in]').click();
+    await page.locator('[data-image-preview-action="close"]').click();
+    await page.locator('[data-robomaster-image]').first().click();
+    await expect(page.locator('[data-image-preview-toolbar] [data-preview-zoom-value]')).toHaveText('125%');
+});

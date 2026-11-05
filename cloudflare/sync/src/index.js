@@ -26,6 +26,7 @@ const MAINTENANCE_RPC_TIMEOUT = 5000;
 const MAINTENANCE_CONCURRENCY = 10;
 const PAIR_DISCOVERY_CACHE_LIFETIME = 2000;
 const statusRefreshes = new Map();
+const usageRefreshes = new Map();
 const ROOM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function json(data, status = 200, headers = {}) {
@@ -191,7 +192,25 @@ export default {
     }
 
     const registry = env.E2EE_PAIRING_REGISTRY.getByName('registry');
-    if (request.method === 'GET' && url.pathname === '/v1/usage') return json(await registry.dailyUsage());
+    if (request.method === 'GET' && url.pathname === '/v1/usage') {
+      const day = new Date().toISOString().slice(0, 10);
+      const cacheKey = new Request(`${url.origin}/v1/usage?day=${day}&release=${encodeURIComponent(env.WORKER_VERSION?.id || env.RELEASE_REVISION || 'local')}`);
+      const cached = await caches.default.match(cacheKey);
+      if (cached) return new Response(cached.body, { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+      let pending = usageRefreshes.get(cacheKey.url);
+      if (!pending) {
+        pending = (async () => {
+          const usage = await registry.dailyUsage();
+          const now = Date.now();
+          const expiresAt = usage.status === 'ready' ? usage.checkedAt + 15 * 60 * 1000 : now + 60000;
+          const ttl = Math.floor((Math.min(expiresAt, usage.resetsAt) - now) / 1000);
+          if (usage.day === day && ttl > 0) await caches.default.put(cacheKey, json(usage, 200, { 'Cache-Control': `public, max-age=${ttl}` }));
+          return usage;
+        })().finally(() => { if (usageRefreshes.get(cacheKey.url) === pending) usageRefreshes.delete(cacheKey.url); });
+        usageRefreshes.set(cacheKey.url, pending);
+      }
+      return json(await pending);
+    }
     if (request.method === 'GET' && url.pathname === '/v1/status') {
       const cacheKey = new Request(`${url.origin}/v1/status?release=${encodeURIComponent(env.WORKER_VERSION?.id || env.RELEASE_REVISION || 'local')}`);
       const cached = await caches.default.match(cacheKey);
@@ -469,6 +488,7 @@ export class E2eePairingRegistry extends DurableObject {
     if (migrateReservations) this.sql.exec('ALTER TABLE room_usage ADD COLUMN reserved_bytes INTEGER NOT NULL DEFAULT 0');
     this.sql.exec('CREATE TABLE IF NOT EXISTS cleanup (id INTEGER PRIMARY KEY CHECK(id = 1), phase TEXT NOT NULL, cursor TEXT NOT NULL, target_bytes INTEGER)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS maintenance_failures (room_id TEXT PRIMARY KEY, retry_at INTEGER NOT NULL)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS maintenance_jobs (room_id TEXT PRIMARY KEY, request_id TEXT NOT NULL, prune_before INTEGER)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS reservations (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS registry_metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL)');
     this.roomQueues = new Map();
@@ -546,30 +566,52 @@ export class E2eePairingRegistry extends DurableObject {
     this.sql.exec('INSERT INTO registry_metadata (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', 'lastMaintenanceFailureAt', Date.now());
   }
 
-  async runRoomMaintenance(roomId, work) {
+  async runRoomMaintenance(roomId, pruneBefore = null) {
     if (this.sql.exec('SELECT 1 FROM maintenance_failures WHERE room_id = ? AND retry_at > ?', roomId, Date.now()).toArray().length) return;
-    if (this.maintenanceTasks.has(roomId) || this.maintenanceTasks.size >= MAINTENANCE_CONCURRENCY) {
+    if (this.roomQueues.has(roomId) || this.maintenanceTasks.has(roomId) || this.maintenanceTasks.size >= MAINTENANCE_CONCURRENCY) {
       this.maintenanceFailed(roomId);
       return;
     }
-    const task = { current: true };
+    const task = {};
     this.maintenanceTasks.set(roomId, task);
-    const operation = Promise.resolve().then(() => work(() => task.current)).finally(() => {
+    try {
+      await this.withRoom(roomId, async () => {
+        if (!this.hasRoom(roomId)) {
+          this.sql.exec('DELETE FROM maintenance_jobs WHERE room_id = ?', roomId);
+          this.sql.exec('DELETE FROM maintenance_failures WHERE room_id = ?', roomId);
+          return;
+        }
+        this.sql.exec('INSERT OR IGNORE INTO maintenance_jobs (room_id, request_id, prune_before) VALUES (?, ?, ?)', roomId, crypto.randomUUID(), pruneBefore);
+        const job = this.sql.exec('SELECT request_id AS requestId, prune_before AS pruneBefore FROM maintenance_jobs WHERE room_id = ?', roomId).one();
+        const invitation = this.currentInvite(roomId);
+        const response = await this.env.E2EE_SYNC_ROOMS.getByName(roomId).fetch('https://maintenance.internal/', {
+          method: 'POST', body: JSON.stringify({ ...job, roomId, reclaim: !invitation?.offerId || invitation.locked }),
+          signal: AbortSignal.timeout(MAINTENANCE_RPC_TIMEOUT)
+        });
+        if (!response.ok) throw new Error('maintenance_failed');
+        const result = await response.json();
+        if (!result.done) throw new Error('maintenance_pending');
+        this.ctx.storage.transactionSync(() => {
+          if (result.reclaimed) {
+            this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
+            this.sql.exec('DELETE FROM room_pairing WHERE room_id = ?', roomId);
+            const removed = this.sql.exec('DELETE FROM room_usage WHERE room_id = ? RETURNING bytes', roomId).toArray()[0];
+            if (this.accountedBytes != null) this.accountedBytes -= removed?.bytes || 0;
+          } else this.rememberUsage(roomId, result.usage);
+          this.releaseCapacity(roomId);
+          this.sql.exec('DELETE FROM maintenance_jobs WHERE room_id = ?', roomId);
+          this.sql.exec('DELETE FROM maintenance_failures WHERE room_id = ?', roomId);
+        });
+      });
+    } catch {
+      this.maintenanceFailed(roomId);
+    } finally {
       if (this.maintenanceTasks.get(roomId) === task) this.maintenanceTasks.delete(roomId);
-    });
-    const result = await rpcResult(operation, MAINTENANCE_RPC_TIMEOUT);
-    // An RPC can finish after its timeout; only this attempt may update registry accounting.
-    task.current = false;
-    if (result.ok) this.sql.exec('DELETE FROM maintenance_failures WHERE room_id = ?', roomId);
-    else this.maintenanceFailed(roomId);
+    }
   }
 
   async refreshMaintenanceRoom(roomId) {
-    return this.runRoomMaintenance(roomId, async current => {
-      if (!this.hasRoom(roomId)) return;
-      await this.env.E2EE_SYNC_ROOMS.getByName(roomId).maintain(roomId);
-      if (current()) await this.withRoom(roomId, () => this.refreshUsage(roomId, true, current));
-    });
+    return this.runRoomMaintenance(roomId);
   }
 
   async finishMaintenancePass() {
@@ -585,14 +627,12 @@ export class E2eePairingRegistry extends DurableObject {
     await this.withRoom(roomId, () => this.refreshUsage(roomId, true));
   }
 
-  async refreshUsage(roomId, maintained = false, current = () => true) {
-    if (!current() || !this.hasRoom(roomId)) return null;
+  async refreshUsage(roomId, maintained = false) {
+    if (!this.hasRoom(roomId)) return null;
     const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
     const usage = maintained ? await room.storageUsage() : await room.maintain(roomId, false);
-    if (!current()) return null;
     const invitation = this.currentInvite(roomId);
     if (usage.oldestAt === null && (!invitation?.offerId || invitation.locked) && await room.reclaimIfEmpty()) {
-      if (!current()) return null;
       this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
       this.sql.exec('DELETE FROM room_pairing WHERE room_id = ?', roomId);
       const removed = this.sql.exec('DELETE FROM room_usage WHERE room_id = ? RETURNING bytes', roomId).toArray()[0];
@@ -600,7 +640,6 @@ export class E2eePairingRegistry extends DurableObject {
       this.releaseCapacity(roomId);
       return null;
     }
-    if (!current()) return null;
     this.ctx.storage.transactionSync(() => {
       this.rememberUsage(roomId, usage);
       this.releaseCapacity(roomId);
@@ -829,14 +868,14 @@ export class E2eePairingRegistry extends DurableObject {
       if (pending) { await this.refreshMaintenanceRoom(pending.room_id); continue; }
       const oldest = this.sql.exec('SELECT room_id, oldest_at FROM room_usage WHERE oldest_at IS NOT NULL AND room_id NOT IN (SELECT room_id FROM maintenance_failures) ORDER BY oldest_at, room_id LIMIT 1').toArray()[0];
       if (!oldest) break;
-      await this.runRoomMaintenance(oldest.room_id, current => this.withRoom(oldest.room_id, async () => {
-        const usage = await this.refreshUsage(oldest.room_id, false, current);
-        if (!current() || !usage || this.storageBytes() <= state.target_bytes || usage.deletingFiles) return;
-        const first = this.sql.exec('SELECT room_id, oldest_at FROM room_usage WHERE oldest_at IS NOT NULL AND room_id NOT IN (SELECT room_id FROM maintenance_failures) ORDER BY oldest_at, room_id LIMIT 2').toArray();
-        if (first[0]?.room_id !== oldest.room_id) return;
-        const pruned = await this.env.E2EE_SYNC_ROOMS.getByName(oldest.room_id).pruneOldest(first[1]?.oldest_at ?? Number.MAX_SAFE_INTEGER);
-        if (current()) this.rememberUsage(oldest.room_id, pruned);
-      }));
+      await this.refreshMaintenanceRoom(oldest.room_id);
+      if (this.storageBytes() <= state.target_bytes) break;
+      if (this.sql.exec('SELECT 1 FROM maintenance_failures WHERE room_id = ?', oldest.room_id).toArray().length) continue;
+      const usage = this.sql.exec('SELECT oldest_at, deleting_files FROM room_usage WHERE room_id = ?', oldest.room_id).toArray()[0];
+      if (!usage || usage.oldest_at === null || usage.deleting_files) continue;
+      const next = this.sql.exec('SELECT oldest_at FROM room_usage WHERE oldest_at IS NOT NULL AND room_id != ? AND room_id NOT IN (SELECT room_id FROM maintenance_failures) ORDER BY oldest_at, room_id LIMIT 1', oldest.room_id).toArray()[0];
+      if (next && next.oldest_at < usage.oldest_at) continue;
+      await this.runRoomMaintenance(oldest.room_id, next?.oldest_at ?? Number.MAX_SAFE_INTEGER);
     }
     if (this.storageBytes() <= state.target_bytes || !this.sql.exec('SELECT 1 FROM room_usage WHERE oldest_at IS NOT NULL AND room_id NOT IN (SELECT room_id FROM maintenance_failures) LIMIT 1').toArray().length) await this.finishMaintenancePass();
     else await this.ctx.storage.setAlarm(Date.now() + 1000);
@@ -1732,6 +1771,33 @@ export class E2eeSyncRoom extends DurableObject {
     return this.storageUsage();
   }
 
+  async handleMaintenance(request) {
+    const job = await request.json();
+    if (!this.initialized) return json({ done: true, reclaimed: true });
+    const completed = this.sql.exec("SELECT value FROM metadata WHERE key = 'maintenanceDone'").toArray()[0]?.value;
+    if (completed !== job.requestId) {
+      this.sql.exec("INSERT OR IGNORE INTO metadata (key, value) VALUES ('maintenanceJob', ?)", JSON.stringify(job));
+      if (!this.maintenanceCompletion) {
+        let resolve;
+        const promise = new Promise(done => { resolve = done; });
+        this.maintenanceCompletion = { promise, resolve };
+      }
+      const completion = this.maintenanceCompletion;
+      await this.ctx.storage.setAlarm(Date.now());
+      let timer;
+      try {
+        const done = await Promise.race([
+          completion.promise,
+          new Promise(resolve => { timer = setTimeout(() => resolve(false), MAINTENANCE_RPC_TIMEOUT - 1000); })
+        ]);
+        if (!done) return json({ done: false });
+      } finally { clearTimeout(timer); }
+    }
+    const usage = await this.storageUsage();
+    const reclaimed = job.reclaim && usage.oldestAt === null && await this.reclaimIfEmpty();
+    return json({ done: true, reclaimed, usage });
+  }
+
   async reclaimIfEmpty() {
     return this.ctx.blockConcurrencyWhile(async () => {
       if (this.initialized) {
@@ -1753,15 +1819,19 @@ export class E2eeSyncRoom extends DurableObject {
     });
   }
 
-  async pruneOldest(before = Number.MAX_SAFE_INTEGER) {
+  async pruneOldest(before = Number.MAX_SAFE_INTEGER, jobId = null) {
     return this.ctx.blockConcurrencyWhile(async () => {
       if (!this.initialized) return this.storageUsage();
+      if (jobId && this.sql.exec("SELECT 1 FROM metadata WHERE key = 'maintenancePruned' AND value = ?", jobId).toArray().length) return this.storageUsage();
       const items = this.sql.exec('SELECT id AS messageId, attachment IS NOT NULL AS attachment FROM messages WHERE created_at <= ? ORDER BY created_at, id LIMIT 100', before).toArray();
       // Reclaim one completed file before considering any newer history.
       const attachmentIndex = items.findIndex(item => item.attachment);
       const selected = items.slice(0, attachmentIndex < 0 ? items.length : attachmentIndex + 1);
       const ids = selected.map(item => item.messageId);
-      if (ids.length) this.sql.exec(`DELETE FROM messages WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids);
+      this.ctx.storage.transactionSync(() => {
+        if (ids.length) this.sql.exec(`DELETE FROM messages WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids);
+        if (jobId) this.sql.exec("INSERT INTO metadata (key, value) VALUES ('maintenancePruned', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", jobId);
+      });
       if (ids.length) this.historyChanged(ids);
       await this.scheduleAlarm();
       return this.storageUsage();
@@ -2116,8 +2186,9 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   async fetch(request) {
-    if (!this.initialized) return json({ error: 'not_found' }, 404);
     const url = new URL(request.url);
+    if (url.hostname === 'maintenance.internal' && url.pathname === '/' && request.method === 'POST') return this.handleMaintenance(request);
+    if (!this.initialized) return json({ error: 'not_found' }, 404);
     const path = url.pathname;
     const uploadChunk = path.match(/^\/v1\/spaces\/[^/]+\/files\/uploads\/([0-9a-f-]{36})\/chunks\/(0|[1-9][0-9]*)$/i);
     if (request.method === 'PUT' && uploadChunk && ROOM_ID.test(uploadChunk[1])) {
@@ -2340,6 +2411,7 @@ export class E2eeSyncRoom extends DurableObject {
     const uploading = expiry.upload;
     if (uploading !== null) deadlines.push(uploading + UPLOAD_LIFETIME);
     if (expiry.deleting) deadlines.push(Date.now() + 1000);
+    if (this.sql.exec("SELECT 1 FROM metadata WHERE key = 'maintenanceJob'").toArray().length) deadlines.push(Date.now() + 1000);
     this.nextPruneAt = deadlines.length ? Math.min(...deadlines) : Infinity;
     const nextAlarm = deadlines.length ? this.nextPruneAt : null;
     if (nextAlarm === await this.ctx.storage.getAlarm()) return;
@@ -2356,9 +2428,31 @@ export class E2eeSyncRoom extends DurableObject {
       socket.serializeAttachment({ closing: true });
       socket.close(1008, 'Authentication timed out');
     }
-    const deleted = this.pruneExpired();
-    const hadPending = this.sql.exec("SELECT 1 FROM files WHERE status = 'deleting' LIMIT 1").toArray().length;
-    await this.cleanupFiles();
+    const job = this.sql.exec("SELECT value FROM metadata WHERE key = 'maintenanceJob'").toArray()[0];
+    let deleted = 0;
+    let hadPending = false;
+    if (job) {
+      const { requestId, roomId, pruneBefore } = JSON.parse(job.value);
+      try {
+        await this.maintain(roomId);
+        if (pruneBefore !== null) {
+          await this.pruneOldest(pruneBefore, requestId);
+          await this.cleanupFiles();
+        }
+        this.ctx.storage.transactionSync(() => {
+          this.sql.exec("DELETE FROM metadata WHERE key = 'maintenanceJob'");
+          this.sql.exec("INSERT INTO metadata (key, value) VALUES ('maintenanceDone', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", requestId);
+        });
+        this.maintenanceCompletion?.resolve(true);
+      } catch (error) {
+        this.maintenanceCompletion?.resolve(false);
+        throw error;
+      } finally { this.maintenanceCompletion = null; }
+    } else {
+      deleted = this.pruneExpired();
+      hadPending = this.sql.exec("SELECT 1 FROM files WHERE status = 'deleting' LIMIT 1").toArray().length;
+      await this.cleanupFiles();
+    }
     await this.scheduleAlarm();
     const roomId = this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'roomId').toArray()[0]?.value;
     if ((deleted || hadPending) && roomId) this.ctx.waitUntil(this.env.E2EE_PAIRING_REGISTRY.getByName('registry').refreshRoom(roomId));

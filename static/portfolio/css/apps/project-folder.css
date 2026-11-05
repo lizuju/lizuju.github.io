@@ -534,3 +534,14 @@
     margin: auto;
     object-fit: contain;
 }
+
+.image-preview-window .preview-zoom-toolbar {
+    flex-wrap: wrap;
+}
+
+.project-image-error {
+    margin: auto;
+    padding: 24px;
+    text-align: center;
+    font: 13px/1.5 var(--font-system);
+}
