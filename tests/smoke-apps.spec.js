@@ -272,20 +272,17 @@ test('opens RoboMaster match records in a movable image preview window', async (
     await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText('09 3号.jpg');
 
     const imageButtons = folderWindow.locator('[data-robomaster-image]');
-    const aboveIndex = await imageButtons.evaluateAll((buttons) => {
-        const firstRowTop = buttons[0].offsetTop;
-        const columnCount = buttons.findIndex((button, index) => index > 0 && button.offsetTop !== firstRowTop);
-        return 8 - (columnCount === -1 ? buttons.length : columnCount);
-    });
-    const aboveLabel = await imageButtons.nth(aboveIndex).locator('[data-photo-label]').textContent();
-    const abovePreviewPath = await imageButtons.nth(aboveIndex).getAttribute('data-image-src');
+    const previousLabel = await imageButtons.nth(7).locator('[data-photo-label]').textContent();
+    const previousPreviewPath = await imageButtons.nth(7).getAttribute('data-image-src');
     await page.keyboard.press('ArrowUp');
-    await expect(previewWindow).toContainText(aboveLabel);
-    await expect(previewWindow.locator('[data-image-preview-image]')).toHaveAttribute('src', abovePreviewPath);
-    await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText(aboveLabel);
+    await expect(previewWindow).toContainText(previousLabel);
+    await expect(previewWindow.locator('[data-image-preview-image]')).toHaveAttribute('src', previousPreviewPath);
+    await expect(previewWindow.locator('[data-image-counter]')).toHaveText('8 / 13');
+    await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText(previousLabel);
 
     await page.keyboard.press('ArrowDown');
     await expect(previewWindow).toContainText('09 3号.jpg');
+    await expect(previewWindow.locator('[data-image-counter]')).toHaveText('9 / 13');
     await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText('09 3号.jpg');
 
     const beforeDrag = await previewWindow.boundingBox();
