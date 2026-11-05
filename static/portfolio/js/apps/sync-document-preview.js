@@ -71,27 +71,43 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
                 refreshLanguage = () => { root.textContent = translate('syncPreviewDocumentEmpty'); };
             }
         } else if (kind === 'spreadsheet') {
-            const buffer = await response.arrayBuffer();
+            const source = await response.blob();
             if (signal.aborted) return cleanup;
-            worker = new Worker(new URL('./sync-spreadsheet-worker.js', import.meta.url), { type: 'module', name: 'spreadsheet-preview' });
             let nextId = 0;
-            const request = (data, transfer = []) => new Promise((resolve, reject) => {
-                const id = ++nextId;
-                pending.set(id, { resolve, reject });
-                worker.postMessage({ ...data, id }, transfer);
-            });
-            worker.onmessage = ({ data }) => {
-                const request = pending.get(data.id);
-                if (!request) return;
-                pending.delete(data.id);
-                if (data.error) request.reject(new Error(data.error));
-                else request.resolve(data.result);
-            };
-            worker.onerror = (event) => {
-                for (const request of pending.values()) request.reject(new Error(event.message));
+            let workbookLoad;
+            const stopWorker = error => {
+                worker?.terminate();
+                worker = null;
+                for (const request of pending.values()) request.reject(error);
                 pending.clear();
             };
-            const sheets = await request({ type: 'load', buffer, delimited: /\.(?:csv|tsv)$/i.test(name) }, [buffer]);
+            const request = (data, transfer = []) => new Promise((resolve, reject) => {
+                const id = ++nextId;
+                const timeout = setTimeout(() => stopWorker(new Error('Spreadsheet preview timed out')), 15000);
+                pending.set(id, {
+                    resolve: value => { clearTimeout(timeout); resolve(value); },
+                    reject: error => { clearTimeout(timeout); reject(error); }
+                });
+                worker.postMessage({ ...data, id }, transfer);
+            });
+            const loadWorkbook = () => {
+                if (!workbookLoad) workbookLoad = (async () => {
+                    const buffer = await source.arrayBuffer();
+                    signal.throwIfAborted();
+                    worker = new Worker(new URL('./sync-spreadsheet-worker.js', import.meta.url), { type: 'module', name: 'spreadsheet-preview' });
+                    worker.onmessage = ({ data }) => {
+                        const request = pending.get(data.id);
+                        if (!request) return;
+                        pending.delete(data.id);
+                        if (data.error) request.reject(new Error(data.error));
+                        else request.resolve(data.result);
+                    };
+                    worker.onerror = event => stopWorker(new Error(event.message));
+                    return request({ type: 'load', buffer, delimited: /\.(?:csv|tsv)$/i.test(name) }, [buffer]);
+                })().finally(() => { workbookLoad = null; });
+                return workbookLoad;
+            };
+            const sheets = await loadWorkbook();
             if (signal.aborted) return cleanup;
             root.className = 'sync-document-workbook';
             const tabs = document.createElement('nav');
@@ -103,6 +119,7 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
             sheetContainer.tabIndex = 0;
             let activeSheet;
             let sheetRequest = 0;
+            let sheetState = '';
             let renderRows = () => {};
             const rowHeight = 32;
             refreshLanguage = () => {
@@ -111,14 +128,40 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
                 sheetContainer.setAttribute('aria-label', activeSheet
                     ? translate('syncPreviewSheet', { name: activeSheet.name })
                     : translate('syncPreviewSheets'));
-                if (!activeSheet?.rows) sheetContainer.textContent = translate('syncPreviewSheetEmpty');
+                if (sheetState) {
+                    sheetContainer.querySelector('[data-sheet-notice]').textContent = translate(sheetState);
+                    const retry = sheetContainer.querySelector('button');
+                    if (retry) retry.textContent = translate('syncPreviewRetry');
+                } else if (!activeSheet?.rows) sheetContainer.textContent = translate('syncPreviewSheetEmpty');
             };
             const showSheet = async (sheet) => {
                 if (disposed || signal.aborted) return;
                 const generation = ++sheetRequest;
-                const data = await request({ type: 'sheet', sheet });
-                if (disposed || signal.aborted || generation !== sheetRequest) return;
                 activeSheet = sheet;
+                sheetState = 'syncPreviewLoading';
+                renderRows = () => {};
+                const notice = document.createElement('p');
+                notice.dataset.sheetNotice = '';
+                sheetContainer.replaceChildren(notice);
+                refreshLanguage();
+                let data;
+                try {
+                    if (!worker) await loadWorkbook();
+                    if (disposed || signal.aborted || generation !== sheetRequest) return;
+                    data = await request({ type: 'sheet', sheet });
+                } catch {
+                    if (disposed || signal.aborted || generation !== sheetRequest) return;
+                    sheetState = 'syncPreviewFailed';
+                    const retry = document.createElement('button');
+                    retry.type = 'button';
+                    retry.addEventListener('click', () => showSheet(sheet), { signal });
+                    sheetContainer.replaceChildren(notice, retry);
+                    refreshLanguage();
+                    return;
+                }
+                if (disposed || signal.aborted || generation !== sheetRequest) return;
+                Object.assign(sheet, data.sheet);
+                sheetState = '';
                 for (const [index, button] of Array.from(tabs.children).entries()) {
                     button.setAttribute('aria-pressed', String(sheets[index] === sheet));
                 }
@@ -192,9 +235,7 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
                 button.type = 'button';
                 button.textContent = sheet.name;
                 button.addEventListener('click', () => {
-                    showSheet(sheet).catch(() => {
-                        if (!disposed) sheetContainer.textContent = translate('syncPreviewFailed');
-                    });
+                    showSheet(sheet);
                 }, { signal });
                 tabs.append(button);
             }

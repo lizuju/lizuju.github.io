@@ -948,12 +948,19 @@
                 <span data-i18n="menuHelp">帮助</span>
             </div>
             <div class="preview-zoom-toolbar" data-image-preview-toolbar>
+                <button type="button" data-image-previous data-i18n-aria="previewPrevious" aria-label="上一张">‹</button>
+                <span data-image-counter aria-live="polite"></span>
+                <button type="button" data-image-next data-i18n-aria="previewNext" aria-label="下一张">›</button>
                 <button type="button" data-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
                 <button type="button" data-preview-zoom-fit data-i18n="syncPreviewFit">适应窗口</button>
                 <button type="button" data-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
                 <span data-preview-zoom-value>100%</span>
             </div>
             <div class="image-preview-body" tabindex="0" data-i18n-aria="previewWindowTitle" aria-label="图片预览">
+                <div class="project-image-error" data-image-error role="status" hidden>
+                    <p data-i18n="previewImageFailed">图片加载失败</p>
+                    <button class="folder-up-button" type="button" data-i18n="previewImageRetry">重新加载</button>
+                </div>
                 <figure class="image-preview-figure">
                     <picture>
                         <source data-image-preview-source type="image/webp">

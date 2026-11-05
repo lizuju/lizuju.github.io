@@ -310,3 +310,35 @@ test('cancels a stalled Word conversion on close, enforces its time budget and a
     await page.locator('[data-sync-preview-file]').last().click();
     await expect(page.locator('.sync-document-word')).toContainText('联络站 Word 预览');
 });
+
+test('a stalled spreadsheet parse times out, terminates its worker and retries the selected sheet', async ({ page }) => {
+    await page.evaluate(() => {
+        const NativeWorker = window.Worker;
+        window.blockSheet = true;
+        window.Worker = class extends NativeWorker {
+            constructor(url, options) {
+                super(url, options);
+                if (options?.name !== 'spreadsheet-preview') return;
+                const post = this.postMessage.bind(this);
+                this.postMessage = (message, transfer) => {
+                    if (window.blockSheet && message.type === 'sheet' && message.sheet.name === 'Large sheet') return;
+                    post(message, transfer);
+                };
+            }
+        };
+        const timeout = window.setTimeout.bind(window);
+        window.setTimeout = (callback, delay, ...args) => timeout(callback, delay === 15000 ? 1000 : delay, ...args);
+    });
+    await page.locator('[data-sync-preview-file]').first().click();
+    const preview = page.locator('[data-sync-preview-window]');
+    const sheet = preview.locator('.sync-document-sheet');
+    await expect(sheet).toContainText('Amount');
+    await preview.getByRole('button', { name: 'Large sheet', exact: true }).click();
+    await expect(sheet.getByRole('button', { name: '重试', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => window.closedSpreadsheetWorkers)).toBe(1);
+    await page.evaluate(() => { window.blockSheet = false; });
+    await sheet.getByRole('button', { name: '重试', exact: true }).click();
+    await expect(sheet).toContainText('row1-col1');
+    await expect(preview.getByRole('button', { name: 'Large sheet', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    expect(await page.evaluate(() => window.spreadsheetWorkers)).toBe(2);
+});

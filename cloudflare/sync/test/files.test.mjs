@@ -160,7 +160,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                     this.usageWrites = (this.usageWrites || 0) + this.sql.exec('SELECT total_changes() AS count').one().count - before;
                   }
                   testUsageWrites() { return this.usageWrites || 0; }
-                  testRunAlarm() { return super.alarm(); }
+                  async testRunAlarm() { await this.ctx.storage.deleteAlarm(); return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                 }
                 export class SyncRoom extends ProductionSyncRoom {

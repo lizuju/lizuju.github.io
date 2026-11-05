@@ -83,6 +83,15 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                     super(ctx, observe(env));
                   }
                   testRpcCalls() { return rpcCalls.splice(0); }
+                  testUsageFixture(value) { this.usageFixture = value; }
+                  dailyUsage() { return this.usageFixture || super.dailyUsage(); }
+                  async testUsageCache(day, value) {
+                    const key = 'https://sync.test/v1/usage?day=' + day + '&release=local';
+                    if (value) await caches.default.put(key, Response.json(value, { headers: { 'Cache-Control': 'public, max-age=900' } }));
+                    const cached = await caches.default.match(key);
+                    return cached ? { control: cached.headers.get('Cache-Control'), value: await cached.json() } : null;
+                  }
+
                   async testExpireDiagnosticsCache() { this.diagnosticsCacheUntil = Date.now() - 1; await caches.default.delete('https://sync.test/v1/status?release=local'); }
                   testDiagnosticsCacheUntil() { return this.diagnosticsCacheUntil; }
                   testFailDiagnostics() { this.failDiagnostics = true; }
@@ -113,7 +122,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                     return pending;
                   }
                   testFillDiscoveryWindow() { this.discoveryWindow = { expiresAt: Date.now() + 60000, attempts: new Map(Array.from({ length: 1024 }, (_, index) => ['test:' + index, 1])) }; }
-                  testRunAlarm() { return super.alarm(); }
+                  async testRunAlarm() { await this.ctx.storage.deleteAlarm(); return super.alarm(); }
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   testDropAlarm() { return this.ctx.storage.deleteAlarm(); }
                   testMaintenancePending(roomId) { return this.maintenanceTasks.has(roomId); }
@@ -1953,12 +1962,15 @@ test('pruning real large text rows reduces the measured SQLite storage usage', a
   const namespace = await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
   const room = namespace.getByName(space.roomId);
   const before = await room.storageUsage();
-  const after = await room.pruneOldest();
+  const requestId = randomUUID();
+  const after = await room.pruneOldest(Number.MAX_SAFE_INTEGER, requestId);
   assert.ok(before.bytes > 1_000_000);
   assert.ok(after.bytes < before.bytes, `${after.bytes} should be below ${before.bytes}`);
   const state = await request(`/v1/spaces/${space.roomId}`, { token: space.token });
   assert.equal(state.body.messages.length, 20);
   assert.ok(state.body.messages[0].text.startsWith('100 '));
+  await room.pruneOldest(Number.MAX_SAFE_INTEGER, requestId);
+  assert.equal((await room.messages()).length, 20, 'retrying the same cleanup job must not delete another batch');
 });
 
 test('combined room storage starts background cleanup, removes about 3 GB in global age order, and can start a second round', async t => {
@@ -2755,7 +2767,7 @@ test('a timed-out room keeps its capacity estimate while later maintenance batch
   assert.equal((await storage.exec('SELECT count(*) AS count FROM maintenance_failures'))[0].count, 1, 'a late response cannot turn the timed-out pass into success');
   await storage.exec('UPDATE maintenance_failures SET retry_at = 0');
   await registry.testRunAlarm(); await registry.testDropAlarm();
-  assert.equal(await rooms[0].testMaintenanceCalls(), 2);
+  assert.equal(await rooms[0].testMaintenanceCalls(), 1, 'the completed room job is consumed without repeating cleanup');
   assert.deepEqual(await storage.exec('SELECT * FROM maintenance_failures'), []);
   assert.deepEqual(await storage.exec('SELECT * FROM cleanup'), []);
 });
@@ -2786,7 +2798,7 @@ test('late accounting snapshots cannot overwrite newer capacity or release a new
   assert.equal((await storage.exec('SELECT bytes FROM room_usage WHERE room_id = ?', created.roomId))[0].bytes, (await room.storageUsage()).bytes);
 });
 
-test('unresolved maintenance calls never fan out beyond ten and the deferred rooms recover once calls settle', async t => {
+test('ten stalled room alarms do not block healthy rooms or duplicate cleanup on retry', async t => {
   const instance = await createRuntime(); t.after(() => instance.dispose());
   const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   const namespace = await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
@@ -2797,17 +2809,20 @@ test('unresolved maintenance calls never fan out beyond ten and the deferred roo
   for (const room of rooms.slice(0, 10)) await room.testHoldMaintenance();
   await Promise.all(ids.slice(0, 10).map(id => registry.refreshMaintenanceRoom(id)));
   await Promise.all(ids.slice(10).map(id => registry.refreshMaintenanceRoom(id)));
-  assert.deepEqual(await Promise.all(rooms.map(room => room.testMaintenanceCalls())), [...Array(10).fill(1), 0, 0]);
+  assert.deepEqual(await Promise.all(rooms.map(room => room.testMaintenanceCalls())), Array(12).fill(1));
   const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   await storage.exec('UPDATE maintenance_failures SET retry_at = 0');
-  await Promise.all(ids.map(id => registry.refreshMaintenanceRoom(id)));
-  assert.deepEqual(await Promise.all(rooms.map(room => room.testMaintenanceCalls())), [...Array(10).fill(1), 0, 0]);
+  await Promise.all(ids.slice(0, 10).map(id => registry.refreshMaintenanceRoom(id)));
+  assert.deepEqual(await Promise.all(rooms.map(room => room.testMaintenanceCalls())), Array(12).fill(1));
+  assert.equal((await storage.exec('SELECT count(*) AS count FROM maintenance_jobs'))[0].count, 10);
+  assert.equal((await storage.exec('SELECT count(*) AS count FROM maintenance_failures'))[0].count, 10);
   for (const room of rooms.slice(0, 10)) await room.testReleaseMaintenance();
+  await Promise.all(rooms.slice(0, 10).map(room => room.testWaitAlarm()));
   while ((await Promise.all(ids.map(id => registry.testMaintenancePending(id)))).some(Boolean)) await new Promise(resolve => setTimeout(resolve, 10));
   await storage.exec('UPDATE maintenance_failures SET retry_at = 0');
   for (const id of ids) await registry.refreshMaintenanceRoom(id);
   assert.deepEqual(await storage.exec('SELECT * FROM maintenance_failures'), []);
-  assert.deepEqual(await Promise.all(rooms.map(room => room.testMaintenanceCalls())), [...Array(10).fill(2), 1, 1]);
+  assert.deepEqual(await Promise.all(rooms.map(room => room.testMaintenanceCalls())), [...Array(10).fill(1), 2, 2]);
 });
 
 test('capacity pruning times out a slow room without applying its late result or blocking healthy rooms', async t => {
@@ -2833,4 +2848,47 @@ test('capacity pruning times out a slow room without applying its late result or
   await storage.exec('UPDATE maintenance_failures SET retry_at = 0');
   await registry.testRunAlarm(); await registry.testDropAlarm();
   assert.deepEqual(await storage.exec('SELECT * FROM maintenance_failures'), []);
+});
+
+test('daily usage edge caching coalesces callers, preserves CORS and respects sample expiry and UTC rollover', async t => {
+  const local = 'http://127.0.0.1:3117';
+  const instance = await createRuntime({ allowedOrigins: `${origin},${local}` }); t.after(() => instance.dispose());
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const now = Date.now(), day = new Date(now).toISOString().slice(0, 10);
+  const yesterday = new Date(now - 86400000).toISOString().slice(0, 10);
+  const usage = { status: 'ready', available: true, day, checkedAt: now - 600000, resetsAt: Date.parse(`${day}T00:00:00Z`) + 86400000, metrics: { example: 123 } };
+  await registry.testUsageCache(yesterday, { day: yesterday, metrics: { example: 999 } });
+  await registry.testUsageFixture(usage);
+  await registry.testRpcCalls();
+  const responses = await Promise.all(Array.from({ length: 20 }, (_, index) => instance.dispatchFetch('https://sync.test/v1/usage', { headers: { Origin: index % 2 ? origin : local } })));
+  for (let index = 0; index < responses.length; index++) {
+    assert.equal(responses[index].headers.get('Access-Control-Allow-Origin'), index % 2 ? origin : local);
+    assert.equal(responses[index].headers.get('Cache-Control'), 'no-store');
+    assert.deepEqual(await responses[index].json(), usage);
+  }
+  assert.equal((await registry.testRpcCalls()).filter(method => method === 'dailyUsage').length, 1);
+  const cached = await registry.testUsageCache(day);
+  const ttl = Number(cached.control.match(/max-age=(\d+)/)[1]);
+  assert.ok(ttl > 0 && ttl <= 300);
+  assert.ok(ttl <= Math.floor((usage.resetsAt - now) / 1000));
+  const response = await instance.dispatchFetch('https://sync.test/v1/usage');
+  assert.equal(response.headers.get('Access-Control-Allow-Origin'), null);
+  assert.deepEqual(await response.json(), usage);
+  assert.equal((await registry.testRpcCalls()).filter(method => method === 'dailyUsage').length, 0);
+  assert.equal((await instance.dispatchFetch('https://sync.test/v1/usage', { headers: { Origin: 'https://untrusted.test' } })).status, 403);
+});
+
+test('unavailable daily usage has a short edge cache and a response from a different day is never cached', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const now = Date.now(), day = new Date(now).toISOString().slice(0, 10);
+  await registry.testUsageFixture({ status: 'stale', available: true, day: '2000-01-01', checkedAt: now, resetsAt: now + 86400000 });
+  await instance.dispatchFetch('https://sync.test/v1/usage');
+  assert.equal(await registry.testUsageCache(day), null);
+  const usage = { status: 'unavailable', available: false, day, checkedAt: null, resetsAt: now + 86400000 };
+  await registry.testUsageFixture(usage);
+  await instance.dispatchFetch('https://sync.test/v1/usage');
+  const cached = await registry.testUsageCache(day);
+  assert.deepEqual(cached.value, usage);
+  assert.ok(Number(cached.control.match(/max-age=(\d+)/)[1]) <= 60);
 });
