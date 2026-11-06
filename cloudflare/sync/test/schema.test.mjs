@@ -103,7 +103,7 @@ test('legacy schemas migrate once using the latest retained message instead of a
   assert.ok((await storage.exec('PRAGMA table_info(files)')).some(column => column.name === 'fingerprint'));
   assert.ok((await storage.exec('PRAGMA table_info(gomoku_games)')).some(column => column.name === 'base_score'));
   assert.ok((await storage.exec('PRAGMA table_info(file_shards)')).some(column => column.name === 'measured_bytes'));
-  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'schemaVersion'"))[0].value, '3');
+  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'schemaVersion'"))[0].value, '4');
   await wake();
   assert.ok((await room.testQueries()).every(query => query.startsWith('SELECT')));
 });
@@ -124,19 +124,20 @@ test('an empty legacy room gets one fourteen-day grace period that reads and sub
   assert.equal(Number((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value), deadlineStart);
 });
 
-test('push schema migration preserves the room inactivity deadline and existing devices', async t => {
+test('version 3 rooms gain push subscriptions without changing inactivity deadlines or devices', async t => {
   const { runtime, room, storage, wake } = await createRuntime(); t.after(() => runtime.dispose());
   const device = await room.initialize(randomUUID());
   const activity = String(Date.now() - 10 * 86400000);
   await storage.exec('DROP TRIGGER delete_device_push');
   await storage.exec('DROP TABLE push_subscriptions');
-  await storage.exec("UPDATE metadata SET value = '2' WHERE key = 'schemaVersion'");
+  await storage.exec("UPDATE metadata SET value = '3' WHERE key = 'schemaVersion'");
   await storage.exec("UPDATE metadata SET value = ? WHERE key = 'lastMessageAt'", activity);
   assert.equal(await wake(), true);
   assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value, activity);
   assert.equal(await room.authorize(device.token), device.deviceId);
   assert.deepEqual(await storage.exec('SELECT * FROM push_subscriptions'), []);
-  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'schemaVersion'"))[0].value, '3');
+  assert.equal((await storage.exec("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'delete_device_push'")).length, 1);
+  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'schemaVersion'"))[0].value, '4');
 });
 
 

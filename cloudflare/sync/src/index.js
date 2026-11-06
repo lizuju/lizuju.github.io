@@ -3,7 +3,7 @@ import { API_VERSION } from './api-version.js';
 import { collectDailyUsage, unavailableDailyUsage } from './daily-usage.js';
 import { getPushPublicKey, validatePushSubscription, sendWebPush } from './web-push.js';
 
-const ROOM_SCHEMA_VERSION = '3';
+const ROOM_SCHEMA_VERSION = '4';
 const INVITE_LIFETIME = 10 * 60 * 1000;
 const MESSAGE_LIFETIME = 7 * 24 * 60 * 60 * 1000;
 const STORAGE_HIGH_WATER = 4_800_000_000;
