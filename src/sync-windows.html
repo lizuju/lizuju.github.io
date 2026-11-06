@@ -2,7 +2,7 @@
             aria-labelledby="sync-space-title">
             <div class="window-titlebar" data-sync-titlebar>
                 <div class="window-title">
-                    <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
+                    <span class="window-app-icon window-app-icon--sync" aria-hidden="true"></span>
                     <span id="sync-space-title" data-i18n="desktopSyncSpace">联络站</span>
                 </div>
                 <div class="window-controls">
@@ -33,7 +33,7 @@
                 <div class="sync-main">
                 <div class="sync-setup" data-sync-setup>
                     <div class="sync-welcome">
-                        <span class="sync-welcome-icon" aria-hidden="true">↔</span>
+                        <span class="sync-welcome-icon" aria-hidden="true"></span>
                         <h2 data-i18n="syncSetupTitle">输入配对码，随时聊，随手传。</h2>
                     </div>
                     <button class="sync-button sync-create" type="button" data-sync-create
@@ -209,8 +209,15 @@
                                     data-i18n="syncLeave">离开空间</button>
                             </div>
                             <div class="sync-tools-notes">
+                                <details class="sync-install-guide" data-sync-install-guide>
+                                    <summary data-i18n="syncInstallTitle">添加到主屏幕</summary>
+                                    <p class="sync-hint" data-sync-install-copy></p>
+                                    <a href="/chat/" target="_blank" rel="noopener" data-i18n="syncInstallOpen">打开独立联络站</a>
+                                    <button class="sync-button" type="button" data-sync-install data-i18n="syncInstallAction" hidden>安装联络站</button>
+                                </details>
                                 <p class="sync-hint" id="sync-file-limit" data-i18n="syncFileLimit">可选择、拖入文件或粘贴截图，最大 2GB。</p>
                                 <p class="sync-hint" data-i18n="syncHistoryLimit">消息和附件最多保留 7 天、500 条；空间不足自动清理，清空同步所有设备。</p>
+                                <p class="sync-hint" data-i18n="syncSpaceIdleLimit">空间连续 14 天无新消息将自动清理。</p>
                                 <p class="sync-hint" data-i18n="syncEncrypted">消息与附件已端到端加密</p>
                             </div>
                         </div>
@@ -227,7 +234,7 @@
                 <form method="dialog">
                     <div class="window-titlebar">
                         <div class="window-title">
-                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
+                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true"></span>
                             <span id="sync-confirm-title" data-sync-confirm-title></span>
                         </div>
                         <div class="window-controls">
@@ -269,7 +276,7 @@
                 <form method="dialog">
                     <div class="window-titlebar">
                         <div class="window-title">
-                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true">☺</span>
+                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true"></span>
                             <span id="sync-sticker-title" data-i18n="syncStickers">表情</span>
                         </div>
                         <div class="window-controls">
@@ -288,7 +295,7 @@
                 <form data-sync-devices-form>
                     <div class="window-titlebar">
                         <div class="window-title">
-                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
+                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true"></span>
                             <span id="sync-devices-title" data-i18n="syncDevices">设备管理</span>
                         </div>
                         <div class="window-controls">

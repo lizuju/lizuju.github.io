@@ -15,6 +15,7 @@ import { STICKERS, stickerById } from './sync-stickers.js';
 import { createGomokuWindow } from './sync-gomoku.js';
 import { pendingReads } from './sync-read-receipts.js';
 import { createSystemNotifications } from './sync-notifications.js';
+import { createWebPush } from './sync-push.js';
 import { pendingMessages } from './sync-outbox.js';
 
 (() => {
@@ -629,6 +630,7 @@ import { pendingMessages } from './sync-outbox.js';
             await spacesReady;
             await savedSpaces.save(session, { activate });
             renderSpaces();
+            systemNotifications.syncPush();
         };
         const liveSession = session => credentials === session || connections.get(session.roomId)?.session === session;
         const applySpaceProfile = async (profile, session) => {
@@ -812,7 +814,13 @@ import { pendingMessages } from './sync-outbox.js';
             if (type === 'application/pdf' || extension === 'pdf') return 'pdf';
             if (extension === 'docx') return 'word';
             if (['xlsx', 'xls', 'ods', 'csv', 'tsv'].includes(extension)) return 'spreadsheet';
-            if (['txt', 'md', 'json', 'log', 'xml', 'yaml', 'yml'].includes(extension)) return 'text';
+            if ([
+                'txt', 'md', 'markdown', 'log', 'json', 'jsonc', 'jsonl', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'env', 'properties',
+                'py', 'pyw', 'pyi', 'ipynb', 'c', 'cc', 'cpp', 'cxx', 'h', 'hh', 'hpp', 'hxx', 'm', 'mm', 'cs', 'java', 'kt', 'kts', 'swift', 'go', 'rs',
+                'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'vue', 'svelte', 'html', 'htm', 'css', 'scss', 'sass', 'less', 'sql',
+                'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat', 'cmd', 'rb', 'php', 'pl', 'lua', 'r', 'dart',
+                'tex', 'latex', 'bib', 'sty', 'cls', 'cmake', 'makefile', 'dockerfile', 'gitignore', 'gitattributes', 'editorconfig'
+            ].includes(extension)) return 'text';
             return null;
         };
         const showAttachmentError = (error) => {
@@ -919,7 +927,7 @@ import { pendingMessages } from './sync-outbox.js';
             if (message.sendState || button.disabled) return;
             const session = credentials;
             const kind = previewKind(message.attachment);
-            const limit = ['image', 'heic'].includes(kind) ? 20 : kind === 'text' ? 2 : 25;
+            const limit = ['image', 'heic'].includes(kind) ? 20 : kind === 'text' ? 5 : 25;
             if (!['pdf', 'video', 'audio'].includes(kind) && message.attachment.size > limit * 1024 * 1024) {
                 setNotice('syncPreviewTooLarge', true);
                 return;
@@ -1871,6 +1879,7 @@ import { pendingMessages } from './sync-outbox.js';
             if (data.spaceProfile) record.spaceProfile = data.spaceProfile;
             if (data.profile) record.spaceProfile = data.profile;
             if (data.type === 'ready') {
+                systemNotifications.syncPush();
                 const pending = await pendingReads.load(session).catch(() => 0);
                 if (!valid()) return;
                 record.pendingReadId = Math.max(record.pendingReadId, pending);
@@ -2545,6 +2554,7 @@ import { pendingMessages } from './sync-outbox.js';
         // In narrow windows the tools overlay the conversation, so an action closes them like switching spaces does.
         app.querySelector('.sync-tools-actions').addEventListener('click', (event) => {
             if (!event.target.closest('button') || getComputedStyle(find('tools')).position !== 'absolute') return;
+            if (event.target.closest('[data-sync-notifications]') && find('install-guide').open && !find('install-guide').hidden) return;
             app.classList.add('is-tools-collapsed');
             renderToolsToggle();
         });
@@ -3754,12 +3764,15 @@ import { pendingMessages } from './sync-outbox.js';
             reconcileSession();
             if (active || needsGameConnection()) connect();
         } });
+        const push = createWebPush({ api, getSessions: () => Array.from(connections.values(), record => record.session), getLanguage: desktopApi.getLanguage });
         const systemNotifications = createSystemNotifications({
             button: find('notifications'), translate, onError: key => setNotice(key, true),
+            push, installGuide: find('install-guide'), installButton: find('install'),
             onOpen: roomId => { entry.show(); if (credentials?.roomId !== roomId) switchSpace(roomId); }
         });
         desktopApi.notificationDiagnostics = () => systemNotifications.diagnostics();
         reconcileSession().then(async () => {
+            systemNotifications.syncPush();
             const target = new URLSearchParams(location.hash.slice(1)).get('space');
             if (target && savedSpaces.list().some(space => space.roomId === target)) {
                 window.history.replaceState(null, '', location.pathname + location.search);

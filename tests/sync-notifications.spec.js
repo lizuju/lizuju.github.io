@@ -11,6 +11,7 @@ const install = async page => {
         window.delivered = [];
         window.permissionRequests = 0;
         window.errors = [];
+        Object.defineProperty(navigator, 'standalone', { configurable: true, value: true });
         window.Notification = { permission: 'default', requestPermission: async () => { permissionRequests++; return Notification.permission = 'granted'; } };
         const { createSystemNotifications, testSystemNotification, getNotificationState, readNotificationDiagnostics } = await import('./sync-notifications.js');
         window.notificationTools = { testSystemNotification, getNotificationState, readNotificationDiagnostics };
@@ -79,7 +80,7 @@ for (const path of ['portfolio', 'chat']) test(`the ${path} service worker sets 
     await deliver();
     expect(shown).toHaveLength(1);
     expect(shown[0].body).toBe('有新消息');
-    expect(shown[0].icon).toBe('https://example.test/portfolio/assets/sync-notification.png');
+    expect(shown[0].icon).toBe('https://example.test/portfolio/assets/sync-icon-192.png');
     let clicked;
     handlers.get('notificationclick')[0]({ notification: { data: shown[0].data, close() {} }, waitUntil: promise => { clicked = promise; } });
     await clicked;

@@ -1,8 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
 import { API_VERSION } from './api-version.js';
 import { collectDailyUsage, unavailableDailyUsage } from './daily-usage.js';
+import { getPushPublicKey, validatePushSubscription, sendWebPush } from './web-push.js';
 
-const ROOM_SCHEMA_VERSION = '3';
+const ROOM_SCHEMA_VERSION = '4';
 const INVITE_LIFETIME = 10 * 60 * 1000;
 const MESSAGE_LIFETIME = 7 * 24 * 60 * 60 * 1000;
 const STORAGE_HIGH_WATER = 4_800_000_000;
@@ -189,6 +190,10 @@ export default {
     if (request.method === 'GET' && url.pathname === '/health') {
       return json({ ok: true, service: 'portfolio-sync', apiVersion: API_VERSION, encryptionVersion: 1, revision: env.RELEASE_REVISION || null, sourceFingerprint: env.RELEASE_SOURCE || null, versionId: env.WORKER_VERSION?.id || null });
     }
+    if (request.method === 'GET' && url.pathname === '/v1/push/key') {
+      const publicKey = getPushPublicKey(env);
+      return publicKey ? json({ publicKey }) : json({ error: 'push_unavailable' }, 503);
+    }
 
     const registry = env.E2EE_PAIRING_REGISTRY.getByName('registry');
     if (request.method === 'GET' && url.pathname === '/v1/usage') {
@@ -267,7 +272,7 @@ export default {
       return json({ error: 'not_found' }, 404);
     }
 
-    const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/key-rotation|\/key-grants|\/pair-code|\/pair-challenge|\/pair-accept|\/pair-requests|\/messages|\/socket|\/profile|\/device|\/devices(?:\/([^/]+))?|\/gomoku\/[^/]+(?:\/(?:join|move|leave))?|\/files(?:\/.*)?|\/downloads\/[0-9a-f]{64})?$/);
+    const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/key-rotation|\/key-grants|\/pair-code|\/pair-challenge|\/pair-accept|\/pair-requests|\/messages|\/socket|\/profile|\/push-subscription|\/device|\/devices(?:\/([^/]+))?|\/gomoku\/[^/]+(?:\/(?:join|move|leave))?|\/files(?:\/.*)?|\/downloads\/[0-9a-f]{64})?$/);
     if (!match || !ROOM_ID.test(match[1]) || (match[3] && !ROOM_ID.test(match[3]))) return json({ error: 'not_found' }, 404);
     const roomId = match[1];
     const uploadChunk = match[2]?.match(/^\/files\/uploads\/([0-9a-f-]{36})\/chunks\/(0|[1-9][0-9]*)$/i);
@@ -308,6 +313,17 @@ export default {
     const deviceId = token ? await room.authorize(token) : null;
     if (!deviceId) return json({ error: 'unauthorized' }, 401);
     const keyId = request.headers.get('X-Sync-Key-Id');
+    if (match[2] === '/push-subscription') {
+      if (request.method === 'DELETE') return resultResponse(await room.removePushSubscription(deviceId));
+      if (request.method !== 'PUT') return json({ error: 'not_found' }, 404);
+      if (!getPushPublicKey(env)) return json({ error: 'push_unavailable' }, 503);
+      const body = await readJson(request, 4096);
+      if (body.error) return resultResponse(body);
+      const subscription = validatePushSubscription(body.value.subscription);
+      if (!subscription || !['zh-CN', 'en'].includes(body.value.language)
+          || Object.keys(body.value).some(key => !['subscription', 'language'].includes(key))) return json({ error: 'invalid_push_subscription' }, 400);
+      return resultResponse(await room.savePushSubscription(deviceId, subscription, body.value.language));
+    }
     if (match[2] === '/profile') {
       if (request.method !== 'PATCH') return json({ error: 'not_found' }, 404);
       const body = await readJson(request, 8192);
@@ -1245,6 +1261,7 @@ export class E2eeSyncRoom extends DurableObject {
     this.uploadCompletions = new Map();
     this.uploadWrites = new Map();
     this.connectedActivity = new Map();
+    this.pushRequests = new Map();
     // Stale requests can wake reclaimed objects; only initialize may create their tables.
     const tables = this.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('devices', 'metadata')").toArray().map(row => row.name);
     this.initialized = tables.includes('devices');
@@ -1277,6 +1294,8 @@ export class E2eeSyncRoom extends DurableObject {
       this.sql.exec('ALTER TABLE devices ADD COLUMN read_message_id INTEGER NOT NULL DEFAULT 0');
     }
     this.sql.exec('CREATE INDEX IF NOT EXISTS devices_activity ON devices(last_active_at)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS push_subscriptions (device_id TEXT PRIMARY KEY, subscription TEXT NOT NULL, language TEXT NOT NULL)');
+    this.sql.exec('CREATE TRIGGER IF NOT EXISTS delete_device_push AFTER DELETE ON devices BEGIN DELETE FROM push_subscriptions WHERE device_id = OLD.device_id; END');
     this.sql.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
     this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'historyGeneration', crypto.randomUUID());
     this.sql.exec('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL, device_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, attachment TEXT, UNIQUE(device_id, client_id))');
@@ -1400,6 +1419,7 @@ export class E2eeSyncRoom extends DurableObject {
     this.sql.exec("INSERT INTO metadata (key, value) VALUES ('rekeyRequired', '0') ON CONFLICT(key) DO UPDATE SET value = '0'");
     if (!preserveUploads) this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading'");
     if (rotation.removedDeviceId) {
+      this.cancelDevicePush(rotation.removedDeviceId);
       this.sql.exec('DELETE FROM devices WHERE device_id = ?', rotation.removedDeviceId);
       this.connectedActivity.delete(rotation.removedDeviceId);
       this.downloadRevision++;
@@ -1504,6 +1524,7 @@ export class E2eeSyncRoom extends DurableObject {
   expireIfInactive() {
     if (this.roomExpired) return true;
     if (this.lastMessageAt + ROOM_IDLE_LIFETIME > Date.now()) return false;
+    for (const deviceId of this.pushRequests.keys()) this.cancelDevicePush(deviceId);
     this.ctx.storage.transactionSync(() => {
       this.sql.exec("INSERT INTO metadata (key, value) VALUES ('roomExpired', '1')");
       this.sql.exec('DELETE FROM devices');
@@ -1536,6 +1557,70 @@ export class E2eeSyncRoom extends DurableObject {
       deviceId,
       devices: this.sql.exec('SELECT device_id AS deviceId, name, created_at AS createdAt FROM devices ORDER BY created_at, device_id').toArray()
     };
+  }
+
+  savePushSubscription(deviceId, subscription, language) {
+    if (!this.initialized || this.expireIfInactive()) return { error: 'not_found', status: 404 };
+    if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+    const value = JSON.stringify(subscription);
+    const changed = this.sql.exec(`INSERT INTO push_subscriptions (device_id, subscription, language) VALUES (?, ?, ?)
+      ON CONFLICT(device_id) DO UPDATE SET subscription = excluded.subscription, language = excluded.language
+      WHERE subscription <> excluded.subscription OR language <> excluded.language RETURNING device_id`, deviceId, value, language).toArray().length;
+    if (changed) this.cancelDevicePush(deviceId);
+    return { ok: true };
+  }
+
+  removePushSubscription(deviceId) {
+    if (!this.initialized || this.expireIfInactive()) return { error: 'not_found', status: 404 };
+    if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+    this.sql.exec('DELETE FROM push_subscriptions WHERE device_id = ?', deviceId);
+    this.cancelDevicePush(deviceId);
+    return { ok: true };
+  }
+
+  cancelDevicePush(deviceId) {
+    for (const controller of this.pushRequests.get(deviceId) || []) controller.abort();
+    this.pushRequests.delete(deviceId);
+  }
+
+  queuePush(message) {
+    if (!getPushPublicKey(this.env)) return;
+    this.ctx.waitUntil(this.sendPushNotifications(message).catch(() => {
+      console.warn(JSON.stringify({ event: 'sync_push_error', status: 0 }));
+    }));
+  }
+
+  async sendPushNotifications(message) {
+    if (!this.initialized || this.roomExpired) return;
+    const subscriptions = this.sql.exec('SELECT p.device_id, p.subscription, p.language FROM push_subscriptions p JOIN devices d ON d.device_id = p.device_id WHERE p.device_id <> ? AND d.last_active_at > ?', message.deviceId, Date.now() - DEVICE_IDLE_LIFETIME).toArray();
+    if (!subscriptions.length) return;
+    const roomId = this.sql.exec("SELECT value FROM metadata WHERE key = 'roomId'").toArray()[0]?.value;
+    if (!roomId) return;
+    let index = 0;
+    await Promise.all(Array.from({ length: Math.min(3, subscriptions.length) }, async () => {
+      while (index < subscriptions.length) {
+        const recipient = subscriptions[index++];
+        if (!this.initialized || this.roomExpired) return;
+        if (!this.sql.exec('SELECT 1 FROM push_subscriptions p JOIN devices d ON d.device_id = p.device_id WHERE p.device_id = ? AND p.subscription = ? AND d.last_active_at > ?', recipient.device_id, recipient.subscription, Date.now() - DEVICE_IDLE_LIFETIME).toArray().length) continue;
+        const controller = new AbortController();
+        let requests = this.pushRequests.get(recipient.device_id);
+        if (!requests) this.pushRequests.set(recipient.device_id, requests = new Set());
+        requests.add(controller);
+        try {
+          const result = await sendWebPush(JSON.parse(recipient.subscription), {
+            roomId, messageId: message.id, language: recipient.language
+          }, this.env, { signal: controller.signal });
+          if (controller.signal.aborted || !this.initialized || this.roomExpired) continue;
+          if ([404, 410].includes(result.status)) this.sql.exec('DELETE FROM push_subscriptions WHERE device_id = ? AND subscription = ?', recipient.device_id, recipient.subscription);
+          else if (result.status < 200 || result.status >= 300) console.warn(JSON.stringify({ event: 'sync_push_error', status: result.status }));
+        } catch {
+          if (!controller.signal.aborted) console.warn(JSON.stringify({ event: 'sync_push_error', status: 0 }));
+        } finally {
+          requests.delete(controller);
+          if (!requests.size && this.pushRequests.get(recipient.device_id) === requests) this.pushRequests.delete(recipient.device_id);
+        }
+      }
+    }));
   }
 
   renameDevice(deviceId, targetDeviceId, name, keyId) {
@@ -2066,6 +2151,7 @@ export class E2eeSyncRoom extends DurableObject {
         this.shardBytes = null;
         if (pruned.length) this.downloadRevision++;
         this.broadcast({ type: 'message', message, history: { ...this.historySnapshot(), ...(pruned.length ? { removedIds: pruned } : {}) }, ...(pruned.length ? { activeGames: this.activeGames() } : {}) });
+        this.queuePush(message);
         await this.scheduleAlarm();
         return { message, created: true };
       });
@@ -2184,6 +2270,7 @@ export class E2eeSyncRoom extends DurableObject {
     this.retainedMessageIds = [...this.retainedMessageIds.filter(id => !removed.has(id)), message.id];
     if (pruned.length) this.downloadRevision++;
     this.broadcast({ type: 'message', message, history: { ...this.historySnapshot(), ...(pruned.length ? { removedIds: pruned } : {}) }, ...(pruned.length ? { activeGames: this.activeGames() } : {}) });
+    this.queuePush(message);
     if (gameType) this.broadcast({ type: 'gomoku', game: this.gameSnapshot(this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', clientId).one()) });
     if (previousGameId) {
       const previous = this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', previousGameId).toArray()[0];
@@ -2211,6 +2298,7 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.sql.exec('DELETE FROM devices WHERE device_id = ? RETURNING device_id', deviceId).toArray().length) {
       return { error: 'device_not_found', status: 404 };
     }
+    this.cancelDevicePush(deviceId);
     this.downloadRevision++;
     this.connectedActivity.delete(deviceId);
     const games = this.finishDeviceGames(deviceId);
