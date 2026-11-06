@@ -87,19 +87,11 @@
     padding: 20px;
 }
 
-.project-folder-search {
-    display: flex;
-    padding: 4px 8px;
-}
-
 .project-folder-search input {
     width: 100%;
-    min-width: 0;
-    padding: 5px 8px;
-    border: 2px inset #efefef;
-    background: #fff;
+    appearance: none;
     color: #111;
-    font: 13px/1.4 var(--font-system);
+    font: inherit;
 }
 
 .project-folder-empty {

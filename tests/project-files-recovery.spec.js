@@ -67,7 +67,7 @@ test('searches the current folder in either language and keeps filtered keyboard
     await expect(page.locator('[data-folder="music"]')).toBeVisible();
     await page.locator('[data-taskbar-lang]').click();
     await expect(search).toHaveValue('music');
-    await expect(search).toHaveAttribute('placeholder', 'Search this folder');
+    await expect(search).toHaveAttribute('placeholder', 'Search');
     await search.fill('数学');
     await expect(page.locator('[data-folder="papers"]')).toBeVisible();
     await page.locator('[data-folder="papers"]').click();
