@@ -10,6 +10,7 @@ const MiB = 1024 * 1024;
 const chunkSize = 8 * MiB;
 const maximumFileSize = 2 * 1024 * MiB;
 const sevenDays = 7 * 24 * 60 * 60 * 1000;
+const fourteenDays = 14 * 24 * 60 * 60 * 1000;
 let runtime;
 let nextIp = 1;
 const sockets = new Set();
@@ -129,6 +130,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
 
                   hasRoom(roomId) { this.roomLookups = (this.roomLookups || 0) + 1; return super.hasRoom(roomId); }
                   testRoomLookups() { return this.roomLookups || 0; }
+                  testRecountCapacity() { this.accountedBytes = null; return this.storageBytes(); }
                   testCleanupCandidates() {
                     return [
                       this.sql.exec('SELECT room_id FROM room_usage WHERE (deleting_files IS NULL OR deleting_files > 0) AND room_id NOT IN (SELECT room_id FROM maintenance_failures) ORDER BY oldest_at, room_id LIMIT 1'),
@@ -164,6 +166,10 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                 }
                 export class SyncRoom extends ProductionSyncRoom {
+                  testAgeActivity(timestamp) {
+                    this.lastMessageAt = timestamp;
+                    this.sql.exec("UPDATE metadata SET value = ? WHERE key = 'lastMessageAt'", String(timestamp));
+                  }
                   testFailCleanup(value) { this.failCleanup = value; }
                   cleanupFiles() { if (this.failCleanup) throw new Error('test_cleanup_failed'); return super.cleanupFiles(); }
                   testSocketActivity(activity) {
@@ -1926,7 +1932,8 @@ test('warm text sends keep SQL operations bounded while scheduling history expir
   const reads = await room.testReadCount();
   t.diagnostic(`Warm text send: ${queries} SQL calls, ${reads} rows read in the room`);
   assert.equal(result.created, true);
-  assert.ok(queries <= 16, `expected <= 16 SQL calls, got ${queries}`);
+  // Includes the single durable activity update for this newly accepted message.
+  assert.ok(queries <= 17, `expected <= 17 SQL calls, got ${queries}`);
   assert.ok(reads < 30, `expected fewer than 30 read rows, got ${reads}`);
   assert.ok(await room.testReadAlarm() <= Date.now() + sevenDays);
 });
@@ -1945,3 +1952,116 @@ test('expiry hints skip warm sweeps but cold recovery and overdue messages still
   assert.deepEqual(rows, [{ id: next.body.id }]);
   assert.ok(await room.testReadAlarm() <= Date.now() + sevenDays);
 });
+
+
+test('file activity renews the room deadline only on its first successful completion', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const room = await roomObject(space, instance), storage = await roomStorage(space, instance);
+  const old = Date.now() - fourteenDays + 60000;
+  await room.testAgeActivity(old);
+  const started = await initiate(request, space, { size: 4096, name: 'voice.webm', type: 'audio/webm' });
+  assert.equal(started.status, 201);
+  assert.equal(Number((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value), old);
+  assert.equal((await complete(request, space, started.body.uploadId)).status, 409);
+  assert.equal((await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(4096, 7))).status, 200);
+  assert.equal(Number((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value), old);
+  const sent = await complete(request, space, started.body.uploadId);
+  assert.equal(sent.status, 201);
+  assert.equal(Number((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value), sent.body.createdAt);
+  assert.ok(sent.body.createdAt > old);
+  const marker = sent.body.createdAt - 1000;
+  await room.testAgeActivity(marker);
+  const retry = await complete(request, space, started.body.uploadId);
+  assert.equal(retry.status, 200);
+  assert.deepEqual(retry.body, sent.body);
+  assert.equal(Number((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value), marker);
+});
+
+test('fourteen-day room expiry clears completed files, unfinished uploads and tickets before releasing all room capacity', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), survivor = await createSpace(request);
+  const retained = await upload(request, survivor, { bytes: Buffer.alloc(4096, 9), name: 'keep.bin' });
+  assert.equal(retained.status, 201);
+  const retainedShards = await instance.listDurableObjectIds('E2EE_FILE_SHARDS');
+  const space = await createSpace(request);
+  const room = await roomObject(space, instance), storage = await roomStorage(space, instance);
+  const sent = [];
+  for (let index = 0; index < 5; index++) {
+    const file = await upload(request, space, { bytes: Buffer.alloc(4096, index), name: `file-${index}.bin` });
+    assert.equal(file.status, 201);
+    sent.push(file.body);
+  }
+  const pending = await initiate(request, space, { size: 4096, name: 'pending.bin' });
+  assert.equal((await putChunk(request, space, pending.body.uploadId, 0, Buffer.alloc(4096, 6))).status, 200);
+  const ticket = await request(`/v1/spaces/${space.roomId}/files/${sent[0].id}/download`, { method: 'POST', token: space.token });
+  assert.equal(ticket.status, 200);
+  const expiredShards = (await instance.listDurableObjectIds('E2EE_FILE_SHARDS')).filter(id => !retainedShards.includes(id));
+  assert.equal(expiredShards.length, 6);
+  assert.ok((await shardRows(expiredShards, instance)).length > 0);
+  await room.testAgeActivity(Date.now() - fourteenDays);
+  await room.pruneExpired();
+  for (const table of ['devices', 'messages', 'download_tickets', 'key_grants', 'pair_acceptances']) {
+    assert.deepEqual(await storage.exec(`SELECT * FROM ${table}`), []);
+  }
+  assert.deepEqual(await storage.exec('SELECT DISTINCT status, reserved_bytes FROM files'), [{ status: 'deleting', reserved_bytes: 0 }]);
+  assert.ok([401, 404].includes((await request.raw(`/v1/spaces/${space.roomId}/downloads/${ticket.body.ticket}`)).status));
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  for (let turn = 0; turn < 10 && await registry.hasRoom(space.roomId); turn++) await registry.refreshRoom(space.roomId);
+  assert.equal(await registry.hasRoom(space.roomId), false);
+  assert.equal(await registry.hasRoom(survivor.roomId), true);
+  assert.deepEqual(await storage.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name'"), []);
+  assert.deepEqual(await shardRows(expiredShards, instance), []);
+  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-files-test', 'PairingRegistry', { name: 'registry' });
+  for (const table of ['room_usage', 'reservations', 'offers', 'room_pairing']) {
+    assert.deepEqual(await registryStorage.exec(`SELECT * FROM ${table} WHERE room_id = ?`, space.roomId), []);
+  }
+  assert.deepEqual((await registryStorage.exec('SELECT room_id FROM room_usage')).map(row => row.room_id), [survivor.roomId]);
+  assert.equal(await registry.storageBytes(), await registry.testRecountCapacity());
+  const downloaded = await request(`/v1/spaces/${survivor.roomId}/files/${retained.body.id}`, { token: survivor.token });
+  assert.equal(downloaded.status, 200);
+  assert.deepEqual(downloaded.body, Buffer.alloc(4096, 9));
+  assert.ok([401, 404].includes((await complete(request, space, pending.body.uploadId)).status));
+  assert.deepEqual(await shardRows(expiredShards, instance), []);
+});
+
+for (const phase of ['chunk write', 'finalization']) {
+  test(`fourteen-day expiry during a delayed ${phase} cannot restore files or leave orphan shards`, { timeout: 10000 }, async t => {
+    const instance = await createRuntime(); t.after(() => instance.dispose());
+    const request = client(instance), space = await createSpace(request);
+    const started = await initiate(request, space, { size: 4096 });
+    const room = await roomObject(space, instance), storage = await roomStorage(space, instance);
+    const shard = (await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS')).getByName(`${started.body.uploadId}:0`);
+    const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+    let pending;
+    if (phase === 'chunk write') {
+      await shard.testHoldWrite();
+      pending = putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(4096, 1));
+      while (!await shard.testWriteStarted()) await new Promise(resolve => setTimeout(resolve, 5));
+    } else {
+      assert.equal((await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(4096, 1))).status, 200);
+      await shard.testHoldSize();
+      pending = complete(request, space, started.body.uploadId);
+      await registry.testWaitSizeCalls(1);
+    }
+    try {
+      await room.testAgeActivity(Date.now() - fourteenDays);
+      await room.pruneExpired();
+      assert.deepEqual(await storage.exec('SELECT * FROM devices'), []);
+      await registry.refreshRoom(space.roomId);
+      if (phase === 'chunk write') {
+        assert.equal(await registry.hasRoom(space.roomId), true, 'the in-flight shard must remain tracked until the write settles');
+        assert.equal((await storage.exec('SELECT count(*) AS count FROM file_shards'))[0].count, 1);
+      }
+    } finally {
+      if (phase === 'chunk write') await shard.testReleaseWrite();
+      else await shard.testReleaseSize();
+    }
+    assert.ok([401, 404].includes((await pending).status));
+    for (let turn = 0; turn < 10 && await registry.hasRoom(space.roomId); turn++) await registry.refreshRoom(space.roomId);
+    assert.equal(await registry.hasRoom(space.roomId), false);
+    assert.deepEqual(await storage.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name'"), []);
+    assert.equal((await shard.databaseProbe()).initialized, false);
+    assert.equal((await new Response(await shard.readStream()).arrayBuffer()).byteLength, 0);
+  });
+}

@@ -14,6 +14,7 @@ import { PreviewZoom } from './preview-zoom.js';
         const projectFolderAddress = document.querySelector('[data-project-folder-address]');
         const projectFolderStatus = document.querySelector('[data-project-folder-status]');
         const folderSearch = document.querySelector('[data-project-folder-search]');
+        const folderScroll = projectFolderWindow.querySelector('.project-folder-scroll');
         const folderEmpty = document.querySelector('[data-project-folder-empty]');
         const projectFolderRoot = document.querySelector('[data-project-folder-root]');
         const robomasterFolderView = document.querySelector('[data-robomaster-folder-view]');
@@ -25,6 +26,9 @@ import { PreviewZoom } from './preview-zoom.js';
         const honorsGrid = document.querySelector('[data-honors-grid]');
         const honorsLoading = document.querySelector('[data-honors-loading]');
         const honorsRetry = document.querySelector('[data-honors-retry]');
+        const openHonorsLink = document.querySelector('[data-open-honors]');
+        const standaloneHonors = document.body.classList.contains('standalone-honors');
+        const honorsAssetRoot = new URL('assets/honors/', new URL(document.body.dataset.assetRoot || './', document.baseURI));
         const paperButtons = Array.from(document.querySelectorAll('[data-modeling-paper]'));
         const paperPreviewWindow = document.querySelector('[data-paper-preview-window]');
         const paperPreviewTask = document.querySelector('[data-paper-preview-task]');
@@ -68,11 +72,13 @@ import { PreviewZoom } from './preview-zoom.js';
         let selectedPaperButton = paperButtons[0];
         let previewPaperButton;
         let pendingPaperScrollTop;
+        let pendingFolderScrollTop;
         const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
         const imageButtons = [...robomasterImageButtons];
         let previewImages = robomasterImageButtons;
         const folderItems = { root: folderButtons, photos: robomasterImageButtons, music: [musicVideoButton], papers: paperButtons, honors: [] };
         let honorsRequest;
+        let pendingImageRestore;
         let videoPosition = 0;
         try {
             const saved = Number(localStorage.getItem('portfolio-music-position'));
@@ -137,6 +143,17 @@ import { PreviewZoom } from './preview-zoom.js';
             actionAttribute: 'data-project-folder-action',
             minWidth: 440,
             minHeight: 320,
+            show: () => {
+                manager.showWindow(projectFolderWindow, projectFolderTask, { revealTask: true });
+                if (pendingFolderScrollTop !== undefined && (currentFolder !== 'honors' || folderItems.honors.length)) {
+                    folderScroll.scrollTop = pendingFolderScrollTop;
+                    pendingFolderScrollTop = undefined;
+                }
+            },
+            hide: (state) => {
+                pendingFolderScrollTop = folderScroll.scrollTop;
+                manager.hideWindow(projectFolderWindow, projectFolderTask, state, { hideTask: state === 'is-closed' });
+            },
             focusTarget: () => (
                 ['photos', 'honors'].includes(currentFolder) && manager.isFocusable(selectedImageButton)
                     ? selectedImageButton
@@ -275,9 +292,13 @@ import { PreviewZoom } from './preview-zoom.js';
             updatePaperCopy();
         };
 
-        const openPaperPreview = (button) => {
+        const selectPaper = (button) => {
             selectedPaperButton = button;
             paperButtons.forEach((candidate) => candidate.classList.toggle('is-selected', candidate === button));
+        };
+
+        const openPaperPreview = (button) => {
+            selectPaper(button);
             updatePaperPreview(button);
             paperEntry.show();
         };
@@ -309,6 +330,7 @@ import { PreviewZoom } from './preview-zoom.js';
             paperButtons.forEach((button) => button.classList.remove('is-selected'));
             imageButtons.forEach((button) => button.classList.remove('is-selected'));
             selectedImageButton = undefined;
+            selectedPaperButton = undefined;
         };
 
         const getPhotoColumnCount = (buttons) => {
@@ -399,11 +421,19 @@ import { PreviewZoom } from './preview-zoom.js';
                 .replace('{count}', count).replace('{total}', items.length);
             folderSearch.setAttribute('aria-label', t().folderSearch);
             if (selectedFolderButton?.hidden) selectedFolderButton = folderButtons.find(button => !button.hidden);
-            if (selectedPaperButton?.hidden) selectedPaperButton = paperButtons.find(button => !button.hidden);
-            if (['photos', 'honors'].includes(currentFolder) && selectedImageButton?.hidden) selectPhoto(items.find(button => !button.hidden));
+            if (currentFolder === 'papers' && (!selectedPaperButton || selectedPaperButton.hidden)) selectPaper(paperButtons.find(button => !button.hidden));
+            if (['photos', 'honors'].includes(currentFolder) && (!items.includes(selectedImageButton) || selectedImageButton.hidden)) {
+                selectPhoto(items.find(button => !button.hidden));
+            }
         };
         const setProjectFolderView = (folder) => {
-            if (folder !== currentFolder) folderSearch.value = '';
+            if (standaloneHonors) folder = 'honors';
+            if (folder !== currentFolder) {
+                pendingImageRestore = undefined;
+                folderSearch.value = '';
+                folderScroll.scrollTop = 0;
+                pendingFolderScrollTop = 0;
+            }
             currentFolder = folder;
             const copy = t();
             projectFolderRoot.hidden = folder !== 'root';
@@ -412,6 +442,7 @@ import { PreviewZoom } from './preview-zoom.js';
             papersFolderView.hidden = folder !== 'papers';
             honorsFolderView.hidden = folder !== 'honors';
             projectFolderBack.hidden = folder === 'root';
+            if (openHonorsLink) openHonorsLink.hidden = folder !== 'honors' || standaloneHonors;
             if (folder !== 'root') selectedFolderButton = folderButtons.find((button) => button.dataset.folder === folder);
             const prefix = folder === 'photos' ? 'folderPhoto' : folder === 'music' ? 'folderMusic'
                 : folder === 'papers' ? 'folderPapers' : folder === 'honors' ? 'folderHonors' : 'folder';
@@ -442,7 +473,7 @@ import { PreviewZoom } from './preview-zoom.js';
 
         const updateImagePreview = (button) => {
             const changed = imagePreviewImage.getAttribute('src') !== button.dataset.imageSrc;
-            selectPhoto(button);
+            if (!button.hidden) selectPhoto(button);
             previewImageButton = button;
             imageError.hidden = true;
             imagePreviewFigure.hidden = false;
@@ -462,6 +493,7 @@ import { PreviewZoom } from './preview-zoom.js';
         };
 
         const openImagePreview = (button) => {
+            pendingImageRestore = undefined;
             const items = button.hasAttribute('data-honor-image') ? folderItems.honors : robomasterImageButtons;
             previewImages = items.filter(candidate => !candidate.hidden);
             if (!previewImages.includes(button)) previewImages = items;
@@ -476,11 +508,23 @@ import { PreviewZoom } from './preview-zoom.js';
         imageNext.addEventListener('click', () => movePreview(1));
         imageError.querySelector('button').addEventListener('click', () => updateImagePreview(previewImageButton));
 
+        const restoreImages = (savedState) => {
+            previewImages = savedState.previewImageIndices?.map(index => imageButtons[index]).filter(Boolean) || robomasterImageButtons;
+            const previewImage = imageButtons[savedState.previewImageIndex];
+            if (previewImage) updateImagePreview(previewImage);
+            selectPhoto(imageButtons[savedState.selectedImageIndex]);
+            filterFolder();
+            if (pendingFolderScrollTop !== undefined && manager.isWindowVisible(projectFolderWindow)) {
+                folderScroll.scrollTop = pendingFolderScrollTop;
+                pendingFolderScrollTop = undefined;
+            }
+        };
+
         const loadHonors = () => {
             if (honorsRequest) return honorsRequest;
             honorsRetry.hidden = true;
             honorsLoading.querySelector('span').textContent = t().folderHonorsLoading;
-            honorsRequest = fetch('assets/honors/certificates.json').then(response => {
+            honorsRequest = fetch(new URL('certificates.json', honorsAssetRoot)).then(response => {
                 if (!response.ok) throw new Error('Certificates could not be loaded');
                 return response.json();
             }).then(certificates => {
@@ -490,7 +534,7 @@ import { PreviewZoom } from './preview-zoom.js';
                     button.className = 'project-folder-item project-folder-item--button project-folder-item--image';
                     Object.assign(button.dataset, {
                         honorImage: certificate.id,
-                        imageSrc: `assets/honors/${encodeURIComponent(certificate.image)}`,
+                        imageSrc: new URL(encodeURIComponent(certificate.image), honorsAssetRoot).href,
                         photoLabelZh: certificate.nameZh,
                         photoLabelEn: certificate.nameEn,
                         photoAltZh: certificate.nameZh,
@@ -503,7 +547,7 @@ import { PreviewZoom } from './preview-zoom.js';
                     thumbnail.decoding = 'async';
                     thumbnail.width = certificate.width;
                     thumbnail.height = certificate.height;
-                    thumbnail.src = `assets/honors/${encodeURIComponent(certificate.thumbnail)}`;
+                    thumbnail.src = new URL(encodeURIComponent(certificate.thumbnail), honorsAssetRoot).href;
                     icon.append(thumbnail);
                     const label = document.createElement('strong');
                     label.dataset.photoLabel = '';
@@ -519,6 +563,10 @@ import { PreviewZoom } from './preview-zoom.js';
                 honorsLoading.hidden = true;
                 updatePhotoCopy();
                 filterFolder();
+                if (pendingImageRestore) {
+                    restoreImages(pendingImageRestore);
+                    pendingImageRestore = undefined;
+                }
             }).catch(() => {
                 honorsRequest = null;
                 honorsLoading.querySelector('span').textContent = t().folderHonorsFailed;
@@ -567,7 +615,10 @@ import { PreviewZoom } from './preview-zoom.js';
         document.querySelectorAll('[data-open-project-folder]').forEach((button) => {
             button.addEventListener('click', openProjectFolder);
         });
-        folderSearch.addEventListener('input', filterFolder);
+        folderSearch.addEventListener('input', () => {
+            pendingFolderScrollTop = undefined;
+            filterFolder();
+        });
         folderButtons.forEach((button) => {
             button.addEventListener('focus', () => { selectedFolderButton = button; });
             button.addEventListener('click', () => {
@@ -584,7 +635,7 @@ import { PreviewZoom } from './preview-zoom.js';
             videoEntry.show();
         });
         paperButtons.forEach((button) => {
-            button.addEventListener('focus', () => { selectedPaperButton = button; });
+            button.addEventListener('focus', () => selectPaper(button));
             button.addEventListener('click', () => openPaperPreview(button));
         });
         new MutationObserver(() => {
@@ -650,28 +701,33 @@ import { PreviewZoom } from './preview-zoom.js';
         manager.onSession({
             save: () => ({
                 folderView: currentFolder,
+                folderSearch: folderSearch.value,
+                folderScrollTop: pendingFolderScrollTop ?? folderScroll.scrollTop,
+                selectedFolderIndex: folderButtons.indexOf(selectedFolderButton),
                 selectedPaperIndex: paperButtons.indexOf(selectedPaperButton),
                 previewPaperIndex: paperButtons.indexOf(previewPaperButton),
                 paperScrollTop: pendingPaperScrollTop ?? paperPreviewPages.scrollTop,
-                selectedImageIndex: selectedImageButton ? imageButtons.indexOf(selectedImageButton) : null,
-                previewImageIndex: previewImageButton ? imageButtons.indexOf(previewImageButton) : null
+                selectedImageIndex: pendingImageRestore?.selectedImageIndex ?? (selectedImageButton ? imageButtons.indexOf(selectedImageButton) : null),
+                previewImageIndex: pendingImageRestore?.previewImageIndex ?? (previewImageButton ? imageButtons.indexOf(previewImageButton) : null),
+                previewImageIndices: pendingImageRestore?.previewImageIndices ?? previewImages.map(button => imageButtons.indexOf(button))
             }),
             restore: (savedState) => {
-                selectedPaperButton = paperButtons[savedState.selectedPaperIndex] || paperButtons[0];
                 setProjectFolderView(savedState.folderView || 'root');
-                const restoreImages = () => {
-                    const previewImage = imageButtons[savedState.previewImageIndex];
-                    if (previewImage) {
-                        previewImages = previewImage.hasAttribute('data-honor-image') ? folderItems.honors : robomasterImageButtons;
-                        updateImagePreview(previewImage);
-                    }
-                    selectPhoto(imageButtons[savedState.selectedImageIndex]);
-                };
-                if (savedState.previewImageIndex >= robomasterImageButtons.length || savedState.selectedImageIndex >= robomasterImageButtons.length) loadHonors().then(restoreImages);
-                else restoreImages();
+                folderSearch.value = savedState.folderSearch || '';
+                selectedFolderButton = folderButtons[savedState.selectedFolderIndex] || selectedFolderButton;
+                selectPaper(paperButtons[savedState.selectedPaperIndex]);
+                filterFolder();
+                pendingFolderScrollTop = savedState.folderScrollTop || 0;
+                const needsHonors = currentFolder === 'honors'
+                    || [savedState.selectedImageIndex, savedState.previewImageIndex, ...(savedState.previewImageIndices || [])]
+                        .some(index => index >= robomasterImageButtons.length);
+                if (needsHonors && !folderItems.honors.length) {
+                    pendingImageRestore = savedState;
+                    loadHonors();
+                } else restoreImages(savedState);
                 if (manager.isWindowVisible(videoPreviewWindow)) loadVideo();
                 if (!paperPreviewWindow.classList.contains('is-closed')) {
-                    updatePaperPreview(paperButtons[savedState.previewPaperIndex] || selectedPaperButton);
+                    updatePaperPreview(paperButtons[savedState.previewPaperIndex] || selectedPaperButton || paperButtons[0]);
                     if (manager.isWindowVisible(paperPreviewWindow)) {
                         paperPreviewPages.scrollTop = savedState.paperScrollTop || 0;
                         pendingPaperScrollTop = undefined;
@@ -680,7 +736,13 @@ import { PreviewZoom } from './preview-zoom.js';
             }
         });
 
-        return { open: openProjectFolder };
+        return {
+            open: openProjectFolder,
+            showHonors: () => {
+                setProjectFolderView('honors');
+                folderEntry.show();
+            }
+        };
     }
 
     desktopApi.apps.projectFolder = setupProjectFolder;

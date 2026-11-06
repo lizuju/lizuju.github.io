@@ -10,6 +10,7 @@
     height: min(660px, calc(100% - 100px));
     min-width: 420px;
     min-height: min(500px, calc(100% - 36px));
+    container: gomoku-window / inline-size;
 }
 
 .gomoku-window.is-maximized {
@@ -145,6 +146,58 @@
 
 .gomoku-back-button {
     margin-left: auto;
+}
+
+.gomoku-difficulty {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 4px;
+    margin-block: 2px;
+    font: 12px/1.2 var(--font-system);
+}
+
+.gomoku-difficulty select {
+    max-width: 92px;
+    min-width: 0;
+    height: 18px;
+    padding: 0 2px;
+    border: 1px inset #efefef;
+    border-radius: 0;
+    color: #111;
+    background: #fff;
+    font: inherit;
+}
+
+.gomoku-difficulty select:disabled {
+    color: #777;
+    background: #d4d4d4;
+}
+
+.gomoku-difficulty select:focus-visible {
+    outline: 1px dotted #000080;
+    outline-offset: 1px;
+}
+
+@container gomoku-window (max-width: 380px) {
+    .gomoku-difficulty > span {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+    }
+
+    .gomoku-menubar .window-menu-trigger {
+        padding-inline: 3px;
+    }
+}
+
+@container gomoku-window (max-width: 300px) {
+    .gomoku-menubar {
+        flex: 0 0 auto;
+        flex-wrap: wrap;
+    }
 }
 
 .gomoku-back-button::first-letter {

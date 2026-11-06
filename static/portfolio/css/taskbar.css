@@ -282,6 +282,11 @@
     background: #d4d4d4;
 }
 
+.start-button,
+.taskbar-tray {
+    flex-shrink: 0;
+}
+
 .start-mark {
     display: block;
     flex: 0 0 18px;
@@ -466,11 +471,6 @@
 
     .taskbar-spacer {
         display: none;
-    }
-
-    .start-button,
-    .taskbar-tray {
-        flex-shrink: 0;
     }
 
     .taskbar-tray {

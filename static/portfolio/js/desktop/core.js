@@ -2,7 +2,8 @@
     const { SUPPORTED_LANGS, CONTENT } = window.PORTFOLIO_DATA;
     const LANGUAGE_KEY = 'portfolio-lang';
     const DESKTOP_SESSION_KEY = document.body.classList.contains('standalone-sync')
-        ? 'gavin-chat-window-session' : 'gavin-portfolio-desktop-session';
+        ? 'gavin-chat-window-session' : document.body.classList.contains('standalone-honors')
+            ? 'gavin-honors-window-session' : 'gavin-portfolio-desktop-session';
 
     function normalizeLanguage(lang) {
         return SUPPORTED_LANGS.includes(lang) ? lang : 'zh-CN';

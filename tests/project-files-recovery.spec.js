@@ -67,7 +67,7 @@ test('searches the current folder in either language and keeps filtered keyboard
     await expect(page.locator('[data-folder="music"]')).toBeVisible();
     await page.locator('[data-taskbar-lang]').click();
     await expect(search).toHaveValue('music');
-    await expect(search).toHaveAttribute('placeholder', 'Search this folder');
+    await expect(search).toHaveAttribute('placeholder', 'Search');
     await search.fill('数学');
     await expect(page.locator('[data-folder="papers"]')).toBeVisible();
     await page.locator('[data-folder="papers"]').click();
@@ -195,6 +195,75 @@ test('photo errors expose a bilingual retry and successful reopen does not reset
     await expect(page.locator('[data-image-preview-toolbar] [data-preview-zoom-value]')).toHaveText('125%');
 });
 
+test('paper focus, filtered selection and opening refer to the same visible document', async ({ page, browserName }) => {
+    await openFolder(page);
+    await page.locator('[data-folder="papers"]').click();
+    const papers = page.locator('[data-modeling-paper]');
+    await papers.first().click();
+    await page.locator('[data-paper-preview-action="close"]').click();
+    await papers.first().focus();
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
+    await expect(papers.nth(1)).toBeFocused();
+    await expect(papers.nth(1)).toHaveClass(/is-selected/);
+    await expect(papers.first()).not.toHaveClass(/is-selected/);
+    const search = page.locator('[data-project-folder-search]');
+    await search.fill('国赛');
+    await expect(papers.first()).toHaveClass(/is-selected/);
+    await expect(papers.nth(1)).not.toHaveClass(/is-selected/);
+    await search.fill('none');
+    await expect(page.locator('[data-modeling-paper].is-selected')).toHaveCount(0);
+    await search.fill('美赛');
+    await expect(papers.nth(1)).toHaveClass(/is-selected/);
+    await page.locator('[data-window-menu="folder-file"]').click();
+    await page.locator('[data-menu-action="folder-open"]').click();
+    await expect(page.locator('[data-paper-preview-title]')).toContainText('美赛');
+    await page.reload();
+    await expect(search).toHaveValue('美赛');
+    await expect(papers.nth(1)).toHaveClass(/is-selected/);
+    await expect(papers.first()).toBeHidden();
+    await expect(page.locator('[data-paper-preview-title]')).toContainText('美赛');
+});
+
+test('restores photo search, list scroll and the independent preview sequence after refresh', async ({ page }) => {
+    await page.setViewportSize({ width: 980, height: 420 });
+    await openFolder(page);
+    await page.locator('[data-folder="photos"]').click();
+    const search = page.locator('[data-project-folder-search]');
+    const scroll = page.locator('.project-folder-scroll');
+    await search.fill('service');
+    await page.locator('[data-robomaster-image]:visible').first().click();
+    await page.locator('[data-image-next]').click();
+    await expect(page.locator('[data-image-counter]')).toHaveText('2 / 2');
+    await page.locator('[data-image-preview-action="minimize"]').click();
+    await search.fill('1');
+    await expect(page.locator('[data-robomaster-image]:visible')).toHaveCount(5);
+    await scroll.evaluate(element => { element.scrollTop = Math.floor((element.scrollHeight - element.clientHeight) / 2); });
+    const position = await scroll.evaluate(element => element.scrollTop);
+    expect(position).toBeGreaterThan(0);
+    expect(position).toBeLessThan(await scroll.evaluate(element => element.scrollHeight - element.clientHeight));
+    for (const minimized of [false, true]) {
+        if (minimized) await page.locator('[data-project-folder-action="minimize"]').click();
+        await page.reload();
+        if (minimized) await page.locator('[data-project-folder-task]').click();
+        await expect(search).toHaveValue('1');
+        await expect(page.locator('[data-robomaster-image]:visible')).toHaveCount(5);
+        await expect.poll(() => scroll.evaluate((element, saved) => (
+            element.scrollTop - Math.min(saved, element.scrollHeight - element.clientHeight)
+        ), position)).toBeCloseTo(0, 0);
+    }
+    await page.locator('[data-image-preview-task]').click();
+    await expect(page.locator('[data-image-counter]')).toHaveText('2 / 2');
+    await expect(page.locator('[data-image-preview-title]')).toContainText('12');
+    await page.locator('[data-image-previous]').click();
+    await expect(page.locator('[data-image-preview-title]')).toContainText('05');
+    await expect(page.locator('[data-image-counter]')).toHaveText('1 / 2');
+    await expect(page.locator('[data-robomaster-image].is-selected')).toHaveAttribute('data-image-src', /12-team-trackside-service\.jpg$/);
+    await page.locator('[data-image-preview-action="close"]').click();
+    await page.locator('[data-window-menu="folder-file"]').click();
+    await page.locator('[data-menu-action="folder-open"]').click();
+    await expect(page.locator('[data-image-preview-title]')).toContainText('12');
+});
+
 test('loads certificate thumbnails on demand and reuses bilingual searchable image previews with recovery', async ({ page }) => {
     const certificates = [
         { id: 'honor-a', nameZh: '2024 年数学建模一等奖', nameEn: '2024 Modeling First Prize', image: 'honor-a.webp', thumbnail: 'honor-a-thumb.webp', width: 1600, height: 1200 },
@@ -246,4 +315,50 @@ test('loads certificate thumbnails on demand and reuses bilingual searchable ima
     await page.locator('[data-image-preview-action="close"]').click();
     await page.locator('[data-project-folder-back]').click();
     await expect(page.locator('[data-project-folder-root] [data-folder]:visible')).toHaveCount(4);
+});
+
+test('restores a filtered certificate list and independent preview after its manifest loads', async ({ page }) => {
+    const certificates = Array.from({ length: 18 }, (_, index) => ({
+        id: `certificate-${index}`,
+        nameZh: `${index < 2 ? 'Alpha' : 'Beta'} 荣誉 ${index}`,
+        nameEn: `${index < 2 ? 'Alpha' : 'Beta'} Certificate ${index}`,
+        image: `certificate-${index}.webp`, thumbnail: `certificate-${index}-thumb.webp`, width: 1600, height: 1200
+    }));
+    let pendingManifest;
+    let holdManifest = false;
+    await page.route('**/honors/certificates.json', route => {
+        if (holdManifest) pendingManifest = route;
+        else return route.fulfill({ json: certificates });
+    });
+    const image = await readFile(path.join(__dirname, '../static/portfolio/assets/robomaster-match-records/previews/01-match-multi-robot.webp'));
+    await page.route('**/honors/*.webp', route => route.fulfill({ contentType: 'image/webp', body: image }));
+    await page.setViewportSize({ width: 980, height: 420 });
+    await openFolder(page);
+    await page.locator('[data-folder="honors"]').click();
+    await expect(page.locator('[data-honor-image]')).toHaveCount(18);
+    const search = page.locator('[data-project-folder-search]');
+    const scroll = page.locator('.project-folder-scroll');
+    await search.fill('Alpha');
+    await page.locator('[data-honor-image]:visible').first().click();
+    await page.locator('[data-image-next]').click();
+    await page.locator('[data-image-preview-action="minimize"]').click();
+    await search.fill('Beta');
+    await scroll.evaluate(element => { element.scrollTop = Math.floor((element.scrollHeight - element.clientHeight) / 2); });
+    const position = await scroll.evaluate(element => element.scrollTop);
+    expect(position).toBeGreaterThan(0);
+    holdManifest = true;
+    await page.reload();
+    await expect(search).toHaveValue('Beta');
+    await expect(page.locator('[data-honors-loading]')).toBeVisible();
+    await expect.poll(() => Boolean(pendingManifest)).toBe(true);
+    await pendingManifest.fulfill({ json: certificates });
+    await expect(page.locator('[data-honor-image]:visible')).toHaveCount(16);
+    await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBeCloseTo(position, 0);
+    await expect(page.locator('[data-honor-image].is-selected')).toHaveAttribute('data-honor-image', 'certificate-2');
+    await page.locator('[data-image-preview-task]').click();
+    await expect(page.locator('[data-image-counter]')).toHaveText('2 / 2');
+    await expect(page.locator('[data-image-preview-title]')).toContainText('Alpha 荣誉 1');
+    await page.locator('[data-image-previous]').click();
+    await expect(page.locator('[data-image-counter]')).toHaveText('1 / 2');
+    await expect(page.locator('[data-honor-image].is-selected')).toHaveAttribute('data-honor-image', 'certificate-2');
 });
