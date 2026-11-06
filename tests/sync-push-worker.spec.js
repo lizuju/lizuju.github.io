@@ -102,7 +102,7 @@ test('push clicks prefer a trusted chat app, reuse the desktop, or open the orig
 
 test('the chat installation manifest opens the hub with its own identity and app icons', async () => {
     const html = await readFile('static/chat/index.html', 'utf8');
-    expect(html).toContain('rel="manifest" href="./manifest.webmanifest"');
+    expect(html).toContain('rel="manifest" href="manifest.webmanifest"');
     expect(html).toContain('name="apple-mobile-web-app-capable" content="yes"');
     expect(html).toContain('rel="apple-touch-icon"');
     const manifest = JSON.parse(await readFile('static/chat/manifest.webmanifest', 'utf8'));
