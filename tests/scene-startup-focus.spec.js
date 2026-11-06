@@ -53,3 +53,46 @@ test('focuses retry on startup failure and restores the normal Enter flow after 
     await page.keyboard.press('Enter');
     await expect(page.locator('#css')).not.toHaveAttribute('inert', '');
 });
+
+test('approaches the monitor for keyboard focus and returns when focus leaves the desktop', async ({ page, browserName }) => {
+    await page.goto('/');
+    await expect(page.locator('[data-start-scene]')).toBeFocused({ timeout: 30000 });
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.direct-entry')).toBeFocused();
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
+    const home = page.frameLocator('#computer-screen').locator('.desktop-shortcut[data-open-window]');
+    await expect(home).toBeFocused();
+    const monitor = page.locator('#computer-screen');
+    await expect.poll(async () => (await monitor.boundingBox()).width, { timeout: 10000 }).toBeGreaterThan(500);
+    const enteredWidth = (await monitor.boundingBox()).width;
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Shift+Tab' : 'Shift+Tab');
+    await expect(page.locator('.direct-entry')).toBeFocused();
+    await expect.poll(async () => (await monitor.boundingBox()).width, { timeout: 10000 }).toBeLessThan(enteredWidth * 0.8);
+});
+
+test('honors reduced motion at startup and when the preference changes during the scene', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto('/');
+    await expect(page.locator('[data-start-scene]')).toBeFocused({ timeout: 30000 });
+    await page.keyboard.press('Enter');
+    const monitor = page.locator('#computer-screen');
+    await expect(monitor).toHaveCSS('animation-name', 'none');
+    await expect.poll(() => page.locator('#video-1, #video-2').evaluateAll(videos => videos.every(video => video.paused))).toBe(true);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const transform = await monitor.evaluate(element => element.parentElement.parentElement.style.transform);
+    await page.waitForTimeout(250);
+    expect(await monitor.evaluate(element => element.parentElement.parentElement.style.transform)).toBe(transform);
+
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await expect(monitor).toHaveCSS('animation-name', 'jittery');
+    await expect.poll(() => page.locator('#video-1, #video-2').evaluateAll(videos => videos.every(video => !video.paused))).toBe(true);
+    await expect.poll(() => monitor.evaluate(element => element.parentElement.parentElement.style.transform)).not.toBe(transform);
+
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await expect(monitor).toHaveCSS('animation-name', 'none');
+    await expect.poll(() => page.locator('#video-1, #video-2').evaluateAll(videos => videos.every(video => video.paused))).toBe(true);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const stopped = await monitor.evaluate(element => element.parentElement.parentElement.style.transform);
+    await page.waitForTimeout(250);
+    expect(await monitor.evaluate(element => element.parentElement.parentElement.style.transform)).toBe(stopped);
+});

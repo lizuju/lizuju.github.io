@@ -177,3 +177,30 @@ test('shared names keep their revision across key updates and reject delayed or 
     expect(result.cleared.nameRevision).toBe(2);
     expect(result.removed).toEqual([]);
 });
+
+test('removal cause reaches other tabs before catalog deletion without retaining credentials or notices', async ({ page, context }) => {
+    const other = await context.newPage();
+    await other.goto('/__sync-spaces-test__/');
+    await other.evaluate(() => {
+        localStorage.getItem('portfolio-sync-spaces-e2ee1');
+        window.removals = [];
+        window.addEventListener('storage', event => window.removals.push({ key: event.key, value: event.newValue }));
+    });
+    const vaultId = await page.evaluate(async () => {
+        const { createKeyring } = await import('/__sync-spaces-test__/sync-crypto.js');
+        const { SavedSpaces } = await import('/__sync-spaces-test__/sync-spaces.js');
+        const spaces = new SavedSpaces();
+        const session = { roomId: 'expired-room', deviceId: 'device', token: 'private-token', keyring: await createKeyring() };
+        await spaces.save(session, { activate: true });
+        await spaces.remove(session, 'expired');
+        return session.vaultId;
+    });
+    await expect.poll(() => other.evaluate(() => window.removals.some(event => event.key === 'portfolio-sync-spaces-e2ee1' && event.value === '[]'))).toBe(true);
+    const events = await other.evaluate(() => window.removals);
+    const cause = events.findIndex(event => event.key === 'portfolio-sync-space-removal' && event.value);
+    const removed = events.findIndex(event => event.key === 'portfolio-sync-spaces-e2ee1' && event.value === '[]');
+    expect(cause).toBeGreaterThanOrEqual(0);
+    expect(cause).toBeLessThan(removed);
+    expect(JSON.parse(events[cause].value)).toEqual({ vaultId, reason: 'expired' });
+    expect(await page.evaluate(() => localStorage.getItem('portfolio-sync-space-removal'))).toBeNull();
+});

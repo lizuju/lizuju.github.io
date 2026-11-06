@@ -6,7 +6,8 @@
     "image": "2025 美国大学生数学建模竞赛全球 M 奖一等奖（Top 5%）.webp",
     "thumbnail": "2025 美国大学生数学建模竞赛全球 M 奖一等奖（Top 5%）-缩略图.webp",
     "width": 1169,
-    "height": 917
+    "height": 917,
+    "category": "modeling"
   },
   {
     "id": "certificate-03",
@@ -15,7 +16,8 @@
     "image": "2024 广东省大学生数学建模竞赛省级一等奖（Top 5%）.webp",
     "thumbnail": "2024 广东省大学生数学建模竞赛省级一等奖（Top 5%）-缩略图.webp",
     "width": 2484,
-    "height": 1782
+    "height": 1782,
+    "category": "modeling"
   },
   {
     "id": "certificate-16",
@@ -24,7 +26,8 @@
     "image": "2024 年 APMCM 亚太地区大学生数学建模竞赛省级一等奖.webp",
     "thumbnail": "2024 年 APMCM 亚太地区大学生数学建模竞赛省级一等奖-缩略图.webp",
     "width": 1165,
-    "height": 834
+    "height": 834,
+    "category": "modeling"
   },
   {
     "id": "certificate-15",
@@ -33,7 +36,8 @@
     "image": "2024 “华数杯”全国数学建模竞赛国家级二等奖.webp",
     "thumbnail": "2024 “华数杯”全国数学建模竞赛国家级二等奖-缩略图.webp",
     "width": 1165,
-    "height": 841
+    "height": 841,
+    "category": "modeling"
   },
   {
     "id": "certificate-14",
@@ -42,7 +46,8 @@
     "image": "2024 “中国电机工程学会杯”电工杯数学建模竞赛国家级三等奖.webp",
     "thumbnail": "2024 “中国电机工程学会杯”电工杯数学建模竞赛国家级三等奖-缩略图.webp",
     "width": 1181,
-    "height": 1635
+    "height": 1635,
+    "category": "modeling"
   },
   {
     "id": "certificate-05",
@@ -51,7 +56,8 @@
     "image": "RoboMaster 2023 步兵对抗赛省级二等奖（团队证书）.webp",
     "thumbnail": "RoboMaster 2023 步兵对抗赛省级二等奖（团队证书）-缩略图.webp",
     "width": 1217,
-    "height": 1663
+    "height": 1663,
+    "category": "robotics"
   },
   {
     "id": "certificate-25",
@@ -60,7 +66,8 @@
     "image": "RoboMaster 2023 3V3 对抗赛省级三等奖（个人证书）.webp",
     "thumbnail": "RoboMaster 2023 3V3 对抗赛省级三等奖（个人证书）-缩略图.webp",
     "width": 1647,
-    "height": 2278
+    "height": 2278,
+    "category": "robotics"
   },
   {
     "id": "certificate-34",
@@ -69,7 +76,8 @@
     "image": "RoboMaster 2023 3V3 对抗赛省级三等奖（团队证书）.webp",
     "thumbnail": "RoboMaster 2023 3V3 对抗赛省级三等奖（团队证书）-缩略图.webp",
     "width": 1344,
-    "height": 1771
+    "height": 1771,
+    "category": "robotics"
   },
   {
     "id": "certificate-10",
@@ -78,7 +86,8 @@
     "image": "RoboMaster 2024 步兵对抗赛省级三等奖（个人证书）.webp",
     "thumbnail": "RoboMaster 2024 步兵对抗赛省级三等奖（个人证书）-缩略图.webp",
     "width": 1630,
-    "height": 2278
+    "height": 2278,
+    "category": "robotics"
   },
   {
     "id": "certificate-06",
@@ -87,7 +96,8 @@
     "image": "RoboMaster 2024 步兵对抗赛省级三等奖（团队证书）.webp",
     "thumbnail": "RoboMaster 2024 步兵对抗赛省级三等奖（团队证书）-缩略图.webp",
     "width": 1634,
-    "height": 2278
+    "height": 2278,
+    "category": "robotics"
   },
   {
     "id": "certificate-11",
@@ -96,7 +106,8 @@
     "image": "RoboMaster 2024 3V3 对抗赛省级三等奖.webp",
     "thumbnail": "RoboMaster 2024 3V3 对抗赛省级三等奖-缩略图.webp",
     "width": 1640,
-    "height": 2278
+    "height": 2278,
+    "category": "robotics"
   },
   {
     "id": "certificate-35",
@@ -105,7 +116,8 @@
     "image": "2025 第十六届蓝桥杯人工智能大学组全国选拔赛二等奖.webp",
     "thumbnail": "2025 第十六届蓝桥杯人工智能大学组全国选拔赛二等奖-缩略图.webp",
     "width": 1633,
-    "height": 2278
+    "height": 2278,
+    "category": "competitions"
   },
   {
     "id": "certificate-09",
@@ -114,7 +126,8 @@
     "image": "2024 传智杯全国 IT 技能大赛国家级一等奖.webp",
     "thumbnail": "2024 传智杯全国 IT 技能大赛国家级一等奖-缩略图.webp",
     "width": 2278,
-    "height": 1633
+    "height": 1633,
+    "category": "competitions"
   },
   {
     "id": "certificate-20",
@@ -123,7 +136,8 @@
     "image": "2024 全国软件测试大赛国家级一等奖.webp",
     "thumbnail": "2024 全国软件测试大赛国家级一等奖-缩略图.webp",
     "width": 1134,
-    "height": 1582
+    "height": 1582,
+    "category": "competitions"
   },
   {
     "id": "certificate-33",
@@ -132,7 +146,8 @@
     "image": "2025 华为 ICT 大赛实践赛省级三等奖.webp",
     "thumbnail": "2025 华为 ICT 大赛实践赛省级三等奖-缩略图.webp",
     "width": 1165,
-    "height": 843
+    "height": 843,
+    "category": "competitions"
   },
   {
     "id": "certificate-02",
@@ -141,7 +156,8 @@
     "image": "2024 全国大学生电子商务赛省级二等奖.webp",
     "thumbnail": "2024 全国大学生电子商务赛省级二等奖-缩略图.webp",
     "width": 658,
-    "height": 898
+    "height": 898,
+    "category": "competitions"
   },
   {
     "id": "certificate-08",
@@ -150,7 +166,8 @@
     "image": "2024 全国大学生电子商务“三创赛”校级一等奖.webp",
     "thumbnail": "2024 全国大学生电子商务“三创赛”校级一等奖-缩略图.webp",
     "width": 1633,
-    "height": 2278
+    "height": 2278,
+    "category": "competitions"
   },
   {
     "id": "certificate-07",
@@ -159,7 +176,8 @@
     "image": "2024 新文科实践创新大赛铜奖.webp",
     "thumbnail": "2024 新文科实践创新大赛铜奖-缩略图.webp",
     "width": 934,
-    "height": 668
+    "height": 668,
+    "category": "competitions"
   },
   {
     "id": "certificate-32",
@@ -168,7 +186,8 @@
     "image": "2025 “赢在广州”暨粤港澳大湾区大学生创业大赛创新奖.webp",
     "thumbnail": "2025 “赢在广州”暨粤港澳大湾区大学生创业大赛创新奖-缩略图.webp",
     "width": 1879,
-    "height": 1139
+    "height": 1139,
+    "category": "competitions"
   },
   {
     "id": "certificate-22",
@@ -177,7 +196,8 @@
     "image": "2023—2024 学年度国家奖学金荣誉证书.webp",
     "thumbnail": "2023—2024 学年度国家奖学金荣誉证书-缩略图.webp",
     "width": 2280,
-    "height": 1690
+    "height": 1690,
+    "category": "academic"
   },
   {
     "id": "certificate-28",
@@ -186,7 +206,8 @@
     "image": "2024—2025 学年度国家奖学金荣誉证书.webp",
     "thumbnail": "2024—2025 学年度国家奖学金荣誉证书-缩略图.webp",
     "width": 2280,
-    "height": 1666
+    "height": 1666,
+    "category": "academic"
   },
   {
     "id": "certificate-12",
@@ -195,7 +216,8 @@
     "image": "优秀毕业生荣誉证书.webp",
     "thumbnail": "优秀毕业生荣誉证书-缩略图.webp",
     "width": 1638,
-    "height": 2278
+    "height": 2278,
+    "category": "academic"
   },
   {
     "id": "certificate-29",
@@ -204,7 +226,8 @@
     "image": "2024 大学生年度人物公示.webp",
     "thumbnail": "2024 大学生年度人物公示-缩略图.webp",
     "width": 1412,
-    "height": 1531
+    "height": 1531,
+    "category": "academic"
   },
   {
     "id": "certificate-31",
@@ -213,7 +236,8 @@
     "image": "2024—2025 学年励志榜样（学术科研类）拟获奖公示.webp",
     "thumbnail": "2024—2025 学年励志榜样（学术科研类）拟获奖公示-缩略图.webp",
     "width": 1567,
-    "height": 688
+    "height": 688,
+    "category": "academic"
   },
   {
     "id": "certificate-13",
@@ -222,7 +246,8 @@
     "image": "《以 ROS 为平台的 3D 激光雷达车辆路况感知系统》国家级结项（含 2 项省级结项）.webp",
     "thumbnail": "《以 ROS 为平台的 3D 激光雷达车辆路况感知系统》国家级结项（含 2 项省级结项）-缩略图.webp",
     "width": 1939,
-    "height": 2692
+    "height": 2692,
+    "category": "innovation"
   },
   {
     "id": "certificate-26",
@@ -231,7 +256,8 @@
     "image": "《基于大数据和物联网的城市洪涝灾害预警系统》国家级结项（含 2 项省级结项）.webp",
     "thumbnail": "《基于大数据和物联网的城市洪涝灾害预警系统》国家级结项（含 2 项省级结项）-缩略图.webp",
     "width": 1961,
-    "height": 2694
+    "height": 2694,
+    "category": "innovation"
   },
   {
     "id": "certificate-27",
@@ -240,7 +266,8 @@
     "image": "《基于深度卷积神经网络的手环特征精准识别系统》省级结项（结项证明续页）.webp",
     "thumbnail": "《基于深度卷积神经网络的手环特征精准识别系统》省级结项（结项证明续页）-缩略图.webp",
     "width": 1945,
-    "height": 2692
+    "height": 2692,
+    "category": "innovation"
   },
   {
     "id": "certificate-04",
@@ -249,7 +276,8 @@
     "image": "《基于大数据和物联网的城市洪涝灾害预警系统》软件著作权.webp",
     "thumbnail": "《基于大数据和物联网的城市洪涝灾害预警系统》软件著作权-缩略图.webp",
     "width": 494,
-    "height": 675
+    "height": 675,
+    "category": "intellectual-property"
   },
   {
     "id": "certificate-19",
@@ -258,7 +286,8 @@
     "image": "《融合神经网络与认知计算的自优化数据洞察平台》软件著作权.webp",
     "thumbnail": "《融合神经网络与认知计算的自优化数据洞察平台》软件著作权-缩略图.webp",
     "width": 1181,
-    "height": 1577
+    "height": 1577,
+    "category": "intellectual-property"
   },
   {
     "id": "certificate-21",
@@ -267,7 +296,8 @@
     "image": "《基于 SpringBoot 开发的 Admin 智慧管控平台》软件著作权.webp",
     "thumbnail": "《基于 SpringBoot 开发的 Admin 智慧管控平台》软件著作权-缩略图.webp",
     "width": 1181,
-    "height": 1567
+    "height": 1567,
+    "category": "intellectual-property"
   },
   {
     "id": "certificate-23",
@@ -276,7 +306,8 @@
     "image": "《端到端自适应神经网络图像优化系统》软件著作权.webp",
     "thumbnail": "《端到端自适应神经网络图像优化系统》软件著作权-缩略图.webp",
     "width": 1181,
-    "height": 1572
+    "height": 1572,
+    "category": "intellectual-property"
   },
   {
     "id": "certificate-18",
@@ -285,7 +316,8 @@
     "image": "《一种汽车激光雷达安装支架》实用新型专利.webp",
     "thumbnail": "《一种汽车激光雷达安装支架》实用新型专利-缩略图.webp",
     "width": 1181,
-    "height": 2340
+    "height": 2340,
+    "category": "intellectual-property"
   },
   {
     "id": "certificate-01",
@@ -294,7 +326,8 @@
     "image": "华为 HarmonyOS 应用开发者基础认证.webp",
     "thumbnail": "华为 HarmonyOS 应用开发者基础认证-缩略图.webp",
     "width": 1302,
-    "height": 1816
+    "height": 1816,
+    "category": "certifications"
   },
   {
     "id": "certificate-30",
@@ -303,7 +336,8 @@
     "image": "华为人工智能初识微认证.webp",
     "thumbnail": "华为人工智能初识微认证-缩略图.webp",
     "width": 2130,
-    "height": 1529
+    "height": 1529,
+    "category": "certifications"
   },
   {
     "id": "certificate-17",
@@ -312,6 +346,7 @@
     "image": "2025 澳门科技大学“智汇澳门·知行合一”研学营结业证书.webp",
     "thumbnail": "2025 澳门科技大学“智汇澳门·知行合一”研学营结业证书-缩略图.webp",
     "width": 1732,
-    "height": 2282
+    "height": 2282,
+    "category": "certifications"
   }
 ]

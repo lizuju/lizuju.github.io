@@ -54,6 +54,7 @@ export default class CoffeeSteam {
     }
 
     update() {
+        if (this.application.reducedMotion) return;
         this.model.material.uniforms.uTime.value = this.time.elapsed;
     }
 }

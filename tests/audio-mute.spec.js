@@ -286,6 +286,8 @@ test('keeps native media playback and volume independent of both background mute
         }))
     ));
 
+    await page.locator('.direct-entry').focus();
+    await expect(sceneAudio).toBeEnabled();
     await sceneAudio.evaluate((button) => button.click());
     await expect.poll(() => page.evaluate(() => window.__sceneAudio.contexts[0].state)).toBe('suspended');
     const taskbarAudio = desktop.locator('[data-audio-toggle]');
