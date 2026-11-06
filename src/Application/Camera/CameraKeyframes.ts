@@ -92,16 +92,18 @@ export class DeskKeyframe extends CameraKeyframeInstance {
     }
 
     update() {
-        this.targetFoc.x +=
-            (this.mouse.x - this.sizes.width / 2 - this.targetFoc.x) * 0.05;
-        this.targetFoc.y +=
-            (-(this.mouse.y - this.sizes.height) - this.targetFoc.y) * 0.05;
+        if (!this.application.reducedMotion) {
+            this.targetFoc.x +=
+                (this.mouse.x - this.sizes.width / 2 - this.targetFoc.x) * 0.05;
+            this.targetFoc.y +=
+                (-(this.mouse.y - this.sizes.height) - this.targetFoc.y) * 0.05;
 
-        this.targetPos.x +=
-            (this.mouse.x - this.sizes.width / 2 - this.targetPos.x) * 0.025;
-        this.targetPos.y +=
-            (-(this.mouse.y - this.sizes.height * 2) - this.targetPos.y) *
-            0.025;
+            this.targetPos.x +=
+                (this.mouse.x - this.sizes.width / 2 - this.targetPos.x) * 0.025;
+            this.targetPos.y +=
+                (-(this.mouse.y - this.sizes.height * 2) - this.targetPos.y) *
+                0.025;
+        }
 
         const aspect = this.sizes.height / this.sizes.width;
         this.targetPos.z = this.origin.z + aspect * 3000 - 1800;
@@ -114,15 +116,18 @@ export class DeskKeyframe extends CameraKeyframeInstance {
 export class IdleKeyframe extends CameraKeyframeInstance {
     time: Time;
     origin: THREE.Vector3;
+    application: Application;
 
     constructor() {
         const keyframe = keys.idle;
         super(keyframe);
         this.origin = new THREE.Vector3().copy(keyframe.position);
-        this.time = new Time();
+        this.application = new Application();
+        this.time = this.application.time;
     }
 
     update() {
+        if (this.application.reducedMotion) return;
         this.position.x =
             Math.sin((this.time.elapsed + 19000) * 0.00008) * this.origin.x;
         this.position.y =

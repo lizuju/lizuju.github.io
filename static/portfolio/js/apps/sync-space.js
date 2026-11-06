@@ -2,7 +2,7 @@ import { createKeyring, createDeviceIdentity, encryptPayload, decryptPayload, cr
     keyedFingerprint, fileChunkLayout, FILE_CIPHER_CHUNK_SIZE, loadLocalSession,
     createKeyRotation, acceptKeyRotation } from './sync-crypto.js';
 import { EncryptedPairing } from './sync-pairing.js';
-import { SavedSpaces, CREDENTIAL_KEY, CATALOG_KEY } from './sync-spaces.js';
+import { SavedSpaces, CREDENTIAL_KEY, CATALOG_KEY, REMOVAL_KEY } from './sync-spaces.js';
 import { SharedSyncConnection } from './sync-shared-connection.js';
 import { createMentions, validMentions, renderMessageText } from './sync-mentions.js';
 import { openEncryptedFile, prepareEncryptedFiles } from './sync-e2ee-files.js';
@@ -38,6 +38,7 @@ import { pendingMessages } from './sync-outbox.js';
         const feed = find('feed');
         const status = find('status');
         const notice = find('notice');
+        let removedSessionNotice;
         const mobileLayout = matchMedia('(pointer: coarse) and (max-width: 900px), (pointer: coarse) and (max-height: 520px)');
         const resizeComposer = () => {
             if (!mobileLayout.matches || !input.clientWidth) return;
@@ -499,6 +500,7 @@ import { pendingMessages } from './sync-outbox.js';
                 invalid_file_type: 'syncFileInvalid', invalid_file_size: 'syncFileInvalid',
                 request_too_large: 'syncFileTooLarge', upload_expired: 'syncUploadFailed',
                 upload_unavailable: 'syncUploadFailed', not_found: 'syncUploadFailed',
+                space_expired: 'syncSpaceExpired',
                 upload_conflict: 'syncUploadConflict',
                 invalid_ciphertext: 'syncDecryptFailed', key_unavailable: 'syncKeyUnavailable', key_changed: 'syncKeyChanged', rekey_required: 'syncKeyChanged',
                 pairing_limited: 'syncPairLimited', pairing_ambiguous: 'syncPairAmbiguous', pairing_busy: 'syncPairBusy', pairing_timeout: 'syncPairTimeout',
@@ -2056,23 +2058,27 @@ import { pendingMessages } from './sync-outbox.js';
                     },
                     onClose: async (event, authenticated) => {
                         if (connections.get(session.roomId) !== record) return;
-                        let revoked = event.code === 4001;
+                        let expired = event.code === 4004;
+                        let revoked = event.code === 4001 || expired;
                         if (!authenticated && event.code === 1006) {
                             try { await api(`/v1/spaces/${session.roomId}/devices`, {}, session); }
-                            catch (error) { revoked = ['unauthorized', 'not_found'].includes(error.code); }
+                            catch (error) {
+                                expired = error.code === 'space_expired';
+                                revoked = expired || ['unauthorized', 'not_found'].includes(error.code);
+                            }
                         }
                         if (!revoked || connections.get(session.roomId) !== record) return;
                         if (credentials === session) {
                             const left = leavingSession === session;
-                            reset();
-                            setNotice(left ? 'syncLeft' : 'syncRejoin', !left);
+                            reset(true, false, expired ? 'expired' : 'revoked');
+                            setNotice(left ? 'syncLeft' : expired ? 'syncSpaceExpired' : 'syncRejoin', !left);
                             reconcileSession();
                         } else {
                             disposeConnection(record);
                             spaceFiles.delete(session.roomId);
                             sessionStorage.removeItem(`portfolio-sync-draft:${session.roomId}`);
                             await pendingMessages.clear(session);
-                            await savedSpaces.remove(session);
+                            await savedSpaces.remove(session, expired ? 'expired' : 'revoked');
                             renderSpaces();
                         }
                     }
@@ -2139,7 +2145,7 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const savedSession = () => savedSpaces.active();
         const sameSession = (a, b) => a?.roomId === b?.roomId && a?.token === b?.token && a?.revision === b?.revision;
-        const reset = (forget = true, keepConnection = false) => {
+        const reset = (forget = true, keepConnection = false, removalReason = null) => {
             replyNavigation?.abort();
             replyNavigation = null;
             clearTimeout(replyHighlightTimer);
@@ -2194,7 +2200,7 @@ import { pendingMessages } from './sync-outbox.js';
                 const forgotten = credentials;
                 spaceFiles.delete(forgotten.roomId);
                 sessionStorage.removeItem(`portfolio-sync-draft:${forgotten.roomId}`);
-                const removal = pendingMessages.clear(forgotten).then(() => savedSpaces.remove(forgotten));
+                const removal = pendingMessages.clear(forgotten).then(() => savedSpaces.remove(forgotten, removalReason));
                 forgettingSpace = removal;
                 removal.then(() => {
                     if (forgettingSpace !== removal) return;
@@ -2399,7 +2405,15 @@ import { pendingMessages } from './sync-outbox.js';
                         }
                         setNotice(pendingUpload ? 'syncUploadRestored' : 'syncJoined');
                     }
-                    else { await saveDraft(); reset(false); setNotice('syncReady'); }
+                    else {
+                        const previous = credentials;
+                        await saveDraft();
+                        if (credentials !== previous) return;
+                        const removalKey = removedSessionNotice?.vaultId === previous?.vaultId ? removedSessionNotice.key : null;
+                        reset(false);
+                        setNotice(removalKey || 'syncReady', !!removalKey);
+                        removedSessionNotice = null;
+                    }
                 }
               } catch { setNotice('syncStorageError', true); }
             })().finally(() => {
@@ -3669,6 +3683,13 @@ import { pendingMessages } from './sync-outbox.js';
         });
         window.addEventListener('online', () => { connections.forEach(record => connect(record)); connect(); recoverPendingPairing(); });
         window.addEventListener('storage', (event) => {
+            if (event.key === REMOVAL_KEY && event.newValue) {
+                try {
+                    const removed = JSON.parse(event.newValue);
+                    const key = { expired: 'syncSpaceExpired', revoked: 'syncRejoin' }[removed.reason];
+                    if (key && removed.vaultId === credentials?.vaultId) removedSessionNotice = { vaultId: removed.vaultId, key };
+                } catch { /* Ignore malformed cross-tab notices. */ }
+            }
             if (event.key === 'portfolio-sync-notification-sound' || event.key === null) setSoundEnabled(event.newValue !== 'off');
             if (event.key === CREDENTIAL_KEY || event.key === CATALOG_KEY || event.key === null) reconcileSession();
         });

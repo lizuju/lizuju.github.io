@@ -1,4 +1,5 @@
 import { PreviewZoom } from './preview-zoom.js';
+import { ProjectImageCache } from './project-image-cache.js';
 
 (() => {
     const desktopApi = window.GavinDesktop;
@@ -14,6 +15,7 @@ import { PreviewZoom } from './preview-zoom.js';
         const projectFolderAddress = document.querySelector('[data-project-folder-address]');
         const projectFolderStatus = document.querySelector('[data-project-folder-status]');
         const folderSearch = document.querySelector('[data-project-folder-search]');
+        const honorsCategory = document.querySelector('[data-honors-category]');
         const folderScroll = projectFolderWindow.querySelector('.project-folder-scroll');
         const folderEmpty = document.querySelector('[data-project-folder-empty]');
         const projectFolderRoot = document.querySelector('[data-project-folder-root]');
@@ -53,7 +55,10 @@ import { PreviewZoom } from './preview-zoom.js';
         const imagePrevious = imagePreviewWindow.querySelector('[data-image-previous]');
         const imageNext = imagePreviewWindow.querySelector('[data-image-next]');
         const imageCounter = imagePreviewWindow.querySelector('[data-image-counter]');
+        const imageShare = imagePreviewWindow.querySelector('[data-image-share]');
+        const imageShareUrl = imagePreviewWindow.querySelector('[data-image-share-url]');
         const imageError = imagePreviewWindow.querySelector('[data-image-error]');
+        const imageLoading = imagePreviewWindow.querySelector('[data-image-loading]');
         const videoPreviewWindow = document.querySelector('[data-video-preview-window]');
         const videoPreviewTask = document.querySelector('[data-video-preview-task]');
         const videoPreviewBody = videoPreviewWindow.querySelector('.video-preview-body');
@@ -69,6 +74,13 @@ import { PreviewZoom } from './preview-zoom.js';
         let selectedFolderButton = robomasterFolderButton;
         let selectedImageButton;
         let previewImageButton;
+        let imageRequest = 0;
+        let imagePreloadTimer;
+        const compactImageCache = window.matchMedia('(max-width: 600px), (pointer: coarse)').matches;
+        const imageCache = new ProjectImageCache({
+            maxBytes: (compactImageCache ? 24 : 48) * 1024 * 1024,
+            maxEntries: compactImageCache ? 4 : 6
+        });
         let selectedPaperButton = paperButtons[0];
         let previewPaperButton;
         let pendingPaperScrollTop;
@@ -79,6 +91,7 @@ import { PreviewZoom } from './preview-zoom.js';
         const folderItems = { root: folderButtons, photos: robomasterImageButtons, music: [musicVideoButton], papers: paperButtons, honors: [] };
         let honorsRequest;
         let pendingImageRestore;
+        let sharedCertificate = standaloneHonors ? new URLSearchParams(location.search).get('certificate') : null;
         let videoPosition = 0;
         try {
             const saved = Number(localStorage.getItem('portfolio-music-position'));
@@ -115,15 +128,6 @@ import { PreviewZoom } from './preview-zoom.js';
         const imageZoom = new PreviewZoom({ toolbar: document.querySelector('[data-image-preview-toolbar]'), onChange: layoutImage });
         const videoZoom = new PreviewZoom({ toolbar: document.querySelector('[data-video-preview-toolbar]'), onChange: layoutVideo });
         const paperZoom = new PreviewZoom({ toolbar: document.querySelector('[data-paper-preview-toolbar]'), onChange: layoutPaper });
-        imagePreviewImage.addEventListener('load', () => {
-            imageError.hidden = true;
-            imagePreviewFigure.hidden = false;
-            layoutImage();
-        });
-        imagePreviewImage.addEventListener('error', () => {
-            imagePreviewFigure.hidden = true;
-            imageError.hidden = false;
-        });
         video.addEventListener('loadedmetadata', layoutVideo);
         video.addEventListener('loadedmetadata', () => {
             if (videoPosition > 0 && videoPosition < video.duration) video.currentTime = videoPosition;
@@ -172,6 +176,14 @@ import { PreviewZoom } from './preview-zoom.js';
             actionAttribute: 'data-image-preview-action',
             minWidth: 380,
             minHeight: 300,
+            hide: (state) => {
+                manager.hideWindow(imagePreviewWindow, imagePreviewTask, state, { hideTask: state === 'is-closed' });
+                if (standaloneHonors && state === 'is-closed') {
+                    const url = new URL(location.href);
+                    url.searchParams.delete('certificate');
+                    history.replaceState(null, '', url);
+                }
+            },
             focusTarget: () => imagePreviewWindow.querySelector('[data-image-preview-action="close"]')
         });
         const loadVideo = () => {
@@ -376,17 +388,10 @@ import { PreviewZoom } from './preview-zoom.js';
             return null;
         };
 
-        const updatePhotoCopy = () => {
+        const updateImageCopy = () => {
             const copy = t();
-            imageButtons.forEach((button) => {
-                const label = getPhotoCopy(button, 'photoLabel');
-                const alt = getPhotoCopy(button, 'photoAlt');
-                button.querySelector('[data-photo-label]').textContent = label;
-                button.querySelector('[data-photo-type]').textContent = copy[button.hasAttribute('data-honor-image') ? 'previewWebpType' : 'previewImageType'];
-                button.querySelector('img').alt = alt;
-                button.title = label;
-            });
-
+            imageShare.hidden = !previewImageButton?.hasAttribute('data-honor-image');
+            imageShare.textContent = copy.honorsCopyLink;
             if (!previewImageButton) {
                 imagePreviewTitle.textContent = copy.previewWindowTitle;
                 imagePreviewTaskTitle.textContent = copy.previewTaskTitle;
@@ -406,6 +411,18 @@ import { PreviewZoom } from './preview-zoom.js';
             imageNext.disabled = index >= previewImages.length - 1;
         };
 
+        const updatePhotoCopy = () => {
+            const copy = t();
+            imageButtons.forEach((button) => {
+                const label = getPhotoCopy(button, 'photoLabel');
+                button.querySelector('[data-photo-label]').textContent = label;
+                button.querySelector('[data-photo-type]').textContent = copy[button.hasAttribute('data-honor-image') ? 'previewWebpType' : 'previewImageType'];
+                button.querySelector('img').alt = getPhotoCopy(button, 'photoAlt');
+                button.title = label;
+            });
+            updateImageCopy();
+        };
+
         const filterFolder = () => {
             const query = folderSearch.value.trim().toLocaleLowerCase();
             const items = folderItems[currentFolder];
@@ -413,11 +430,12 @@ import { PreviewZoom } from './preview-zoom.js';
                 const name = button.querySelector('strong');
                 const translations = name.dataset.i18n ? Object.values(window.PORTFOLIO_DATA.CONTENT).map(copy => copy[name.dataset.i18n]) : [];
                 const names = [name.textContent, button.dataset.photoLabelZh, button.dataset.photoLabelEn, ...translations];
-                button.hidden = !!query && !names.some(name => name?.toLocaleLowerCase().includes(query));
+                button.hidden = (currentFolder === 'honors' && !!honorsCategory.value && button.dataset.honorCategory !== honorsCategory.value)
+                    || !!query && !names.some(name => name?.toLocaleLowerCase().includes(query));
             }
             folderEmpty.hidden = currentFolder === 'honors' && !folderItems.honors.length || items.some(button => !button.hidden);
             const count = items.filter(button => !button.hidden).length;
-            projectFolderStatus.textContent = t()[query ? 'folderSearchCount' : 'folderObjectCount']
+            projectFolderStatus.textContent = t()[query || currentFolder === 'honors' && honorsCategory.value ? 'folderSearchCount' : 'folderObjectCount']
                 .replace('{count}', count).replace('{total}', items.length);
             folderSearch.setAttribute('aria-label', t().folderSearch);
             if (selectedFolderButton?.hidden) selectedFolderButton = folderButtons.find(button => !button.hidden);
@@ -441,6 +459,7 @@ import { PreviewZoom } from './preview-zoom.js';
             musicFolderView.hidden = folder !== 'music';
             papersFolderView.hidden = folder !== 'papers';
             honorsFolderView.hidden = folder !== 'honors';
+            honorsCategory.hidden = folder !== 'honors';
             projectFolderBack.hidden = folder === 'root';
             if (openHonorsLink) openHonorsLink.hidden = folder !== 'honors' || standaloneHonors;
             if (folder !== 'root') selectedFolderButton = folderButtons.find((button) => button.dataset.folder === folder);
@@ -471,26 +490,90 @@ import { PreviewZoom } from './preview-zoom.js';
             folderEntry.show();
         };
 
-        const updateImagePreview = (button) => {
+        const adjacentImageSources = () => {
+            const index = previewImages.indexOf(previewImageButton);
+            return previewImages.slice(Math.max(0, index - 1), index + 2)
+                .map(button => button.dataset.imageSrc.replace(/\.jpg$/i, '.webp'));
+        };
+        const preloadAdjacentImages = async (request) => {
+            const currentSource = previewImageButton.dataset.imageSrc.replace(/\.jpg$/i, '.webp');
+            for (const source of adjacentImageSources()) {
+                if (request !== imageRequest) return;
+                if (source === currentSource) continue;
+                try { await imageCache.get(source, { priority: 'low' }); } catch {}
+            }
+        };
+        const updateImagePreview = async (button) => {
             const changed = imagePreviewImage.getAttribute('src') !== button.dataset.imageSrc;
             if (!button.hidden) selectPhoto(button);
             previewImageButton = button;
+            imageShareUrl.hidden = true;
+            if (button.hasAttribute('data-honor-image')) {
+                const url = new URL('/honors/', location.origin);
+                url.searchParams.set('certificate', button.dataset.honorImage);
+                imageShareUrl.value = url.href;
+                if (standaloneHonors && new URLSearchParams(location.search).has('certificate')) history.replaceState(null, '', url);
+            }
+            updateImageCopy();
+            if (!changed && imageError.hidden) return;
+            const request = ++imageRequest;
+            clearTimeout(imagePreloadTimer);
             imageError.hidden = true;
             imagePreviewFigure.hidden = false;
-            if (!changed && imagePreviewImage.complete && !imagePreviewImage.naturalWidth) {
-                imagePreviewSource.removeAttribute('srcset');
-                imagePreviewImage.removeAttribute('src');
-            }
-            imagePreviewSource.srcset = button.dataset.imageSrc.replace(/\.jpg$/i, '.webp');
+            imageLoading.hidden = false;
+            imagePreviewBody.classList.add('is-image-pending');
+            imagePreviewBody.setAttribute('aria-busy', 'true');
+            const source = button.dataset.imageSrc.replace(/\.jpg$/i, '.webp');
+            const cached = imageCache.peek(source);
+            const thumbnail = button.querySelector('img');
+            const placeholder = thumbnail.currentSrc || thumbnail.getAttribute('src') || thumbnail.dataset.thumbnailSrc;
+            imagePreviewSource.srcset = cached?.url || placeholder;
             imagePreviewImage.decoding = 'async';
+            imagePreviewImage.fetchPriority = 'high';
             imagePreviewImage.src = button.dataset.imageSrc;
-            updatePhotoCopy();
+            imageCache.cancelPending(source);
+            imageCache.setActive(source);
+            const initialDecode = imagePreviewImage.decode();
+            if (!cached) {
+                initialDecode.then(() => {
+                    if (request !== imageRequest || imagePreviewSource.getAttribute('srcset') !== placeholder) return;
+                    layoutImage();
+                    imagePreviewBody.classList.remove('is-image-pending');
+                }).catch(() => {});
+            }
             if (changed) {
                 imageZoom.reset();
                 imagePreviewBody.scrollTop = 0;
                 imagePreviewBody.scrollLeft = 0;
             }
+            try {
+                const fullImage = cached || await imageCache.get(source);
+                if (request !== imageRequest) return;
+                if (cached) await initialDecode;
+                else {
+                    imagePreviewSource.srcset = fullImage.url;
+                    await imagePreviewImage.decode();
+                }
+                if (request !== imageRequest) return;
+                imageLoading.hidden = true;
+                layoutImage();
+                imagePreloadTimer = setTimeout(() => preloadAdjacentImages(request), 250);
+            } catch {
+                if (request !== imageRequest) return;
+                imageLoading.hidden = true;
+                imagePreviewFigure.hidden = true;
+                imageError.hidden = false;
+            }
+            imagePreviewBody.classList.remove('is-image-pending');
+            imagePreviewBody.setAttribute('aria-busy', 'false');
         };
+        window.addEventListener('pagehide', (event) => {
+            clearTimeout(imagePreloadTimer);
+            if (!event.persisted) {
+                imageRequest++;
+                imageCache.clear();
+            }
+        });
 
         const openImagePreview = (button) => {
             pendingImageRestore = undefined;
@@ -506,6 +589,19 @@ import { PreviewZoom } from './preview-zoom.js';
         };
         imagePrevious.addEventListener('click', () => movePreview(-1));
         imageNext.addEventListener('click', () => movePreview(1));
+        imageShare.addEventListener('click', async () => {
+            const url = imageShareUrl.value;
+            try {
+                await navigator.clipboard.writeText(url);
+                if (url === imageShareUrl.value) imageShare.textContent = t().honorsLinkCopied;
+            } catch {
+                if (url !== imageShareUrl.value) return;
+                imageShare.textContent = t().honorsCopyManually;
+                imageShareUrl.hidden = false;
+                imageShareUrl.focus();
+                imageShareUrl.select();
+            }
+        });
         imageError.querySelector('button').addEventListener('click', () => updateImagePreview(previewImageButton));
 
         const restoreImages = (savedState) => {
@@ -534,6 +630,7 @@ import { PreviewZoom } from './preview-zoom.js';
                     button.className = 'project-folder-item project-folder-item--button project-folder-item--image';
                     Object.assign(button.dataset, {
                         honorImage: certificate.id,
+                        honorCategory: certificate.category,
                         imageSrc: new URL(encodeURIComponent(certificate.image), honorsAssetRoot).href,
                         photoLabelZh: certificate.nameZh,
                         photoLabelEn: certificate.nameEn,
@@ -566,6 +663,12 @@ import { PreviewZoom } from './preview-zoom.js';
                 if (pendingImageRestore) {
                     restoreImages(pendingImageRestore);
                     pendingImageRestore = undefined;
+                }
+                if (sharedCertificate) {
+                    const button = folderItems.honors.find(item => item.dataset.honorImage === sharedCertificate);
+                    sharedCertificate = null;
+                    if (button) openImagePreview(button);
+                    else projectFolderStatus.textContent = t().honorsNotFound;
                 }
             }).catch(() => {
                 honorsRequest = null;
@@ -617,6 +720,11 @@ import { PreviewZoom } from './preview-zoom.js';
         });
         folderSearch.addEventListener('input', () => {
             pendingFolderScrollTop = undefined;
+            filterFolder();
+        });
+        honorsCategory.addEventListener('change', () => {
+            pendingFolderScrollTop = undefined;
+            folderScroll.scrollTop = 0;
             filterFolder();
         });
         folderButtons.forEach((button) => {
@@ -686,6 +794,7 @@ import { PreviewZoom } from './preview-zoom.js';
 
             selectPhoto(targetPhoto);
             targetPhoto.focus({ preventScroll: true });
+            targetPhoto.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         });
 
         window.addEventListener('portfolio-language-change', () => {
@@ -702,6 +811,7 @@ import { PreviewZoom } from './preview-zoom.js';
             save: () => ({
                 folderView: currentFolder,
                 folderSearch: folderSearch.value,
+                honorsCategory: honorsCategory.value,
                 folderScrollTop: pendingFolderScrollTop ?? folderScroll.scrollTop,
                 selectedFolderIndex: folderButtons.indexOf(selectedFolderButton),
                 selectedPaperIndex: paperButtons.indexOf(selectedPaperButton),
@@ -714,6 +824,7 @@ import { PreviewZoom } from './preview-zoom.js';
             restore: (savedState) => {
                 setProjectFolderView(savedState.folderView || 'root');
                 folderSearch.value = savedState.folderSearch || '';
+                honorsCategory.value = savedState.honorsCategory || '';
                 selectedFolderButton = folderButtons[savedState.selectedFolderIndex] || selectedFolderButton;
                 selectPaper(paperButtons[savedState.selectedPaperIndex]);
                 filterFolder();

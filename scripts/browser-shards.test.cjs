@@ -56,11 +56,21 @@ test('timing reporter counts retries and publishes only successful runs', t => {
     const result = spawnSync(process.execPath, ['-e', `
         const assert = require('node:assert/strict');
         const fs = require('node:fs');
+        const { performance } = require('node:perf_hooks');
+        const { mock } = require('node:test');
         const Reporter = require(${JSON.stringify(reporter)});
         const reporter = new Reporter();
         const test = { parent: { project: () => ({ name: 'webkit-desktop' }) }, location: { file: process.cwd() + '/tests/sync-space.spec.js' } };
-        reporter.onTestEnd(test, { duration: 1000 });
-        reporter.onTestEnd(test, { duration: 500 });
+        let now = 0;
+        mock.method(performance, 'now', () => now);
+        const failed = { workerIndex: 0, duration: 100, status: 'failed' };
+        reporter.onTestBegin(test, failed);
+        now = 1000;
+        reporter.onTestEnd(test, failed);
+        const retried = { workerIndex: 1, duration: 100, status: 'passed', retry: 1 };
+        reporter.onTestBegin(test, retried);
+        now = 1500;
+        reporter.onTestEnd(test, retried);
         reporter.onEnd({ status: 'failed' });
         assert.equal(fs.existsSync('test-results/browser-durations.json'), false);
         reporter.onEnd({ status: 'passed' });

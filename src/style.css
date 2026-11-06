@@ -26,6 +26,12 @@ body {
     z-index: -10;
 }
 
+@media (prefers-reduced-motion: reduce) {
+    .jitter {
+        animation: none;
+    }
+}
+
 .interface-wrapper {
     width: 100%;
     top: 64px;
