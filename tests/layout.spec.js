@@ -129,3 +129,46 @@ test('keeps homepage text readable when resizing its window on a wide desktop', 
     await appWindow.locator('[data-window-action="maximize"]').click();
     await expect(page.locator('.desktop-nav')).toBeVisible();
 });
+
+test('keeps the Start button full size and usable when many tasks fill the taskbar', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the width matrix runs once per browser engine');
+    for (const width of [1100, 768, 320]) {
+        await page.setViewportSize({ width, height: 768 });
+        await page.goto('/portfolio/');
+        const start = page.locator('[data-start-toggle]');
+        await expect(start).toBeVisible();
+        const before = await start.boundingBox();
+        await page.locator('.desktop-taskbar .task-window-button').evaluateAll(buttons => {
+            buttons.forEach(button => { button.hidden = false; });
+        });
+        const after = await start.boundingBox();
+        expect(after.width, `Start button at ${width}px`).toBeCloseTo(before.width, 1);
+        const layout = await page.evaluate(() => {
+            const button = document.querySelector('[data-start-toggle]');
+            const startBox = button.getBoundingClientRect();
+            const label = button.querySelector('strong');
+            const labelBox = label.getBoundingClientRect();
+            const tray = document.querySelector('.taskbar-tray').getBoundingClientRect();
+            const tasks = document.querySelector('.taskbar-tasks');
+            const taskBoxes = getComputedStyle(tasks).display === 'contents'
+                ? [...tasks.querySelectorAll('.task-window-button')].map(task => task.getBoundingClientRect())
+                : [tasks.getBoundingClientRect()];
+            return {
+                labelFits: label.scrollWidth <= label.clientWidth + 1
+                    && labelBox.left >= startBox.left && labelBox.right <= startBox.right - 2,
+                startFits: startBox.left >= 0 && startBox.right <= tray.left,
+                tasksFit: taskBoxes.every(box => box.left >= startBox.right && box.right <= tray.left),
+                trayFits: tray.left >= 0 && tray.right <= window.innerWidth,
+                documentFits: document.documentElement.scrollWidth <= window.innerWidth
+            };
+        });
+        expect(layout, `${width}px with all task buttons visible`).toEqual({
+            labelFits: true, startFits: true, tasksFit: true, trayFits: true, documentFits: true
+        });
+        await start.click();
+        await expect(start).toHaveAttribute('aria-expanded', 'true');
+        await expect(page.locator('[data-start-menu]')).toBeVisible();
+        await start.click();
+        await expect(page.locator('[data-start-menu]')).toBeHidden();
+    }
+});

@@ -68,7 +68,7 @@ body.direct-portfolio .direct-return-button {
     }
 
     .address-label,
-    .address-toolbar > a {
+    .address-toolbar > a:not(.window-open-link) {
         display: none;
     }
 

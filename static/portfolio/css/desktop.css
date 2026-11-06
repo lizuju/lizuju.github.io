@@ -500,6 +500,17 @@
     border-style: inset;
 }
 
+.window-open-link img {
+    width: 16px;
+    height: 16px;
+}
+
+.address-toolbar > .window-open-link {
+    flex: 0 0 23px;
+    justify-content: center;
+    padding: 1px;
+}
+
 .window-scroll,
 .project-folder-scroll,
 .control-panel-body,

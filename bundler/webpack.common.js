@@ -11,6 +11,7 @@ const buildMetadata = createBuildMetadata(rootDirectory);
 const profileSchemaPath = path.resolve(rootDirectory, 'src/profile-schema.json');
 const readProfileSchema = () => JSON.stringify(JSON.parse(fs.readFileSync(profileSchemaPath, 'utf8')));
 const syncWindowsPath = path.resolve(rootDirectory, 'src/sync-windows.html');
+const projectWindowsPath = path.resolve(rootDirectory, 'src/project-windows.html');
 const syncOrigin = new URL(require('../static/portfolio/sync-config.json').apiBase).origin;
 const socketOrigin = syncOrigin.replace(/^http/, 'ws');
 const contentSecurityPolicy = [
@@ -43,6 +44,11 @@ module.exports = {
             filename: 'portfolio/js/chat.js',
             publicPath: '../',
         },
+        honors: {
+            import: path.resolve(rootDirectory, 'static/portfolio/js/honors.js'),
+            filename: 'portfolio/js/honors.js',
+            publicPath: '../',
+        },
     },
     output: {
         hashFunction: 'xxhash64',
@@ -70,6 +76,7 @@ module.exports = {
                         'static/portfolio/assets/robomaster-match-records/*.jpg',
                         'static/portfolio/js/main.js',
                         'static/portfolio/js/chat.js',
+                        'static/portfolio/js/honors.js',
                         'static/portfolio/sync-e2ee-worker.js',
                         'static/portfolio/js/desktop/**',
                         'static/portfolio/js/apps/**',
@@ -77,10 +84,11 @@ module.exports = {
                     ].map((pattern) => path.resolve(rootDirectory, pattern)),
                 },
                 transform(content, absolutePath) {
-                    if (absolutePath.endsWith('portfolio/index.html') || absolutePath.endsWith('chat/index.html')) {
+                    if (['portfolio/index.html', 'chat/index.html', 'honors/index.html'].some(page => absolutePath.endsWith(page))) {
                         return content
                             .toString()
                             .replace('__SYNC_WINDOWS__', () => fs.readFileSync(syncWindowsPath, 'utf8'))
+                            .replace('__PROJECT_WINDOWS__', () => fs.readFileSync(projectWindowsPath, 'utf8'))
                             .replaceAll('__ASSET_VERSION__', buildMetadata.assetVersion)
                             .replace('__CONTENT_SECURITY_POLICY__', contentSecurityPolicy)
                             .replace('__PROFILE_SCHEMA__', readProfileSchema);
@@ -88,7 +96,7 @@ module.exports = {
                     if (absolutePath.endsWith('sitemap.xml')) {
                         return content
                             .toString()
-                            .replace('__LAST_MODIFIED__', buildMetadata.lastModified);
+                            .replaceAll('__LAST_MODIFIED__', buildMetadata.lastModified);
                     }
                     return content;
                 },
@@ -110,7 +118,7 @@ module.exports = {
         }),
         new MiniCSSExtractPlugin({
             filename: ({ chunk }) => chunk.name === 'portfolio' ? 'portfolio/css/main.css'
-                : chunk.name === 'chat' ? 'portfolio/css/chat.css' : '[name].css',
+                : ['chat', 'honors'].includes(chunk.name) ? `portfolio/css/${chunk.name}.css` : '[name].css',
             chunkFilename: '[name].css',
         }),
         new TrimGeneratedTextPlugin(),
@@ -118,6 +126,7 @@ module.exports = {
             apply(compiler) {
                 compiler.hooks.thisCompilation.tap('SyncWindowTemplate', (compilation) => {
                     compilation.fileDependencies.add(syncWindowsPath);
+                    compilation.fileDependencies.add(projectWindowsPath);
                 });
             },
         },

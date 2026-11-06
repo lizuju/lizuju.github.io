@@ -8,6 +8,7 @@ import { encryptedClient, cryptoClient } from './e2ee-client.mjs';
 
 const origin = 'https://lizuju.github.io';
 const sevenDays = 7 * 24 * 60 * 60 * 1000;
+const fourteenDays = 14 * 24 * 60 * 60 * 1000;
 const cryptoSource = (await readFile(new URL('../../../static/portfolio/js/apps/sync-crypto.js', import.meta.url), 'utf8')).replaceAll("'@serenity-kit/opaque'", JSON.stringify(import.meta.resolve('@serenity-kit/opaque')));
 const pairingSource = (await readFile(new URL('../../../static/portfolio/js/apps/sync-pairing.js', import.meta.url), 'utf8')).replace("'./sync-crypto.js'", JSON.stringify(`data:text/javascript;base64,${Buffer.from(cryptoSource).toString('base64')}`));
 const { EncryptedPairing } = await import(`data:text/javascript;base64,${Buffer.from(pairingSource).toString('base64')}`);
@@ -289,8 +290,18 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                     }
                   }
                   testAgeActivity(timestamp) {
-                    this.lastActivity = timestamp;
-                    this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', String(timestamp), 'lastActiveAt');
+                    this.lastMessageAt = timestamp;
+                    this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', String(timestamp), 'lastMessageAt');
+                  }
+                  testExpireOnPairingSnapshot() { this.expireOnPairingSnapshot = true; }
+                  pairingSnapshot(roomId, receive) {
+                    return super.pairingSnapshot(roomId, pairing => {
+                      if (this.expireOnPairingSnapshot) {
+                        this.expireOnPairingSnapshot = false;
+                        this.testAgeActivity(Date.now() - ${fourteenDays});
+                      }
+                      return receive(pairing);
+                    });
                   }
                   async testPublishPairingFailure(roomId) {
                     try { await super.publishPairing(roomId); return null; }
@@ -614,13 +625,13 @@ test('device names migrate from the old schema without revoking existing credent
   assert.ok((await storage.exec('SELECT last_active_at FROM devices')).every(device => device.last_active_at >= Date.now() - 10000));
 });
 
-test('upgrading an abandoned legacy room grants seven days before either its devices or room can expire', async () => {
+test('upgrading an abandoned legacy room preserves device grace and starts fourteen days for an empty room', async () => {
   const space = await createSpace();
   const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
   await storage.exec('DROP INDEX devices_activity');
   await storage.exec('ALTER TABLE devices DROP COLUMN last_active_at');
   await storage.exec("DELETE FROM metadata WHERE key = 'schemaVersion'");
-  await storage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 8 * 24 * 60 * 60 * 1000), 'lastActiveAt');
+  await storage.exec("DELETE FROM metadata WHERE key = 'lastMessageAt'");
   const registryStorage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
   await registryStorage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
   await runtime.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId });
@@ -628,6 +639,7 @@ test('upgrading an abandoned legacy room grants seven days before either its dev
   await registry.refreshRoom(space.roomId);
   assert.equal(await registry.hasRoom(space.roomId), true);
   assert.equal((await client()(`/v1/spaces/${space.roomId}/devices`, { token: space.token })).status, 200);
+  assert.ok(Number((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value) >= Date.now() - 10000);
 });
 
 test('seven days of device inactivity rejects HTTP and WebSocket credentials without waiting for maintenance', async () => {
@@ -746,7 +758,7 @@ test('a room without an online inviter cannot admit a new device from a retained
   assert.equal(joined.status, 404);
 });
 
-test('empty rooms reclaim expired offers and stale credentials cannot recreate a database', async t => {
+test('empty rooms wait fourteen days even without devices and stale credentials cannot recreate a reclaimed database', async t => {
   const instance = await createRuntime(); t.after(() => instance.dispose());
   const request = client(instance), space = await createSpace(request);
   await request(`/v1/spaces/${space.roomId}/device`, { method: 'DELETE', token: space.token });
@@ -754,8 +766,14 @@ test('empty rooms reclaim expired offers and stale credentials cannot recreate a
   await registryStorage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
   const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   await registry.refreshRoom(space.roomId);
-  assert.equal(await registry.hasRoom(space.roomId), false);
+  assert.equal(await registry.hasRoom(space.roomId), true);
   const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  await room.testAgeActivity(Date.now() - fourteenDays + 60000);
+  await registry.refreshRoom(space.roomId);
+  assert.equal(await registry.hasRoom(space.roomId), true);
+  await room.testAgeActivity(Date.now() - fourteenDays);
+  await registry.refreshRoom(space.roomId);
+  assert.equal(await registry.hasRoom(space.roomId), false);
   assert.deepEqual(await room.testSchema(), []);
   assert.equal((await request.raw(`/v1/spaces/${space.roomId}`, { token: space.token })).status, 404);
   assert.deepEqual(await room.testSchema(), []);
@@ -800,81 +818,157 @@ test('empty-room reclamation retains devices, history, uploads and remaining sha
       if (retained === 'deleting shards') {
         assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM file_shards'), [{ count: 1 }]);
         await registry.refreshRoom(space.roomId);
-        assert.equal(await registry.hasRoom(space.roomId), false);
-        assert.deepEqual(await storage.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name'"), []);
+        assert.equal(await registry.hasRoom(space.roomId), true);
+        assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM file_shards'), [{ count: 0 }]);
       }
     });
   }
 });
 
-test('daily maintenance reclaims a seven-day abandoned empty room despite old paired devices', async t => {
-  const instance = await createRuntime();
-  t.after(() => instance.dispose());
-  const space = await createSpace(client(instance));
-  const roomStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
-  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  await roomStorage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 8 * 24 * 60 * 60 * 1000), 'lastActiveAt');
-  await roomStorage.exec('UPDATE devices SET last_active_at = ?', Date.now() - sevenDays - 1);
-  await registryStorage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
-  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
-  await registry.maintainRooms();
-  await registry.testRunAlarm();
-  assert.equal(await registry.hasRoom(space.roomId), false);
-  assert.deepEqual(await roomStorage.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name != '__miniflare_do_name'"), []);
-  assert.equal((await client(instance)(`/v1/spaces/${space.roomId}`, { token: space.token })).status, 404);
-});
-
-test('abandoned-room reclamation preserves recent activity, online devices, invitations and pending contents', async t => {
-  const instance = await createRuntime();
-  t.after(() => instance.dispose());
-  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
-  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  for (const retained of ['recent', 'online', 'invitation', 'history', 'upload']) {
-    const request = client(instance);
-    const space = await createSpace(request);
-    const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
-    const socket = retained === 'online' ? (await authenticateSocket(space, instance)).socket : null;
-    if (retained === 'history') await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'keep' } });
-    if (retained === 'upload') await request(`/v1/spaces/${space.roomId}/files/uploads`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), name: 'pending.bin', type: 'application/octet-stream', size: 8 } });
-    if (retained !== 'recent') await storage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 31 * 24 * 60 * 60 * 1000), 'lastActiveAt');
-    if (retained !== 'invitation') await registryStorage.exec('UPDATE offers SET expires_at = ? WHERE room_id = ?', Date.now() - 1, space.roomId);
-    await registry.refreshRoom(space.roomId);
-    assert.equal(await registry.hasRoom(space.roomId), true, retained);
-    socket?.close();
-  }
-});
-
-test('successful authentication refreshes stale activity and existing rooms receive a full idle grace period on migration', async t => {
+test('daily maintenance reclaims only rooms with fourteen days without messages, even with current devices and offers', async t => {
   const instance = await createRuntime();
   t.after(() => instance.dispose());
   const request = client(instance);
-  const space = await createSpace(request);
-  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
-  const old = Date.now() - 31 * 24 * 60 * 60 * 1000;
-  await storage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(old), 'lastActiveAt');
-  await instance.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId });
-  assert.equal((await request(`/v1/spaces/${space.roomId}/devices`, { token: space.token })).status, 200);
-  assert.ok(Number((await storage.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt'))[0].value) > old);
-  await storage.exec('DELETE FROM metadata WHERE key = ?', 'lastActiveAt');
-  await storage.exec("DELETE FROM metadata WHERE key = 'schemaVersion'");
-  await instance.unsafeEvictDurableObject('sync-test', 'SyncRoom', { name: space.roomId });
-  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
-  assert.equal(await room.reclaimIfEmpty(), false);
-  assert.ok(Number((await storage.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt'))[0].value) >= Date.now() - 10000);
+  const expired = await createSpace(request);
+  const recent = await createSpace(client(instance));
+  const namespace = await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
+  const room = namespace.getByName(expired.roomId);
+  await room.testAgeActivity(Date.now() - fourteenDays);
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  await registry.maintainRooms();
+  await registry.testRunAlarm();
+  assert.equal(await registry.hasRoom(expired.roomId), false);
+  assert.equal(await registry.hasRoom(recent.roomId), true);
+  assert.deepEqual(await room.testSchema(), []);
+  assert.equal((await request.raw(`/v1/spaces/${expired.roomId}`, { token: expired.token })).status, 404);
+  assert.equal((await request(`/v1/spaces/${recent.roomId}`, { token: recent.token })).status, 200);
+  const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  for (const table of ['offers', 'room_pairing', 'reservations', 'room_usage']) {
+    assert.deepEqual(await registryStorage.exec(`SELECT 1 FROM ${table} WHERE room_id = ?`, expired.roomId), []);
+  }
 });
 
-test('closing a long-lived authenticated connection refreshes activity before an empty room can be reclaimed', async t => {
+test('message activity is renewed by a successful send, not reads, pairing, duplicate delivery or clearing history', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  const old = Date.now() - fourteenDays + 60000;
+  await room.testAgeActivity(old);
+  for (const suffix of ['', '/messages', '/devices', '/pair-code']) {
+    assert.equal((await request(`/v1/spaces/${space.roomId}${suffix}`, { token: space.token })).status, 200);
+  }
+  const invitation = await request(`/v1/spaces/${space.roomId}/pair-code`, { method: 'POST', token: space.token });
+  assert.equal(invitation.status, 200);
+  const peer = await client(instance)('/v1/pair', { method: 'POST', json: { code: invitation.body.code } });
+  assert.equal(peer.status, 200);
+  assert.equal(Number((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value), old);
+  const clientId = randomUUID();
+  const sent = await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId, text: 'a new conversation' } });
+  assert.equal(sent.status, 201);
+  const lastMessageAt = Number((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value);
+  assert.equal(lastMessageAt, sent.body.createdAt);
+  assert.ok(lastMessageAt >= Date.now() - 10000);
+  // Age only the activity marker to prove retries do not count as another send.
+  const marker = lastMessageAt - 1000;
+  await room.testAgeActivity(marker);
+  assert.equal((await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId, text: 'a new conversation' } })).status, 200);
+  assert.equal((await request(`/v1/spaces/${space.roomId}/messages`, { method: 'DELETE', token: space.token })).status, 200);
+  assert.equal(Number((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value), marker);
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  await registry.refreshRoom(space.roomId);
+  assert.equal(await registry.hasRoom(space.roomId), true);
+});
+
+test('room expiry rejects attempts to revive it through HTTP or a late new message', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  for (const suffix of ['/devices', '/messages']) {
+    const request = client(instance), space = await createSpace(request);
+    const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+    await room.testAgeActivity(Date.now() - fourteenDays);
+    const result = suffix === '/messages'
+      ? await request.raw(`/v1/spaces/${space.roomId}${suffix}`, { method: 'POST', token: space.token,
+        headers: { 'X-Sync-Key-Id': request.state.sessions.get(space.token).keyring.currentKeyId },
+        json: { clientId: randomUUID(), text: `e2ee1.${'a'.repeat(100)}` } })
+      : await request.raw(`/v1/spaces/${space.roomId}${suffix}`, { token: space.token });
+    assert.ok([401, 404].includes(result.status), JSON.stringify(result));
+  }
+});
+
+test('the room deadline closes every online device and releases the space without a page visit', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const peer = (await client(instance)('/v1/pair', { method: 'POST', json: { code: space.code } })).body;
+  const one = (await authenticateSocket(space, instance)).socket;
+  const two = (await authenticateSocket({ ...peer, roomId: space.roomId }, instance)).socket;
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  const oneClosed = socketEvent(one, 'close'), twoClosed = socketEvent(two, 'close');
+  const deadline = Date.now() + 300;
+  await room.testAgeActivity(deadline - fourteenDays);
+  await room.testScheduleAlarm();
+  assert.equal(await room.testReadAlarm(), deadline);
+  const ping = socketEvent(one);
+  one.send('ping');
+  assert.equal((await ping).data, 'pong');
+  assert.equal((await oneClosed).code, 4001);
+  assert.equal((await twoClosed).code, 4001);
+  await room.testWaitAlarm();
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  for (let attempt = 0; attempt < 100 && await registry.hasRoom(space.roomId); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(await registry.hasRoom(space.roomId), false);
+  assert.deepEqual(await room.testSchema(), []);
+});
+
+test('authentication cannot publish ready when the room expires while awaiting its pairing snapshot', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const space = await createSpace(client(instance));
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  const socket = await openSocket(space.roomId, instance);
+  const frames = [];
+  socket.addEventListener('message', event => frames.push(event.data));
+  const closed = socketEvent(socket, 'close');
+  await room.testExpireOnPairingSnapshot();
+  socket.send(JSON.stringify({ type: 'auth', token: space.token }));
+  assert.equal((await closed).code, 4001);
+  assert.deepEqual(frames, []);
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  await registry.refreshRoom(space.roomId);
+  assert.equal(await registry.hasRoom(space.roomId), false);
+  assert.equal(await room.testReadAlarm(), null);
+  assert.deepEqual(await room.testSchema(), []);
+});
+
+test('an expired device cannot make a recent empty room expire before fourteen days', async t => {
+  const instance = await createRuntime();
+  t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
+  await room.testAgeActivity(Date.now() - sevenDays - 1000);
+  await storage.exec('UPDATE devices SET last_active_at = ?', Date.now() - sevenDays - 1000);
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  await registry.refreshRoom(space.roomId);
+  assert.equal(await registry.hasRoom(space.roomId), true);
+  assert.deepEqual(await storage.exec('SELECT device_id FROM devices'), []);
+  assert.equal(await room.reclaimIfEmpty(), false);
+});
+
+test('closing a long-lived authenticated connection does not renew the message deadline', async t => {
   const instance = await createRuntime();
   t.after(() => instance.dispose());
   const space = await createSpace(client(instance));
   const { socket } = await authenticateSocket(space, instance);
   const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
-  await room.testAgeActivity(Date.now() - 31 * 24 * 60 * 60 * 1000);
+  const old = Date.now() - fourteenDays + 60000;
+  await room.testAgeActivity(old);
   const closed = socketEvent(socket, 'close');
   socket.close();
   await closed;
   const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
-  assert.ok(Number((await storage.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt'))[0].value) >= Date.now() - 10000);
+  assert.equal(Number((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value), old);
   assert.equal(await room.reclaimIfEmpty(), false);
 });
 
@@ -1076,7 +1170,8 @@ test('fixed pairing settings survive a registry restart and are reclaimed with a
   assert.equal(await registry.hasRoom(space.roomId), true);
   const roomStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
   const registryStorage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
-  await roomStorage.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now() - 8 * 24 * 60 * 60 * 1000), 'lastActiveAt');
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
+  await room.testAgeActivity(Date.now() - fourteenDays);
   await roomStorage.exec('UPDATE devices SET last_active_at = ?', Date.now() - sevenDays - 1);
   await registry.refreshRoom(space.roomId);
   assert.equal(await registry.hasRoom(space.roomId), false);

@@ -81,6 +81,84 @@ test('ignores a previous round reply while the new round is still searching', as
     expect(await page.evaluate(() => window.gomokuJobs.every(job => job.terminated))).toBe(true);
 });
 
+test('uses Shift+F2 to return to mode selection without affecting dialogs or inactive games', async ({ page }) => {
+    const back = page.locator('[data-gomoku-back]');
+    await expect(back).toHaveText('返回选择(B)');
+    await expect(back).toHaveAttribute('aria-keyshortcuts', 'B Shift+F2');
+    await expect(back).toHaveAttribute('title', /Shift\+F2/);
+    await controlledWorker(page);
+    await beginSearch(page);
+    await page.keyboard.press('F2');
+    expect(await state(page)).toMatchObject({ mode: 'computer', phase: 'playing', moves: [] });
+    await expect(page.locator('[data-gomoku-mode-home]')).toBeHidden();
+    expect(await page.evaluate(() => window.gomokuJobs[0].terminated)).toBe(true);
+
+    await beginSearch(page);
+    await page.keyboard.press('Shift+F2');
+    expect(await state(page)).toMatchObject({ phase: 'choosing', currentPlayer: null, moves: [] });
+    await expect(page.locator('[data-gomoku-mode-home]')).toBeVisible();
+    expect(await page.evaluate(() => window.gomokuJobs[1].terminated)).toBe(true);
+    const choosing = await state(page);
+    await page.evaluate(() => window.gomokuJobs[1].onmessage({ data: { move: [7, 8] } }));
+    expect(await state(page)).toEqual(choosing);
+
+    await page.locator('[data-gomoku-mode="local"]').click();
+    await page.evaluate(() => window.GomokuGame.playMove(7, 7));
+    await page.locator('[data-gomoku-menu="help"]').click();
+    await page.locator('[data-gomoku-help]').click();
+    await expect(page.locator('[data-gomoku-dialog-copy]')).toContainText('Shift+F2');
+    const playing = await state(page);
+    await page.keyboard.press('b');
+    await page.keyboard.press('Shift+F2');
+    expect(await state(page)).toEqual(playing);
+    await expect(page.locator('[data-gomoku-dialog]')).toBeVisible();
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('portfolio-language-change', { detail: { language: 'en' } })));
+    await expect(back).toHaveText('Choose Mode(B)');
+    await expect(back).toHaveAttribute('title', /Shift\+F2/);
+    await expect(page.locator('[data-gomoku-dialog-copy]')).toContainText('Shift+F2');
+    await page.keyboard.press('Escape');
+    await page.locator('[data-app-window]').evaluate(element => element.dispatchEvent(new CustomEvent('gavin:focus-window', { bubbles: true })));
+    await expect(page.locator('[data-gomoku-window]')).not.toHaveClass(/is-active/);
+    await page.keyboard.press('b');
+    await page.keyboard.press('Shift+F2');
+    expect(await state(page)).toEqual(playing);
+    await page.evaluate(() => window.GomokuGame.open());
+    await page.keyboard.press('Shift+F2');
+    expect(await state(page)).toMatchObject({ mode: 'local', phase: 'choosing', moves: [] });
+    await expect(page.locator('[data-gomoku-mode-home]')).toBeVisible();
+});
+
+test('uses the B mnemonic without interrupting difficulty input or modified shortcuts', async ({ page }) => {
+    await controlledWorker(page);
+    const selector = page.locator('[data-gomoku-difficulty]');
+    await selector.focus();
+    await page.keyboard.press('b');
+    expect(await state(page)).toMatchObject({ phase: 'playing', difficulty: 'normal', moves: [] });
+    await page.locator('[data-gomoku-board]').focus();
+    await beginSearch(page);
+    const thinking = await state(page);
+    for (const modifier of ['ctrlKey', 'metaKey', 'altKey']) {
+        expect(await page.evaluate(modifier => {
+            const event = new KeyboardEvent('keydown', { key: 'b', bubbles: true, cancelable: true, [modifier]: true });
+            document.activeElement.dispatchEvent(event);
+            return event.defaultPrevented;
+        }, modifier)).toBe(false);
+        expect(await state(page)).toEqual(thinking);
+    }
+    await page.keyboard.press('b');
+    expect(await state(page)).toMatchObject({ phase: 'choosing', moves: [] });
+    expect(await page.evaluate(() => window.gomokuJobs[0].terminated)).toBe(true);
+    await page.evaluate(() => window.gomokuJobs[0].onmessage({ data: { move: [7, 8] } }));
+    expect(await state(page)).toMatchObject({ phase: 'choosing', moves: [] });
+    await page.keyboard.press('b');
+    await expect(page.locator('[data-gomoku-mode-home]')).toBeVisible();
+    await page.locator('[data-gomoku-mode="local"]').click();
+    await page.evaluate(() => window.GomokuGame.playMove(7, 7));
+    await page.keyboard.press('B');
+    expect(await state(page)).toMatchObject({ mode: 'local', phase: 'choosing', moves: [] });
+    await expect(page.locator('[data-gomoku-mode="local"]')).toBeFocused();
+});
+
 test('recovers from worker errors, invalid moves and a stalled search', async ({ page }) => {
     await controlledWorker(page);
     await page.clock.install();
@@ -100,29 +178,63 @@ test('recovers from worker errors, invalid moves and a stalled search', async ({
     }
 });
 
-test('changes difficulty without discarding the board and cancels the previous search', async ({ page }, testInfo) => {
+test('locks difficulty during a round and keeps compact controls through recovery and mode changes', async ({ page }, testInfo) => {
     const selector = page.getByRole('combobox', { name: '难度' });
     await expect(selector).toHaveValue('normal');
+    await expect(selector).toBeEnabled();
+    await selector.selectOption('challenge');
     await controlledWorker(page);
     await beginSearch(page);
-    await selector.selectOption('challenge');
-    await page.evaluate(() => { window.advanceTime(1000); });
+    await expect(selector).toBeDisabled();
     expect(await page.evaluate(() => window.gomokuJobs.map(job => ({ difficulty: job.difficulty, terminated: !!job.terminated })))).toEqual([
-        { difficulty: 'normal', terminated: true }, { difficulty: 'challenge', terminated: false }
+        { difficulty: 'challenge', terminated: false }
     ]);
-    await page.evaluate(() => window.gomokuJobs[0].onmessage({ data: { move: [0, 0] } }));
     expect(await state(page)).toMatchObject({ difficulty: 'challenge', phase: 'thinking', moves: [{ row: 7, col: 7, player: 'human-black' }] });
-    await page.evaluate(() => window.gomokuJobs[1].onmessage({ data: { move: [7, 8] } }));
+    await page.evaluate(() => window.gomokuJobs[0].onmessage({ data: { move: [7, 8] } }));
     expect((await state(page)).moves).toHaveLength(2);
+    await expect(selector).toBeDisabled();
     await page.reload();
     await expect(selector).toHaveValue('challenge');
+    await expect(selector).toBeDisabled();
     expect((await state(page)).moves).toHaveLength(2);
     await page.evaluate(() => window.GomokuGame.open());
+    await page.keyboard.press('Meta+z');
+    expect((await state(page)).moves).toEqual([]);
+    await expect(selector).toBeEnabled();
+    await selector.selectOption('simple');
+    await controlledWorker(page);
+    await beginSearch(page);
+    await expect(selector).toBeDisabled();
+    await page.keyboard.press('F2');
+    await expect(selector).toBeEnabled();
+    await expect(selector).toHaveValue('simple');
+    expect(await page.evaluate(() => window.gomokuJobs.at(-1).terminated)).toBe(true);
+    await beginSearch(page);
+    await expect(selector).toBeDisabled();
     await page.locator('[data-gomoku-back]').click();
     await page.locator('[data-gomoku-mode="local"]').click();
     await expect(selector).toBeHidden();
     await page.locator('[data-gomoku-back]').click();
     await choose(page);
+    await expect(selector).toBeEnabled();
+    await selector.selectOption('challenge');
+    await page.evaluate(() => {
+        window.GomokuGame.loadPosition([
+            { row: 7, col: 0, player: 0 }, { row: 0, col: 0, player: 1 },
+            { row: 7, col: 1, player: 0 }, { row: 0, col: 2, player: 1 },
+            { row: 7, col: 2, player: 0 }, { row: 0, col: 4, player: 1 },
+            { row: 7, col: 3, player: 0 }, { row: 0, col: 6, player: 1 }
+        ]);
+    });
+    await expect(selector).toBeDisabled();
+    await page.evaluate(() => window.GomokuGame.playMove(7, 4));
+    expect((await state(page)).phase).toBe('player-won');
+    await expect(selector).toBeEnabled();
+    await selector.selectOption('simple');
+    expect(await state(page)).toMatchObject({ difficulty: 'simple', phase: 'player-won' });
+    expect((await state(page)).moves).toHaveLength(9);
+    await page.keyboard.press('F2');
+    await selector.selectOption('challenge');
     await expect(selector).toHaveValue('challenge');
     await page.evaluate(() => window.dispatchEvent(new CustomEvent('portfolio-language-change', { detail: { language: 'en' } })));
     const translated = page.getByRole('combobox', { name: 'Difficulty' });
@@ -132,6 +244,8 @@ test('changes difficulty without discarding the board and cancels the previous s
     const bounds = await bar.boundingBox();
     const selectBounds = await translated.boundingBox();
     const backBounds = await page.locator('[data-gomoku-back]').boundingBox();
+    expect(selectBounds.y - bounds.y).toBeGreaterThanOrEqual(2);
+    expect(bounds.y + bounds.height - selectBounds.y - selectBounds.height).toBeGreaterThanOrEqual(2);
     expect(selectBounds.x + selectBounds.width).toBeLessThanOrEqual(backBounds.x);
     expect(backBounds.x + backBounds.width).toBeLessThanOrEqual(bounds.x + bounds.width);
     await page.screenshot({ path: testInfo.outputPath('difficulty-controls.png') });
@@ -142,6 +256,9 @@ test('changes difficulty without discarding the board and cancels the previous s
     await page.mouse.move(grip.x + grip.width / 2 - 100, grip.y + grip.height / 2);
     await page.mouse.up();
     const narrowBar = await bar.boundingBox();
+    const narrowSelect = await translated.boundingBox();
+    expect(narrowSelect.y - narrowBar.y).toBeGreaterThanOrEqual(2);
+    expect(narrowBar.y + narrowBar.height - narrowSelect.y - narrowSelect.height).toBeGreaterThanOrEqual(2);
     for (const control of [translated, page.locator('[data-gomoku-back]')]) {
         const box = await control.boundingBox();
         expect(box.x).toBeGreaterThanOrEqual(narrowBar.x);
