@@ -165,6 +165,26 @@ npx wrangler secret put CF_ANALYTICS_TOKEN
 
 ## 上线配置
 
+### 手机主屏幕应用与 Web Push
+
+联络站的右侧工具栏提供主屏幕安装引导。iPhone / iPad 需要 iOS / iPadOS 16.4 或更新版本：在 Safari 打开 `/chat/`，通过“分享 → 添加到主屏幕”安装，再从主屏幕图标打开并主动开启系统通知；普通 Safari 标签页不能申请这类通知权限。标准 Web Push 无需购买 Apple Developer Program，也不需要额外的付费推送服务。推送请求和订阅保存计入已有 Cloudflare 免费额度，通知到达仍受系统权限、网络和专注模式影响。
+
+Web Push 使用与聊天加密分离的 VAPID 密钥。首次配置时，在本目录运行：
+
+```sh
+node scripts/setup-push.mjs
+```
+
+脚本只生成本地密钥，将 `PUSH_VAPID_PUBLIC_KEY`、`PUSH_VAPID_PRIVATE_KEY`、`PUSH_VAPID_SUBJECT` 保存到仓库已忽略的 `output/web-push-secrets.json`，文件权限为 `0600`；不会打印私钥、覆盖已有文件或修改云端。可传入 `mailto:你的联系邮箱` 作为第二个命令参数替换默认网站联系地址。需要发布时，在本目录执行：
+
+```sh
+npx wrangler secret bulk ../../output/web-push-secrets.json
+```
+
+随后按下面的发布流程部署后端和网站。不要把私钥写入前端、`wrangler.jsonc` 或 Git；后续发布继续使用同一组 VAPID 密钥，换钥会使旧订阅需要重新授权订阅。未配置完整密钥时，`GET /v1/push/key` 返回 `503 push_unavailable`，不会伪装成已支持后台推送。
+
+推送采用 RFC 8291 `aes128gcm` 和 RFC 8292 VAPID，仅携带空间标识、消息编号及语言；显示固定“有新消息”，不携带聊天正文、附件名称、设备凭据或聊天解密密钥。推送服务地址只接受 Apple、Google、Mozilla 和 Microsoft 的已支持 HTTPS 域名，禁止重定向；失败日志不包含订阅端点或密钥。
+
 网站两种入口均通过早期 CSP meta 限制脚本和资源来源：只运行本站脚本，禁止内联脚本、字符串求值、插件对象、base URL 覆盖和原生表单提交；API、WebSocket、邮件和卫星数据仅放行实际使用的来源。HEIC 使用 CSP 兼容转换器；保留 WebAssembly 编译与界面必要的内联样式。GitHub Pages 不提供自定义响应头，因此采用 meta 策略，不宣称它能限制外部网站嵌入（frame-ancestors 需响应头支持）。
 
 后端地址为 `https://portfolio-sync.li2096870763.workers.dev`。更新后端时，先提交本次发布内容，在本目录运行 `npm run deploy`。脚本要求工作区干净，先运行后端测试和打包检查，检查 Cloudflare 登录，再部署并注入当前完整 Git SHA 为 `RELEASE_REVISION`；部署后检查 `/health` 返回的服务名、API 版本、提交 SHA 和 Cloudflare 版本 ID，失败会以非零状态退出。使用兼容 Workers Free 的 `new_sqlite_classes` 迁移，不开通付费计划。仓库内 `static/portfolio/sync-config.json` 的 `apiBase` 指向该 HTTPS 地址，修改前端后仍需构建并发布网站。协议有不兼容改动时，同时把本目录 `src/api-version.js` 的 `API_VERSION` 和 `sync-config.json` 的 `apiVersion` 加 1，先部署后端再推送前端；CI 发布 Pages 前会用 `npm run check:sync-api` 检查线上 Worker 版本，落后则停止发布。

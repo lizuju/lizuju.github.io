@@ -39,6 +39,7 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
           modules: {
             'index.js': { type: 'esm', contents: await readFile(new URL('../src/index.js', import.meta.url), 'utf8') },
             'daily-usage.js': { type: 'esm', contents: await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8') },
+            'web-push.js': { type: 'esm', contents: await readFile(new URL('../src/web-push.js', import.meta.url), 'utf8') },
             'api-version.js': { type: 'esm', contents: await readFile(new URL('../src/api-version.js', import.meta.url), 'utf8') },
             'harness.js': {
               type: 'esm',
@@ -2070,6 +2071,7 @@ for (const phase of ['chunk write', 'finalization']) {
     assert.equal((await new Response(await shard.readStream()).arrayBuffer()).byteLength, 0);
   });
 }
+
 
 test('combined room reads retain authentication, registry existence and reclaimed-object guards', async t => {
   const instance = await createRuntime(); t.after(() => instance.dispose());

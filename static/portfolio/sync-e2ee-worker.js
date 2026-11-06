@@ -520,16 +520,38 @@ const showSystemNotification = event => {
         reply('shown');
     })().catch(() => reply('error')));
 };
+self.addEventListener('push', event => {
+    let payload;
+    try { payload = event.data?.json(); } catch {}
+    const valid = payload && typeof payload === 'object' && !Array.isArray(payload)
+        && Object.keys(payload).every(key => ['roomId', 'messageId', 'language'].includes(key))
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(payload.roomId)
+        && Number.isSafeInteger(payload.messageId) && payload.messageId > 0
+        && ['zh-CN', 'en'].includes(payload.language);
+    const english = valid && payload.language === 'en';
+    // iOS requires each push event to display a user-visible notification, even with an open window.
+    event.waitUntil(self.registration.showNotification(english ? 'Contact Hub' : '联络站', {
+        body: english ? 'You have a new message' : '有新消息',
+        tag: valid ? `sync:${payload.roomId}` : 'sync:message',
+        icon: new URL('../portfolio/assets/sync-icon-192.png', self.location.href).href,
+        data: valid ? { roomId: payload.roomId } : {}
+    }));
+});
 self.addEventListener('notificationclick', event => {
     event.notification.close();
     event.waitUntil((async () => {
-        const client = await self.clients.get(event.notification.data.clientId);
-        if (client) {
+        const data = event.notification.data || {};
+        let client = data.clientId ? await self.clients.get(data.clientId) : null;
+        if (!data.clientId) {
+            const clients = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true })).filter(trustedClient);
+            client = clients.find(candidate => new URL(candidate.url).pathname.startsWith('/chat/')) || clients[0];
+        }
+        if (trustedClient(client)) {
             await client.focus();
-            if (event.notification.data.roomId) client.postMessage({ source: 'gavin-sync-notification', roomId: event.notification.data.roomId });
+            if (data.roomId) client.postMessage({ source: 'gavin-sync-notification', roomId: data.roomId });
         } else {
             const url = new URL('chat/', self.registration.scope);
-            if (event.notification.data.roomId) url.hash = new URLSearchParams({ space: event.notification.data.roomId }).toString();
+            if (data.roomId) url.hash = new URLSearchParams({ space: data.roomId }).toString();
             await self.clients.openWindow(url.href);
         }
     })());
