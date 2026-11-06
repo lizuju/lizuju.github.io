@@ -225,30 +225,45 @@ test('opens RoboMaster match records in a movable image preview window', async (
     expect(originalImageRequests).toEqual(new Set());
 
     const selectedPreviewPath = '/portfolio/assets/robomaster-match-records/previews/09-no3-infantry-front.webp';
-    const selectedImageRequest = page.waitForRequest(
-        (request) => new URL(request.url()).pathname === selectedPreviewPath
+    const selectedImageResponse = page.waitForResponse(
+        (response) => new URL(response.url()).pathname === selectedPreviewPath
     );
     await folderWindow.locator('[data-robomaster-image]').nth(8).click();
-    await selectedImageRequest;
+    await selectedImageResponse;
     await expect(previewWindow).toBeVisible();
     await expect(previewWindow).toContainText('09 3号.jpg');
     await expect(previewWindow.locator('[data-image-preview-image]')).toHaveAttribute(
         'src',
         'assets/robomaster-match-records/previews/09-no3-infantry-front.jpg'
     );
-    await expect(previewWindow.locator('[data-image-preview-source]')).toHaveAttribute(
-        'srcset',
-        'assets/robomaster-match-records/previews/09-no3-infantry-front.webp'
-    );
+    await expect(previewWindow.locator('[data-image-loading]')).toBeHidden();
+    await expect(previewWindow.locator('[data-image-error]')).toBeHidden();
     const previewImage = previewWindow.locator('[data-image-preview-image]');
-    const previewResource = await previewImage.evaluate((image) => ({
-        currentSrc: image.currentSrc,
-        width: image.naturalWidth,
-        height: image.naturalHeight
-    }));
-    expect(new URL(previewResource.currentSrc).pathname).toBe(selectedPreviewPath);
+    const previewResource = await previewImage.evaluate(async (image, selectedSource) => {
+        const expectedImage = new Image();
+        expectedImage.src = selectedSource;
+        await expectedImage.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext('2d');
+        context.drawImage(image, 0, 0);
+        const actualPixels = canvas.toDataURL();
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(expectedImage, 0, 0);
+        return {
+            contentMatches: actualPixels === canvas.toDataURL(),
+            width: image.naturalWidth,
+            height: image.naturalHeight
+        };
+    }, selectedPreviewPath);
+    expect(previewResource.contentMatches).toBe(true);
+    expect(Math.min(previewResource.width, previewResource.height)).toBeGreaterThan(0);
     expect(Math.max(previewResource.width, previewResource.height)).toBeLessThanOrEqual(1600);
-    expect(previewImageRequests).toEqual(new Set([selectedPreviewPath]));
+    const allowedPreviewPaths = await folderWindow.locator('[data-robomaster-image]').evaluateAll(images =>
+        images.slice(7, 10).map(image => new URL(image.dataset.imageSrc.replace(/\.jpg$/, '.webp'), location.href).pathname));
+    expect(previewImageRequests.has(selectedPreviewPath)).toBe(true);
+    expect([...previewImageRequests].every(path => allowedPreviewPaths.includes(path))).toBe(true);
     expect(originalImageRequests).toEqual(new Set());
     const originalImageResponse = await page.request.get(
         '/portfolio/assets/robomaster-match-records/09-no3-infantry-front.jpg'
@@ -259,11 +274,9 @@ test('opens RoboMaster match records in a movable image preview window', async (
     await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText('09 3号.jpg');
 
     const nextPreviewPath = '/portfolio/assets/robomaster-match-records/previews/10-operator-console.webp';
-    const nextImageRequest = page.waitForRequest(
-        (request) => new URL(request.url()).pathname === nextPreviewPath
-    );
     await page.keyboard.press('ArrowRight');
-    await nextImageRequest;
+    await expect.poll(() => previewImageRequests.has(nextPreviewPath)).toBe(true);
+    await expect(previewWindow.locator('[data-image-loading]')).toBeHidden();
     await expect(previewWindow).toContainText('10 调试.jpg');
     await expect(folderWindow.locator('[data-robomaster-image].is-selected')).toContainText('10 调试.jpg');
 
