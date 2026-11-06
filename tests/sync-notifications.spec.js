@@ -79,7 +79,7 @@ for (const path of ['portfolio', 'chat']) test(`the ${path} service worker sets 
     await deliver();
     expect(shown).toHaveLength(1);
     expect(shown[0].body).toBe('有新消息');
-    expect(shown[0].icon).toBe('https://example.test/portfolio/assets/sync-notification.png');
+    expect(shown[0].icon).toBe('https://example.test/portfolio/assets/sync-icon-192.png');
     let clicked;
     handlers.get('notificationclick')[0]({ notification: { data: shown[0].data, close() {} }, waitUntil: promise => { clicked = promise; } });
     await clicked;

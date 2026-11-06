@@ -812,7 +812,13 @@ import { pendingMessages } from './sync-outbox.js';
             if (type === 'application/pdf' || extension === 'pdf') return 'pdf';
             if (extension === 'docx') return 'word';
             if (['xlsx', 'xls', 'ods', 'csv', 'tsv'].includes(extension)) return 'spreadsheet';
-            if (['txt', 'md', 'json', 'log', 'xml', 'yaml', 'yml'].includes(extension)) return 'text';
+            if ([
+                'txt', 'md', 'markdown', 'log', 'json', 'jsonc', 'jsonl', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'env', 'properties',
+                'py', 'pyw', 'pyi', 'ipynb', 'c', 'cc', 'cpp', 'cxx', 'h', 'hh', 'hpp', 'hxx', 'm', 'mm', 'cs', 'java', 'kt', 'kts', 'swift', 'go', 'rs',
+                'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'vue', 'svelte', 'html', 'htm', 'css', 'scss', 'sass', 'less', 'sql',
+                'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat', 'cmd', 'rb', 'php', 'pl', 'lua', 'r', 'dart',
+                'tex', 'latex', 'bib', 'sty', 'cls', 'cmake', 'makefile', 'dockerfile', 'gitignore', 'gitattributes', 'editorconfig'
+            ].includes(extension)) return 'text';
             return null;
         };
         const showAttachmentError = (error) => {
@@ -919,7 +925,7 @@ import { pendingMessages } from './sync-outbox.js';
             if (message.sendState || button.disabled) return;
             const session = credentials;
             const kind = previewKind(message.attachment);
-            const limit = ['image', 'heic'].includes(kind) ? 20 : kind === 'text' ? 2 : 25;
+            const limit = ['image', 'heic'].includes(kind) ? 20 : kind === 'text' ? 5 : 25;
             if (!['pdf', 'video', 'audio'].includes(kind) && message.attachment.size > limit * 1024 * 1024) {
                 setNotice('syncPreviewTooLarge', true);
                 return;
