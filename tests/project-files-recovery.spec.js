@@ -194,3 +194,56 @@ test('photo errors expose a bilingual retry and successful reopen does not reset
     await page.locator('[data-robomaster-image]').first().click();
     await expect(page.locator('[data-image-preview-toolbar] [data-preview-zoom-value]')).toHaveText('125%');
 });
+
+test('loads certificate thumbnails on demand and reuses bilingual searchable image previews with recovery', async ({ page }) => {
+    const certificates = [
+        { id: 'honor-a', nameZh: '2024 年数学建模一等奖', nameEn: '2024 Modeling First Prize', image: 'honor-a.webp', thumbnail: 'honor-a-thumb.webp', width: 1600, height: 1200 },
+        { id: 'honor-b', nameZh: '2025 年机器人二等奖', nameEn: '2025 Robotics Second Prize', image: 'honor-b.webp', thumbnail: 'honor-b-thumb.webp', width: 1200, height: 1600 }
+    ];
+    let manifestRequests = 0;
+    let fullRequests = 0;
+    let failImage = true;
+    const image = await readFile(path.join(__dirname, '../static/portfolio/assets/robomaster-match-records/previews/01-match-multi-robot.webp'));
+    await page.route('**/honors/certificates.json', route => {
+        manifestRequests++;
+        return route.fulfill({ json: certificates });
+    });
+    await page.route('**/honors/*.webp', route => {
+        if (!route.request().url().endsWith('-thumb.webp')) {
+            fullRequests++;
+            if (failImage) return route.abort();
+        }
+        return route.fulfill({ contentType: 'image/webp', body: image });
+    });
+    await openFolder(page);
+    expect(manifestRequests).toBe(0);
+    await page.locator('[data-folder="honors"]').click();
+    const honors = page.locator('[data-honor-image]');
+    await expect(honors).toHaveCount(2);
+    await expect(page.locator('[data-project-folder-status]')).toHaveText('2 个对象');
+    expect(manifestRequests).toBe(1);
+    expect(fullRequests).toBe(0);
+    await page.locator('[data-project-folder-search]').fill('Modeling');
+    await expect(page.locator('[data-honor-image]:visible')).toHaveCount(1);
+    await page.locator('[data-project-folder-search]').fill('');
+    await honors.first().click();
+    await expect(page.locator('[data-image-error]')).toBeVisible();
+    failImage = false;
+    await page.locator('[data-image-error] button').click();
+    await expect(page.locator('[data-image-error]')).toBeHidden();
+    await expect.poll(() => page.locator('[data-image-preview-image]').evaluate(element => element.naturalWidth)).toBeGreaterThan(0);
+    await expect(page.locator('[data-image-counter]')).toHaveText('1 / 2');
+    await page.locator('[data-image-next]').click();
+    await expect(page.locator('[data-image-preview-title]')).toContainText('2025 年机器人二等奖');
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(page.locator('[data-image-preview-title]')).toHaveText('Image Preview - 2025 Robotics Second Prize');
+    await expect(page.locator('[data-project-folder-window-title]')).toHaveText('Honor Certificates - Explorer');
+    await page.locator('[data-image-preview-toolbar] [data-preview-zoom-in]').click();
+    await expect(page.locator('[data-image-preview-toolbar] [data-preview-zoom-value]')).toHaveText('125%');
+    await page.reload();
+    await expect(page.locator('[data-image-preview-title]')).toHaveText('Image Preview - 2025 Robotics Second Prize');
+    await expect(page.locator('[data-image-counter]')).toHaveText('2 / 2');
+    await page.locator('[data-image-preview-action="close"]').click();
+    await page.locator('[data-project-folder-back]').click();
+    await expect(page.locator('[data-project-folder-root] [data-folder]:visible')).toHaveCount(4);
+});

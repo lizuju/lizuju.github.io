@@ -21,6 +21,10 @@ import { PreviewZoom } from './preview-zoom.js';
         const musicFolderView = document.querySelector('[data-music-folder-view]');
         const musicVideoButton = document.querySelector('[data-music-video]');
         const papersFolderView = document.querySelector('[data-papers-folder-view]');
+        const honorsFolderView = document.querySelector('[data-honors-folder-view]');
+        const honorsGrid = document.querySelector('[data-honors-grid]');
+        const honorsLoading = document.querySelector('[data-honors-loading]');
+        const honorsRetry = document.querySelector('[data-honors-retry]');
         const paperButtons = Array.from(document.querySelectorAll('[data-modeling-paper]'));
         const paperPreviewWindow = document.querySelector('[data-paper-preview-window]');
         const paperPreviewTask = document.querySelector('[data-paper-preview-task]');
@@ -65,8 +69,10 @@ import { PreviewZoom } from './preview-zoom.js';
         let previewPaperButton;
         let pendingPaperScrollTop;
         const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
+        const imageButtons = [...robomasterImageButtons];
         let previewImages = robomasterImageButtons;
-        const folderItems = { root: folderButtons, photos: robomasterImageButtons, music: [musicVideoButton], papers: paperButtons };
+        const folderItems = { root: folderButtons, photos: robomasterImageButtons, music: [musicVideoButton], papers: paperButtons, honors: [] };
+        let honorsRequest;
         let videoPosition = 0;
         try {
             const saved = Number(localStorage.getItem('portfolio-music-position'));
@@ -132,7 +138,7 @@ import { PreviewZoom } from './preview-zoom.js';
             minWidth: 440,
             minHeight: 320,
             focusTarget: () => (
-                currentFolder === 'photos' && manager.isFocusable(selectedImageButton)
+                ['photos', 'honors'].includes(currentFolder) && manager.isFocusable(selectedImageButton)
                     ? selectedImageButton
                     : currentFolder === 'music'
                         ? musicVideoButton
@@ -283,15 +289,15 @@ import { PreviewZoom } from './preview-zoom.js';
 
         const selectPhoto = (button) => {
             selectedImageButton = button;
-            robomasterImageButtons.forEach((candidate) => {
+            imageButtons.forEach((candidate) => {
                 candidate.classList.toggle('is-selected', candidate === button);
             });
         };
 
         const selectAllFolderItems = () => {
-            if (currentFolder === 'photos') {
-                robomasterImageButtons.filter(button => !button.hidden).forEach((button) => button.classList.add('is-selected'));
-                selectedImageButton = robomasterImageButtons.find(button => !button.hidden);
+            if (['photos', 'honors'].includes(currentFolder)) {
+                folderItems[currentFolder].filter(button => !button.hidden).forEach((button) => button.classList.add('is-selected'));
+                selectedImageButton = folderItems[currentFolder].find(button => !button.hidden);
                 return;
             }
             folderItems[currentFolder].filter(button => !button.hidden).forEach(button => button.classList.add('is-selected'));
@@ -301,7 +307,7 @@ import { PreviewZoom } from './preview-zoom.js';
             folderButtons.forEach((button) => button.classList.remove('is-selected'));
             musicVideoButton.classList.remove('is-selected');
             paperButtons.forEach((button) => button.classList.remove('is-selected'));
-            robomasterImageButtons.forEach((button) => button.classList.remove('is-selected'));
+            imageButtons.forEach((button) => button.classList.remove('is-selected'));
             selectedImageButton = undefined;
         };
 
@@ -316,7 +322,7 @@ import { PreviewZoom } from './preview-zoom.js';
         };
 
         const getPhotoNavigationTarget = (key, selected = selectedImageButton) => {
-            const buttons = robomasterImageButtons.filter(button => !button.hidden);
+            const buttons = folderItems[currentFolder].filter(button => !button.hidden);
             if (!buttons.length) return null;
             if (!selected) return buttons[0];
 
@@ -350,12 +356,13 @@ import { PreviewZoom } from './preview-zoom.js';
 
         const updatePhotoCopy = () => {
             const copy = t();
-            robomasterImageButtons.forEach((button) => {
+            imageButtons.forEach((button) => {
                 const label = getPhotoCopy(button, 'photoLabel');
                 const alt = getPhotoCopy(button, 'photoAlt');
                 button.querySelector('[data-photo-label]').textContent = label;
-                button.querySelector('[data-photo-type]').textContent = copy.previewImageType;
-                button.querySelector('[data-robomaster-thumbnail]').alt = alt;
+                button.querySelector('[data-photo-type]').textContent = copy[button.hasAttribute('data-honor-image') ? 'previewWebpType' : 'previewImageType'];
+                button.querySelector('img').alt = alt;
+                button.title = label;
             });
 
             if (!previewImageButton) {
@@ -369,7 +376,7 @@ import { PreviewZoom } from './preview-zoom.js';
             imagePreviewTitle.textContent = `${copy.previewWindowTitle} - ${label}`;
             imagePreviewTaskTitle.textContent = `${copy.previewTaskTitle}: ${label}`;
             imagePreviewCaption.textContent = label;
-            imagePreviewStatus.textContent = copy.previewImageType;
+            imagePreviewStatus.textContent = copy[previewImageButton.hasAttribute('data-honor-image') ? 'previewWebpType' : 'previewImageType'];
             imagePreviewImage.alt = getPhotoCopy(previewImageButton, 'photoAlt');
             const index = previewImages.indexOf(previewImageButton);
             imageCounter.textContent = `${index + 1} / ${previewImages.length}`;
@@ -386,14 +393,14 @@ import { PreviewZoom } from './preview-zoom.js';
                 const names = [name.textContent, button.dataset.photoLabelZh, button.dataset.photoLabelEn, ...translations];
                 button.hidden = !!query && !names.some(name => name?.toLocaleLowerCase().includes(query));
             }
-            folderEmpty.hidden = items.some(button => !button.hidden);
+            folderEmpty.hidden = currentFolder === 'honors' && !folderItems.honors.length || items.some(button => !button.hidden);
             const count = items.filter(button => !button.hidden).length;
             projectFolderStatus.textContent = t()[query ? 'folderSearchCount' : 'folderObjectCount']
                 .replace('{count}', count).replace('{total}', items.length);
             folderSearch.setAttribute('aria-label', t().folderSearch);
             if (selectedFolderButton?.hidden) selectedFolderButton = folderButtons.find(button => !button.hidden);
             if (selectedPaperButton?.hidden) selectedPaperButton = paperButtons.find(button => !button.hidden);
-            if (selectedImageButton?.hidden) selectPhoto(robomasterImageButtons.find(button => !button.hidden));
+            if (['photos', 'honors'].includes(currentFolder) && selectedImageButton?.hidden) selectPhoto(items.find(button => !button.hidden));
         };
         const setProjectFolderView = (folder) => {
             if (folder !== currentFolder) folderSearch.value = '';
@@ -403,10 +410,11 @@ import { PreviewZoom } from './preview-zoom.js';
             robomasterFolderView.hidden = folder !== 'photos';
             musicFolderView.hidden = folder !== 'music';
             papersFolderView.hidden = folder !== 'papers';
+            honorsFolderView.hidden = folder !== 'honors';
             projectFolderBack.hidden = folder === 'root';
             if (folder !== 'root') selectedFolderButton = folderButtons.find((button) => button.dataset.folder === folder);
             const prefix = folder === 'photos' ? 'folderPhoto' : folder === 'music' ? 'folderMusic'
-                : folder === 'papers' ? 'folderPapers' : 'folder';
+                : folder === 'papers' ? 'folderPapers' : folder === 'honors' ? 'folderHonors' : 'folder';
             projectFolderTitle.textContent = copy[`${prefix}WindowTitle`];
             projectFolderAddress.textContent = copy[`${prefix}Address`];
             projectFolderStatus.textContent = copy[`${prefix}Status`];
@@ -415,6 +423,9 @@ import { PreviewZoom } from './preview-zoom.js';
                 document.querySelectorAll('[data-robomaster-thumbnail]').forEach((thumbnail) => {
                     if (!thumbnail.getAttribute('src')) thumbnail.src = thumbnail.dataset.thumbnailSrc;
                 });
+            } else if (folder === 'honors') {
+                honorsLoading.querySelector('span').textContent = copy[honorsRetry.hidden ? 'folderHonorsLoading' : 'folderHonorsFailed'];
+                loadHonors();
             } else if (folder === 'music') {
                 const thumbnail = musicVideoButton.querySelector('[data-music-thumbnail]');
                 if (!thumbnail.getAttribute('src')) thumbnail.src = thumbnail.dataset.thumbnailSrc;
@@ -451,8 +462,9 @@ import { PreviewZoom } from './preview-zoom.js';
         };
 
         const openImagePreview = (button) => {
-            previewImages = robomasterImageButtons.filter(candidate => !candidate.hidden);
-            if (!previewImages.includes(button)) previewImages = robomasterImageButtons;
+            const items = button.hasAttribute('data-honor-image') ? folderItems.honors : robomasterImageButtons;
+            previewImages = items.filter(candidate => !candidate.hidden);
+            if (!previewImages.includes(button)) previewImages = items;
             updateImagePreview(button);
             previewEntry.show();
         };
@@ -463,6 +475,58 @@ import { PreviewZoom } from './preview-zoom.js';
         imagePrevious.addEventListener('click', () => movePreview(-1));
         imageNext.addEventListener('click', () => movePreview(1));
         imageError.querySelector('button').addEventListener('click', () => updateImagePreview(previewImageButton));
+
+        const loadHonors = () => {
+            if (honorsRequest) return honorsRequest;
+            honorsRetry.hidden = true;
+            honorsLoading.querySelector('span').textContent = t().folderHonorsLoading;
+            honorsRequest = fetch('assets/honors/certificates.json').then(response => {
+                if (!response.ok) throw new Error('Certificates could not be loaded');
+                return response.json();
+            }).then(certificates => {
+                folderItems.honors = certificates.map(certificate => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'project-folder-item project-folder-item--button project-folder-item--image';
+                    Object.assign(button.dataset, {
+                        honorImage: certificate.id,
+                        imageSrc: `assets/honors/${encodeURIComponent(certificate.image)}`,
+                        photoLabelZh: certificate.nameZh,
+                        photoLabelEn: certificate.nameEn,
+                        photoAltZh: certificate.nameZh,
+                        photoAltEn: certificate.nameEn
+                    });
+                    const icon = document.createElement('span');
+                    icon.className = 'photo-file-icon';
+                    const thumbnail = document.createElement('img');
+                    thumbnail.loading = 'lazy';
+                    thumbnail.decoding = 'async';
+                    thumbnail.width = certificate.width;
+                    thumbnail.height = certificate.height;
+                    thumbnail.src = `assets/honors/${encodeURIComponent(certificate.thumbnail)}`;
+                    icon.append(thumbnail);
+                    const label = document.createElement('strong');
+                    label.dataset.photoLabel = '';
+                    const type = document.createElement('small');
+                    type.dataset.photoType = '';
+                    button.append(icon, label, type);
+                    button.addEventListener('focus', () => selectPhoto(button));
+                    button.addEventListener('click', () => openImagePreview(button));
+                    return button;
+                });
+                imageButtons.push(...folderItems.honors);
+                honorsGrid.replaceChildren(...folderItems.honors);
+                honorsLoading.hidden = true;
+                updatePhotoCopy();
+                filterFolder();
+            }).catch(() => {
+                honorsRequest = null;
+                honorsLoading.querySelector('span').textContent = t().folderHonorsFailed;
+                honorsRetry.hidden = false;
+            });
+            return honorsRequest;
+        };
+        honorsRetry.addEventListener('click', loadHonors);
 
         const openProjectFolder = () => {
             setProjectFolderView('root');
@@ -478,7 +542,8 @@ import { PreviewZoom } from './preview-zoom.js';
             }
             if (currentFolder === 'music') videoEntry.show();
             else if (currentFolder === 'papers') openPaperPreview(selectedPaperButton || paperButtons.find(button => !button.hidden));
-            else openImagePreview(selectedImageButton || robomasterImageButtons.find(button => !button.hidden));
+            else openImagePreview(folderItems[currentFolder].includes(selectedImageButton) && !selectedImageButton.hidden
+                ? selectedImageButton : folderItems[currentFolder].find(button => !button.hidden));
         };
 
         manager.addMenuActions({
@@ -546,11 +611,11 @@ import { PreviewZoom } from './preview-zoom.js';
 
             const previewActive = manager.isWindowVisible(imagePreviewWindow)
                 && imagePreviewWindow.classList.contains('is-active');
-            const folderActive = currentFolder === 'photos' && manager.isWindowVisible(projectFolderWindow)
+            const folderActive = ['photos', 'honors'].includes(currentFolder) && manager.isWindowVisible(projectFolderWindow)
                 && projectFolderWindow.classList.contains('is-active');
             if (!previewActive && !folderActive) return;
             if (previewActive && !imagePreviewWindow.contains(event.target) && event.target !== document.body) return;
-            if (folderActive && !event.target.closest('[data-robomaster-image]')) return;
+            if (folderActive && !event.target.closest('[data-robomaster-image], [data-honor-image]')) return;
 
             if (event.key === 'Enter') {
                 if (previewActive || !selectedImageButton) return;
@@ -588,15 +653,22 @@ import { PreviewZoom } from './preview-zoom.js';
                 selectedPaperIndex: paperButtons.indexOf(selectedPaperButton),
                 previewPaperIndex: paperButtons.indexOf(previewPaperButton),
                 paperScrollTop: pendingPaperScrollTop ?? paperPreviewPages.scrollTop,
-                selectedImageIndex: selectedImageButton ? robomasterImageButtons.indexOf(selectedImageButton) : null,
-                previewImageIndex: previewImageButton ? robomasterImageButtons.indexOf(previewImageButton) : null
+                selectedImageIndex: selectedImageButton ? imageButtons.indexOf(selectedImageButton) : null,
+                previewImageIndex: previewImageButton ? imageButtons.indexOf(previewImageButton) : null
             }),
             restore: (savedState) => {
                 selectedPaperButton = paperButtons[savedState.selectedPaperIndex] || paperButtons[0];
                 setProjectFolderView(savedState.folderView || 'root');
-                const previewImage = robomasterImageButtons[savedState.previewImageIndex];
-                if (previewImage) updateImagePreview(previewImage);
-                selectPhoto(robomasterImageButtons[savedState.selectedImageIndex]);
+                const restoreImages = () => {
+                    const previewImage = imageButtons[savedState.previewImageIndex];
+                    if (previewImage) {
+                        previewImages = previewImage.hasAttribute('data-honor-image') ? folderItems.honors : robomasterImageButtons;
+                        updateImagePreview(previewImage);
+                    }
+                    selectPhoto(imageButtons[savedState.selectedImageIndex]);
+                };
+                if (savedState.previewImageIndex >= robomasterImageButtons.length || savedState.selectedImageIndex >= robomasterImageButtons.length) loadHonors().then(restoreImages);
+                else restoreImages();
                 if (manager.isWindowVisible(videoPreviewWindow)) loadVideo();
                 if (!paperPreviewWindow.classList.contains('is-closed')) {
                     updatePaperPreview(paperButtons[savedState.previewPaperIndex] || selectedPaperButton);

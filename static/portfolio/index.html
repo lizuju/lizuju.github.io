@@ -745,6 +745,20 @@
                         <strong data-i18n="folderPapers">数学建模论文</strong>
                         <small data-i18n="folderPapersBody">2 篇论文 · PDF</small>
                     </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
+                        data-folder="honors">
+                        <span class="folder-item-icon" aria-hidden="true"></span>
+                        <strong data-i18n="folderHonors">荣誉奖状</strong>
+                        <small data-i18n="folderHonorsBody">35 张奖状图片</small>
+                    </button>
+                </div>
+
+                <div data-honors-folder-view hidden>
+                    <div class="project-folder-empty" data-honors-loading role="status">
+                        <span data-i18n="folderHonorsLoading">正在加载奖状…</span>
+                        <button class="folder-up-button" type="button" data-honors-retry data-i18n="previewImageRetry" hidden>重新加载</button>
+                    </div>
+                    <div class="project-folder-grid project-folder-grid--photos project-folder-grid--honors" data-honors-grid></div>
                 </div>
 
                 <div class="project-folder-grid project-folder-grid--photos" data-robomaster-folder-view hidden>
@@ -918,7 +932,7 @@
             </div>
 
             <div class="window-statusbar project-folder-statusbar">
-                <span data-project-folder-status data-i18n="folderStatus">3 个对象</span>
+                <span data-project-folder-status data-i18n="folderStatus">4 个对象</span>
                 <span data-i18n="statusZone">我的电脑</span>
             </div>
             <button class="window-resize-handle" type="button" data-project-folder-resize aria-label="Resize folder window"

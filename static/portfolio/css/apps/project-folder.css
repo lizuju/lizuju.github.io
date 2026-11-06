@@ -545,3 +545,23 @@
     text-align: center;
     font: 13px/1.5 var(--font-system);
 }
+
+.project-folder-grid--honors {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-auto-rows: auto;
+}
+
+.project-folder-grid--honors .photo-file-icon {
+    width: 112px;
+    height: 82px;
+}
+
+.project-folder-grid--honors .photo-file-icon img {
+    object-fit: contain;
+    background: #f4f2ee;
+}
+
+.project-folder-grid--honors strong {
+    white-space: normal;
+    line-height: 1.4;
+}
