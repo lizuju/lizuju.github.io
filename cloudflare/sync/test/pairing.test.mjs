@@ -126,6 +126,12 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                   testReadAlarm() { return this.ctx.storage.getAlarm(); }
                   testDropAlarm() { return this.ctx.storage.deleteAlarm(); }
                   testMaintenancePending(roomId) { return this.maintenanceTasks.has(roomId); }
+                  testExpireNextPrunePermit() { this.expireNextPrunePermit = true; }
+                  authorizePrune(...args) {
+                    const until = super.authorizePrune(...args);
+                    if (this.expireNextPrunePermit) { this.expireNextPrunePermit = false; return Date.now() - 1; }
+                    return until;
+                  }
                   testFailPairingRead() { this.failPairingRead = true; }
                   currentInvite(...args) {
                     if (this.failPairingRead) {
@@ -238,6 +244,12 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                     this.pruneGate = new Promise(resolve => { this.releasePrune = resolve; });
                   }
                   testWaitPrune() { return this.pruneStarted; }
+                  testHoldPruneSettlement() {
+                    this.pruneSettled = new Promise(resolve => { this.startPruneSettlement = resolve; });
+                    this.pruneSettlementGate = new Promise(resolve => { this.releasePruneSettlement = resolve; });
+                  }
+                  testWaitPruneSettlement() { return this.pruneSettled; }
+                  testReleasePruneSettlement() { this.releasePruneSettlement(); }
                   testReleasePrune() { this.releasePrune(); }
                   async pruneOldest(...args) {
                     if (this.pruneGate) {
@@ -246,7 +258,14 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                       this.startPrune();
                       await gate;
                     }
-                    return super.pruneOldest(...args);
+                    const result = await super.pruneOldest(...args);
+                    if (this.pruneSettlementGate) {
+                      const gate = this.pruneSettlementGate;
+                      this.pruneSettlementGate = null;
+                      this.startPruneSettlement();
+                      await gate;
+                    }
+                    return result;
                   }
                   async maintain(roomId, cleanFiles) {
                     this.maintenanceCalls = (this.maintenanceCalls || 0) + 1;
@@ -1963,6 +1982,9 @@ test('pruning real large text rows reduces the measured SQLite storage usage', a
   const room = namespace.getByName(space.roomId);
   const before = await room.storageUsage();
   const requestId = randomUUID();
+  const registryStorage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  await registryStorage.exec("INSERT OR REPLACE INTO cleanup (id, phase, cursor, target_bytes) VALUES (1, 'prune', '', 0)");
+  await registryStorage.exec('INSERT INTO maintenance_jobs (room_id, request_id, prune_before) VALUES (?, ?, ?)', space.roomId, requestId, Number.MAX_SAFE_INTEGER);
   const after = await room.pruneOldest(Number.MAX_SAFE_INTEGER, requestId);
   assert.ok(before.bytes > 1_000_000);
   assert.ok(after.bytes < before.bytes, `${after.bytes} should be below ${before.bytes}`);
@@ -2848,6 +2870,103 @@ test('capacity pruning times out a slow room without applying its late result or
   await storage.exec('UPDATE maintenance_failures SET retry_at = 0');
   await registry.testRunAlarm(); await registry.testDropAlarm();
   assert.deepEqual(await storage.exec('SELECT * FROM maintenance_failures'), []);
+});
+
+test('a delayed capacity prune keeps history once other rooms have reached the cleanup target', async t => {
+  const instance = await createRuntime({ virtualMessageBytes: 1_000_000 }); t.after(() => instance.dispose());
+  const request = client(instance), spaces = [await createSpace(request), await createSpace(request)];
+  for (const space of spaces) assert.equal((await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'keep unless capacity still needs it' } })).status, 201);
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
+  const slow = namespace.getByName(spaces[0].roomId), healthy = namespace.getByName(spaces[1].roomId);
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const target = await registry.storageBytes() - 900000;
+  await slow.testHoldPrune();
+  await registry.startCleanup();
+  await storage.exec("UPDATE cleanup SET phase = 'prune', target_bytes = ?", target);
+  const task = registry.testRunAlarm();
+  await slow.testWaitPrune();
+  await task; await registry.testDropAlarm();
+  assert.equal((await healthy.messages()).length, 0);
+  assert.ok(await registry.storageBytes() <= target);
+  assert.equal((await slow.messages()).length, 1);
+  await slow.testReleasePrune(); await slow.testWaitAlarm();
+  assert.equal((await slow.messages()).length, 1, 'an obsolete delayed prune must not delete another room after the target is met');
+  await storage.exec('UPDATE maintenance_failures SET retry_at = 0');
+  await registry.testRunAlarm(); await registry.testDropAlarm();
+  assert.deepEqual(await storage.exec('SELECT * FROM maintenance_jobs'), []);
+  assert.deepEqual(await storage.exec('SELECT * FROM maintenance_failures'), []);
+  assert.equal((await slow.messages()).length, 1);
+  const status = await registry.collectDiagnostics();
+  assert.equal(status.maintenance.pendingTasks, 0);
+  assert.equal(status.maintenance.longestWaitMs, 0);
+  assert.ok(status.maintenance.freedBytes >= 1_000_000);
+  await registry.startCleanup();
+  assert.equal((await registry.collectDiagnostics()).maintenance.freedBytes, 0);
+});
+
+test('expired destructive permits remain fenced until their deletion is accounted, while ordinary room maintenance proceeds', async t => {
+  const instance = await createRuntime({ virtualMessageBytes: 1_000_000 }); t.after(() => instance.dispose());
+  const request = client(instance), spaces = [await createSpace(request), await createSpace(request)];
+  for (const space of spaces) await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'retain the newer room' } });
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const namespace = await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS');
+  const slow = namespace.getByName(spaces[0].roomId), healthy = namespace.getByName(spaces[1].roomId);
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const target = await registry.storageBytes() - 900000;
+  await registry.startCleanup();
+  await storage.exec("UPDATE cleanup SET phase = 'prune', target_bytes = ?", target);
+  await slow.testHoldPruneSettlement();
+  const pending = registry.runRoomMaintenance(spaces[0].roomId, Number.MAX_SAFE_INTEGER);
+  await slow.testWaitPruneSettlement(); await pending;
+  assert.equal((await slow.messages()).length, 0);
+  assert.ok(await registry.storageBytes() > target, 'the delayed response has not corrected the capacity ledger yet');
+  await storage.exec('UPDATE maintenance_jobs SET permit_until = 1');
+  await registry.runRoomMaintenance(spaces[1].roomId, Number.MAX_SAFE_INTEGER);
+  assert.equal((await healthy.messages()).length, 1, 'expiry alone cannot allow another deletion against stale capacity');
+  assert.ok(await healthy.testReadAlarm() >= Date.now() + 59000, 'a busy destructive job waits instead of polling every second');
+  const waiting = await storage.exec('SELECT request_id FROM maintenance_jobs WHERE room_id = ?', spaces[1].roomId);
+  await registry.refreshMaintenanceRoom(spaces[1].roomId);
+  assert.deepEqual(await storage.exec('SELECT request_id FROM maintenance_jobs WHERE room_id = ?', spaces[1].roomId), waiting, 'deferred retries preserve their job rather than recreate it');
+  assert.equal((await healthy.messages()).length, 1);
+  await slow.testReleasePruneSettlement(); await slow.testWaitAlarm();
+  await storage.exec('UPDATE maintenance_failures SET retry_at = 0');
+  await registry.refreshMaintenanceRoom(spaces[0].roomId);
+  assert.ok(await registry.storageBytes() <= target);
+  await registry.refreshMaintenanceRoom(spaces[1].roomId);
+  assert.deepEqual(await storage.exec('SELECT * FROM maintenance_jobs'), []);
+  assert.equal((await healthy.messages()).length, 1);
+});
+
+test('capacity prune permits reject unknown jobs, expired responses and another pending destructive job', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), spaces = [await createSpace(request), await createSpace(request)];
+  for (const space of spaces) await request(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, json: { clientId: randomUUID(), text: 'protected' } });
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
+  const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(spaces[0].roomId);
+  await registry.startCleanup();
+  const cleanupId = (await storage.exec('SELECT cleanup_id FROM cleanup'))[0].cleanup_id;
+  await storage.exec("UPDATE cleanup SET phase = 'prune', target_bytes = 0");
+  const ids = spaces.map(() => randomUUID());
+  for (let index = 0; index < spaces.length; index++) await storage.exec('INSERT INTO maintenance_jobs (room_id, request_id, prune_before, started_at, cleanup_id) VALUES (?, ?, ?, ?, ?)', spaces[index].roomId, ids[index], Number.MAX_SAFE_INTEGER, Date.now() - 65000, cleanupId);
+  assert.equal(await registry.authorizePrune(spaces[0].roomId, randomUUID()), 0);
+  const first = await registry.authorizePrune(spaces[0].roomId, ids[0]);
+  assert.ok(first > Date.now());
+  assert.equal(await registry.authorizePrune(spaces[1].roomId, ids[1]), -1);
+  await registry.testExpireNextPrunePermit();
+  await room.pruneOldest(Number.MAX_SAFE_INTEGER, ids[0]);
+  assert.equal((await room.messages()).length, 1);
+  await storage.exec('UPDATE maintenance_jobs SET permit_until = 0');
+  assert.ok(await registry.authorizePrune(spaces[1].roomId, ids[1]) > Date.now());
+  await storage.exec('UPDATE cleanup SET cleanup_id = ?', randomUUID());
+  assert.equal(await registry.authorizePrune(spaces[0].roomId, ids[0]), 0, 'jobs from a different cleanup round cannot authorize new deletion');
+  await registry.maintenanceFailed(spaces[0].roomId);
+  await registry.maintenanceFailed('queued-room');
+  const status = await registry.collectDiagnostics();
+  assert.equal(status.maintenance.pendingTasks, 3, 'failed and pending records for the same room count once');
+  assert.ok(status.maintenance.longestWaitMs >= 65000);
+  assert.equal(status.maintenance.freedBytes, 0);
 });
 
 test('daily usage edge caching coalesces callers, preserves CORS and respects sample expiry and UTC rollover', async t => {

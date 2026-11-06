@@ -2,6 +2,7 @@
     const desktopApi = window.GavinDesktop;
     const { t } = desktopApi;
     let revealObserver;
+    let projectImageObserver;
 
     function renderList(name, items) {
         document.querySelectorAll(`[data-list="${name}"]`).forEach((container) => {
@@ -44,6 +45,12 @@
         };
         const copy = t();
 
+        projectImageObserver?.disconnect();
+        projectImageObserver = new ResizeObserver(entries => {
+            for (const { target, contentRect } of entries) {
+                if (contentRect.width > 0) target.querySelector('source').sizes = `${Math.ceil(contentRect.width)}px`;
+            }
+        });
         container.replaceChildren();
         projects.forEach((project, index) => {
             const visual = visualTypes.includes(project.visual) ? project.visual : 'vision';
@@ -60,7 +67,7 @@
             source.type = 'image/webp';
             const imageBase = visualAssets[visual].replace(/\.jpg$/, '');
             source.srcset = `${imageBase}-480.webp 480w, ${imageBase}-960.webp 960w, ${imageBase}.webp 1672w`;
-            source.sizes = '(max-width: 560px) calc(100vw - 48px), (max-width: 900px) calc(100vw - 56px), (max-width: 1040px) calc(100vw - 280px), calc(41vw - 125px)';
+            source.sizes = '1px';
             const image = document.createElement('img');
             image.alt = project.alt || project.title;
             image.loading = 'lazy';
@@ -118,7 +125,12 @@
 
             card.append(media, body);
             container.append(card);
+            projectImageObserver.observe(media);
         });
+        for (const media of container.querySelectorAll('.project-media')) {
+            const width = media.getBoundingClientRect().width;
+            if (width > 0) media.querySelector('source').sizes = `${Math.ceil(width)}px`;
+        }
     }
 
     function renderMethods(methods) {
