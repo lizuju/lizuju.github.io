@@ -61,7 +61,7 @@ test('loads public storage inside the control panel and aborts on back or close'
         await route.fulfill({ headers, json: {
             ok: true, checkedAt: Date.now(), database: { registry: { ok: true } },
             storage: { bytes, storedBytes: bytes - 800000000, highWaterBytes: 4800000000, roomCount: 3, reservedBytes: 800000000 },
-            maintenance: { phase: null, scannedRooms: null, lastSuccessAt: Date.now() - 1000, nextAlarmAt: null }
+            maintenance: { phase: null, scannedRooms: null, lastSuccessAt: Date.now() - 1000, nextAlarmAt: null, pendingTasks: 3, longestWaitMs: 125000, freedBytes: 250000000 }
         } });
     });
     await page.goto('/portfolio/');
@@ -82,6 +82,9 @@ test('loads public storage inside the control panel and aborts on back or close'
     await expect(page.locator('[data-sync-storage-window], [data-sync-storage-task], [data-sync-storage-action]')).toHaveCount(0);
     await expect(storage.locator('input')).toHaveCount(0);
     await expect(metrics).toContainText('1.200 GB / 4.800 GB');
+    await expect(metrics.locator('dt', { hasText: '待处理清理任务' }).locator('+ dd')).toHaveText('3');
+    await expect(metrics.locator('dt', { hasText: '最长等待时间' }).locator('+ dd')).toHaveText('2 分钟');
+    await expect(metrics.locator('dt', { hasText: '本轮已释放容量' }).locator('+ dd')).toHaveText('0.250 GB');
     await expect(metrics.locator('dt', { hasText: '已存储内容' }).locator('+ dd')).toHaveText('0.400 GB');
     await expect(metrics.locator('dt', { hasText: '上传与写入预留' }).locator('+ dd')).toHaveText('0.800 GB');
     await expect(metrics.locator('dt', { hasText: '距清理阈值可用容量' }).locator('+ dd')).toHaveText('3.600 GB');
@@ -96,6 +99,9 @@ test('loads public storage inside the control panel and aborts on back or close'
     await expect(storage).toBeVisible();
     await expect(storage.locator('[data-i18n="syncStorageHint"]')).toHaveText('Storage is shared by all spaces. History is kept for up to 7 days.');
     await expect(metrics).toContainText('Capacity used / cleanup threshold');
+    await expect(metrics.locator('dt', { hasText: 'Pending cleanup tasks' }).locator('+ dd')).toHaveText('3');
+    await expect(metrics.locator('dt', { hasText: 'Longest wait' }).locator('+ dd')).toHaveText('2 min');
+    await expect(metrics.locator('dt', { hasText: 'Space freed this round' }).locator('+ dd')).toHaveText('0.250 GB');
     await expect(metrics.locator('dt', { hasText: 'Stored content' }).locator('+ dd')).toHaveText('0.700 GB');
     await expect(panel.locator('[data-control-panel-location]')).toContainText('Sync storage');
     await panel.locator('[data-control-panel-action="minimize"]').click();

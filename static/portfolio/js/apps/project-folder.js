@@ -14,6 +14,7 @@ import { PreviewZoom } from './preview-zoom.js';
         const projectFolderAddress = document.querySelector('[data-project-folder-address]');
         const projectFolderStatus = document.querySelector('[data-project-folder-status]');
         const folderSearch = document.querySelector('[data-project-folder-search]');
+        const folderScroll = projectFolderWindow.querySelector('.project-folder-scroll');
         const folderEmpty = document.querySelector('[data-project-folder-empty]');
         const projectFolderRoot = document.querySelector('[data-project-folder-root]');
         const robomasterFolderView = document.querySelector('[data-robomaster-folder-view]');
@@ -64,6 +65,7 @@ import { PreviewZoom } from './preview-zoom.js';
         let selectedPaperButton = paperButtons[0];
         let previewPaperButton;
         let pendingPaperScrollTop;
+        let pendingFolderScrollTop;
         const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
         let previewImages = robomasterImageButtons;
         const folderItems = { root: folderButtons, photos: robomasterImageButtons, music: [musicVideoButton], papers: paperButtons };
@@ -131,6 +133,17 @@ import { PreviewZoom } from './preview-zoom.js';
             actionAttribute: 'data-project-folder-action',
             minWidth: 440,
             minHeight: 320,
+            show: () => {
+                manager.showWindow(projectFolderWindow, projectFolderTask, { revealTask: true });
+                if (pendingFolderScrollTop !== undefined) {
+                    folderScroll.scrollTop = pendingFolderScrollTop;
+                    pendingFolderScrollTop = undefined;
+                }
+            },
+            hide: (state) => {
+                pendingFolderScrollTop = folderScroll.scrollTop;
+                manager.hideWindow(projectFolderWindow, projectFolderTask, state, { hideTask: state === 'is-closed' });
+            },
             focusTarget: () => (
                 currentFolder === 'photos' && manager.isFocusable(selectedImageButton)
                     ? selectedImageButton
@@ -269,9 +282,13 @@ import { PreviewZoom } from './preview-zoom.js';
             updatePaperCopy();
         };
 
-        const openPaperPreview = (button) => {
+        const selectPaper = (button) => {
             selectedPaperButton = button;
             paperButtons.forEach((candidate) => candidate.classList.toggle('is-selected', candidate === button));
+        };
+
+        const openPaperPreview = (button) => {
+            selectPaper(button);
             updatePaperPreview(button);
             paperEntry.show();
         };
@@ -303,6 +320,7 @@ import { PreviewZoom } from './preview-zoom.js';
             paperButtons.forEach((button) => button.classList.remove('is-selected'));
             robomasterImageButtons.forEach((button) => button.classList.remove('is-selected'));
             selectedImageButton = undefined;
+            selectedPaperButton = undefined;
         };
 
         const getPhotoColumnCount = (buttons) => {
@@ -392,11 +410,15 @@ import { PreviewZoom } from './preview-zoom.js';
                 .replace('{count}', count).replace('{total}', items.length);
             folderSearch.setAttribute('aria-label', t().folderSearch);
             if (selectedFolderButton?.hidden) selectedFolderButton = folderButtons.find(button => !button.hidden);
-            if (selectedPaperButton?.hidden) selectedPaperButton = paperButtons.find(button => !button.hidden);
-            if (selectedImageButton?.hidden) selectPhoto(robomasterImageButtons.find(button => !button.hidden));
+            if (currentFolder === 'papers' && (!selectedPaperButton || selectedPaperButton.hidden)) selectPaper(paperButtons.find(button => !button.hidden));
+            if (currentFolder === 'photos' && (!selectedImageButton || selectedImageButton.hidden)) selectPhoto(robomasterImageButtons.find(button => !button.hidden));
         };
         const setProjectFolderView = (folder) => {
-            if (folder !== currentFolder) folderSearch.value = '';
+            if (folder !== currentFolder) {
+                folderSearch.value = '';
+                folderScroll.scrollTop = 0;
+                pendingFolderScrollTop = 0;
+            }
             currentFolder = folder;
             const copy = t();
             projectFolderRoot.hidden = folder !== 'root';
@@ -431,7 +453,7 @@ import { PreviewZoom } from './preview-zoom.js';
 
         const updateImagePreview = (button) => {
             const changed = imagePreviewImage.getAttribute('src') !== button.dataset.imageSrc;
-            selectPhoto(button);
+            if (!button.hidden) selectPhoto(button);
             previewImageButton = button;
             imageError.hidden = true;
             imagePreviewFigure.hidden = false;
@@ -519,7 +541,7 @@ import { PreviewZoom } from './preview-zoom.js';
             videoEntry.show();
         });
         paperButtons.forEach((button) => {
-            button.addEventListener('focus', () => { selectedPaperButton = button; });
+            button.addEventListener('focus', () => selectPaper(button));
             button.addEventListener('click', () => openPaperPreview(button));
         });
         new MutationObserver(() => {
@@ -585,21 +607,36 @@ import { PreviewZoom } from './preview-zoom.js';
         manager.onSession({
             save: () => ({
                 folderView: currentFolder,
+                folderSearch: folderSearch.value,
+                folderScrollTop: pendingFolderScrollTop ?? folderScroll.scrollTop,
+                selectedFolderIndex: folderButtons.indexOf(selectedFolderButton),
                 selectedPaperIndex: paperButtons.indexOf(selectedPaperButton),
                 previewPaperIndex: paperButtons.indexOf(previewPaperButton),
                 paperScrollTop: pendingPaperScrollTop ?? paperPreviewPages.scrollTop,
                 selectedImageIndex: selectedImageButton ? robomasterImageButtons.indexOf(selectedImageButton) : null,
-                previewImageIndex: previewImageButton ? robomasterImageButtons.indexOf(previewImageButton) : null
+                previewImageIndex: previewImageButton ? robomasterImageButtons.indexOf(previewImageButton) : null,
+                previewImageIndices: previewImages.map(button => robomasterImageButtons.indexOf(button))
             }),
             restore: (savedState) => {
-                selectedPaperButton = paperButtons[savedState.selectedPaperIndex] || paperButtons[0];
                 setProjectFolderView(savedState.folderView || 'root');
+                folderSearch.value = savedState.folderSearch || '';
+                selectedFolderButton = folderButtons[savedState.selectedFolderIndex] || selectedFolderButton;
+                selectPaper(paperButtons[savedState.selectedPaperIndex]);
+                selectPhoto(robomasterImageButtons[savedState.selectedImageIndex]);
+                filterFolder();
+                pendingFolderScrollTop = savedState.folderScrollTop || 0;
+                if (manager.isWindowVisible(projectFolderWindow)) {
+                    folderScroll.scrollTop = pendingFolderScrollTop;
+                    pendingFolderScrollTop = undefined;
+                }
+                previewImages = savedState.previewImageIndices?.map(index => robomasterImageButtons[index]).filter(Boolean) || robomasterImageButtons;
                 const previewImage = robomasterImageButtons[savedState.previewImageIndex];
                 if (previewImage) updateImagePreview(previewImage);
                 selectPhoto(robomasterImageButtons[savedState.selectedImageIndex]);
+                filterFolder();
                 if (manager.isWindowVisible(videoPreviewWindow)) loadVideo();
                 if (!paperPreviewWindow.classList.contains('is-closed')) {
-                    updatePaperPreview(paperButtons[savedState.previewPaperIndex] || selectedPaperButton);
+                    updatePaperPreview(paperButtons[savedState.previewPaperIndex] || selectedPaperButton || paperButtons[0]);
                     if (manager.isWindowVisible(paperPreviewWindow)) {
                         paperPreviewPages.scrollTop = savedState.paperScrollTop || 0;
                         pendingPaperScrollTop = undefined;

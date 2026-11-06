@@ -120,6 +120,7 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
             let activeSheet;
             let sheetRequest = 0;
             let sheetState = '';
+            const sheetPositions = new Map();
             let renderRows = () => {};
             const rowHeight = 32;
             refreshLanguage = () => {
@@ -136,9 +137,18 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
             };
             const showSheet = async (sheet) => {
                 if (disposed || signal.aborted) return;
+                if (activeSheet === sheet && sheetState !== 'syncPreviewFailed') return;
+                if (activeSheet && !sheetState) {
+                    sheetPositions.set(activeSheet.name, { top: sheetContainer.scrollTop, left: sheetContainer.scrollLeft });
+                }
                 const generation = ++sheetRequest;
                 activeSheet = sheet;
                 sheetState = 'syncPreviewLoading';
+                for (const [index, button] of Array.from(tabs.children).entries()) {
+                    button.setAttribute('aria-pressed', String(sheets[index] === sheet));
+                }
+                sheetContainer.setAttribute('aria-busy', 'true');
+                limit.hidden = true;
                 renderRows = () => {};
                 const notice = document.createElement('p');
                 notice.dataset.sheetNotice = '';
@@ -152,6 +162,7 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
                 } catch {
                     if (disposed || signal.aborted || generation !== sheetRequest) return;
                     sheetState = 'syncPreviewFailed';
+                    sheetContainer.setAttribute('aria-busy', 'false');
                     const retry = document.createElement('button');
                     retry.type = 'button';
                     retry.addEventListener('click', () => showSheet(sheet), { signal });
@@ -162,9 +173,7 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
                 if (disposed || signal.aborted || generation !== sheetRequest) return;
                 Object.assign(sheet, data.sheet);
                 sheetState = '';
-                for (const [index, button] of Array.from(tabs.children).entries()) {
-                    button.setAttribute('aria-pressed', String(sheets[index] === sheet));
-                }
+                sheetContainer.setAttribute('aria-busy', 'false');
                 limit.hidden = !sheet.limited;
                 sheetContainer.replaceChildren();
                 sheetContainer.scrollTop = 0;
@@ -227,6 +236,12 @@ export async function renderDocumentPreview({ container, url, name, kind, signal
                     table.append(head, body);
                     sheetContainer.append(table);
                     renderRows();
+                    const position = sheetPositions.get(sheet.name);
+                    if (position) {
+                        sheetContainer.scrollTop = position.top;
+                        sheetContainer.scrollLeft = position.left;
+                        renderRows();
+                    }
                 }
                 refreshLanguage();
             };

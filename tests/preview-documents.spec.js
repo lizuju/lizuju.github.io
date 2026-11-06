@@ -179,6 +179,30 @@ test('changing languages preserves the active worksheet and scroll position whil
     await expect(preview.getByRole('button', { name: 'Empty', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
 
+test('switching worksheets restores each reading position and selecting the current tab leaves it unchanged', async ({ page }) => {
+    await page.locator('[data-sync-preview-file]').first().click();
+    const preview = page.locator('[data-sync-preview-window]');
+    const sheet = preview.locator('.sync-document-sheet');
+    const positions = [
+        ['Large sheet', { top: 7000, left: 400 }],
+        ['Varied widths', { top: 3200, left: 120 }]
+    ];
+    for (const [name, position] of positions) {
+        await preview.getByRole('button', { name, exact: true }).click();
+        await expect(sheet).toHaveAttribute('aria-busy', 'false');
+        await sheet.evaluate((element, position) => { element.scrollTop = position.top; element.scrollLeft = position.left; }, position);
+        position.left = await sheet.evaluate(element => element.scrollLeft);
+    }
+    for (const [name, position] of positions) {
+        const tab = preview.getByRole('button', { name, exact: true });
+        await tab.click();
+        await expect(sheet).toHaveAttribute('aria-busy', 'false');
+        await expect.poll(() => sheet.evaluate(element => ({ top: element.scrollTop, left: element.scrollLeft }))).toEqual(position);
+        await tab.click();
+        expect(await sheet.evaluate(element => ({ top: element.scrollTop, left: element.scrollLeft }))).toEqual(position);
+    }
+});
+
 test('previews UTF-8 CSV through the same worker and closes it when another attachment opens', async ({ page }) => {
     await page.locator('[data-sync-preview-file]').nth(1).click();
     const preview = page.locator('[data-sync-preview-window]');
@@ -334,7 +358,12 @@ test('a stalled spreadsheet parse times out, terminates its worker and retries t
     const sheet = preview.locator('.sync-document-sheet');
     await expect(sheet).toContainText('Amount');
     await preview.getByRole('button', { name: 'Large sheet', exact: true }).click();
+    await expect(preview.getByRole('button', { name: 'Large sheet', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(preview.getByRole('button', { name: 'Summary', exact: true })).toHaveAttribute('aria-pressed', 'false');
+    await expect(sheet).toHaveAttribute('aria-busy', 'true');
     await expect(sheet.getByRole('button', { name: '重试', exact: true })).toBeVisible();
+    await expect(sheet).toHaveAttribute('aria-busy', 'false');
+    await expect(preview.getByRole('button', { name: 'Large sheet', exact: true })).toHaveAttribute('aria-pressed', 'true');
     expect(await page.evaluate(() => window.closedSpreadsheetWorkers)).toBe(1);
     await page.evaluate(() => { window.blockSheet = false; });
     await sheet.getByRole('button', { name: '重试', exact: true }).click();

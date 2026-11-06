@@ -49,6 +49,10 @@
             backToModes: '返回选择',
             localMode: '双人对局',
             computerMode: '人机对局',
+            difficulty: '难度',
+            simple: '简单',
+            normal: '普通',
+            challenge: '挑战',
             blackPlayer: '黑方',
             whitePlayer: '白方',
             blackTurn: '轮到黑方落子（黑棋）',
@@ -102,6 +106,10 @@
             backToModes: 'Choose Mode',
             localMode: 'Two Players',
             computerMode: 'Vs Computer',
+            difficulty: 'Difficulty',
+            simple: 'Easy',
+            normal: 'Normal',
+            challenge: 'Challenge',
             blackPlayer: 'Black',
             whitePlayer: 'White',
             blackTurn: 'Black to move',
@@ -157,6 +165,7 @@
         const launcher = document.querySelector('[data-gomoku-launcher]');
         const launchLog = document.querySelector('[data-gomoku-launch-log]');
         const modeHome = document.querySelector('[data-gomoku-mode-home]');
+        const difficultySelect = document.querySelector('[data-gomoku-difficulty]');
 
         if (!desktop || !gameWindow || !gameTask || !titlebar
             || !resizeHandle || !canvas || !boardFrame || !status || !movesOutput || !scoreOutput
@@ -173,6 +182,7 @@
         let history = [];
         let phase = 'playing';
         let mode = 'computer';
+        let difficulty = 'normal';
         let currentPlayer = HUMAN;
         let winner = null;
         let winningLine = [];
@@ -253,6 +263,8 @@
             gameWindow.querySelector('.gomoku-menubar').hidden = choosing;
             gameWindow.querySelector('.gomoku-game-area').hidden = choosing;
             gameWindow.querySelector('.gomoku-statusbar').hidden = choosing;
+            difficultySelect.closest('label').hidden = mode !== 'computer';
+            difficultySelect.value = difficulty;
             status.textContent = getStatusText();
             movesOutput.textContent = String(history.length).padStart(3, '0');
             scoreOutput.textContent = `${humanScore}:${computerScore}`;
@@ -435,7 +447,7 @@
             aiTimer = undefined;
             let resolve;
             const promise = new Promise(done => { resolve = done; });
-            const task = { promise, resolve, worker: null, timeout: null };
+            const task = { promise, resolve, worker: null, timeout: null, candidate: null };
             aiTask = task;
             const finish = (move) => {
                 if (aiTask !== task || mode !== 'computer' || phase !== 'thinking') return;
@@ -453,11 +465,14 @@
             };
             try {
                 task.worker = new Worker(aiWorkerUrl);
-                task.worker.onmessage = ({ data }) => finish(data.move);
-                task.worker.onerror = event => { event.preventDefault(); finish(); };
-                task.worker.onmessageerror = () => finish();
-                task.timeout = window.setTimeout(() => finish(), AI_TIMEOUT);
-                task.worker.postMessage({ history });
+                task.worker.onmessage = ({ data }) => {
+                    if (data.candidate) task.candidate = data.candidate;
+                    else finish(data.move || task.candidate);
+                };
+                task.worker.onerror = event => { event.preventDefault(); finish(task.candidate); };
+                task.worker.onmessageerror = () => finish(task.candidate);
+                task.timeout = window.setTimeout(() => finish(task.candidate), AI_TIMEOUT);
+                task.worker.postMessage({ history, difficulty });
             } catch {
                 finish();
             }
@@ -751,6 +766,7 @@
                 history,
                 phase,
                 mode,
+                difficulty,
                 humanScore,
                 computerScore,
                 winner,
@@ -767,6 +783,7 @@
             if (!savedSession || savedSession.version !== 1 || savedSession.context !== getSessionContext()) return false;
 
             mode = savedSession.mode === 'local' ? 'local' : 'computer';
+            difficulty = ['simple', 'normal', 'challenge'].includes(savedSession.difficulty) ? savedSession.difficulty : 'normal';
 
             board = createBoard();
             history = [];
@@ -947,6 +964,11 @@
 
         document.querySelectorAll('[data-gomoku-new]').forEach((button) => button.addEventListener('click', newGame));
         document.querySelector('[data-gomoku-back]').addEventListener('click', showModeSelection);
+        difficultySelect.addEventListener('change', () => {
+            difficulty = difficultySelect.value;
+            if (phase === 'thinking') scheduleComputerMove();
+            else render();
+        });
         document.querySelector('[data-gomoku-undo]')?.addEventListener('click', undoMove);
         document.querySelector('[data-gomoku-help]')?.addEventListener('click', (event) => showDialog('help', event.currentTarget));
         document.querySelector('[data-gomoku-about]')?.addEventListener('click', (event) => showDialog('about', event.currentTarget));
@@ -1092,6 +1114,7 @@
                 : gameWindow.classList.contains('is-minimized') ? 'minimized' : 'open',
             launching: gameWindow.classList.contains('is-launching'),
             mode,
+            difficulty,
             coordinateSystem: 'row 0 is top, column 0 is left; both increase toward bottom-right',
             boardSize: BOARD_SIZE,
             score: { human: humanScore, computer: computerScore },

@@ -194,3 +194,72 @@ test('photo errors expose a bilingual retry and successful reopen does not reset
     await page.locator('[data-robomaster-image]').first().click();
     await expect(page.locator('[data-image-preview-toolbar] [data-preview-zoom-value]')).toHaveText('125%');
 });
+
+test('paper focus, filtered selection and opening refer to the same visible document', async ({ page, browserName }) => {
+    await openFolder(page);
+    await page.locator('[data-folder="papers"]').click();
+    const papers = page.locator('[data-modeling-paper]');
+    await papers.first().click();
+    await page.locator('[data-paper-preview-action="close"]').click();
+    await papers.first().focus();
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
+    await expect(papers.nth(1)).toBeFocused();
+    await expect(papers.nth(1)).toHaveClass(/is-selected/);
+    await expect(papers.first()).not.toHaveClass(/is-selected/);
+    const search = page.locator('[data-project-folder-search]');
+    await search.fill('国赛');
+    await expect(papers.first()).toHaveClass(/is-selected/);
+    await expect(papers.nth(1)).not.toHaveClass(/is-selected/);
+    await search.fill('none');
+    await expect(page.locator('[data-modeling-paper].is-selected')).toHaveCount(0);
+    await search.fill('美赛');
+    await expect(papers.nth(1)).toHaveClass(/is-selected/);
+    await page.locator('[data-window-menu="folder-file"]').click();
+    await page.locator('[data-menu-action="folder-open"]').click();
+    await expect(page.locator('[data-paper-preview-title]')).toContainText('美赛');
+    await page.reload();
+    await expect(search).toHaveValue('美赛');
+    await expect(papers.nth(1)).toHaveClass(/is-selected/);
+    await expect(papers.first()).toBeHidden();
+    await expect(page.locator('[data-paper-preview-title]')).toContainText('美赛');
+});
+
+test('restores photo search, list scroll and the independent preview sequence after refresh', async ({ page }) => {
+    await page.setViewportSize({ width: 980, height: 420 });
+    await openFolder(page);
+    await page.locator('[data-folder="photos"]').click();
+    const search = page.locator('[data-project-folder-search]');
+    const scroll = page.locator('.project-folder-scroll');
+    await search.fill('service');
+    await page.locator('[data-robomaster-image]:visible').first().click();
+    await page.locator('[data-image-next]').click();
+    await expect(page.locator('[data-image-counter]')).toHaveText('2 / 2');
+    await page.locator('[data-image-preview-action="minimize"]').click();
+    await search.fill('1');
+    await expect(page.locator('[data-robomaster-image]:visible')).toHaveCount(5);
+    await scroll.evaluate(element => { element.scrollTop = Math.floor((element.scrollHeight - element.clientHeight) / 2); });
+    const position = await scroll.evaluate(element => element.scrollTop);
+    expect(position).toBeGreaterThan(0);
+    expect(position).toBeLessThan(await scroll.evaluate(element => element.scrollHeight - element.clientHeight));
+    for (const minimized of [false, true]) {
+        if (minimized) await page.locator('[data-project-folder-action="minimize"]').click();
+        await page.reload();
+        if (minimized) await page.locator('[data-project-folder-task]').click();
+        await expect(search).toHaveValue('1');
+        await expect(page.locator('[data-robomaster-image]:visible')).toHaveCount(5);
+        await expect.poll(() => scroll.evaluate((element, saved) => (
+            element.scrollTop - Math.min(saved, element.scrollHeight - element.clientHeight)
+        ), position)).toBeCloseTo(0, 0);
+    }
+    await page.locator('[data-image-preview-task]').click();
+    await expect(page.locator('[data-image-counter]')).toHaveText('2 / 2');
+    await expect(page.locator('[data-image-preview-title]')).toContainText('12');
+    await page.locator('[data-image-previous]').click();
+    await expect(page.locator('[data-image-preview-title]')).toContainText('05');
+    await expect(page.locator('[data-image-counter]')).toHaveText('1 / 2');
+    await expect(page.locator('[data-robomaster-image].is-selected')).toHaveAttribute('data-image-src', /12-team-trackside-service\.jpg$/);
+    await page.locator('[data-image-preview-action="close"]').click();
+    await page.locator('[data-window-menu="folder-file"]').click();
+    await page.locator('[data-menu-action="folder-open"]').click();
+    await expect(page.locator('[data-image-preview-title]')).toContainText('12');
+});

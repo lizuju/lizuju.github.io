@@ -113,6 +113,9 @@ test('keeps homepage text readable when resizing its window on a wide desktop', 
                 };
             });
             expect(layout, `${width}px, ${language}`).toEqual({ fits: true, blocksFit: true, titleReadable: true });
+            await expect.poll(() => page.locator('.project-media').evaluateAll(pictures => pictures.every(picture => (
+                Math.abs(Number.parseFloat(picture.querySelector('source').sizes) - picture.getBoundingClientRect().width) <= 1
+            )))).toBe(true);
         }
     }
 
