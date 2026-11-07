@@ -151,8 +151,10 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
         find('guest').textContent = current.guestDeviceId ? deviceLabel(current.guestDeviceId) : text('syncGameWaitingPlayer');
         find('move-count').textContent = current.result ? current.result.hostMoves + current.result.guestMoves : current.board.filter(Boolean).length;
         for (const seat of ['host', 'guest']) {
-            app.querySelector(`[data-sync-gomoku-player="${seat}"]`).classList.toggle('is-turn',
+            const card = app.querySelector(`[data-sync-gomoku-player="${seat}"]`);
+            card.classList.toggle('is-turn',
                 current.status === 'playing' && current.turnDeviceId === current[`${seat}DeviceId`]);
+            card.classList.toggle('is-winner', Boolean(current.result?.winnerDeviceId) && current.result.winnerDeviceId === current[`${seat}DeviceId`]);
             const outcome = app.querySelector(`[data-sync-gomoku-outcome="${seat}"]`);
             outcome.hidden = !current.result;
             if (current.result) {
@@ -163,11 +165,11 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
         find('result').hidden = current.status !== 'finished';
         const waitingForRematch = rematch?.status === 'waiting';
         find('rematch-controls').hidden = current.status !== 'finished' || !player() || (rematch && !['waiting', 'cancelled'].includes(rematch.status));
-        find('rematch').textContent = text(waitingForRematch
-            ? rematch.requestedBy === getDeviceId() ? 'syncGameRematchWaiting' : 'syncGameRematchAccept' : 'syncGameRematch');
-        find('rematch').disabled = !online || arranging || (waitingForRematch && rematch.requestedBy === getDeviceId());
-        find('rematch-cancel').hidden = !waitingForRematch;
-        find('rematch-cancel').disabled = !online || arranging;
+        find('rematch').textContent = waitingForRematch && rematch.requestedBy !== getDeviceId()
+            ? translate('syncGameRematchAccept', { name: deviceLabel(rematch.requestedBy) })
+            : text(waitingForRematch ? 'syncGameRematchWaiting' : 'syncGameRematch');
+        find('rematch').disabled = !online || arranging || leaving || (waitingForRematch && rematch.requestedBy === getDeviceId());
+        find('result-close').disabled = arranging || leaving;
         if (current.result) {
             find('result-title').textContent = current.result.winnerDeviceId
                 ? translate('syncGameWinner', { name: deviceLabel(current.result.winnerDeviceId) }) : text('syncGameDraw');
@@ -202,25 +204,41 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
         if (hadGame) onClosed();
     };
 
-    const requestClose = () => {
+    const requestClose = async () => {
+        if (arranging || leaving) return;
+        if (current?.status === 'finished' && player() && rematch?.status === 'waiting') {
+            const id = current.id;
+            const invitation = rematch;
+            leaving = true;
+            errorKey = '';
+            render();
+            try {
+                await onCancelRematch(id, invitation);
+                if (current?.id === id || current?.id === invitation.id) close();
+            } catch {
+                if (current?.id === id || current?.id === invitation.id) errorKey = 'syncGameLeaveFailed';
+            } finally {
+                leaving = false;
+                render();
+            }
+            return;
+        }
         if (current && player() && ['waiting', 'playing'].includes(current.status)) {
             render();
             if (!confirmation.open) confirmation.showModal();
         } else close();
     };
-    find('result-close').addEventListener('click', close);
-    for (const [name, action] of [['rematch', onRematch], ['rematch-cancel', onCancelRematch]]) {
-        find(name).addEventListener('click', async () => {
-            if (arranging || !current || !online) return;
-            const id = current.id;
-            arranging = true;
-            errorKey = '';
-            render();
-            try { await action(id, rematch); }
-            catch { if (current?.id === id) errorKey = 'syncGameRematchFailed'; }
-            finally { arranging = false; render(); }
-        });
-    }
+    find('result-close').addEventListener('click', requestClose);
+    find('rematch').addEventListener('click', async () => {
+        if (arranging || leaving || !current || !online) return;
+        const id = current.id;
+        arranging = true;
+        errorKey = '';
+        render();
+        try { await onRematch(id, rematch); }
+        catch { if (current?.id === id) errorKey = 'syncGameRematchFailed'; }
+        finally { arranging = false; render(); }
+    });
 
     const entry = manager.registerWindow({
         id: 'sync-gomoku', element: app, task, titlebar: find('drag'), resizeHandle: find('resize'),
