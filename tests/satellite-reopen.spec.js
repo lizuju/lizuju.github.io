@@ -217,11 +217,14 @@ test('a stalled orbital request times out and reopening does not reuse it or bur
     let requests = 0;
     await page.route('https://celestrak.org/**', () => { requests++; });
     await page.goto('/portfolio/');
-    await page.clock.install();
+    await page.clock.install({ time: new Date('2026-11-07T00:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-11-07T00:00:01Z'));
     await page.locator('[data-window-action="minimize"]').click();
     await page.locator('.desktop-shortcut[data-open-satellite]').click();
     await expect.poll(() => requests).toBe(1);
-    await page.clock.fastForward(12500);
+    await page.clock.fastForward(29500);
+    await expect(page.locator('[data-satellite-status]')).toHaveAttribute('data-i18n', 'satelliteLoading');
+    await page.clock.fastForward(1000);
     await expect(page.locator('[data-satellite-status]')).toHaveAttribute('data-i18n', 'satelliteLoadError');
     await page.evaluate(() => window.SatelliteTracker.refresh());
     await expect(page.locator('[data-satellite-status]')).toHaveAttribute('data-i18n', 'satelliteLoadError');

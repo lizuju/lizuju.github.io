@@ -5,7 +5,7 @@ const DATA_URL = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMA
 const CACHE_NAME = 'gavin-satellite-data-v1';
 const CACHE_TIMESTAMP_KEY = 'gavin-satellite-data-timestamp';
 const REQUEST_AFTER_KEY = 'gavin-satellite-request-after';
-const REQUEST_TIMEOUT = 12000;
+const REQUEST_TIMEOUT = 30000;
 const CACHE_TTL = 2 * 60 * 60 * 1000;
 const COLORS = {
     starlink: new THREE.Color('#65d6ff'),
