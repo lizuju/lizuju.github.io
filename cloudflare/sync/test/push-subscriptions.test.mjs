@@ -20,7 +20,7 @@ const subscription = (id = randomUUID()) => ({ endpoint: `https://web.push.apple
 let runtime;
 
 before(async () => {
-  const state = `export const state = { calls: [], status: 201, hold: false, releases: [], active: 0, maximum: 0 };
+  const state = `export const state = { calls: [], status: 201, hold: false, releases: [], active: 0, maximum: 0, retryAfterMs: 0 };
     export async function deliver(subscription, payload, { signal } = {}) {
       const call = { endpoint: subscription.endpoint, payload, cancelled: false };
       state.calls.push(call); state.active++; state.maximum = Math.max(state.maximum, state.active);
@@ -31,7 +31,7 @@ before(async () => {
           signal.addEventListener('abort', abort, { once: true });
           state.releases.push(() => { signal.removeEventListener('abort', abort); resolve(); });
         });
-        return { status: state.status };
+        return { status: state.status, retryAfterMs: state.retryAfterMs };
       } finally { state.active--; }
     }`;
   runtime = new Miniflare({ unsafeInspectDurableObjects: true, workers: [{ config: {
@@ -42,15 +42,22 @@ before(async () => {
       'web-push-transport.js': { type: 'esm', contents: await readFile(new URL('../src/web-push.js', import.meta.url), 'utf8') },
       'push-state.js': { type: 'esm', contents: state },
       'web-push.js': { type: 'esm', contents: `export { getPushPublicKey, validatePushSubscription } from './web-push-transport.js'; import { deliver } from './push-state.js'; export const sendWebPush = (subscription, payload, env, options) => deliver(subscription, payload, options);` },
-      'harness.js': { type: 'esm', contents: `import worker from './index.js'; import { state } from './push-state.js';
-        export { E2eeSyncRoom, E2eePairingRegistry, E2eeFileShard } from './index.js';
+      'harness.js': { type: 'esm', contents: `import worker, { E2eeSyncRoom as ProductionRoom } from './index.js'; import { state } from './push-state.js';
+        export { E2eePairingRegistry, E2eeFileShard } from './index.js';
+        export class E2eeSyncRoom extends ProductionRoom {
+          async testDrain() { await this.sendPushNotifications(); await this.scheduleAlarm(); }
+          testRead(deviceId, messageId) { this.markRead(deviceId, messageId); }
+        }
         export default { async fetch(request, env) {
           const path = new URL(request.url).pathname;
+          if (path === '/test/drain') { const { roomId } = await request.json(); await env.E2EE_SYNC_ROOMS.getByName(roomId).testDrain(); return Response.json({ ok: true }); }
+          if (path === '/test/read') { const { roomId, deviceId, messageId } = await request.json(); await env.E2EE_SYNC_ROOMS.getByName(roomId).testRead(deviceId, messageId); return Response.json({ ok: true }); }
           if (path === '/test/push') {
             if (request.method === 'POST') {
               const input = await request.json();
               if (input.reset) { state.calls.length = 0; state.maximum = state.active; }
               if (input.status !== undefined) state.status = input.status;
+              if (input.retryAfterMs !== undefined) state.retryAfterMs = input.retryAfterMs;
               if (input.hold !== undefined) state.hold = input.hold;
               if (input.release) { const releases = state.releases.splice(0); for (const release of releases) release(); }
             }
@@ -189,4 +196,115 @@ test('device and room expiry release push subscriptions along with membership', 
   await runtime.unsafeEvictDurableObject(workerName, 'E2eeSyncRoom', { name: host.roomId });
   assert.equal((await request(`${path}/push-subscription`, host, { method: 'DELETE' })).status, 401);
   assert.deepEqual(await storage.exec('SELECT * FROM push_subscriptions'), []);
+});
+
+const drain = host => request('/test/drain', null, { method: 'POST', body: { roomId: host.roomId } });
+
+test('coalesces bursts per recipient and limits the entire room to three deliveries', async () => {
+  await control({ reset: true, status: 201, hold: true, retryAfterMs: 0 });
+  const { host, peers, storage, path } = await room(3);
+  for (const peer of peers) await subscribe(path, peer);
+  for (let index = 0; index < 12; index++) await send(path, host);
+  await waitFor(state => state.active === 3);
+  await control({ hold: false, release: true });
+  await waitFor(state => state.active === 0);
+  await drain(host);
+  const state = await control();
+  assert.equal(state.maximum, 3);
+  assert.ok(state.calls.length <= 6);
+  assert.equal(new Set(state.calls.filter(call => call.payload.messageId === 12).map(call => call.endpoint)).size, 3);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), []);
+});
+
+test('rechecks queued recipients and cancels in-flight reminders when a read receipt arrives', async () => {
+  await control({ reset: true, status: 201, hold: true });
+  const { host, peers, storage, path } = await room(4);
+  const targets = new Map();
+  for (const peer of peers) { const target = subscription(); targets.set(peer.deviceId, target.endpoint); await subscribe(path, peer, target); }
+  await send(path, host);
+  const started = await waitFor(state => state.active === 3);
+  const queued = peers.find(peer => !started.calls.some(call => call.endpoint === targets.get(peer.deviceId)));
+  const active = peers.find(peer => started.calls.some(call => call.endpoint === targets.get(peer.deviceId)));
+  for (const peer of [queued, active]) await request('/test/read', null, { method: 'POST', body: { roomId: host.roomId, deviceId: peer.deviceId, messageId: 1 } });
+  await control({ hold: false, release: true });
+  const final = await waitFor(state => state.active === 0);
+  assert.equal(final.calls.length, 3);
+  assert.equal(final.calls.find(call => call.endpoint === targets.get(active.deviceId)).cancelled, true);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), []);
+});
+
+test('temporary provider failures respect Retry-After and persist retries across room eviction', async () => {
+  await control({ reset: true, status: 503, hold: false, retryAfterMs: 60000 });
+  const { host, peers: [peer], storage, path } = await room();
+  await subscribe(path, peer); await send(path, host);
+  await waitFor(state => state.calls.length === 1 && state.active === 0);
+  const [pending] = await storage.exec('SELECT * FROM push_queue');
+  assert.equal(pending.attempts, 1);
+  assert.ok(pending.due_at > Date.now() + 50000);
+  await drain(host);
+  assert.equal((await control()).calls.length, 1);
+  await runtime.unsafeEvictDurableObject(workerName, 'E2eeSyncRoom', { name: host.roomId });
+  await control({ status: 201, retryAfterMs: 0 });
+  await storage.exec('UPDATE push_queue SET due_at = ?', Date.now() - 1);
+  await drain(host);
+  assert.equal((await control()).calls.length, 2);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), []);
+});
+
+test('retries are finite and expire or disappear when the message is cleared', async () => {
+  await control({ reset: true, status: 503, hold: false, retryAfterMs: 60000 });
+  const { host, peers: [peer], storage, path } = await room();
+  await subscribe(path, peer); await send(path, host);
+  await waitFor(state => state.calls.length === 1);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await storage.exec('UPDATE push_queue SET due_at = ?', Date.now() - 1);
+    await drain(host);
+  }
+  assert.equal((await control()).calls.length, 4);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), []);
+  await send(path, host);
+  await storage.exec('UPDATE push_queue SET created_at = ?, due_at = ?', Date.now() - 3600001, Date.now() - 1);
+  await drain(host);
+  assert.equal((await control()).calls.length, 4);
+  await send(path, host);
+  await storage.exec('DELETE FROM messages');
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), []);
+  await control({ retryAfterMs: 0 });
+});
+
+test('foreground hints from shared tabs are independent and suppress push only while their lease is live', async () => {
+  await control({ reset: true, status: 201, hold: false });
+  const { host, peers: [peer], path, storage } = await room();
+  await subscribe(path, peer);
+  const response = await runtime.dispatchFetch(`https://push.test${path}/socket`, { headers: { Origin: origin, Upgrade: 'websocket' } });
+  const socket = response.webSocket;
+  socket.accept();
+  const ready = new Promise(resolve => socket.addEventListener('message', event => { if (JSON.parse(event.data).type === 'ready') resolve(); }));
+  socket.send(JSON.stringify({ type: 'auth', token: peer.token }));
+  await ready;
+  const first = randomUUID(); const second = randomUUID();
+  socket.send(JSON.stringify({ type: 'foreground', tabId: first, active: true }));
+  socket.send(JSON.stringify({ type: 'foreground', tabId: second, active: false }));
+  await send(path, host);
+  await storage.exec('UPDATE push_queue SET due_at = ?', Date.now() - 1);
+  await drain(host);
+  assert.equal((await control()).calls.length, 0);
+  socket.send(JSON.stringify({ type: 'foreground', tabId: first, active: false }));
+  await send(path, host);
+  await storage.exec('UPDATE push_queue SET due_at = ?', Date.now() - 1);
+  await drain(host);
+  assert.equal((await control()).calls.length, 1);
+  socket.close();
+});
+
+test('clearing chat history cancels in-flight notifications and queued retries', async () => {
+  await control({ reset: true, status: 201, hold: true, retryAfterMs: 0 });
+  const { host, peers: [peer], storage, path } = await room();
+  await subscribe(path, peer); await send(path, host);
+  await waitFor(state => state.active === 1);
+  assert.equal((await request(`${path}/messages`, host, { method: 'DELETE' })).status, 200);
+  const final = await waitFor(state => state.active === 0);
+  assert.equal(final.calls[0].cancelled, true);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), []);
+  await control({ hold: false, release: true });
 });

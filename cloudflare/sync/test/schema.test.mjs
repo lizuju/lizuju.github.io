@@ -103,7 +103,7 @@ test('legacy schemas migrate once using the latest retained message instead of a
   assert.ok((await storage.exec('PRAGMA table_info(files)')).some(column => column.name === 'fingerprint'));
   assert.ok((await storage.exec('PRAGMA table_info(gomoku_games)')).some(column => column.name === 'base_score'));
   assert.ok((await storage.exec('PRAGMA table_info(file_shards)')).some(column => column.name === 'measured_bytes'));
-  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'schemaVersion'"))[0].value, '4');
+  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'schemaVersion'"))[0].value, '5');
   await wake();
   assert.ok((await room.testQueries()).every(query => query.startsWith('SELECT')));
 });
@@ -137,7 +137,7 @@ test('version 3 rooms gain push subscriptions without changing inactivity deadli
   assert.equal(await room.authorize(device.token), device.deviceId);
   assert.deepEqual(await storage.exec('SELECT * FROM push_subscriptions'), []);
   assert.equal((await storage.exec("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'delete_device_push'")).length, 1);
-  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'schemaVersion'"))[0].value, '4');
+  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'schemaVersion'"))[0].value, '5');
 });
 
 

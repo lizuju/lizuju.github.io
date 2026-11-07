@@ -1,5 +1,5 @@
 import { getConnectionDiagnostics } from './sync-connection-diagnostics.js';
-import { getNotificationState, readNotificationDiagnostics, testSystemNotification } from './sync-notifications.js';
+import { getNotificationState, readNotificationDiagnostics, refreshPushDiagnostics, testSystemNotification } from './sync-notifications.js';
 
 export function setupSyncDiagnostics(view) {
     const desktop = window.GavinDesktop;
@@ -57,6 +57,8 @@ export function setupSyncDiagnostics(view) {
         fields(find('timings'), [
             ['syncDiagnosticsResult', latest ? status(latest.status) : t('syncDiagnosticsEmpty')],
             ['syncDiagnosticsReceived', time(latest?.at)],
+            ['syncDiagnosticsSubmitted', time(latest?.submittedAt)],
+            ['syncDiagnosticsCompleted', time(latest?.completedAt)],
             ['syncDiagnosticsBeforeRequest', duration(latest?.receiveToRequestMs)],
             ['syncDiagnosticsQueue', duration(latest?.queueMs)],
             ['syncDiagnosticsPreparation', duration(latest?.prepareMs)],
@@ -107,7 +109,7 @@ export function setupSyncDiagnostics(view) {
         setTimeout(() => URL.revokeObjectURL(url), 60000);
     });
     for (const event of ['sync-diagnostics-change', 'portfolio-language-change', 'online', 'offline', 'focus']) window.addEventListener(event, render);
-    document.addEventListener('visibilitychange', render);
+    document.addEventListener('visibilitychange', () => { render(); if (!view.hidden && !document.hidden) refreshPushDiagnostics(); });
     navigator.serviceWorker?.addEventListener('controllerchange', render);
-    return { show: render };
+    return { show() { render(); refreshPushDiagnostics(); } };
 }

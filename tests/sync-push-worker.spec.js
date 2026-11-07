@@ -11,6 +11,7 @@ const installWorker = async () => {
     const focused = [];
     const posted = [];
     const clients = [];
+    const cacheEntries = new Map();
     const worker = {
         location: new URL('https://example.test/sync-e2ee-worker.js'),
         registration: {
@@ -25,7 +26,8 @@ const installWorker = async () => {
         addEventListener(name, handler) { handlers.set(name, [...(handlers.get(name) || []), handler]); }
     };
     vm.runInNewContext(await readFile('static/portfolio/sync-e2ee-worker.js', 'utf8'), {
-        self: worker, URL, URLSearchParams, Map, Set, Date, crypto: webcrypto
+        self: worker, URL, URLSearchParams, Map, Set, Date, Response, crypto: webcrypto,
+        caches: { open: async () => ({ match: async key => cacheEntries.get(key)?.clone(), put: async (key, response) => cacheEntries.set(key, response) }) }
     });
     const push = async payload => {
         const waits = [];
@@ -43,7 +45,7 @@ const installWorker = async () => {
         clients.push({ id, url, type: 'window', focused: active, visibilityState: 'visible',
             focus: async () => focused.push(id), postMessage: data => posted.push({ id, data }) });
     };
-    return { push, click, addClient, clients, notifications, opened, focused, posted };
+    return { push, click, addClient, clients, notifications, opened, focused, posted, cacheEntries, worker };
 };
 
 test('push always displays a fixed, private notification in either language, including with a foreground app', async () => {
@@ -91,7 +93,7 @@ test('push clicks prefer a trusted chat app, reuse the desktop, or open the orig
     const notification = worker.notifications[0];
     await worker.click(notification);
     expect(worker.focused).toEqual(['chat']);
-    expect(worker.posted).toEqual([{ id: 'chat', data: { source: 'gavin-sync-notification', roomId } }]);
+    expect(worker.posted.filter(item => item.data.source === 'gavin-sync-notification')).toEqual([{ id: 'chat', data: { source: 'gavin-sync-notification', roomId } }]);
     worker.clients.pop();
     await worker.click(notification);
     expect(worker.focused).toEqual(['chat', 'desktop']);
@@ -120,4 +122,22 @@ test('the chat installation manifest opens the hub with its own identity and app
         expect(`${data.readUInt32BE(16)}x${data.readUInt32BE(20)}`).toBe(icon.sizes);
         expect(data[25]).toBe(2);
     }
+});
+
+
+test('push diagnostics persist only timing and results and report showNotification failures', async () => {
+    const worker = await installWorker();
+    await worker.push(JSON.stringify({ roomId, messageId: 1, language: 'en' }));
+    worker.worker.registration.showNotification = async () => { throw new Error('denied'); };
+    await worker.push(JSON.stringify({ roomId, messageId: 2, language: 'en' }));
+    const entries = await worker.cacheEntries.get('https://example.test/__sync-push-diagnostics__').clone().json();
+    expect(entries.map(entry => entry.status)).toEqual(['shown', 'error']);
+    for (const entry of entries) {
+        expect(entry.source).toBe('push');
+        expect(entry.submittedAt).toBeGreaterThanOrEqual(entry.at);
+        expect(entry.completedAt).toBeGreaterThanOrEqual(entry.submittedAt);
+        expect(entry.totalMs).toBeGreaterThanOrEqual(0);
+    }
+    expect(JSON.stringify(entries)).not.toContain(roomId);
+    expect(JSON.stringify(entries)).not.toContain('messageId');
 });

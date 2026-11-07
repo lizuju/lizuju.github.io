@@ -4,6 +4,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 const DATA_URL = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json';
 const CACHE_NAME = 'gavin-satellite-data-v1';
 const CACHE_TIMESTAMP_KEY = 'gavin-satellite-data-timestamp';
+const REQUEST_AFTER_KEY = 'gavin-satellite-request-after';
+const REQUEST_TIMEOUT = 12000;
 const CACHE_TTL = 2 * 60 * 60 * 1000;
 const COLORS = {
     starlink: new THREE.Color('#65d6ff'),
@@ -60,6 +62,8 @@ let initialized = false;
 let dataLoaded = false;
 let dataStatusKey = 'satelliteReady';
 let loadingPromise;
+let dataTimestamp = 0;
+let requestAfter = 0;
 let records = [];
 let selectedIndex = -1;
 let selectedState;
@@ -333,40 +337,64 @@ async function readCachedData() {
     }
 }
 
-async function cacheData(nextRecords) {
+function updateDataTime() {
+    const element = document.querySelector('[data-satellite-data-time]');
+    const format = value => new Date(value).toLocaleString(document.documentElement.lang === 'en' ? 'en' : 'zh-CN');
+    element.textContent = [dataTimestamp ? `${copy().satelliteUpdated} ${format(dataTimestamp)}` : '',
+        requestAfter > Date.now() ? `${copy().satelliteNextUpdate} ${format(requestAfter)}` : ''].filter(Boolean).join(' · ');
+}
+
+async function cacheData(nextRecords, timestamp) {
     if (!('caches' in window)) return;
     try {
         const cache = await caches.open(CACHE_NAME);
         await cache.put(DATA_URL, new Response(JSON.stringify(nextRecords), {
             headers: { 'Content-Type': 'application/json' }
         }));
-        localStorage.setItem(CACHE_TIMESTAMP_KEY, String(Date.now()));
+        localStorage.setItem(CACHE_TIMESTAMP_KEY, String(timestamp));
     } catch {
         // The live visualization can continue without persistent browser cache.
     }
 }
 
 async function fetchRecords() {
-    dataStatusKey = 'satelliteReady';
-    const cached = await readCachedData();
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) return cached.records;
-
-    try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+    const fetchOnce = async () => {
+        const cached = await readCachedData();
+        try { requestAfter = Math.max(requestAfter, Number(localStorage.getItem(REQUEST_AFTER_KEY)) || 0); } catch {}
+        requestAfter = Math.max(requestAfter, (cached?.timestamp || 0) + CACHE_TTL);
+        updateDataTime();
+        if (Date.now() < requestAfter) {
+            if (cached?.records?.length) {
+                dataTimestamp = cached.timestamp;
+                dataStatusKey = Date.now() - cached.timestamp < CACHE_TTL ? 'satelliteReady' : 'satelliteCached';
+                return cached.records;
+            }
+            throw new Error('CelesTrak cooldown');
+        }
+        // Reserve the next request before fetching: reopening or another tab must not redownload this update.
+        requestAfter = Date.now() + CACHE_TTL;
+        try { localStorage.setItem(REQUEST_AFTER_KEY, String(requestAfter)); } catch {}
+        updateDataTime();
         const response = await fetch(DATA_URL, {
-            cache: 'no-store',
-            headers: { Accept: 'application/json' }
+            signal: controller.signal, cache: 'no-store', headers: { Accept: 'application/json' }
         });
         if (!response.ok) throw new Error(`CelesTrak responded with ${response.status}`);
         const nextRecords = await response.json();
         if (!Array.isArray(nextRecords) || !nextRecords.length) throw new Error('CelesTrak returned no records');
-        await cacheData(nextRecords);
+        dataTimestamp = Date.now();
+        requestAfter = dataTimestamp + CACHE_TTL;
+        try { localStorage.setItem(REQUEST_AFTER_KEY, String(requestAfter)); } catch {}
+        dataStatusKey = 'satelliteReady';
+        await cacheData(nextRecords, dataTimestamp);
         return nextRecords;
-    } catch (error) {
-        if (cached?.records?.length) {
-            dataStatusKey = 'satelliteCached';
-            return cached.records;
-        }
-        throw error;
+    };
+    try {
+        return await (navigator.locks ? navigator.locks.request(CACHE_NAME, { signal: controller.signal }, fetchOnce) : fetchOnce());
+    } finally {
+        clearTimeout(timer);
+        updateDataTime();
     }
 }
 
@@ -550,26 +578,43 @@ function handleWorkerMessage(event) {
     }
 }
 
+function applyRecords(nextRecords) {
+    records = nextRecords;
+    selectedIndex = -1;
+    selectedState = null;
+    clearSelectionTracks();
+    initializePoints();
+    updateSelectedDetails();
+    worker.postMessage({ type: 'init', records });
+}
+
 async function loadData() {
     if (loadingPromise) return loadingPromise;
-    setLoading(true);
-    setStatus('satelliteLoading');
-
-    loadingPromise = fetchRecords()
-        .then((nextRecords) => {
-            records = nextRecords;
-            selectedIndex = -1;
-            selectedState = null;
-            clearSelectionTracks();
-            initializePoints();
-            updateSelectedDetails();
-            worker.postMessage({ type: 'init', records });
-        })
-        .catch(() => {
-            setLoading(true, 'satelliteLoadError');
-            setStatus('satelliteLoadError');
-            loadingPromise = null;
-        });
+    if (!dataLoaded) { setLoading(true); setStatus('satelliteLoading'); }
+    loadingPromise = (async () => {
+        let appliedTimestamp = dataTimestamp;
+        const cached = await readCachedData();
+        if (cached?.records?.length) {
+            dataTimestamp = cached.timestamp;
+            dataStatusKey = Date.now() - cached.timestamp < CACHE_TTL ? 'satelliteReady' : 'satelliteCached';
+            if (!dataLoaded || appliedTimestamp !== cached.timestamp) {
+                applyRecords(cached.records);
+                appliedTimestamp = cached.timestamp;
+            }
+            updateDataTime();
+        }
+        try {
+            const nextRecords = await fetchRecords();
+            if (!cached || dataTimestamp !== appliedTimestamp) applyRecords(nextRecords);
+            else if (dataLoaded) {
+                setStatus(dataStatusKey);
+                worker.postMessage({ type: 'propagate', timestamp: Date.now(), selectedIndex });
+            }
+        } catch {
+            if (records.length) { dataStatusKey = 'satelliteCached'; setStatus(dataStatusKey); }
+            else { setLoading(true, 'satelliteLoadError'); setStatus('satelliteLoadError'); }
+        }
+    })().finally(() => { loadingPromise = null; });
     return loadingPromise;
 }
 
@@ -604,8 +649,6 @@ function open() {
 }
 
 function refresh() {
-    loadingPromise = null;
-    dataLoaded = false;
     loadData();
 }
 
@@ -628,6 +671,7 @@ function about() {
 }
 
 window.addEventListener('portfolio-language-change', () => {
+    updateDataTime();
     updateSelectedDetails();
 });
 

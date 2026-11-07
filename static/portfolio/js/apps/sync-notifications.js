@@ -6,9 +6,10 @@ const diagnosticsKey = 'portfolio-sync-notification-diagnostics';
 const statuses = new Set(['shown', 'foreground', 'duplicate', 'disabled', 'timeout', 'lock_timeout', 'error', 'denied', 'unsupported']);
 const cleanDiagnostic = value => {
     if (!value || !Number.isFinite(value.at) || value.at < 0 || !statuses.has(value.status)) return null;
-    const result = { at: value.at, status: value.status, visibility: value.visibility === 'hidden' ? 'hidden' : 'visible' };
+    const result = { at: value.at, status: value.status, visibility: value.source === 'push' ? 'unknown' : value.visibility === 'hidden' ? 'hidden' : 'visible' };
+    if (value.source === 'push') result.source = 'push';
     if (value.test === true) result.test = true;
-    for (const key of ['receiveToRequestMs', 'queueMs', 'prepareMs', 'workerMs', 'totalMs', 'attempt']) {
+    for (const key of ['receiveToRequestMs', 'queueMs', 'prepareMs', 'workerMs', 'totalMs', 'attempt', 'submittedAt', 'completedAt']) {
         if (Number.isFinite(value[key]) && value[key] >= 0) result[key] = value[key];
     }
     return result;
@@ -27,7 +28,29 @@ const record = value => {
     window.dispatchEvent(new Event('sync-diagnostics-change'));
 };
 
-export const readNotificationDiagnostics = () => diagnostics.map(cleanDiagnostic).filter(Boolean);
+let pushDiagnostics = [];
+let pushDiagnosticRequest;
+export const readNotificationDiagnostics = () => [...diagnostics, ...pushDiagnostics].map(cleanDiagnostic).filter(Boolean).sort((a, b) => a.at - b.at).slice(-50);
+export function refreshPushDiagnostics() {
+    if (pushDiagnosticRequest) return pushDiagnosticRequest;
+    pushDiagnosticRequest = (async () => {
+        const worker = navigator.serviceWorker?.controller;
+        if (!worker) return;
+        const entries = await new Promise(resolve => {
+            const channel = new MessageChannel();
+            const timer = setTimeout(() => { channel.port1.close(); resolve(null); }, 2000);
+            channel.port1.onmessage = ({ data }) => { clearTimeout(timer); channel.port1.close(); resolve(data?.entries); };
+            try { worker.postMessage({ source: 'gavin-sync-push-diagnostics' }, [channel.port2]); }
+            catch { clearTimeout(timer); channel.port1.close(); resolve(null); }
+        });
+        if (Array.isArray(entries)) {
+            pushDiagnostics = entries.map(cleanDiagnostic).filter(Boolean).slice(-50);
+            window.dispatchEvent(new Event('sync-diagnostics-change'));
+        }
+    })().finally(() => { pushDiagnosticRequest = null; });
+    return pushDiagnosticRequest;
+}
+
 export function getNotificationState() {
     const supported = 'Notification' in window;
     const permission = supported && ['default', 'granted', 'denied'].includes(Notification.permission) ? Notification.permission : 'unsupported';
@@ -123,7 +146,9 @@ export function createSystemNotifications({ button, translate, onError, onOpen, 
     });
     navigator.serviceWorker?.addEventListener('message', event => {
         const expected = new URL('/sync-e2ee-worker.js', document.baseURI).href;
-        if (event.source?.scriptURL === expected && event.data?.source === 'gavin-sync-notification') onOpen(event.data.roomId);
+        if (event.source?.scriptURL !== expected) return;
+        if (event.data?.source === 'gavin-sync-notification') onOpen(event.data.roomId);
+        if (event.data?.source === 'gavin-sync-push-diagnostics') refreshPushDiagnostics();
     });
     const syncPush = () => {
         if (enabled()) push?.sync().catch(() => { record({ status: 'error' }); });

@@ -70,14 +70,31 @@ async function encryptPayload(subscription, payload) {
   return join(salt, new Uint8Array([0, 0, 16, 0, 65]), senderPublic, ciphertext);
 }
 
-async function authorization(endpoint, env) {
+const authorizations = new Map();
+function authorization(endpoint, env) {
+  const origin = new URL(endpoint).origin;
+  const cacheKey = JSON.stringify([origin, env.PUSH_VAPID_PUBLIC_KEY, env.PUSH_VAPID_PRIVATE_KEY, env.PUSH_VAPID_SUBJECT]);
+  const previous = authorizations.get(cacheKey);
+  if (previous?.expiresAt > Date.now()) return previous.promise;
+  const entry = { expiresAt: Date.now() + 11 * 60 * 60 * 1000 };
+  entry.promise = signAuthorization(origin, env).catch(error => {
+    if (authorizations.get(cacheKey) === entry) authorizations.delete(cacheKey);
+    throw error;
+  });
+  authorizations.delete(cacheKey);
+  authorizations.set(cacheKey, entry);
+  while (authorizations.size > 16) authorizations.delete(authorizations.keys().next().value);
+  return entry.promise;
+}
+
+async function signAuthorization(origin, env) {
   const publicKey = decode(env.PUSH_VAPID_PUBLIC_KEY, 65);
   const key = await crypto.subtle.importKey('jwk', {
     kty: 'EC', crv: 'P-256', x: encode(publicKey.subarray(1, 33)), y: encode(publicKey.subarray(33)),
     d: env.PUSH_VAPID_PRIVATE_KEY
   }, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
   const header = encode(encoder.encode(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
-  const claims = encode(encoder.encode(JSON.stringify({ aud: new URL(endpoint).origin, exp: Math.floor(Date.now() / 1000) + 12 * 60 * 60, sub: env.PUSH_VAPID_SUBJECT })));
+  const claims = encode(encoder.encode(JSON.stringify({ aud: origin, exp: Math.floor(Date.now() / 1000) + 12 * 60 * 60, sub: env.PUSH_VAPID_SUBJECT })));
   const unsigned = `${header}.${claims}`;
   const signature = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, encoder.encode(unsigned));
   return `vapid t=${unsigned}.${encode(signature)}, k=${env.PUSH_VAPID_PUBLIC_KEY}`;
@@ -104,5 +121,11 @@ export async function sendWebPush(subscription, payload, env, { signal } = {}) {
     }, body
   });
   await response.body?.cancel();
-  return { status: response.status };
+  const result = { status: response.status };
+  const retryAfter = response.headers.get('Retry-After');
+  if (retryAfter !== null) {
+    const delay = /^\d+$/.test(retryAfter.trim()) ? Number(retryAfter) * 1000 : Date.parse(retryAfter) - Date.now();
+    if (Number.isFinite(delay)) result.retryAfterMs = Math.max(0, delay);
+  }
+  return result;
 }

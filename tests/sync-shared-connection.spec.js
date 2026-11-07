@@ -394,3 +394,52 @@ test('device retry survives unrelated pairing frames and stops when the connecti
     await page.clock.fastForward(60000);
     expect(await page.evaluate(() => window.calls)).toBe(3);
 });
+
+test('foreground hints wait for authentication, stay separate across tabs and refresh before message processing', async ({ page, context }) => {
+    await context.route('**/__foreground-test__/**', async route => {
+        const filename = new URL(route.request().url()).pathname.split('/').at(-1);
+        return route.fulfill({ contentType: filename ? 'text/javascript' : 'text/html', body: filename
+            ? await readFile(path.join(__dirname, '../static/portfolio/js/apps', filename)) : '<!doctype html>' });
+    });
+    let socket;
+    const frames = [];
+    await context.routeWebSocket(/\/__foreground-socket__$/, ws => {
+        socket = ws;
+        ws.onMessage(raw => { if (raw === 'ping') return ws.send('pong'); frames.push(JSON.parse(raw)); });
+    });
+    const setup = async tab => {
+        await tab.goto('/__foreground-test__/');
+        await tab.evaluate(async () => {
+            const { SharedSyncConnection } = await import('./sync-shared-connection.js');
+            window.foreground = true;
+            window.connection = new SharedSyncConnection({ session: { roomId: 'room', token: 'token' },
+                getUrl: () => `ws://${location.host}/__foreground-socket__`, isForeground: () => foreground,
+                snapshot: () => ({ type: 'ready' }),
+                receive: async data => { if (data.type === 'message') await new Promise(resolve => { window.releaseMessage = resolve; }); },
+                onState(state) { if (state === 'online') connection.setForeground(foreground); }, onClose() {}
+            });
+            connection.connect();
+        });
+    };
+    await setup(page);
+    await expect.poll(() => frames.some(frame => frame.type === 'auth')).toBe(true);
+    await page.evaluate(() => connection.setForeground(true));
+    expect(frames.map(frame => frame.type)).toEqual(['auth']);
+    socket.send(JSON.stringify({ type: 'ready' }));
+    await expect.poll(() => frames.filter(frame => frame.type === 'foreground').length).toBe(1);
+    const other = await context.newPage();
+    await setup(other);
+    await expect.poll(() => frames.filter(frame => frame.type === 'foreground').length).toBe(2);
+    expect(new Set(frames.filter(frame => frame.type === 'foreground').map(frame => frame.tabId)).size).toBe(2);
+    await page.evaluate(() => { foreground = false; connection.setForeground(false); });
+    await expect.poll(() => frames.at(-1)?.active).toBe(false);
+    await other.evaluate(() => { connection.foregroundSentAt = 0; });
+    const before = frames.length;
+    socket.send(JSON.stringify({ type: 'message' }));
+    await expect.poll(() => frames.length).toBeGreaterThan(before);
+    expect(frames.at(-1).active).toBe(true);
+    await other.waitForFunction(() => Boolean(window.releaseMessage));
+    await other.evaluate(() => { releaseMessage(); connection.close(); });
+    await other.close();
+    await page.evaluate(() => { releaseMessage?.(); connection.close(); });
+});

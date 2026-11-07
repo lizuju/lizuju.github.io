@@ -1,16 +1,20 @@
 const { test, expect } = require('@playwright/test');
 const { readFile } = require('node:fs/promises');
 
-const install = async (page, { iphone = false, standalone = false, notificationsSupported = !iphone } = {}) => {
+const install = async (page, { iphone = false, standalone = false, notificationsSupported = !iphone, preserveStorage = false } = {}) => {
     await page.route('**/__push-test__/', route => route.fulfill({ contentType: 'text/html', body: `<button id="toggle"></button><dialog id="guide"><form method="dialog"><h2>Install</h2><button data-sync-install-close>Close</button><ol><li>Safari Share</li><li>Add to Home Screen</li><li>Open and enable notifications</li></ol><a href="/chat/" data-sync-install-open>Open Chat</a><button data-sync-install-dismiss>Done</button></form></dialog>` }));
     for (const name of ['sync-push', 'sync-notifications']) {
         await page.route(`**/__push-test__/${name}.js`, async route => route.fulfill({ contentType: 'text/javascript', body: await readFile(`static/portfolio/js/apps/${name}.js`, 'utf8') }));
     }
     await page.route('**/__push-test__/sync-e2ee-files.js', route => route.fulfill({ contentType: 'text/javascript', body: 'export async function prepareEncryptedFiles() { window.steps.push("worker"); return window.testWorker; }' }));
     await page.goto('/__push-test__/');
-    await page.evaluate(async ({ iphone, standalone, notificationsSupported }) => {
-        localStorage.clear();
+    await page.evaluate(async ({ iphone, standalone, notificationsSupported, preserveStorage }) => {
+        if (!preserveStorage) localStorage.clear();
         sessionStorage.clear();
+        if (!preserveStorage) await caches.delete('gavin-sync-push-registration-v1');
+        window.readPushCache = async () => (await (await caches.open('gavin-sync-push-registration-v1')).match(new URL('/__sync-push-registration__', location.origin)))?.json() || {};
+        window.savePushCache = async value => (await caches.open('gavin-sync-push-registration-v1')).put(new URL('/__sync-push-registration__', location.origin), new Response(JSON.stringify(value)));
+
         window.steps = [];
         window.errors = [];
         window.delivered = [];
@@ -71,7 +75,7 @@ const install = async (page, { iphone = false, standalone = false, notifications
             onError: key => errors.push(key), onOpen() {}, push,
             installDialog: document.querySelector('#guide')
         });
-    }, { iphone, standalone, notificationsSupported });
+    }, { iphone, standalone, notificationsSupported, preserveStorage });
 };
 
 test('opt-in asks permission first, registers each room with its own credentials and avoids duplicate writes', async ({ page }) => {
@@ -103,6 +107,9 @@ test('opt-in asks permission first, registers each room with its own credentials
     await page.evaluate(async () => { language = 'en'; await push.sync(); });
     expect(await page.evaluate(() => apiCalls.filter(call => call.method === 'PUT').slice(-2).map(call => call.body.language))).toEqual(['en', 'en']);
     expect(await page.evaluate(() => subscribeCalls.length)).toBe(1);
+    await page.evaluate(async () => { language = 'zh-CN'; await push.sync(); });
+    expect(await page.evaluate(() => apiCalls.filter(call => call.method === 'PUT').length)).toBe(6);
+    expect(await page.evaluate(() => apiCalls.filter(call => call.method === 'PUT').slice(-2).map(call => call.body.language))).toEqual(['zh-CN', 'zh-CN']);
 });
 
 test('registered push prevents duplicate local notifications and opt-out unsubscribes and deletes room registrations', async ({ page }) => {
@@ -259,4 +266,80 @@ test('an unsupported non-iPhone browser does not offer misleading installation s
     await expect(page.locator('#toggle')).toBeDisabled();
     await expect(page.locator('#guide')).toBeHidden();
     expect(await page.evaluate(() => apiCalls)).toEqual([]);
+});
+
+
+test('shares successful registrations and public key across instances and revalidates expired cache', async ({ page }) => {
+    await install(page);
+    await page.locator('#toggle').click();
+    await expect(page.locator('#toggle')).toHaveAttribute('aria-pressed', 'true');
+    const shared = await page.evaluate(async () => {
+        const { createWebPush } = await import('./sync-push.js');
+        window.secondPush = createWebPush({ api, getSessions: () => sessions, getLanguage: () => language });
+        await secondPush.sync();
+        return { keys: apiCalls.filter(call => call.path === '/v1/push/key').length,
+            writes: apiCalls.filter(call => call.method === 'PUT').length,
+            registered: sessions.map(session => secondPush.usesPush(session)), cache: JSON.stringify(await readPushCache()) };
+    });
+    expect(shared.keys).toBe(1);
+    expect(shared.writes).toBe(2);
+    expect(shared.registered).toEqual([true, true]);
+    expect(shared.cache).not.toContain('token-a');
+    expect(shared.cache).not.toContain('web.push.apple.com');
+    await page.evaluate(async () => {
+        const cached = await readPushCache();
+        cached.keyExpiresAt = 0;
+        cached.registrations = {};
+        await savePushCache(cached);
+        await secondPush.sync();
+    });
+    expect(await page.evaluate(() => apiCalls.filter(call => call.path === '/v1/push/key').length)).toBe(2);
+    expect(await page.evaluate(() => apiCalls.filter(call => call.method === 'PUT').length)).toBe(4);
+});
+
+
+test('two browser tabs share one key request and one registration per room', async ({ page, context }) => {
+    await install(page);
+    const other = await context.newPage();
+    await install(other, { preserveStorage: true });
+    await Promise.all([page, other].map(tab => tab.evaluate(async () => {
+        Notification.permission = 'granted';
+        await push.enable();
+    })));
+    const calls = (await Promise.all([page, other].map(tab => tab.evaluate(() => apiCalls)))).flat();
+    expect(calls.filter(call => call.path === '/v1/push/key')).toHaveLength(1);
+    expect(calls.filter(call => call.method === 'PUT')).toHaveLength(2);
+    for (const tab of [page, other]) expect(await tab.evaluate(() => sessions.map(session => push.usesPush(session)))).toEqual([true, true]);
+    await other.close();
+});
+
+test('expiring the shared cache or a failed revalidation does not enable duplicate local notifications', async ({ page }) => {
+    await install(page);
+    await page.locator('#toggle').click();
+    await expect(page.locator('#toggle')).toHaveAttribute('aria-pressed', 'true');
+    await page.evaluate(async () => {
+        const cached = await readPushCache();
+        for (const entry of Object.values(cached.registrations)) entry.expiresAt = 0;
+        await savePushCache(cached);
+        failPath = `/v1/spaces/${sessions[0].roomId}/push-subscription`;
+        try { await push.sync(); } catch {}
+    });
+    expect(await page.evaluate(() => sessions.map(session => push.usesPush(session)))).toEqual([true, true]);
+    await page.evaluate(async () => { failureStatus = 401; await push.sync(); });
+    expect(await page.evaluate(() => sessions.map(session => push.usesPush(session)))).toEqual([false, true]);
+});
+
+test('a stale cross-tab preference cannot restore a subscription after opt-out', async ({ page, context }) => {
+    await install(page);
+    const other = await context.newPage();
+    await install(other, { preserveStorage: true });
+    for (const tab of [page, other]) await tab.evaluate(async () => { Notification.permission = 'granted'; await push.enable(); });
+    await other.evaluate(() => {
+        const getItem = Storage.prototype.getItem;
+        Storage.prototype.getItem = function(key) { return key === 'portfolio-sync-system-notifications' ? 'on' : getItem.call(this, key); };
+    });
+    await page.evaluate(() => push.disable());
+    await other.evaluate(async () => { apiCalls.length = 0; await push.sync(); });
+    expect(await other.evaluate(() => apiCalls)).toEqual([]);
+    await other.close();
 });

@@ -1080,6 +1080,7 @@ import { pendingMessages } from './sync-outbox.js';
             return candidate;
         };
         const markRead = () => {
+            connections.forEach(record => record.transport?.setForeground(credentials === record.session && isChatForeground()));
             const candidate = readableThrough();
             if (candidate === null) {
                 clearTimeout(readTimer);
@@ -2022,6 +2023,7 @@ import { pendingMessages } from './sync-outbox.js';
             if (!record.transport) {
                 const session = record.session;
                 const transport = new SharedSyncConnection({ session,
+                    isForeground: () => credentials === session && isChatForeground(),
                     request: (path, signal) => {
                         const ticket = path.startsWith(`/v1/spaces/${session.roomId}/files/`) && /\/files\/[1-9][0-9]*\/download$/.test(path);
                         if (!ticket && ![ `/v1/spaces/${session.roomId}/devices`, `/v1/spaces/${session.roomId}/pair-code` ].includes(path)) throw new Error('invalid_request');
