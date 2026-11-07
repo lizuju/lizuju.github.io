@@ -3,7 +3,7 @@
 .retro-desktop {
     position: fixed;
     inset: 0;
-    overflow: hidden;
+    overflow: clip;
     background-color: var(--desktop-teal);
     background-image:
         linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px),

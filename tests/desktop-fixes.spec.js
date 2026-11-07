@@ -146,6 +146,36 @@ test('keeps partially hidden windows reachable after desktop resize and maximize
     await expect.poll(windowReachable).toBe(true);
 });
 
+test('keeps the taskbar anchored when switching windows partly outside the desktop', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'desktop windows can be dragged outside the work area');
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    const taskbar = page.locator('.desktop-taskbar');
+    const original = await taskbar.boundingBox();
+    for (const [shortcut, windowSelector] of [
+        ['[data-open-mail-window]', '[data-mail-window]'],
+        ['[data-open-gomoku]', '[data-gomoku-window]']
+    ]) {
+        await page.locator(`.desktop-shortcut${shortcut}`).click();
+        if (windowSelector === '[data-gomoku-window]') await expect(page.locator('[data-gomoku-mode="local"]')).toBeVisible();
+        const title = await page.locator(windowSelector).locator('.window-titlebar').first().boundingBox();
+        await page.mouse.move(title.x + 60, title.y + 10);
+        await page.mouse.down();
+        await page.mouse.move(page.viewportSize().width - 2, original.y - 5, { steps: 8 });
+        await page.mouse.up();
+        const box = await page.locator(windowSelector).boundingBox();
+        expect(box.y + box.height).toBeGreaterThan(page.viewportSize().height);
+    }
+    for (const selector of ['[data-mail-task]', '[data-gomoku-task]', '[data-gomoku-task]', '[data-gomoku-task]']) {
+        await page.locator(selector).click();
+        expect(await taskbar.boundingBox()).toEqual(original);
+        expect(await page.locator('[data-retro-desktop]').evaluate(el => [el.scrollLeft, el.scrollTop])).toEqual([0, 0]);
+    }
+    await page.locator('[data-gomoku-mode="local"]').evaluate(el => el.scrollIntoView());
+    expect(await taskbar.boundingBox()).toEqual(original);
+    expect(await page.locator('[data-retro-desktop]').evaluate(el => [el.scrollLeft, el.scrollTop])).toEqual([0, 0]);
+});
+
 test('moves keyboard focus into opened windows and windows selected from the taskbar', async ({ page, isMobile }) => {
     test.skip(isMobile, 'this regression concerns desktop keyboard window navigation');
     await page.goto('/portfolio/');
