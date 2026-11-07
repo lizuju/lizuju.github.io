@@ -431,6 +431,7 @@ test('keeps both spaces created concurrently by two empty tabs and follows their
 
 
 test('a notification deep link opens its saved space after the original tab closes', async ({ page, context, browserName }) => {
+    test.setTimeout(60000);
     if (browserName === 'chromium') await context.grantPermissions(['local-network-access']);
     await page.goto(`${siteOrigin}/chat/`);
     await page.locator('[data-sync-create]').click();
@@ -449,8 +450,44 @@ test('a notification deep link opens its saved space after the original tab clos
     await page.close();
     await reopened.goto(`${siteOrigin}/chat/#space=${first.roomId}`);
     await expect.poll(async () => (await readSession(reopened)).roomId).toBe(first.roomId);
+    await awaitOnline(reopened);
     await expect(reopened.locator('[data-sync-messages]')).toContainText('Notification target room');
     await expect(reopened.locator('[data-sync-messages]')).not.toContainText('Last selected room');
     expect(new URL(reopened.url()).hash).toBe('');
     await reopened.close();
+});
+
+test('creating another space waits for a superseding draft save', async ({ page, browserName }) => {
+    test.setTimeout(60000);
+    if (browserName === 'chromium') await page.context().grantPermissions(['local-network-access']);
+    await page.goto(`${siteOrigin}/chat/`);
+    await page.locator('[data-sync-create]').click();
+    await awaitOnline(page);
+    const first = await readSession(page);
+    await expandSpaces(page);
+    await page.locator('[data-sync-add-space]').click();
+    await page.evaluate(() => {
+        const encrypt = crypto.subtle.encrypt.bind(crypto.subtle);
+        let held = false;
+        crypto.subtle.encrypt = async (...args) => {
+            const result = encrypt(...args);
+            if (!held && new TextDecoder().decode(args[0].additionalData).includes(':draft:')) {
+                held = true;
+                await new Promise(resolve => { window.releaseDraftSave = resolve; });
+            }
+            return result;
+        };
+    });
+    await page.locator('[data-sync-create]').click();
+    await expect.poll(() => page.evaluate(() => typeof window.releaseDraftSave)).toBe('function');
+    await page.evaluate(() => {
+        const input = document.querySelector('[data-sync-input]');
+        input.value = 'latest saved draft';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        window.releaseDraftSave();
+    });
+    await expect.poll(async () => (await readSession(page)).roomId).not.toBe(first.roomId);
+    await awaitOnline(page);
+    await selectSpace(page, first.roomId);
+    await expect(page.locator('[data-sync-input]')).toHaveValue('latest saved draft');
 });
