@@ -1,14 +1,14 @@
 const { test, expect } = require('@playwright/test');
 const { readFile } = require('node:fs/promises');
 
-const install = async (page, { iphone = false } = {}) => {
-    await page.route('**/__push-test__/', route => route.fulfill({ contentType: 'text/html', body: '<button id="toggle"></button><details id="guide"><summary>Install</summary><p data-sync-install-copy></p><button id="install">Install app</button></details>' }));
+const install = async (page, { iphone = false, standalone = false, notificationsSupported = !iphone } = {}) => {
+    await page.route('**/__push-test__/', route => route.fulfill({ contentType: 'text/html', body: `<button id="toggle"></button><dialog id="guide"><form method="dialog"><h2>Install</h2><button data-sync-install-close>Close</button><ol><li>Safari Share</li><li>Add to Home Screen</li><li>Open and enable notifications</li></ol><a href="/chat/" data-sync-install-open>Open Chat</a><button data-sync-install-dismiss>Done</button></form></dialog>` }));
     for (const name of ['sync-push', 'sync-notifications']) {
         await page.route(`**/__push-test__/${name}.js`, async route => route.fulfill({ contentType: 'text/javascript', body: await readFile(`static/portfolio/js/apps/${name}.js`, 'utf8') }));
     }
     await page.route('**/__push-test__/sync-e2ee-files.js', route => route.fulfill({ contentType: 'text/javascript', body: 'export async function prepareEncryptedFiles() { window.steps.push("worker"); return window.testWorker; }' }));
     await page.goto('/__push-test__/');
-    await page.evaluate(async iphone => {
+    await page.evaluate(async ({ iphone, standalone, notificationsSupported }) => {
         localStorage.clear();
         sessionStorage.clear();
         window.steps = [];
@@ -27,17 +27,16 @@ const install = async (page, { iphone = false } = {}) => {
         window.failPath = '';
         window.failureStatus = 503;
         window.publicKey = btoa(String.fromCharCode(4, ...new Uint8Array(64))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-        Object.defineProperty(navigator, 'standalone', { configurable: true, value: !iphone });
+        Object.defineProperty(navigator, 'standalone', { configurable: true, value: standalone });
         Object.defineProperty(window, 'PushManager', { configurable: true, value: function PushManager() {} });
         Object.defineProperty(window, 'Notification', { configurable: true, value: {
             permission: 'default',
             requestPermission: async () => { permissionRequests++; steps.push('permission'); return Notification.permission = 'granted'; }
         } });
-        if (iphone) {
-            delete window.Notification;
-            Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' });
-            Object.defineProperty(navigator, 'standalone', { configurable: true, value: false });
-        }
+        if (!notificationsSupported) delete window.Notification;
+        Object.defineProperty(navigator, 'userAgent', { configurable: true, value: iphone
+            ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' : 'Mozilla/5.0 (X11; Linux x86_64)' });
+        Object.defineProperty(navigator, 'platform', { configurable: true, value: iphone ? 'iPhone' : 'Linux x86_64' });
         window.registration = {
             pushManager: {
                 getSubscription: async () => currentSubscription,
@@ -70,17 +69,21 @@ const install = async (page, { iphone = false } = {}) => {
         window.notifications = createSystemNotifications({
             button: document.querySelector('#toggle'), translate: key => key,
             onError: key => errors.push(key), onOpen() {}, push,
-            installGuide: document.querySelector('#guide'), installButton: document.querySelector('#install')
+            installDialog: document.querySelector('#guide')
         });
-    }, iphone);
+    }, { iphone, standalone, notificationsSupported });
 };
 
 test('opt-in asks permission first, registers each room with its own credentials and avoids duplicate writes', async ({ page }) => {
     await install(page);
     expect(await page.evaluate(() => apiCalls)).toEqual([]);
     expect(await page.evaluate(() => permissionRequests)).toBe(0);
+    await expect(page.locator('#toggle')).toHaveText('syncNotificationsOff');
+    await expect(page.locator('#guide')).toBeHidden();
     await page.locator('#toggle').click();
     await expect(page.locator('#toggle')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#toggle')).toHaveText('syncNotificationsOn');
+    await expect(page.locator('#guide')).toBeHidden();
     const result = await page.evaluate(() => ({ steps, apiCalls, subscribeCalls, registered: sessions.map(session => push.usesPush(session)) }));
     expect(result.steps[0]).toBe('permission');
     expect(result.subscribeCalls).toHaveLength(1);
@@ -216,16 +219,44 @@ test('new spaces register independently and revoked spaces do not suppress local
     expect(await page.evaluate(() => apiCalls.filter(call => call.method === 'PUT').length)).toBe(4);
 });
 
-test('regular iPhone Safari opens the sidebar installation steps without requesting unsupported notification permission', async ({ page }) => {
+test('regular iPhone Safari opens an installation dialog only after clicking notifications', async ({ page }) => {
     await install(page, { iphone: true });
-    await expect(page.locator('#toggle')).toBeEnabled();
-    await expect(page.locator('#toggle')).toHaveText('syncNotificationsInstallRequired');
-    await expect(page.locator('#guide')).toBeVisible();
-    expect(await page.locator('#guide').evaluate(element => element.open)).toBe(false);
-    await page.locator('#toggle').click();
-    expect(await page.locator('#guide').evaluate(element => element.open)).toBe(true);
-    await expect(page.locator('[data-sync-install-copy]')).toHaveText('syncInstallIphone');
+    const toggle = page.locator('#toggle');
+    const dialog = page.locator('#guide');
+    await expect(toggle).toBeEnabled();
+    await expect(toggle).toHaveText('syncNotificationsInstallRequired');
+    await expect(toggle).toHaveAttribute('aria-haspopup', 'dialog');
+    await expect(dialog).toBeHidden();
+    await toggle.click();
+    await expect(dialog).toBeVisible();
+    expect(await dialog.evaluate(element => element.matches(':modal'))).toBe(true);
     expect(await page.evaluate(() => permissionRequests)).toBe(0);
     expect(await page.evaluate(() => apiCalls)).toEqual([]);
     expect(await page.evaluate(() => errors)).toEqual([]);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(toggle).toBeFocused();
+});
+
+for (const standalone of [false, true]) test(`notification-capable iPhone ${standalone ? 'Home Screen app' : 'browser'} uses the regular on/off switch`, async ({ page }) => {
+    await install(page, { iphone: true, standalone, notificationsSupported: true });
+    const toggle = page.locator('#toggle');
+    await expect(toggle).toHaveText('syncNotificationsOff');
+    await expect(toggle).not.toHaveAttribute('aria-haspopup', 'dialog');
+    await toggle.click();
+    await expect(toggle).toHaveText('syncNotificationsOn');
+    await expect(page.locator('#guide')).toBeHidden();
+    expect(await page.evaluate(() => permissionRequests)).toBe(1);
+    await toggle.click();
+    await expect(toggle).toHaveText('syncNotificationsOff');
+    await expect(page.locator('#guide')).toBeHidden();
+    expect(await page.evaluate(() => unsubscribeCalls)).toBe(1);
+});
+
+test('an unsupported non-iPhone browser does not offer misleading installation steps', async ({ page }) => {
+    await install(page, { notificationsSupported: false });
+    await expect(page.locator('#toggle')).toHaveText('syncNotificationsUnavailable');
+    await expect(page.locator('#toggle')).toBeDisabled();
+    await expect(page.locator('#guide')).toBeHidden();
+    expect(await page.evaluate(() => apiCalls)).toEqual([]);
 });

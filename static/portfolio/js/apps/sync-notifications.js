@@ -75,12 +75,11 @@ export async function testSystemNotification({ title, body }) {
     return result;
 }
 
-export function createSystemNotifications({ button, translate, onError, onOpen, push, installGuide, installButton }) {
+export function createSystemNotifications({ button, translate, onError, onOpen, push, installDialog }) {
     const supported = 'Notification' in window;
     const iphone = /iPhone|iPad|iPod/.test(navigator.userAgent) || navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
     const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-    const needsInstall = () => iphone && !standalone();
-    let installPrompt;
+    const needsInstall = () => !supported && iphone && !standalone();
     let changing = false;
     const pending = new Map();
     const enabled = () => {
@@ -91,26 +90,18 @@ export function createSystemNotifications({ button, translate, onError, onOpen, 
         button.disabled = changing || !supported && !needsInstall();
         button.textContent = translate(needsInstall() ? 'syncNotificationsInstallRequired' : !supported ? 'syncNotificationsUnavailable' : enabled() ? 'syncNotificationsOn' : 'syncNotificationsOff');
         button.setAttribute('aria-pressed', String(enabled()));
-        if (installGuide) {
-            installGuide.hidden = standalone();
-            installGuide.querySelector('[data-sync-install-copy]').textContent = translate(iphone ? 'syncInstallIphone' : 'syncInstallBrowser');
+        if (needsInstall()) button.setAttribute('aria-haspopup', 'dialog');
+        else button.removeAttribute('aria-haspopup');
+        if (installDialog) {
+            installDialog.querySelector('[data-sync-install-open]').hidden = ['/chat/', '/chat/index.html'].includes(location.pathname);
         }
-        if (installButton) installButton.hidden = !installPrompt;
         window.dispatchEvent(new Event('sync-diagnostics-change'));
     };
-    window.addEventListener('beforeinstallprompt', event => {
-        event.preventDefault(); installPrompt = event; update();
-    });
-    window.addEventListener('appinstalled', () => { installPrompt = null; update(); });
-    installButton?.addEventListener('click', async () => {
-        if (!installPrompt) return;
-        const prompt = installPrompt; installPrompt = null;
-        await prompt.prompt(); update();
-    });
     button.addEventListener('click', async () => {
         if (changing) return;
         if (needsInstall()) {
-            if (installGuide) installGuide.open = true;
+            button.focus({ preventScroll: true });
+            installDialog.showModal();
             return;
         }
         if (!supported) return;
