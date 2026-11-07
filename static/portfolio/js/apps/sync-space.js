@@ -2,7 +2,7 @@ import { createKeyring, createDeviceIdentity, encryptPayload, decryptPayload, cr
     keyedFingerprint, fileChunkLayout, FILE_CIPHER_CHUNK_SIZE, loadLocalSession,
     createKeyRotation, acceptKeyRotation } from './sync-crypto.js';
 import { EncryptedPairing } from './sync-pairing.js';
-import { SavedSpaces, CREDENTIAL_KEY, CATALOG_KEY } from './sync-spaces.js';
+import { SavedSpaces, CREDENTIAL_KEY, CATALOG_KEY, REMOVAL_KEY } from './sync-spaces.js';
 import { SharedSyncConnection } from './sync-shared-connection.js';
 import { createMentions, validMentions, renderMessageText } from './sync-mentions.js';
 import { openEncryptedFile, prepareEncryptedFiles } from './sync-e2ee-files.js';
@@ -39,6 +39,7 @@ import { pendingMessages } from './sync-outbox.js';
         const feed = find('feed');
         const status = find('status');
         const notice = find('notice');
+        let removedSessionNotice;
         const mobileLayout = matchMedia('(pointer: coarse) and (max-width: 900px), (pointer: coarse) and (max-height: 520px)');
         const resizeComposer = () => {
             if (!mobileLayout.matches || !input.clientWidth) return;
@@ -69,6 +70,7 @@ import { pendingMessages } from './sync-outbox.js';
         const devicesDialog = find('devices-dialog');
         const spaceNameDialog = find('space-name-dialog');
         const stickerDialog = find('sticker-dialog');
+        const installDialog = find('install-dialog');
         const messageNodes = new Map();
         const inlineImages = new Map();
         const imageResources = new Map();
@@ -500,6 +502,7 @@ import { pendingMessages } from './sync-outbox.js';
                 invalid_file_type: 'syncFileInvalid', invalid_file_size: 'syncFileInvalid',
                 request_too_large: 'syncFileTooLarge', upload_expired: 'syncUploadFailed',
                 upload_unavailable: 'syncUploadFailed', not_found: 'syncUploadFailed',
+                space_expired: 'syncSpaceExpired',
                 upload_conflict: 'syncUploadConflict',
                 invalid_ciphertext: 'syncDecryptFailed', key_unavailable: 'syncKeyUnavailable', key_changed: 'syncKeyChanged', rekey_required: 'syncKeyChanged',
                 pairing_limited: 'syncPairLimited', pairing_ambiguous: 'syncPairAmbiguous', pairing_busy: 'syncPairBusy', pairing_timeout: 'syncPairTimeout',
@@ -812,7 +815,13 @@ import { pendingMessages } from './sync-outbox.js';
             if (type === 'application/pdf' || extension === 'pdf') return 'pdf';
             if (extension === 'docx') return 'word';
             if (['xlsx', 'xls', 'ods', 'csv', 'tsv'].includes(extension)) return 'spreadsheet';
-            if (['txt', 'md', 'json', 'log', 'xml', 'yaml', 'yml'].includes(extension)) return 'text';
+            if ([
+                'txt', 'md', 'markdown', 'log', 'json', 'jsonc', 'jsonl', 'xml', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'env', 'properties',
+                'py', 'pyw', 'pyi', 'ipynb', 'c', 'cc', 'cpp', 'cxx', 'h', 'hh', 'hpp', 'hxx', 'm', 'mm', 'cs', 'java', 'kt', 'kts', 'swift', 'go', 'rs',
+                'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'vue', 'svelte', 'html', 'htm', 'css', 'scss', 'sass', 'less', 'sql',
+                'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat', 'cmd', 'rb', 'php', 'pl', 'lua', 'r', 'dart',
+                'tex', 'latex', 'bib', 'sty', 'cls', 'cmake', 'makefile', 'dockerfile', 'gitignore', 'gitattributes', 'editorconfig'
+            ].includes(extension)) return 'text';
             return null;
         };
         const showAttachmentError = (error) => {
@@ -919,7 +928,7 @@ import { pendingMessages } from './sync-outbox.js';
             if (message.sendState || button.disabled) return;
             const session = credentials;
             const kind = previewKind(message.attachment);
-            const limit = ['image', 'heic'].includes(kind) ? 20 : kind === 'text' ? 2 : 25;
+            const limit = ['image', 'heic'].includes(kind) ? 20 : kind === 'text' ? 5 : 25;
             if (!['pdf', 'video', 'audio'].includes(kind) && message.attachment.size > limit * 1024 * 1024) {
                 setNotice('syncPreviewTooLarge', true);
                 return;
@@ -948,7 +957,7 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const isChatForeground = () => !room.hidden && active && viewingDesktop && browserFocused && document.hasFocus() && !document.hidden
             && app.classList.contains('is-active') && !app.classList.contains('is-minimized')
-            && !app.closest('[inert]') && !devicesDialog.open && !confirmation.open && !stickerDialog.open && !spaceNameDialog.open && !replyNavigation
+            && !app.closest('[inert]') && !devicesDialog.open && !confirmation.open && !stickerDialog.open && !spaceNameDialog.open && !installDialog.open && !replyNavigation
             && !(app.clientWidth <= 640 && (!app.classList.contains('is-tools-collapsed') || !app.classList.contains('is-spaces-collapsed')));
         const isReading = () => isChatForeground() && performance.now() - lastInteraction < 60000 && !find('search').value.trim();
         const updateReadReceipts = () => {
@@ -2059,23 +2068,27 @@ import { pendingMessages } from './sync-outbox.js';
                     },
                     onClose: async (event, authenticated) => {
                         if (connections.get(session.roomId) !== record) return;
-                        let revoked = event.code === 4001;
+                        let expired = event.code === 4004;
+                        let revoked = event.code === 4001 || expired;
                         if (!authenticated && event.code === 1006) {
                             try { await api(`/v1/spaces/${session.roomId}/devices`, {}, session); }
-                            catch (error) { revoked = ['unauthorized', 'not_found'].includes(error.code); }
+                            catch (error) {
+                                expired = error.code === 'space_expired';
+                                revoked = expired || ['unauthorized', 'not_found'].includes(error.code);
+                            }
                         }
                         if (!revoked || connections.get(session.roomId) !== record) return;
                         if (credentials === session) {
                             const left = leavingSession === session;
-                            reset();
-                            setNotice(left ? 'syncLeft' : 'syncRejoin', !left);
+                            reset(true, false, expired ? 'expired' : 'revoked');
+                            setNotice(left ? 'syncLeft' : expired ? 'syncSpaceExpired' : 'syncRejoin', !left);
                             reconcileSession();
                         } else {
                             disposeConnection(record);
                             spaceFiles.delete(session.roomId);
                             sessionStorage.removeItem(`portfolio-sync-draft:${session.roomId}`);
                             await pendingMessages.clear(session);
-                            await savedSpaces.remove(session);
+                            await savedSpaces.remove(session, expired ? 'expired' : 'revoked');
                             renderSpaces();
                         }
                     }
@@ -2142,7 +2155,7 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const savedSession = () => savedSpaces.active();
         const sameSession = (a, b) => a?.roomId === b?.roomId && a?.token === b?.token && a?.revision === b?.revision;
-        const reset = (forget = true, keepConnection = false) => {
+        const reset = (forget = true, keepConnection = false, removalReason = null) => {
             replyNavigation?.abort();
             replyNavigation = null;
             clearTimeout(replyHighlightTimer);
@@ -2182,6 +2195,7 @@ import { pendingMessages } from './sync-outbox.js';
             if (confirmation.open) confirmation.close();
             if (devicesDialog.open) devicesDialog.close();
             if (spaceNameDialog.open) spaceNameDialog.close();
+            if (installDialog.open) installDialog.close();
             clearTimeout(searchTimer);
             searchController?.abort();
             searchController = null;
@@ -2197,7 +2211,7 @@ import { pendingMessages } from './sync-outbox.js';
                 const forgotten = credentials;
                 spaceFiles.delete(forgotten.roomId);
                 sessionStorage.removeItem(`portfolio-sync-draft:${forgotten.roomId}`);
-                const removal = pendingMessages.clear(forgotten).then(() => savedSpaces.remove(forgotten));
+                const removal = pendingMessages.clear(forgotten).then(() => savedSpaces.remove(forgotten, removalReason));
                 forgettingSpace = removal;
                 removal.then(() => {
                     if (forgettingSpace !== removal) return;
@@ -2402,7 +2416,15 @@ import { pendingMessages } from './sync-outbox.js';
                         }
                         setNotice(pendingUpload ? 'syncUploadRestored' : 'syncJoined');
                     }
-                    else { await saveDraft(); reset(false); setNotice('syncReady'); }
+                    else {
+                        const previous = credentials;
+                        await saveDraft();
+                        if (credentials !== previous) return;
+                        const removalKey = removedSessionNotice?.vaultId === previous?.vaultId ? removedSessionNotice.key : null;
+                        reset(false);
+                        setNotice(removalKey || 'syncReady', !!removalKey);
+                        removedSessionNotice = null;
+                    }
                 }
               } catch { setNotice('syncStorageError', true); }
             })().finally(() => {
@@ -2534,7 +2556,6 @@ import { pendingMessages } from './sync-outbox.js';
         // In narrow windows the tools overlay the conversation, so an action closes them like switching spaces does.
         app.querySelector('.sync-tools-actions').addEventListener('click', (event) => {
             if (!event.target.closest('button') || getComputedStyle(find('tools')).position !== 'absolute') return;
-            if (event.target.closest('[data-sync-notifications]') && find('install-guide').open && !find('install-guide').hidden) return;
             app.classList.add('is-tools-collapsed');
             renderToolsToggle();
         });
@@ -2690,6 +2711,7 @@ import { pendingMessages } from './sync-outbox.js';
                 if (confirmation.open) confirmation.close();
                 if (devicesDialog.open) devicesDialog.close();
                 if (stickerDialog.open) stickerDialog.close();
+                if (installDialog.open) installDialog.close();
                 manager.hideWindow(app, entry.task, state, { hideTask: state === 'is-closed' });
                 if (state === 'is-closed') {
                     clearTimeout(searchTimer);
@@ -3544,6 +3566,7 @@ import { pendingMessages } from './sync-outbox.js';
         }
         const readingObserver = new MutationObserver(() => { markRead(); updateInlineImages(); updateVoiceVisibility(); });
         readingObserver.observe(app, { attributes: true, attributeFilter: ['class', 'inert'] });
+        readingObserver.observe(installDialog, { attributes: true, attributeFilter: ['open'] });
         for (let ancestor = app.parentElement; ancestor; ancestor = ancestor.parentElement) {
             readingObserver.observe(ancestor, { attributes: true, attributeFilter: ['inert'] });
         }
@@ -3572,7 +3595,7 @@ import { pendingMessages } from './sync-outbox.js';
         find('leave').addEventListener('click', () => showConfirmation('leave'));
         find('devices-form').addEventListener('submit', (event) => event.preventDefault());
         for (const name of ['devices-close', 'devices-dismiss']) find(name).addEventListener('click', () => devicesDialog.close());
-        for (const dialog of [confirmation, devicesDialog, spaceNameDialog]) {
+        for (const dialog of [confirmation, devicesDialog, spaceNameDialog, installDialog]) {
             dialog.addEventListener('close', () => {
                 if (!document.activeElement || document.activeElement === document.body || !document.activeElement.getClientRects().length) {
                     find('tools-toggle').focus({ preventScroll: true });
@@ -3588,7 +3611,8 @@ import { pendingMessages } from './sync-outbox.js';
                 }
                 if (event.key !== 'Tab') return;
                 event.preventDefault();
-                const controls = Array.from(dialog.querySelectorAll('button:not(:disabled), input:not(:disabled)'));
+                const controls = Array.from(dialog.querySelectorAll('button:not(:disabled), input:not(:disabled), a[href]'))
+                    .filter(element => element.getClientRects().length);
                 const direction = event.shiftKey ? -1 : 1;
                 controls[(controls.indexOf(document.activeElement) + direction + controls.length) % controls.length].focus();
             });
@@ -3673,6 +3697,13 @@ import { pendingMessages } from './sync-outbox.js';
         });
         window.addEventListener('online', () => { connections.forEach(record => connect(record)); connect(); recoverPendingPairing(); });
         window.addEventListener('storage', (event) => {
+            if (event.key === REMOVAL_KEY && event.newValue) {
+                try {
+                    const removed = JSON.parse(event.newValue);
+                    const key = { expired: 'syncSpaceExpired', revoked: 'syncRejoin' }[removed.reason];
+                    if (key && removed.vaultId === credentials?.vaultId) removedSessionNotice = { vaultId: removed.vaultId, key };
+                } catch { /* Ignore malformed cross-tab notices. */ }
+            }
             if (event.key === 'portfolio-sync-notification-sound' || event.key === null) setSoundEnabled(event.newValue !== 'off');
             if (event.key === CREDENTIAL_KEY || event.key === CATALOG_KEY || event.key === null) reconcileSession();
         });
@@ -3740,7 +3771,7 @@ import { pendingMessages } from './sync-outbox.js';
         const push = createWebPush({ api, getSessions: () => Array.from(connections.values(), record => record.session), getLanguage: desktopApi.getLanguage });
         const systemNotifications = createSystemNotifications({
             button: find('notifications'), translate, onError: key => setNotice(key, true),
-            push, installGuide: find('install-guide'), installButton: find('install'),
+            push, installDialog,
             onOpen: roomId => { entry.show(); if (credentials?.roomId !== roomId) switchSpace(roomId); }
         });
         desktopApi.notificationDiagnostics = () => systemNotifications.diagnostics();

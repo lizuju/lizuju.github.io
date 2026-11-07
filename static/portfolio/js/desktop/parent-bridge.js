@@ -48,6 +48,13 @@
             type: 'audio-mute-ready'
         }, window.location.origin);
 
+        document.addEventListener('focusin', () => {
+            window.parent.postMessage({
+                source: 'gavin-portfolio',
+                type: 'focusin'
+            }, window.location.origin);
+        });
+
         let pendingMouseMove;
         let animationFrame;
         document.addEventListener('mousemove', (event) => {

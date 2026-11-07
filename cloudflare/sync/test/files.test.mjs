@@ -60,7 +60,9 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, ob
                     this.sizeGate = new Promise(resolve => { this.releaseSize = resolve; });
                   }
                   testReleaseSize() { this.releaseSize(); this.sizeGate = null; }
+                  testSizeCallCount() { return this.sizeCallCount || 0; }
                   async storageBytes() {
+                    this.sizeCallCount = (this.sizeCallCount || 0) + 1;
                     if (!this.sizeObserved) return super.storageBytes();
                     const registry = this.env.E2EE_PAIRING_REGISTRY.getByName('registry');
                     await registry.testSizeStart();
@@ -1728,6 +1730,7 @@ test('slow finalization shares probes while messages continue in the same room',
   await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(16));
   const shard = (await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS')).getByName(`${started.body.uploadId}:0`);
   const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  await (await roomStorage(space, instance)).exec('UPDATE file_shards SET measured_bytes = NULL WHERE file_id = ?', started.body.uploadId);
   await shard.testHoldSize();
   const pending = complete(request, space, started.body.uploadId);
   await registry.testWaitSizeCalls(1);
@@ -1757,6 +1760,7 @@ for (const change of ['cancel', 'remove-device', 'rotate-key']) {
     const shard = (await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS')).getByName(`${started.body.uploadId}:0`);
     const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
     const storage = await roomStorage(space, instance);
+    await storage.exec('UPDATE file_shards SET measured_bytes = NULL WHERE file_id = ?', started.body.uploadId);
     await shard.testHoldSize();
     const pending = complete(request, space, started.body.uploadId);
     await registry.testWaitSizeCalls(1);
@@ -2041,6 +2045,7 @@ for (const phase of ['chunk write', 'finalization']) {
       while (!await shard.testWriteStarted()) await new Promise(resolve => setTimeout(resolve, 5));
     } else {
       assert.equal((await putChunk(request, space, started.body.uploadId, 0, Buffer.alloc(4096, 1))).status, 200);
+      await storage.exec('UPDATE file_shards SET measured_bytes = NULL WHERE file_id = ?', started.body.uploadId);
       await shard.testHoldSize();
       pending = complete(request, space, started.body.uploadId);
       await registry.testWaitSizeCalls(1);
@@ -2066,3 +2071,67 @@ for (const phase of ['chunk write', 'finalization']) {
     assert.equal((await new Response(await shard.readStream()).arrayBuffer()).byteLength, 0);
   });
 }
+
+
+test('combined room reads retain authentication, registry existence and reclaimed-object guards', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const sent = await upload(request, space);
+  const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
+  const before = await registry.testRoomLookups();
+  for (const suffix of ['/devices', '/messages', '/profile', '/key-grants']) {
+    assert.equal((await request.raw(`/v1/spaces/${space.roomId}${suffix}`, { token: space.token, headers: { 'X-Sync-Key-Id': request.state.sessions.get(space.token).keyring.currentKeyId } })).status, 200, suffix);
+    assert.equal((await request.raw(`/v1/spaces/${space.roomId}${suffix}`, { token: '0'.repeat(64) })).status, 401, suffix);
+  }
+  assert.equal((await request.raw(`/v1/spaces/${space.roomId}/messages?limit=51`, { token: space.token })).status, 400);
+  assert.equal((await request.raw(`/v1/spaces/${space.roomId}/gomoku/${randomUUID()}`, { token: space.token })).status, 404);
+  const filePath = `/v1/spaces/${space.roomId}/files/${sent.body.id}`;
+  assert.equal((await request.raw(filePath, { method: 'HEAD', token: space.token })).status, 200);
+  assert.equal((await request.raw(`${filePath}/download`, { method: 'POST', token: space.token })).status, 200);
+  assert.equal(await registry.testRoomLookups(), before + 9);
+  const storage = await roomStorage(space, instance);
+  await storage.exec('DELETE FROM devices WHERE device_id = ?', space.deviceId);
+  for (const suffix of ['/devices', '/messages', '/profile', '/key-grants']) {
+    assert.equal((await request.raw(`/v1/spaces/${space.roomId}${suffix}`, { token: space.token })).status, 401, suffix);
+  }
+  const missing = randomUUID();
+  assert.equal((await request.raw(`/v1/spaces/${missing}/devices`, { token: space.token })).status, 404);
+  const missingStorage = await instance.unsafeGetDurableObjectStorage('sync-files-test', 'SyncRoom', { name: missing });
+  assert.deepEqual(await missingStorage.exec("SELECT name FROM sqlite_master WHERE name IN ('devices', 'metadata')"), []);
+});
+
+test('known expired rooms report their cleanup outcome on direct reads', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const room = await roomObject(space, instance);
+  await room.testAgeActivity(Date.now() - fourteenDays);
+  const response = await request.raw(`/v1/spaces/${space.roomId}/devices`, { token: space.token });
+  assert.equal(response.status, 404);
+  assert.equal(response.body.error, 'space_expired');
+});
+
+test('completed uploads reuse durable measured shard sizes after retry and room restart', async t => {
+  const instance = await createRuntime(); t.after(() => instance.dispose());
+  const request = client(instance), space = await createSpace(request);
+  const bytes = Buffer.alloc(chunkSize + 17, 7);
+  const started = await initiate(request, space, { size: bytes.length });
+  const uploadId = started.body.uploadId;
+  assert.equal((await putChunk(request, space, uploadId, 0, bytes.subarray(0, chunkSize))).status, 200);
+  assert.equal((await putChunk(request, space, uploadId, 0, bytes.subarray(0, chunkSize))).status, 200);
+  assert.equal((await putChunk(request, space, uploadId, 1, bytes.subarray(chunkSize))).status, 200);
+  const storage = await roomStorage(space, instance);
+  const shard = (await instance.getDurableObjectNamespace('E2EE_FILE_SHARDS')).getByName(`${uploadId}:0`);
+  const actualBytes = await shard.storageBytes();
+  const measured = (await storage.exec('SELECT bytes, measured_bytes FROM file_shards WHERE file_id = ?', uploadId))[0];
+  assert.equal(measured.measured_bytes, actualBytes);
+  assert.ok(measured.bytes >= measured.measured_bytes);
+  const before = await shard.testSizeCallCount();
+  await instance.unsafeEvictDurableObject('sync-files-test', 'SyncRoom', { name: space.roomId });
+  const sent = await complete(request, space, uploadId);
+  assert.equal(sent.status, 201);
+  assert.equal(await shard.testSizeCallCount(), before, 'finalization must not probe a measured shard again');
+  assert.deepEqual(await storage.exec('SELECT bytes, measured_bytes FROM file_shards WHERE file_id = ?', uploadId), [{ bytes: actualBytes, measured_bytes: actualBytes }]);
+  assert.deepEqual((await request(`/v1/spaces/${space.roomId}/files/${sent.body.id}`, { token: space.token })).body, bytes);
+  assert.equal((await complete(request, space, uploadId)).status, 200);
+  assert.equal(await shard.testSizeCallCount(), before);
+});

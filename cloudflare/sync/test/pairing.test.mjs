@@ -914,8 +914,8 @@ test('the room deadline closes every online device and releases the space withou
   const ping = socketEvent(one);
   one.send('ping');
   assert.equal((await ping).data, 'pong');
-  assert.equal((await oneClosed).code, 4001);
-  assert.equal((await twoClosed).code, 4001);
+  assert.equal((await oneClosed).code, 4004);
+  assert.equal((await twoClosed).code, 4004);
   await room.testWaitAlarm();
   const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   for (let attempt = 0; attempt < 100 && await registry.hasRoom(space.roomId); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
@@ -933,7 +933,7 @@ test('authentication cannot publish ready when the room expires while awaiting i
   const closed = socketEvent(socket, 'close');
   await room.testExpireOnPairingSnapshot();
   socket.send(JSON.stringify({ type: 'auth', token: space.token }));
-  assert.equal((await closed).code, 4001);
+  assert.equal((await closed).code, 4004);
   assert.deepEqual(frames, []);
   const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
   await registry.refreshRoom(space.roomId);

@@ -15,6 +15,7 @@ import { ProjectImageCache } from './project-image-cache.js';
         const projectFolderAddress = document.querySelector('[data-project-folder-address]');
         const projectFolderStatus = document.querySelector('[data-project-folder-status]');
         const folderSearch = document.querySelector('[data-project-folder-search]');
+        const honorsCategory = document.querySelector('[data-honors-category]');
         const folderScroll = projectFolderWindow.querySelector('.project-folder-scroll');
         const folderEmpty = document.querySelector('[data-project-folder-empty]');
         const projectFolderRoot = document.querySelector('[data-project-folder-root]');
@@ -54,6 +55,8 @@ import { ProjectImageCache } from './project-image-cache.js';
         const imagePrevious = imagePreviewWindow.querySelector('[data-image-previous]');
         const imageNext = imagePreviewWindow.querySelector('[data-image-next]');
         const imageCounter = imagePreviewWindow.querySelector('[data-image-counter]');
+        const imageShare = imagePreviewWindow.querySelector('[data-image-share]');
+        const imageShareUrl = imagePreviewWindow.querySelector('[data-image-share-url]');
         const imageError = imagePreviewWindow.querySelector('[data-image-error]');
         const imageLoading = imagePreviewWindow.querySelector('[data-image-loading]');
         const videoPreviewWindow = document.querySelector('[data-video-preview-window]');
@@ -88,6 +91,7 @@ import { ProjectImageCache } from './project-image-cache.js';
         const folderItems = { root: folderButtons, photos: robomasterImageButtons, music: [musicVideoButton], papers: paperButtons, honors: [] };
         let honorsRequest;
         let pendingImageRestore;
+        let sharedCertificate = standaloneHonors ? new URLSearchParams(location.search).get('certificate') : null;
         let videoPosition = 0;
         try {
             const saved = Number(localStorage.getItem('portfolio-music-position'));
@@ -172,6 +176,14 @@ import { ProjectImageCache } from './project-image-cache.js';
             actionAttribute: 'data-image-preview-action',
             minWidth: 380,
             minHeight: 300,
+            hide: (state) => {
+                manager.hideWindow(imagePreviewWindow, imagePreviewTask, state, { hideTask: state === 'is-closed' });
+                if (standaloneHonors && state === 'is-closed') {
+                    const url = new URL(location.href);
+                    url.searchParams.delete('certificate');
+                    history.replaceState(null, '', url);
+                }
+            },
             focusTarget: () => imagePreviewWindow.querySelector('[data-image-preview-action="close"]')
         });
         const loadVideo = () => {
@@ -378,6 +390,8 @@ import { ProjectImageCache } from './project-image-cache.js';
 
         const updateImageCopy = () => {
             const copy = t();
+            imageShare.hidden = !previewImageButton?.hasAttribute('data-honor-image');
+            imageShare.textContent = copy.honorsCopyLink;
             if (!previewImageButton) {
                 imagePreviewTitle.textContent = copy.previewWindowTitle;
                 imagePreviewTaskTitle.textContent = copy.previewTaskTitle;
@@ -416,11 +430,12 @@ import { ProjectImageCache } from './project-image-cache.js';
                 const name = button.querySelector('strong');
                 const translations = name.dataset.i18n ? Object.values(window.PORTFOLIO_DATA.CONTENT).map(copy => copy[name.dataset.i18n]) : [];
                 const names = [name.textContent, button.dataset.photoLabelZh, button.dataset.photoLabelEn, ...translations];
-                button.hidden = !!query && !names.some(name => name?.toLocaleLowerCase().includes(query));
+                button.hidden = (currentFolder === 'honors' && !!honorsCategory.value && button.dataset.honorCategory !== honorsCategory.value)
+                    || !!query && !names.some(name => name?.toLocaleLowerCase().includes(query));
             }
             folderEmpty.hidden = currentFolder === 'honors' && !folderItems.honors.length || items.some(button => !button.hidden);
             const count = items.filter(button => !button.hidden).length;
-            projectFolderStatus.textContent = t()[query ? 'folderSearchCount' : 'folderObjectCount']
+            projectFolderStatus.textContent = t()[query || currentFolder === 'honors' && honorsCategory.value ? 'folderSearchCount' : 'folderObjectCount']
                 .replace('{count}', count).replace('{total}', items.length);
             folderSearch.setAttribute('aria-label', t().folderSearch);
             if (selectedFolderButton?.hidden) selectedFolderButton = folderButtons.find(button => !button.hidden);
@@ -444,6 +459,7 @@ import { ProjectImageCache } from './project-image-cache.js';
             musicFolderView.hidden = folder !== 'music';
             papersFolderView.hidden = folder !== 'papers';
             honorsFolderView.hidden = folder !== 'honors';
+            honorsCategory.hidden = folder !== 'honors';
             projectFolderBack.hidden = folder === 'root';
             if (openHonorsLink) openHonorsLink.hidden = folder !== 'honors' || standaloneHonors;
             if (folder !== 'root') selectedFolderButton = folderButtons.find((button) => button.dataset.folder === folder);
@@ -491,6 +507,13 @@ import { ProjectImageCache } from './project-image-cache.js';
             const changed = imagePreviewImage.getAttribute('src') !== button.dataset.imageSrc;
             if (!button.hidden) selectPhoto(button);
             previewImageButton = button;
+            imageShareUrl.hidden = true;
+            if (button.hasAttribute('data-honor-image')) {
+                const url = new URL('/honors/', location.origin);
+                url.searchParams.set('certificate', button.dataset.honorImage);
+                imageShareUrl.value = url.href;
+                if (standaloneHonors && new URLSearchParams(location.search).has('certificate')) history.replaceState(null, '', url);
+            }
             updateImageCopy();
             if (!changed && imageError.hidden) return;
             const request = ++imageRequest;
@@ -566,6 +589,19 @@ import { ProjectImageCache } from './project-image-cache.js';
         };
         imagePrevious.addEventListener('click', () => movePreview(-1));
         imageNext.addEventListener('click', () => movePreview(1));
+        imageShare.addEventListener('click', async () => {
+            const url = imageShareUrl.value;
+            try {
+                await navigator.clipboard.writeText(url);
+                if (url === imageShareUrl.value) imageShare.textContent = t().honorsLinkCopied;
+            } catch {
+                if (url !== imageShareUrl.value) return;
+                imageShare.textContent = t().honorsCopyManually;
+                imageShareUrl.hidden = false;
+                imageShareUrl.focus();
+                imageShareUrl.select();
+            }
+        });
         imageError.querySelector('button').addEventListener('click', () => updateImagePreview(previewImageButton));
 
         const restoreImages = (savedState) => {
@@ -594,6 +630,7 @@ import { ProjectImageCache } from './project-image-cache.js';
                     button.className = 'project-folder-item project-folder-item--button project-folder-item--image';
                     Object.assign(button.dataset, {
                         honorImage: certificate.id,
+                        honorCategory: certificate.category,
                         imageSrc: new URL(encodeURIComponent(certificate.image), honorsAssetRoot).href,
                         photoLabelZh: certificate.nameZh,
                         photoLabelEn: certificate.nameEn,
@@ -626,6 +663,12 @@ import { ProjectImageCache } from './project-image-cache.js';
                 if (pendingImageRestore) {
                     restoreImages(pendingImageRestore);
                     pendingImageRestore = undefined;
+                }
+                if (sharedCertificate) {
+                    const button = folderItems.honors.find(item => item.dataset.honorImage === sharedCertificate);
+                    sharedCertificate = null;
+                    if (button) openImagePreview(button);
+                    else projectFolderStatus.textContent = t().honorsNotFound;
                 }
             }).catch(() => {
                 honorsRequest = null;
@@ -677,6 +720,11 @@ import { ProjectImageCache } from './project-image-cache.js';
         });
         folderSearch.addEventListener('input', () => {
             pendingFolderScrollTop = undefined;
+            filterFolder();
+        });
+        honorsCategory.addEventListener('change', () => {
+            pendingFolderScrollTop = undefined;
+            folderScroll.scrollTop = 0;
             filterFolder();
         });
         folderButtons.forEach((button) => {
@@ -746,6 +794,7 @@ import { ProjectImageCache } from './project-image-cache.js';
 
             selectPhoto(targetPhoto);
             targetPhoto.focus({ preventScroll: true });
+            targetPhoto.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         });
 
         window.addEventListener('portfolio-language-change', () => {
@@ -762,6 +811,7 @@ import { ProjectImageCache } from './project-image-cache.js';
             save: () => ({
                 folderView: currentFolder,
                 folderSearch: folderSearch.value,
+                honorsCategory: honorsCategory.value,
                 folderScrollTop: pendingFolderScrollTop ?? folderScroll.scrollTop,
                 selectedFolderIndex: folderButtons.indexOf(selectedFolderButton),
                 selectedPaperIndex: paperButtons.indexOf(selectedPaperButton),
@@ -774,6 +824,7 @@ import { ProjectImageCache } from './project-image-cache.js';
             restore: (savedState) => {
                 setProjectFolderView(savedState.folderView || 'root');
                 folderSearch.value = savedState.folderSearch || '';
+                honorsCategory.value = savedState.honorsCategory || '';
                 selectedFolderButton = folderButtons[savedState.selectedFolderIndex] || selectedFolderButton;
                 selectPaper(paperButtons[savedState.selectedPaperIndex]);
                 filterFolder();

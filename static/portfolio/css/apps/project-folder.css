@@ -532,6 +532,10 @@
     flex-wrap: wrap;
 }
 
+.image-preview-window [data-image-share] {
+    margin-inline-start: auto;
+}
+
 .project-image-error {
     margin: auto;
     padding: 24px;
@@ -587,4 +591,17 @@
 .project-folder-grid--honors strong {
     white-space: normal;
     line-height: 1.4;
+}
+
+.project-folder-search .honors-category {
+    flex: 0 1 160px;
+    width: 40%;
+    min-width: 0;
+    font: inherit;
+}
+
+.honors-share-url {
+    width: 100%;
+    min-width: 0;
+    font: inherit;
 }

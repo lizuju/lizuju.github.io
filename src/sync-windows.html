@@ -2,7 +2,7 @@
             aria-labelledby="sync-space-title">
             <div class="window-titlebar" data-sync-titlebar>
                 <div class="window-title">
-                    <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
+                    <span class="window-app-icon window-app-icon--sync" aria-hidden="true"></span>
                     <span id="sync-space-title" data-i18n="desktopSyncSpace">联络站</span>
                 </div>
                 <div class="window-controls">
@@ -33,7 +33,7 @@
                 <div class="sync-main">
                 <div class="sync-setup" data-sync-setup>
                     <div class="sync-welcome">
-                        <span class="sync-welcome-icon" aria-hidden="true">↔</span>
+                        <span class="sync-welcome-icon" aria-hidden="true"></span>
                         <h2 data-i18n="syncSetupTitle">输入配对码，随时聊，随手传。</h2>
                     </div>
                     <button class="sync-button sync-create" type="button" data-sync-create
@@ -209,14 +209,9 @@
                                     data-i18n="syncLeave">离开空间</button>
                             </div>
                             <div class="sync-tools-notes">
-                                <details class="sync-install-guide" data-sync-install-guide>
-                                    <summary data-i18n="syncInstallTitle">添加到主屏幕</summary>
-                                    <p class="sync-hint" data-sync-install-copy></p>
-                                    <a href="/chat/" target="_blank" rel="noopener" data-i18n="syncInstallOpen">打开独立联络站</a>
-                                    <button class="sync-button" type="button" data-sync-install data-i18n="syncInstallAction" hidden>安装联络站</button>
-                                </details>
                                 <p class="sync-hint" id="sync-file-limit" data-i18n="syncFileLimit">可选择、拖入文件或粘贴截图，最大 2GB。</p>
                                 <p class="sync-hint" data-i18n="syncHistoryLimit">消息和附件最多保留 7 天、500 条；空间不足自动清理，清空同步所有设备。</p>
+                                <p class="sync-hint" data-i18n="syncSpaceIdleLimit">空间连续 14 天无新消息将自动清理。</p>
                                 <p class="sync-hint" data-i18n="syncEncrypted">消息与附件已端到端加密</p>
                             </div>
                         </div>
@@ -228,12 +223,36 @@
                 data-i18n="syncReady">创建或加入空间，开始同步。</p>
             <button class="window-resize-handle" type="button" data-sync-resize aria-label="调整联络站大小"
                 title="调整联络站大小"></button>
+            <dialog class="sync-confirm-dialog sync-install-dialog" data-sync-install-dialog aria-labelledby="sync-install-title">
+                <form method="dialog">
+                    <div class="window-titlebar">
+                        <div class="window-title">
+                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true"></span>
+                            <span id="sync-install-title" data-i18n="syncInstallTitle">添加到主屏幕</span>
+                        </div>
+                        <div class="window-controls">
+                            <button type="submit" data-sync-install-close data-i18n-aria="syncInstallClose" aria-label="关闭安装引导"><span aria-hidden="true">×</span></button>
+                        </div>
+                    </div>
+                    <div class="sync-install-body">
+                        <a class="sync-button" href="/chat/" target="_blank" rel="noopener" data-sync-install-open data-i18n="syncInstallOpen">打开独立联络站</a>
+                        <ol>
+                            <li data-i18n="syncInstallOpenStep">Safari 中点「分享」。</li>
+                            <li data-i18n="syncInstallShareStep">选择「添加到主屏幕」→「添加」。</li>
+                            <li data-i18n="syncInstallEnableStep">从主屏幕打开联络站，配对后开启通知。</li>
+                        </ol>
+                    </div>
+                    <div class="sync-confirm-actions">
+                        <button class="sync-button" type="submit" data-sync-install-dismiss data-i18n="syncInstallDismiss" autofocus>知道了</button>
+                    </div>
+                </form>
+            </dialog>
             <dialog class="sync-confirm-dialog" data-sync-confirm-dialog aria-labelledby="sync-confirm-title"
                 aria-describedby="sync-confirm-copy">
                 <form method="dialog">
                     <div class="window-titlebar">
                         <div class="window-title">
-                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
+                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true"></span>
                             <span id="sync-confirm-title" data-sync-confirm-title></span>
                         </div>
                         <div class="window-controls">
@@ -275,7 +294,7 @@
                 <form method="dialog">
                     <div class="window-titlebar">
                         <div class="window-title">
-                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true">☺</span>
+                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true"></span>
                             <span id="sync-sticker-title" data-i18n="syncStickers">表情</span>
                         </div>
                         <div class="window-controls">
@@ -294,7 +313,7 @@
                 <form data-sync-devices-form>
                     <div class="window-titlebar">
                         <div class="window-title">
-                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true">↔</span>
+                            <span class="window-app-icon window-app-icon--sync" aria-hidden="true"></span>
                             <span id="sync-devices-title" data-i18n="syncDevices">设备管理</span>
                         </div>
                         <div class="window-controls">
@@ -330,7 +349,7 @@
             </div>
             <div class="sync-preview-toolbar preview-zoom-toolbar" data-sync-preview-toolbar hidden>
                 <button class="sync-button" type="button" data-sync-preview-zoom-out data-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
-                <button class="sync-button" type="button" data-sync-preview-fit data-preview-zoom-fit data-i18n="syncPreviewFit">适应窗口</button>
+                <button class="sync-button" type="button" data-sync-preview-fit data-preview-zoom-fit data-i18n-aria="syncPreviewFit" aria-label="适应窗口" title="适应窗口"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25" aria-hidden="true" focusable="false"><path d="M7 2H2v5m11-5h5v5M2 13v5h5m6 0h5v-5"/><rect x="6" y="6" width="8" height="8"/></svg></button>
                 <button class="sync-button" type="button" data-sync-preview-zoom-in data-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
                 <span data-sync-preview-zoom data-preview-zoom-value>100%</span>
             </div>

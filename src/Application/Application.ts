@@ -37,6 +37,8 @@ export default class Application {
     ui: UI;
     stats: Stats | undefined;
     eventController: AbortController;
+    motionQuery: MediaQueryList;
+    reducedMotion: boolean;
 
     constructor() {
         // Singleton
@@ -46,6 +48,12 @@ export default class Application {
 
         instance = this;
         this.eventController = new AbortController();
+        this.motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+        // Reading .matches every frame can suppress Chromium's change event delivery.
+        this.reducedMotion = this.motionQuery.matches;
+        this.motionQuery.addEventListener('change', (event) => {
+            this.reducedMotion = event.matches;
+        }, { signal: this.eventController.signal });
 
         // Global access
         //@ts-ignore

@@ -514,7 +514,7 @@ const showSystemNotification = event => {
         if (!testing && windows.some(client => trustedClient(client) && client.focused && client.visibilityState === 'visible')) { reply('foreground'); return; }
         await self.registration.showNotification(event.data.title, {
             body: event.data.body, tag: testing ? `sync:test:${crypto.randomUUID()}` : `sync:${event.data.roomId}`, silent: !testing,
-            icon: new URL('../portfolio/assets/sync-notification.png', self.location.href).href,
+            icon: new URL('../portfolio/assets/sync-icon-192.png', self.location.href).href,
             data: testing ? { clientId: event.source.id } : { clientId: event.source.id, roomId: event.data.roomId }
         });
         reply('shown');
@@ -533,7 +533,7 @@ self.addEventListener('push', event => {
     event.waitUntil(self.registration.showNotification(english ? 'Contact Hub' : '联络站', {
         body: english ? 'You have a new message' : '有新消息',
         tag: valid ? `sync:${payload.roomId}` : 'sync:message',
-        icon: new URL('../portfolio/assets/sync-notification.png', self.location.href).href,
+        icon: new URL('../portfolio/assets/sync-icon-192.png', self.location.href).href,
         data: valid ? { roomId: payload.roomId } : {}
     }));
 });

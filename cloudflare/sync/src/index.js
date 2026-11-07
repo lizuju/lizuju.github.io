@@ -3,7 +3,7 @@ import { API_VERSION } from './api-version.js';
 import { collectDailyUsage, unavailableDailyUsage } from './daily-usage.js';
 import { getPushPublicKey, validatePushSubscription, sendWebPush } from './web-push.js';
 
-const ROOM_SCHEMA_VERSION = '3';
+const ROOM_SCHEMA_VERSION = '4';
 const INVITE_LIFETIME = 10 * 60 * 1000;
 const MESSAGE_LIFETIME = 7 * 24 * 60 * 60 * 1000;
 const STORAGE_HIGH_WATER = 4_800_000_000;
@@ -279,7 +279,11 @@ export default {
     if (request.method === 'PUT' && uploadChunk && ROOM_ID.test(uploadChunk[1])) return env.E2EE_SYNC_ROOMS.getByName(roomId).fetch(request);
     if (['GET', 'HEAD'].includes(request.method) && match[2]?.startsWith('/downloads/')) return env.E2EE_SYNC_ROOMS.getByName(roomId).fetch(request);
     const gamePath = /^\/gomoku\/([^/]+)(?:\/(join|move|leave))?$/.exec(match[2] || '');
+    const directRead = request.method === 'GET' && (['/devices', '/messages', '/profile', '/key-grants'].includes(match[2]) || (gamePath && !gamePath[2]));
+    const directFile = (['GET', 'HEAD'].includes(request.method) && /^\/files\/[1-9][0-9]*$/.test(match[2] || ''))
+      || (request.method === 'POST' && /^\/files\/[1-9][0-9]*\/download$/.test(match[2] || ''));
     if (!gamePath && match[2] !== '/profile' && !await registry.hasRoom(roomId)) return json({ error: 'not_found' }, 404);
+    if (directRead || directFile) return env.E2EE_SYNC_ROOMS.getByName(roomId).fetch(request);
     const room = env.E2EE_SYNC_ROOMS.getByName(roomId);
     if (request.method === 'GET' && match[2] === '/socket') {
       const protocols = (request.headers.get('Sec-WebSocket-Protocol') || '').split(',').map(value => value.trim());
@@ -321,7 +325,6 @@ export default {
       return resultResponse(await room.savePushSubscription(deviceId, subscription, body.value.language));
     }
     if (match[2] === '/profile') {
-      if (request.method === 'GET') return resultResponse(await room.readSpaceProfile(deviceId));
       if (request.method !== 'PATCH') return json({ error: 'not_found' }, 404);
       const body = await readJson(request, 8192);
       if (body.error) return resultResponse(body);
@@ -330,13 +333,11 @@ export default {
     }
     if (gamePath) {
       if (!ROOM_ID.test(gamePath[1])) return json({ error: 'game_not_found' }, 404);
-      if (request.method === 'GET' && !gamePath[2]) return resultResponse(await room.readGame(deviceId, gamePath[1]));
       if (request.method !== 'POST' || !gamePath[2]) return json({ error: 'not_found' }, 404);
       const body = await readJson(request);
       if (body.error) return resultResponse(body);
       return resultResponse(await room.updateGame(deviceId, keyId, gamePath[1], gamePath[2], body.value));
     }
-    if (request.method === 'GET' && match[2] === '/key-grants') return resultResponse(await room.keyGrants(deviceId, keyId));
     if (request.method === 'DELETE' && match[2] === '/key-grants') {
       const body = await readJson(request);
       if (body.error) return resultResponse(body);
@@ -381,16 +382,6 @@ export default {
       await registry.refreshRoom(roomId);
       if (result.message) return json(result.message, result.created ? 201 : 200);
       return resultResponse(result);
-    }
-    const file = match[2]?.match(/^\/files\/([1-9][0-9]*)(\/download)?$/);
-    if (file) {
-      if (request.method === 'POST' && file[2]) {
-        return resultResponse(await room.issueDownload(deviceId, file[1]));
-      }
-      if (['GET', 'HEAD'].includes(request.method) && !file[2]) return room.fetch(request);
-    }
-    if (request.method === 'GET' && match[2] === '/devices') {
-      return resultResponse(await room.listDevices(deviceId));
     }
     if (request.method === 'PATCH' && match[3]) {
       const body = await readJson(request, 8192);
@@ -450,13 +441,6 @@ export default {
       const { requestId, offerId, deviceId: joinedId, token: joinedToken, name, grant } = body.value;
       if (!ROOM_ID.test(requestId) || !ROOM_ID.test(offerId) || !ROOM_ID.test(joinedId) || !/^[0-9a-f]{64}$/.test(joinedToken) || !encrypted(name, 4096) || !encrypted(grant, 262144, 'pair1') || !rotationFields(body.value)) return json({ error: 'invalid_pairing' }, 400);
       return resultResponse(await registry.acceptPairing(roomId, deviceId, requestId, offerId, joinedId, joinedToken, name, grant, keyId, body.value));
-    }
-    if (request.method === 'GET' && match[2] === '/messages') {
-      const before = url.searchParams.get('before');
-      const after = url.searchParams.get('after');
-      const limit = url.searchParams.get('limit') || '50';
-      if ((before && after) || !/^[1-9][0-9]*$/.test(limit) || Number(limit) > 50 || [before, after].some(value => value !== null && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))))) return json({ error: 'invalid_cursor' }, 400);
-      return resultResponse(await room.messagePage({ before: before === null ? null : Number(before), after: after === null ? null : Number(after), limit: Number(limit), generation: url.searchParams.get('generation') }));
     }
     if (request.method === 'DELETE' && match[2] === '/messages') {
       const result = await room.clearMessages(deviceId);
@@ -1344,6 +1328,7 @@ export class E2eeSyncRoom extends DurableObject {
     this.sql.exec('CREATE INDEX IF NOT EXISTS files_status_updated ON files(status, updated_at)');
     this.sql.exec("CREATE INDEX IF NOT EXISTS files_deleting_age ON files(created_at) WHERE status = 'deleting'");
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_shards (file_id TEXT NOT NULL, shard_index INTEGER NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(file_id, shard_index))');
+    if (!this.sql.exec('PRAGMA table_info(file_shards)').toArray().some(column => column.name === 'measured_bytes')) this.sql.exec('ALTER TABLE file_shards ADD COLUMN measured_bytes INTEGER');
     this.sql.exec('CREATE TABLE IF NOT EXISTS file_upload_chunks (file_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, size INTEGER NOT NULL, received INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(file_id, chunk_index))');
     this.sql.exec('CREATE TABLE IF NOT EXISTS pair_acceptances (request_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, token_hash TEXT NOT NULL, rotation_id TEXT NOT NULL, key_id TEXT NOT NULL, grant TEXT NOT NULL, expires_at INTEGER NOT NULL)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS pair_cancellations (request_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)');
@@ -1558,7 +1543,7 @@ export class E2eeSyncRoom extends DurableObject {
     for (const socket of this.ctx.getWebSockets()) {
       if (socket.readyState !== WebSocket.OPEN) continue;
       socket.serializeAttachment({ closing: true });
-      socket.close(4001, 'Space expired');
+      socket.close(4004, 'Space expired');
     }
     this.ctx.waitUntil(this.scheduleAlarm());
     return true;
@@ -1965,7 +1950,7 @@ export class E2eeSyncRoom extends DurableObject {
       for (const socket of this.ctx.getWebSockets()) {
         if (socket.readyState !== WebSocket.OPEN) continue;
         socket.serializeAttachment({ closing: true });
-        socket.close(4001, 'Space expired');
+        socket.close(4004, 'Space expired');
       }
       this.initialized = false;
       await this.ctx.storage.deleteAlarm();
@@ -2079,7 +2064,7 @@ export class E2eeSyncRoom extends DurableObject {
       if (!previous) {
         this.ctx.storage.transactionSync(() => {
           this.sql.exec('INSERT INTO file_upload_chunks (file_id, chunk_index, size) VALUES (?, ?, ?)', uploadId, index, bytes.byteLength);
-          this.sql.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, ?, ?) ON CONFLICT(file_id, shard_index) DO UPDATE SET bytes = bytes + excluded.bytes', uploadId, shardIndex, allocation);
+          this.sql.exec('INSERT INTO file_shards (file_id, shard_index, bytes) VALUES (?, ?, ?) ON CONFLICT(file_id, shard_index) DO UPDATE SET bytes = bytes + excluded.bytes, measured_bytes = NULL', uploadId, shardIndex, allocation);
           this.sql.exec('UPDATE files SET reserved_bytes = max(0, reserved_bytes - ?) WHERE file_id = ?', allocation, uploadId);
         });
       }
@@ -2093,7 +2078,7 @@ export class E2eeSyncRoom extends DurableObject {
         this.sql.exec('UPDATE file_upload_chunks SET received = 1 WHERE file_id = ? AND chunk_index = ?', uploadId, index);
         this.sql.exec('UPDATE files SET updated_at = ?, received_bytes = received_bytes + ?, received_chunks = received_chunks + ? WHERE file_id = ?', Date.now(), previous?.received ? 0 : bytes.byteLength, previous?.received ? 0 : 1, uploadId);
         const accounted = (tracked?.bytes || 0) + (previous ? 0 : allocation);
-        this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', Math.max(result.bytes, accounted), uploadId, shardIndex);
+        this.sql.exec('UPDATE file_shards SET bytes = ?, measured_bytes = ? WHERE file_id = ? AND shard_index = ?', Math.max(result.bytes, accounted), result.bytes, uploadId, shardIndex);
       });
       return { receivedBytes: file.received_bytes + (previous?.received ? 0 : bytes.byteLength) };
     })();
@@ -2130,11 +2115,12 @@ export class E2eeSyncRoom extends DurableObject {
       };
       const initial = readUpload();
       if (!initial.file) return initial;
-      const shards = this.sql.exec('SELECT shard_index, bytes FROM file_shards WHERE file_id = ? ORDER BY shard_index', uploadId).toArray();
-      const measured = [];
-      // Remote shard probes must not hold the room's input gate while people are chatting.
-      for (let index = 0; index < shards.length; index += 4) {
-        const batch = shards.slice(index, index + 4);
+      const shards = this.sql.exec('SELECT shard_index, bytes, measured_bytes FROM file_shards WHERE file_id = ? ORDER BY shard_index', uploadId).toArray();
+      const measured = shards.filter(shard => shard.measured_bytes !== null).map(shard => ({ ...shard, bytes: shard.measured_bytes }));
+      const unmeasured = shards.filter(shard => shard.measured_bytes === null);
+      // Only uploads started before size measurements were persisted need remote probes.
+      for (let index = 0; index < unmeasured.length; index += 4) {
+        const batch = unmeasured.slice(index, index + 4);
         const sizes = await Promise.allSettled(batch.map(shard => this.env.E2EE_FILE_SHARDS.getByName(`${uploadId}:${shard.shard_index}`).storageBytes()));
         const failed = sizes.find(result => result.status === 'rejected');
         if (failed) throw failed.reason;
@@ -2148,9 +2134,10 @@ export class E2eeSyncRoom extends DurableObject {
         const attachment = { name: file.name, type: file.type, size: file.size };
         let pruned = [];
         const message = this.ctx.storage.transactionSync(() => {
-          measured.forEach((shard, index) => {
-            if (shard.bytes !== shards[index].bytes) this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', shard.bytes, uploadId, shard.shard_index);
-          });
+          for (const shard of measured) {
+            const previous = shards.find(value => value.shard_index === shard.shard_index);
+            if (shard.bytes !== previous.bytes) this.sql.exec('UPDATE file_shards SET bytes = ?, measured_bytes = ? WHERE file_id = ? AND shard_index = ?', shard.bytes, shard.bytes, uploadId, shard.shard_index);
+          }
           const created = this.sql.exec('INSERT INTO messages (client_id, device_id, text, created_at, attachment) VALUES (?, ?, ?, ?, ?) RETURNING id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment', file.client_id, deviceId, file.text, Date.now(), JSON.stringify(attachment)).one();
           this.sql.exec("UPDATE metadata SET value = ? WHERE key = 'lastMessageAt'", String(created.createdAt));
           this.sql.exec("UPDATE files SET status = 'complete', message_id = ?, created_at = ?, reserved_bytes = 0 WHERE file_id = ?", created.id, created.createdAt, uploadId);
@@ -2356,8 +2343,27 @@ export class E2eeSyncRoom extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
     if (url.hostname === 'maintenance.internal' && url.pathname === '/' && request.method === 'POST') return this.handleMaintenance(request);
-    if (!this.initialized || this.expireIfInactive()) return json({ error: 'not_found' }, 404);
+    if (!this.initialized) return json({ error: 'not_found' }, 404);
+    if (this.expireIfInactive()) return json({ error: 'space_expired' }, 404);
     const path = url.pathname;
+    const readPath = path.match(/^\/v1\/spaces\/[^/]+\/(devices|messages|profile|key-grants|gomoku\/([^/]+))$/);
+    const downloadRequest = path.match(/^\/v1\/spaces\/[^/]+\/files\/([1-9][0-9]*)\/download$/);
+    if ((request.method === 'GET' && readPath) || (request.method === 'POST' && downloadRequest)) {
+      const token = request.headers.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
+      const deviceId = token ? await this.authorize(token) : null;
+      if (!deviceId) return json({ error: this.roomExpired ? 'space_expired' : 'unauthorized' }, this.roomExpired ? 404 : 401);
+      const keyId = request.headers.get('X-Sync-Key-Id');
+      if (downloadRequest) return resultResponse(await this.issueDownload(deviceId, downloadRequest[1]));
+      if (readPath[1] === 'devices') return resultResponse(this.listDevices(deviceId));
+      if (readPath[1] === 'profile') return resultResponse(this.readSpaceProfile(deviceId));
+      if (readPath[1] === 'key-grants') return resultResponse(this.keyGrants(deviceId, keyId));
+      if (readPath[2]) return ROOM_ID.test(readPath[2]) ? resultResponse(this.readGame(deviceId, readPath[2])) : json({ error: 'game_not_found' }, 404);
+      const before = url.searchParams.get('before');
+      const after = url.searchParams.get('after');
+      const limit = url.searchParams.get('limit') || '50';
+      if ((before && after) || !/^[1-9][0-9]*$/.test(limit) || Number(limit) > 50 || [before, after].some(value => value !== null && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))))) return json({ error: 'invalid_cursor' }, 400);
+      return resultResponse(this.messagePage({ before: before === null ? null : Number(before), after: after === null ? null : Number(after), limit: Number(limit), generation: url.searchParams.get('generation') }));
+    }
     const uploadChunk = path.match(/^\/v1\/spaces\/[^/]+\/files\/uploads\/([0-9a-f-]{36})\/chunks\/(0|[1-9][0-9]*)$/i);
     if (request.method === 'PUT' && uploadChunk && ROOM_ID.test(uploadChunk[1])) {
       const token = request.headers.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
@@ -2486,7 +2492,7 @@ export class E2eeSyncRoom extends DurableObject {
 
   async webSocketMessage(socket, payload) {
     if (!this.initialized || this.expireIfInactive()) {
-      socket.close(4001, 'Space expired');
+      socket.close(4004, 'Space expired');
       return;
     }
     const attachment = socket.deserializeAttachment();

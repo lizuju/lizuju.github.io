@@ -88,6 +88,11 @@ export default class Camera extends EventEmitter {
         this.setInstance();
         this.setMonitorListeners();
         this.setFreeCamListeners();
+        this.application.motionQuery.addEventListener('change', () => {
+            if (this.application.reducedMotion) {
+                TWEEN.getAll().forEach(tween => tween.end());
+            }
+        }, { signal: this.application.eventController.signal });
     }
 
     transition(
@@ -104,6 +109,15 @@ export default class Camera extends EventEmitter {
         this.targetKeyframe = key;
 
         const keyframe = this.keyframes[key];
+        if (this.application.reducedMotion) {
+            keyframe.update();
+            this.position.copy(keyframe.position);
+            this.focalPoint.copy(keyframe.focalPoint);
+            this.currentKeyframe = key;
+            this.targetKeyframe = undefined;
+            if (callback) callback();
+            return;
+        }
 
         const posTween = new TWEEN.Tween(this.position)
             .to(keyframe.position, duration)

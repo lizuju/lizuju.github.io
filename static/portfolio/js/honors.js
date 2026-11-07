@@ -20,7 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     const honors = desktopApi.apps.projectFolder(manager);
     manager.bindGlobalListeners();
-    const active = manager.restoreDesktopSession();
+    const active = new URLSearchParams(location.search).has('certificate') ? null : manager.restoreDesktopSession();
     const folder = document.querySelector('[data-project-folder-window]');
     folder.classList.add('is-maximized');
     honors.showHonors();

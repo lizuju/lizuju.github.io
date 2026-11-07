@@ -85,6 +85,16 @@
             </div>
 
             <div class="address-toolbar project-folder-search">
+                <select class="address-field honors-category" data-honors-category data-i18n-aria="honorsCategory" aria-label="奖状分类" hidden>
+                    <option value="" data-i18n="honorsAll">全部奖状</option>
+                    <option value="modeling" data-i18n="honorsModeling">数学建模</option>
+                    <option value="robotics" data-i18n="honorsRobotics">机器人竞赛</option>
+                    <option value="competitions" data-i18n="honorsCompetitions">其他竞赛</option>
+                    <option value="academic" data-i18n="honorsAcademic">奖学金与学业荣誉</option>
+                    <option value="innovation" data-i18n="honorsInnovation">创新项目</option>
+                    <option value="intellectual-property" data-i18n="honorsIntellectualProperty">专利与软著</option>
+                    <option value="certifications" data-i18n="honorsCertifications">认证与研学</option>
+                </select>
                 <input class="address-field" type="search" data-project-folder-search data-i18n-placeholder="folderSearch"
                     placeholder="搜索" aria-label="搜索" autocomplete="off">
             </div>
@@ -330,9 +340,11 @@
                 <span data-image-counter aria-live="polite"></span>
                 <button type="button" data-image-next data-i18n-aria="previewNext" aria-label="下一张">›</button>
                 <button type="button" data-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
-                <button type="button" data-preview-zoom-fit data-i18n="syncPreviewFit">适应窗口</button>
+                <button type="button" data-preview-zoom-fit data-i18n-aria="syncPreviewFit" aria-label="适应窗口" title="适应窗口"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25" aria-hidden="true" focusable="false"><path d="M7 2H2v5m11-5h5v5M2 13v5h5m6 0h5v-5"/><rect x="6" y="6" width="8" height="8"/></svg></button>
                 <button type="button" data-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
                 <span data-preview-zoom-value>100%</span>
+                <button type="button" data-image-share aria-live="polite" hidden>复制链接</button>
+                <input class="honors-share-url" data-image-share-url data-i18n-aria="honorsShareUrl" aria-label="奖状分享链接" type="url" readonly hidden>
             </div>
             <div class="image-preview-body" tabindex="0" data-i18n-aria="previewWindowTitle" aria-label="图片预览">
                 <div class="project-image-loading" data-image-loading role="status" data-i18n-aria="previewImageLoading" aria-label="正在加载图片" hidden>
@@ -376,7 +388,7 @@
             </div>
             <div class="preview-zoom-toolbar" data-video-preview-toolbar>
                 <button type="button" data-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
-                <button type="button" data-preview-zoom-fit data-i18n="syncPreviewFit">适应窗口</button>
+                <button type="button" data-preview-zoom-fit data-i18n-aria="syncPreviewFit" aria-label="适应窗口" title="适应窗口"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25" aria-hidden="true" focusable="false"><path d="M7 2H2v5m11-5h5v5M2 13v5h5m6 0h5v-5"/><rect x="6" y="6" width="8" height="8"/></svg></button>
                 <button type="button" data-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
                 <span data-preview-zoom-value>100%</span>
             </div>
@@ -410,7 +422,7 @@
             </div>
             <div class="preview-zoom-toolbar" data-paper-preview-toolbar>
                 <button type="button" data-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
-                <button type="button" data-preview-zoom-fit data-i18n="syncPreviewFit">适应窗口</button>
+                <button type="button" data-preview-zoom-fit data-i18n-aria="syncPreviewFit" aria-label="适应窗口" title="适应窗口"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.25" aria-hidden="true" focusable="false"><path d="M7 2H2v5m11-5h5v5M2 13v5h5m6 0h5v-5"/><rect x="6" y="6" width="8" height="8"/></svg></button>
                 <button type="button" data-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
                 <span data-preview-zoom-value>100%</span>
             </div>

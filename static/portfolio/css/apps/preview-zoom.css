@@ -23,6 +23,20 @@
     border-style: inset;
 }
 
+.preview-zoom-toolbar [data-preview-zoom-fit] {
+    display: inline-flex;
+    width: 30px;
+    flex: 0 0 30px;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 5px;
+}
+
+.preview-zoom-toolbar [data-preview-zoom-fit] svg {
+    display: block;
+    flex: none;
+}
+
 .preview-zoom-toolbar button:disabled {
     color: #777;
     text-shadow: 1px 1px #fff;

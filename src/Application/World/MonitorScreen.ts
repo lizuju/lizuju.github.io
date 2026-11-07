@@ -60,6 +60,11 @@ export default class MonitorScreen extends EventEmitter {
     }
 
     initializeScreenEvents() {
+        document.addEventListener('focusin', (event) => {
+            if ((event.target as HTMLElement).id === 'computer-screen' || !this.prevInComputer) return;
+            this.inComputer = this.prevInComputer = false;
+            this.camera.trigger('leftMonitor');
+        }, { signal: this.application.eventController.signal });
         document.addEventListener(
             'mousemove',
             (event) => {
@@ -193,6 +198,13 @@ export default class MonitorScreen extends EventEmitter {
 
             if (event.data.type === 'audio-mute-toggle') {
                 toggleMuteState();
+                return;
+            }
+
+            if (event.data.type === 'focusin') {
+                if (document.activeElement !== iframe || iframe.closest('[inert]') || this.prevInComputer) return;
+                this.inComputer = this.prevInComputer = true;
+                this.camera.trigger('enterMonitor');
                 return;
             }
 
@@ -357,7 +369,14 @@ export default class MonitorScreen extends EventEmitter {
         const video = document.getElementById(videoId) as HTMLVideoElement;
         video.src = video.dataset.src!;
         video.load();
-        video.play().catch(() => undefined);
+        const updateMotion = () => {
+            if (this.application.reducedMotion) video.pause();
+            else video.play().catch(() => undefined);
+        };
+        this.application.motionQuery.addEventListener('change', updateMotion, {
+            signal: this.application.eventController.signal,
+        });
+        updateMotion();
 
         return new THREE.VideoTexture(video);
     }

@@ -2,6 +2,7 @@ import { saveLocalSession, deleteLocalSession } from './sync-crypto.js';
 
 export const CREDENTIAL_KEY = 'portfolio-sync-space-e2ee1';
 export const CATALOG_KEY = 'portfolio-sync-spaces-e2ee1';
+export const REMOVAL_KEY = 'portfolio-sync-space-removal';
 const matches = (a, b) => !!a && !!b && a.roomId === b.roomId && a.token === b.token && a.vaultId === b.vaultId;
 const valid = value => value && ['roomId', 'token', 'deviceId', 'vaultId'].every(key => typeof value[key] === 'string' && value[key].length);
 const descriptor = value => ({ roomId: value.roomId, token: value.token, deviceId: value.deviceId,
@@ -88,11 +89,16 @@ export class SavedSpaces {
         });
     }
 
-    remove(session) {
+    remove(session, reason = null) {
         return locked(async () => {
             const list = this.list();
             const item = list.find(value => matches(value, session));
             if (!item) return false;
+            if (reason) {
+                // Use the same storage event queue as the catalog removal so tabs receive the cause first.
+                localStorage.setItem(REMOVAL_KEY, JSON.stringify({ vaultId: item.vaultId, reason }));
+                localStorage.removeItem(REMOVAL_KEY);
+            }
             const remaining = list.filter(value => value !== item);
             localStorage.setItem(CATALOG_KEY, JSON.stringify(remaining));
             if (matches(this.active(), item)) {

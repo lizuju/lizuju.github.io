@@ -1,4 +1,5 @@
 const { test, expect, deviceId, otherId, keyId, message, authorize } = require('./fixtures/sync-e2ee.cjs');
+const { apiBase: productionApiBase } = require('../static/portfolio/sync-config.json');
 
 test.use({ serviceWorkers: 'block' });
 
@@ -8,7 +9,13 @@ const headers = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
 };
 
-const openChat = async (page, initial = []) => {
+const openChat = async (page, initial = [], path = '/portfolio/') => {
+    if (path === '/chat/') await page.route('**/chat/', async route => {
+        const response = await route.fetch();
+        const body = (await response.text()).replaceAll(productionApiBase, 'https://sync.test')
+            .replaceAll(productionApiBase.replace(/^http/, 'ws'), 'wss://sync.test');
+        await route.fulfill({ response, body });
+    });
     await authorize(page);
     await page.route('**/portfolio/sync-config.json', route => route.fulfill({ json: { apiBase: 'https://sync.test' } }));
     await page.route('https://sync.test/**', route => route.request().method() === 'OPTIONS'
@@ -23,9 +30,11 @@ const openChat = async (page, initial = []) => {
         }));
     }));
     const open = async () => {
-        await page.goto('/portfolio/');
-        if (await page.locator('[data-window-action="minimize"]').isVisible()) await page.locator('[data-window-action="minimize"]').click();
-        if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+        await page.goto(path);
+        if (path === '/portfolio/') {
+            if (await page.locator('[data-window-action="minimize"]').isVisible()) await page.locator('[data-window-action="minimize"]').click();
+            if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+        }
         await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
     };
     await open();
@@ -108,31 +117,52 @@ test('keeps the tools overlay closed in narrow windows and remembers only the wi
     await expect(panel).toBeVisible();
 });
 
-test('keeps the mobile sidebar open when notification setup reveals the Home Screen instructions', async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
+for (const path of ['/portfolio/', '/chat/']) test(`opens concise bilingual Home Screen guidance in a narrow modal from ${path}`, async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 568 });
     await page.addInitScript(() => {
         delete window.Notification;
         Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' });
         Object.defineProperty(navigator, 'standalone', { configurable: true, value: false });
     });
-    await openChat(page);
+    await openChat(page, [], path);
     const toggle = page.locator('[data-sync-tools-toggle]');
-    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    await toggle.click();
     const notifications = page.locator('[data-sync-notifications]');
-    await expect(notifications).toHaveText('系统通知：需添加到主屏幕');
-    await notifications.click();
-    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.locator('[data-sync-tools-panel]')).toBeVisible();
-    const guide = page.locator('[data-sync-install-guide]');
-    await expect(guide).toHaveAttribute('open', '');
-    await expect(guide).toBeVisible();
-    await expect(guide).toContainText('Safari 分享');
-    await guide.scrollIntoViewIfNeeded();
-    const size = await guide.evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth }));
-    expect(size.scroll).toBeLessThanOrEqual(size.width + 1);
+    const dialog = page.locator('[data-sync-install-dialog]');
+    await expect(page.locator('[data-sync-install-guide]')).toHaveCount(0);
+    await expect(dialog).toBeHidden();
+    for (const close of ['escape', 'install-close', 'install-dismiss']) {
+        await toggle.click();
+        await expect(notifications).toHaveText('系统通知：需添加到主屏幕');
+        await notifications.click();
+        await expect(dialog).toBeVisible();
+        expect(await dialog.evaluate(element => element.matches(':modal'))).toBe(true);
+        await expect(dialog.locator('li')).toHaveCount(3);
+        await expect(dialog).toContainText('分享');
+        await expect(dialog).toContainText('添加到主屏幕');
+        await expect(dialog).toContainText('开启通知');
+        const link = dialog.locator('[data-sync-install-open]');
+        if (path === '/portfolio/') {
+            await expect(link).toBeVisible();
+            await expect(link).toHaveAttribute('href', '/chat/');
+        } else await expect(link).toBeHidden();
+        const bounds = await dialog.boundingBox();
+        expect(bounds.x).toBeGreaterThanOrEqual(0);
+        expect(bounds.y).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(321);
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(569);
+        const dimensions = await dialog.evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth }));
+        expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.width + 1);
+        if (close === 'escape') await page.keyboard.press('Escape');
+        else await dialog.locator(`[data-sync-${close}]`).click();
+        await expect(dialog).toBeHidden();
+        await expect(toggle).toBeFocused();
+    }
+    await page.locator('[data-taskbar-lang]').click();
     await toggle.click();
-    await expect(page.locator('[data-sync-tools-panel]')).toBeHidden();
+    await notifications.click();
+    await expect(dialog).toContainText('Share');
+    await expect(dialog).toContainText('Add to Home Screen');
+    await expect(dialog).toContainText('notifications');
 });
 
 // Records an element's top after each of the next frames is painted, starting from a change made in the first frame.
