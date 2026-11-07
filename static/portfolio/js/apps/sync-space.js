@@ -70,6 +70,7 @@ import { pendingMessages } from './sync-outbox.js';
         const devicesDialog = find('devices-dialog');
         const spaceNameDialog = find('space-name-dialog');
         const stickerDialog = find('sticker-dialog');
+        const installDialog = find('install-dialog');
         const messageNodes = new Map();
         const inlineImages = new Map();
         const imageResources = new Map();
@@ -956,7 +957,7 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const isChatForeground = () => !room.hidden && active && viewingDesktop && browserFocused && document.hasFocus() && !document.hidden
             && app.classList.contains('is-active') && !app.classList.contains('is-minimized')
-            && !app.closest('[inert]') && !devicesDialog.open && !confirmation.open && !stickerDialog.open && !spaceNameDialog.open && !replyNavigation
+            && !app.closest('[inert]') && !devicesDialog.open && !confirmation.open && !stickerDialog.open && !spaceNameDialog.open && !installDialog.open && !replyNavigation
             && !(app.clientWidth <= 640 && (!app.classList.contains('is-tools-collapsed') || !app.classList.contains('is-spaces-collapsed')));
         const isReading = () => isChatForeground() && performance.now() - lastInteraction < 60000 && !find('search').value.trim();
         const updateReadReceipts = () => {
@@ -2194,6 +2195,7 @@ import { pendingMessages } from './sync-outbox.js';
             if (confirmation.open) confirmation.close();
             if (devicesDialog.open) devicesDialog.close();
             if (spaceNameDialog.open) spaceNameDialog.close();
+            if (installDialog.open) installDialog.close();
             clearTimeout(searchTimer);
             searchController?.abort();
             searchController = null;
@@ -2554,7 +2556,6 @@ import { pendingMessages } from './sync-outbox.js';
         // In narrow windows the tools overlay the conversation, so an action closes them like switching spaces does.
         app.querySelector('.sync-tools-actions').addEventListener('click', (event) => {
             if (!event.target.closest('button') || getComputedStyle(find('tools')).position !== 'absolute') return;
-            if (event.target.closest('[data-sync-notifications]') && find('install-guide').open && !find('install-guide').hidden) return;
             app.classList.add('is-tools-collapsed');
             renderToolsToggle();
         });
@@ -2710,6 +2711,7 @@ import { pendingMessages } from './sync-outbox.js';
                 if (confirmation.open) confirmation.close();
                 if (devicesDialog.open) devicesDialog.close();
                 if (stickerDialog.open) stickerDialog.close();
+                if (installDialog.open) installDialog.close();
                 manager.hideWindow(app, entry.task, state, { hideTask: state === 'is-closed' });
                 if (state === 'is-closed') {
                     clearTimeout(searchTimer);
@@ -3564,6 +3566,7 @@ import { pendingMessages } from './sync-outbox.js';
         }
         const readingObserver = new MutationObserver(() => { markRead(); updateInlineImages(); updateVoiceVisibility(); });
         readingObserver.observe(app, { attributes: true, attributeFilter: ['class', 'inert'] });
+        readingObserver.observe(installDialog, { attributes: true, attributeFilter: ['open'] });
         for (let ancestor = app.parentElement; ancestor; ancestor = ancestor.parentElement) {
             readingObserver.observe(ancestor, { attributes: true, attributeFilter: ['inert'] });
         }
@@ -3592,7 +3595,7 @@ import { pendingMessages } from './sync-outbox.js';
         find('leave').addEventListener('click', () => showConfirmation('leave'));
         find('devices-form').addEventListener('submit', (event) => event.preventDefault());
         for (const name of ['devices-close', 'devices-dismiss']) find(name).addEventListener('click', () => devicesDialog.close());
-        for (const dialog of [confirmation, devicesDialog, spaceNameDialog]) {
+        for (const dialog of [confirmation, devicesDialog, spaceNameDialog, installDialog]) {
             dialog.addEventListener('close', () => {
                 if (!document.activeElement || document.activeElement === document.body || !document.activeElement.getClientRects().length) {
                     find('tools-toggle').focus({ preventScroll: true });
@@ -3608,7 +3611,8 @@ import { pendingMessages } from './sync-outbox.js';
                 }
                 if (event.key !== 'Tab') return;
                 event.preventDefault();
-                const controls = Array.from(dialog.querySelectorAll('button:not(:disabled), input:not(:disabled)'));
+                const controls = Array.from(dialog.querySelectorAll('button:not(:disabled), input:not(:disabled), a[href]'))
+                    .filter(element => element.getClientRects().length);
                 const direction = event.shiftKey ? -1 : 1;
                 controls[(controls.indexOf(document.activeElement) + direction + controls.length) % controls.length].focus();
             });
@@ -3767,7 +3771,7 @@ import { pendingMessages } from './sync-outbox.js';
         const push = createWebPush({ api, getSessions: () => Array.from(connections.values(), record => record.session), getLanguage: desktopApi.getLanguage });
         const systemNotifications = createSystemNotifications({
             button: find('notifications'), translate, onError: key => setNotice(key, true),
-            push, installGuide: find('install-guide'), installButton: find('install'),
+            push, installDialog,
             onOpen: roomId => { entry.show(); if (credentials?.roomId !== roomId) switchSpace(roomId); }
         });
         desktopApi.notificationDiagnostics = () => systemNotifications.diagnostics();

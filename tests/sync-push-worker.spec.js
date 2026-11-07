@@ -104,14 +104,20 @@ test('the chat installation manifest opens the hub with its own identity and app
     const html = await readFile('static/chat/index.html', 'utf8');
     expect(html).toContain('rel="manifest" href="manifest.webmanifest"');
     expect(html).toContain('name="apple-mobile-web-app-capable" content="yes"');
-    expect(html).toContain('rel="apple-touch-icon"');
+    expect(html).toContain('rel="apple-touch-icon" sizes="180x180" href="../portfolio/assets/sync-app-icon-180.png"');
+    const appleIcon = await readFile('static/portfolio/assets/sync-app-icon-180.png');
+    expect([appleIcon.readUInt32BE(16), appleIcon.readUInt32BE(20)]).toEqual([180, 180]);
+    expect(appleIcon[25]).toBe(2);
     const manifest = JSON.parse(await readFile('static/chat/manifest.webmanifest', 'utf8'));
     expect(manifest.id).toBe('/chat/');
     expect(manifest.start_url).toBe('/chat/');
     expect(manifest.scope).toBe('/chat/');
     expect(manifest.display).toBe('standalone');
     for (const icon of manifest.icons) {
+        expect(icon.purpose).toBe('any maskable');
+        expect(icon.src).toContain('/sync-app-icon-');
         const data = await readFile(new URL(icon.src, new URL('../static/chat/manifest.webmanifest', `file://${__filename}`)));
         expect(`${data.readUInt32BE(16)}x${data.readUInt32BE(20)}`).toBe(icon.sizes);
+        expect(data[25]).toBe(2);
     }
 });
