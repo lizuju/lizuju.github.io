@@ -2758,7 +2758,10 @@ import { pendingMessages } from './sync-outbox.js';
             updateControls();
             setNotice(action === 'create' ? 'syncCreating' : 'syncJoining');
             try {
-                if (!await saveDraft()) return;
+                let saving = saveDraft();
+                let saved = await saving;
+                while (saving !== draftSave && version === sessionVersion) { saving = draftSave; saved = await saving; }
+                if (!saved || version !== sessionVersion) return;
                 // Check persistence without replacing another tab's paired session.
                 const previous = localStorage.getItem(CREDENTIAL_KEY);
                 if (previous !== null) localStorage.setItem(CREDENTIAL_KEY, previous);

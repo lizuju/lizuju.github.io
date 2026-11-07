@@ -739,12 +739,11 @@
             const workArea = getWorkArea();
             const width = Math.min(Math.max(1, geometry.width), workArea.width);
             const height = Math.min(Math.max(1, geometry.height), workArea.height);
-            applyWindowGeometry({
-                left: Math.min(Math.max(0, geometry.left), Math.max(0, workArea.width - width)),
-                top: Math.min(Math.max(0, geometry.top), Math.max(0, workArea.height - height)),
+            applyWindowGeometry(window.GavinDesktop.constrainWindowPosition(gameWindow, {
+                ...geometry,
                 width,
                 height
-            });
+            }, workArea));
         }
 
         function saveGameSession() {
@@ -822,9 +821,7 @@
                     gameWindow.classList.remove('is-maximized');
                     restoreWindowGeometry(savedSession.desktop.geometry);
                 }
-                document.querySelectorAll('[data-gomoku-window-action="maximize"]').forEach((button) => {
-                    button.setAttribute('aria-pressed', String(gameWindow.classList.contains('is-maximized')));
-                });
+                window.GavinDesktop.updateMaximizeButtons(gameWindow, '[data-gomoku-window-action="maximize"]');
             }
 
             return true;
@@ -850,9 +847,7 @@
                 clearWindowGeometry();
                 gameWindow.classList.add('is-maximized');
             }
-            document.querySelectorAll('[data-gomoku-window-action="maximize"]').forEach((button) => {
-                button.setAttribute('aria-pressed', String(gameWindow.classList.contains('is-maximized')));
-            });
+            window.GavinDesktop.updateMaximizeButtons(gameWindow, '[data-gomoku-window-action="maximize"]');
             window.requestAnimationFrame(resizeBoard);
         }
 
@@ -879,11 +874,11 @@
             const deltaX = event.clientX - startX;
             const deltaY = event.clientY - startY;
             if (type === 'drag') {
-                applyWindowGeometry({
+                applyWindowGeometry(window.GavinDesktop.constrainWindowPosition(gameWindow, {
                     ...geometry,
-                    left: Math.min(Math.max(0, geometry.left + deltaX), Math.max(0, workArea.width - geometry.width)),
-                    top: Math.min(Math.max(0, geometry.top + deltaY), Math.max(0, workArea.height - geometry.height))
-                });
+                    left: geometry.left + deltaX,
+                    top: geometry.top + deltaY
+                }, workArea));
                 return;
             }
             const mobileWindow = window.innerWidth <= 900;
@@ -1111,6 +1106,7 @@
 
         window.addEventListener('portfolio-language-change', (event) => {
             applyLanguage(event.detail?.language);
+            window.GavinDesktop.updateMaximizeButtons(gameWindow, '[data-gomoku-window-action="maximize"]');
         });
         window.addEventListener('resize', () => {
             finishPointerInteraction();

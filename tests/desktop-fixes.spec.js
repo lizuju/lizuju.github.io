@@ -97,7 +97,7 @@ test('ignores a second mail send from the menu while delivery is pending', async
     expect(postRequests).toBe(1);
 });
 
-test('keeps dragged windows in the work area after desktop resize and maximized restore', async ({ page, isMobile }) => {
+test('keeps partially hidden windows reachable after desktop resize and maximized restore', async ({ page, isMobile }) => {
     test.skip(isMobile, 'this regression stays above the desktop breakpoint');
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto('/portfolio/');
@@ -106,12 +106,13 @@ test('keeps dragged windows in the work area after desktop resize and maximized 
 
     const folderWindow = page.locator('[data-project-folder-window]');
     const titlebar = folderWindow.locator('[data-project-folder-drag]');
-    const windowFits = () => folderWindow.evaluate((element) => {
+    const windowReachable = () => folderWindow.evaluate((element) => {
         const box = element.getBoundingClientRect();
+        const title = element.querySelector('.window-titlebar').getBoundingClientRect();
         const desktop = document.querySelector('[data-retro-desktop]').getBoundingClientRect();
         const taskbar = document.querySelector('.desktop-taskbar').getBoundingClientRect();
-        return box.left >= desktop.left - 1 && box.top >= desktop.top - 1
-            && box.right <= desktop.right + 1 && box.bottom <= taskbar.top + 1;
+        return box.top >= desktop.top - 1 && title.bottom <= taskbar.top + 1
+            && box.right >= desktop.left + 159 && box.left <= desktop.right - 159;
     });
 
     let dragBar = await titlebar.boundingBox();
@@ -120,11 +121,11 @@ test('keeps dragged windows in the work area after desktop resize and maximized 
     await page.mouse.move(1270, 870, { steps: 8 });
     await page.mouse.up();
     const dragged = await folderWindow.boundingBox();
-    expect(dragged.x + dragged.width).toBeGreaterThan(1000);
-    expect(dragged.y + dragged.height).toBeGreaterThan(700);
+    expect(dragged.x + dragged.width).toBeGreaterThan(1280);
+    expect(dragged.y + dragged.height).toBeGreaterThan(900);
 
     await page.setViewportSize({ width: 1000, height: 700 });
-    await expect.poll(windowFits).toBe(true);
+    await expect.poll(windowReachable).toBe(true);
 
     await page.setViewportSize({ width: 1280, height: 900 });
     dragBar = await titlebar.boundingBox();
@@ -132,17 +133,47 @@ test('keeps dragged windows in the work area after desktop resize and maximized 
     await page.mouse.down();
     await page.mouse.move(1270, 870, { steps: 8 });
     await page.mouse.up();
-    await folderWindow.locator('[data-project-folder-action="maximize"]').click();
+    await titlebar.dblclick({ position: { x: 40, y: 10 } });
     await expect(folderWindow).toHaveClass(/is-maximized/);
 
     await page.setViewportSize({ width: 1000, height: 700 });
-    await expect.poll(windowFits).toBe(true);
+    await expect.poll(windowReachable).toBe(true);
     await folderWindow.locator('[data-project-folder-action="maximize"]').click();
     await expect(folderWindow).not.toHaveClass(/is-maximized/);
-    await expect.poll(windowFits).toBe(true);
+    await expect.poll(windowReachable).toBe(true);
 
     await page.setViewportSize({ width: 1000, height: 300 });
-    await expect.poll(windowFits).toBe(true);
+    await expect.poll(windowReachable).toBe(true);
+});
+
+test('keeps the taskbar anchored when switching windows partly outside the desktop', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'desktop windows can be dragged outside the work area');
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    const taskbar = page.locator('.desktop-taskbar');
+    const original = await taskbar.boundingBox();
+    for (const [shortcut, windowSelector] of [
+        ['[data-open-mail-window]', '[data-mail-window]'],
+        ['[data-open-gomoku]', '[data-gomoku-window]']
+    ]) {
+        await page.locator(`.desktop-shortcut${shortcut}`).click();
+        if (windowSelector === '[data-gomoku-window]') await expect(page.locator('[data-gomoku-mode="local"]')).toBeVisible();
+        const title = await page.locator(windowSelector).locator('.window-titlebar').first().boundingBox();
+        await page.mouse.move(title.x + 60, title.y + 10);
+        await page.mouse.down();
+        await page.mouse.move(page.viewportSize().width - 2, original.y - 5, { steps: 8 });
+        await page.mouse.up();
+        const box = await page.locator(windowSelector).boundingBox();
+        expect(box.y + box.height).toBeGreaterThan(page.viewportSize().height);
+    }
+    for (const selector of ['[data-mail-task]', '[data-gomoku-task]', '[data-gomoku-task]', '[data-gomoku-task]']) {
+        await page.locator(selector).click();
+        expect(await taskbar.boundingBox()).toEqual(original);
+        expect(await page.locator('[data-retro-desktop]').evaluate(el => [el.scrollLeft, el.scrollTop])).toEqual([0, 0]);
+    }
+    await page.locator('[data-gomoku-mode="local"]').evaluate(el => el.scrollIntoView());
+    expect(await taskbar.boundingBox()).toEqual(original);
+    expect(await page.locator('[data-retro-desktop]').evaluate(el => [el.scrollLeft, el.scrollTop])).toEqual([0, 0]);
 });
 
 test('moves keyboard focus into opened windows and windows selected from the taskbar', async ({ page, isMobile }) => {

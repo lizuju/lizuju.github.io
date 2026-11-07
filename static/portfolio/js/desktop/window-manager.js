@@ -1,6 +1,27 @@
 (() => {
     const desktopApi = window.GavinDesktop;
 
+    const constrainWindowPosition = (element, geometry, workArea) => {
+        const visibleWidth = Math.min(160, geometry.width, workArea.width);
+        const titleHeight = element.querySelector('.window-titlebar').offsetHeight + 2 * element.clientTop;
+        return {
+            ...geometry,
+            left: Math.min(Math.max(visibleWidth - geometry.width, geometry.left), workArea.width - visibleWidth),
+            top: Math.min(Math.max(0, geometry.top), Math.max(0, workArea.height - titleHeight))
+        };
+    };
+
+    const updateMaximizeButtons = (element, selector) => {
+        const maximized = element.classList.contains('is-maximized');
+        document.querySelectorAll(selector).forEach((button) => {
+            const key = maximized ? 'windowRestore' : 'windowMaximize';
+            button.dataset.i18nAria = key;
+            button.setAttribute('aria-pressed', String(maximized));
+            button.setAttribute('aria-label', desktopApi.t()[key]);
+            button.title = desktopApi.t()[key];
+        });
+    };
+
     // Owns window stacking, focus, menus, drag/resize and the minimize/maximize/close
     // controls shared by every desktop window. Apps register their windows here.
     function createWindowManager({ desktop, startButton, startMenu }) {
@@ -249,19 +270,11 @@
             const workArea = getWorkArea();
             const width = Math.min(Math.max(1, geometry.width), workArea.width);
             const height = Math.min(Math.max(1, geometry.height), workArea.height);
-            applyWindowGeometry(element, {
-                left: Math.min(Math.max(0, geometry.left), Math.max(0, workArea.width - width)),
-                top: Math.min(Math.max(0, geometry.top), Math.max(0, workArea.height - height)),
+            applyWindowGeometry(element, constrainWindowPosition(element, {
+                ...geometry,
                 width,
                 height
-            });
-        };
-
-        const updateMaximizeButtons = (element, selector) => {
-            const maximized = element.classList.contains('is-maximized');
-            document.querySelectorAll(selector).forEach((button) => {
-                button.setAttribute('aria-pressed', String(maximized));
-            });
+            }, workArea));
         };
 
         const toggleMaximize = (element, selector) => {
@@ -307,11 +320,11 @@
             const workArea = getWorkArea();
 
             if (type === 'drag') {
-                applyWindowGeometry(element, {
+                applyWindowGeometry(element, constrainWindowPosition(element, {
                     ...geometry,
-                    left: Math.min(Math.max(0, geometry.left + deltaX), Math.max(0, workArea.width - geometry.width)),
-                    top: Math.min(Math.max(0, geometry.top + deltaY), Math.max(0, workArea.height - geometry.height))
-                });
+                    left: geometry.left + deltaX,
+                    top: geometry.top + deltaY
+                }, workArea));
                 return;
             }
 
@@ -371,6 +384,7 @@
             const entry = { id, element, task, maximizeSelector };
             windowEntries.push(entry);
             if (focusTarget) focusTargets.set(element, focusTarget);
+            updateMaximizeButtons(element, maximizeSelector);
 
             const showApp = show || (() => showWindow(element, task, { revealTask: true }));
             const hideApp = hide || ((state) => hideWindow(element, task, state, { hideTask: state === 'is-closed' }));
@@ -521,6 +535,11 @@
             document.addEventListener('pointermove', updatePointerInteraction);
             document.addEventListener('pointerup', finishPointerInteraction);
             document.addEventListener('pointercancel', finishPointerInteraction);
+            window.addEventListener('portfolio-language-change', () => {
+                windowEntries.filter((entry) => !entry.external).forEach(({ element, maximizeSelector }) => {
+                    updateMaximizeButtons(element, maximizeSelector);
+                });
+            });
 
             window.addEventListener('resize', () => {
                 finishPointerInteraction();
@@ -582,4 +601,6 @@
     }
 
     desktopApi.createWindowManager = createWindowManager;
+    desktopApi.constrainWindowPosition = constrainWindowPosition;
+    desktopApi.updateMaximizeButtons = updateMaximizeButtons;
 })();
