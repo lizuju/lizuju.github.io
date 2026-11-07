@@ -431,13 +431,16 @@ test('offers a rematch in settlement, waits for the opponent and swaps colors wi
             expect(result.y + result.height - exit.y - exit.height).toBeLessThanOrEqual(16);
             await expect(page.locator('[data-sync-gomoku-board]')).toHaveAttribute('aria-disabled', 'true');
         }
+        await expect(guest.locator('[data-sync-gomoku-host]')).toHaveText(/\S/);
+        const inviterName = await guest.locator('[data-sync-gomoku-host]').textContent();
         await owner.locator('[data-sync-gomoku-rematch]').click();
         await expect(owner.locator('[data-sync-gomoku-rematch]')).toHaveText('等待对方同意');
         await expect(owner.locator('[data-sync-gomoku-rematch]')).toBeDisabled();
-        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText(`${await guest.locator('[data-sync-gomoku-host]').textContent()} 邀你再战`);
+        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText(`${inviterName} 邀你再战`);
         await guest.reload();
         await awaitOnline(guest);
-        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText(`${await guest.locator('[data-sync-gomoku-host]').textContent()} 邀你再战`);
+        await expect(guest.locator('[data-sync-gomoku-host]')).toHaveText(inviterName);
+        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText(`${inviterName} 邀你再战`);
         await expect(guest.locator('[data-sync-gomoku-result]')).toBeVisible();
         for (const page of [owner, guest]) {
             const layout = await page.locator('[data-sync-gomoku-window]').evaluate(element => ({ width: element.clientWidth, content: element.scrollWidth }));
@@ -452,6 +455,7 @@ test('offers a rematch in settlement, waits for the opponent and swaps colors wi
         await owner.locator('[data-taskbar-lang]').click();
         await expect(owner.locator('[data-sync-gomoku-rematch]')).toHaveText('Waiting for opponent');
         await expect(owner.locator('[data-sync-gomoku-result-close]')).toHaveText('Leave match');
+        const englishInviterName = await owner.locator('[data-sync-gomoku-host]').textContent();
         const [englishAgain, englishExit, englishWindow] = await Promise.all([
             owner.locator('[data-sync-gomoku-rematch]').boundingBox(),
             owner.locator('[data-sync-gomoku-result-close]').boundingBox(),
@@ -464,7 +468,8 @@ test('offers a rematch in settlement, waits for the opponent and swaps colors wi
         await owner.screenshot({ path: testInfo.outputPath('rematch-waiting-english.png') });
         await owner.locator('[data-taskbar-lang]').click();
         await guest.locator('[data-taskbar-lang]').click();
-        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText(`${await guest.locator('[data-sync-gomoku-host]').textContent()} invites you`);
+        await expect(guest.locator('[data-sync-gomoku-host]')).toHaveText(englishInviterName);
+        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText(`${englishInviterName} invites you`);
         await guest.locator('[data-taskbar-lang]').click();
         await guest.screenshot({ path: testInfo.outputPath('rematch-offer.png') });
         await guest.locator('[data-sync-gomoku-rematch]').click();
@@ -497,6 +502,8 @@ test('exiting settlement cancels either side of a pending rematch and keeps the 
         await guest.locator('[data-sync-gomoku-action="close"]').click();
         await guest.locator('[data-sync-gomoku-leave]').click();
         await expect(owner.locator('[data-sync-gomoku-result]')).toBeVisible();
+        await expect(guest.locator('[data-sync-gomoku-host]')).toHaveText(/\S/);
+        const inviterName = await guest.locator('[data-sync-gomoku-host]').textContent();
         const finished = await readGame(sessions[0], id);
         for (const [closingPage, selector] of [
             [owner, '[data-sync-gomoku-result-close]'],
@@ -506,7 +513,7 @@ test('exiting settlement cancels either side of a pending rematch and keeps the 
             await owner.locator('[data-sync-gomoku-rematch]').click();
             await expect(owner.locator('[data-sync-gomoku-rematch]')).toHaveText('等待对方同意');
             await expect(owner.locator('[data-sync-gomoku-rematch]')).toBeDisabled();
-            await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText(`${await guest.locator('[data-sync-gomoku-host]').textContent()} 邀你再战`);
+            await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText(`${inviterName} 邀你再战`);
             const invitationId = (await readGame(sessions[0], id)).nextGameId;
             expect((await readGame(sessions[0], invitationId)).status).toBe('waiting');
             if (closingPage === owner && selector === '[data-sync-gomoku-result-close]') {
