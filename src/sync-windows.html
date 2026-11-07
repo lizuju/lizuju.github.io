@@ -173,10 +173,8 @@
                     <aside class="sync-tools" data-sync-tools aria-labelledby="sync-tools-title">
                         <div class="sync-tools-header">
                             <div class="sync-tools-quick">
-                                <a class="sync-button sync-open-chat" href="/chat/" target="_blank" rel="noopener">
-                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
-                                        <path d="M14 3h7v7M21 3l-11 11M10 5H4v15h15v-6" />
-                                    </svg>
+                                <a class="sync-button sync-open-chat window-open-link" href="/chat/" target="_blank" rel="noopener">
+                                    <img src="../portfolio/assets/open-in-new.svg" width="16" height="16" alt="">
                                     <span class="visually-hidden" data-i18n="syncOpenChat">在新标签页打开联络站</span>
                                 </a>
                                 <button class="sync-button sync-sound-toggle" type="button" data-sync-sound
@@ -211,6 +209,12 @@
                                     data-i18n="syncLeave">离开空间</button>
                             </div>
                             <div class="sync-tools-notes">
+                                <details class="sync-install-guide" data-sync-install-guide>
+                                    <summary data-i18n="syncInstallTitle">添加到主屏幕</summary>
+                                    <p class="sync-hint" data-sync-install-copy></p>
+                                    <a href="/chat/" target="_blank" rel="noopener" data-i18n="syncInstallOpen">打开独立联络站</a>
+                                    <button class="sync-button" type="button" data-sync-install data-i18n="syncInstallAction" hidden>安装联络站</button>
+                                </details>
                                 <p class="sync-hint" id="sync-file-limit" data-i18n="syncFileLimit">可选择、拖入文件或粘贴截图，最大 2GB。</p>
                                 <p class="sync-hint" data-i18n="syncHistoryLimit">消息和附件最多保留 7 天、500 条；空间不足自动清理，清空同步所有设备。</p>
                                 <p class="sync-hint" data-i18n="syncEncrypted">消息与附件已端到端加密</p>
@@ -366,12 +370,21 @@
                         <small data-sync-gomoku-outcome="guest" hidden></small>
                     </div>
                 </div>
-                <div class="sync-gomoku-player sync-gomoku-summary" data-sync-gomoku-result hidden role="status">
-                    <div><strong data-sync-gomoku-result-title></strong><span class="sync-gomoku-summary-score" data-sync-gomoku-score></span></div>
-                    <button type="button" class="sync-button" data-sync-gomoku-result-close data-i18n="syncGameClose">关闭对局</button>
-                    <div class="sync-gomoku-rematch" data-sync-gomoku-rematch-controls hidden>
-                        <button type="button" class="sync-button" data-sync-gomoku-rematch></button>
-                        <button type="button" class="sync-button" data-sync-gomoku-rematch-cancel hidden data-i18n="syncGameRematchDecline">取消约战</button>
+                <div class="sync-gomoku-summary" data-sync-gomoku-result hidden role="status">
+                    <div class="sync-gomoku-summary-heading">
+                        <strong data-sync-gomoku-result-title></strong>
+                        <div class="sync-gomoku-summary-score">
+                            <span data-i18n="syncGameScore">比分</span>
+                            <i class="sync-gomoku-stone sync-gomoku-stone--black" aria-hidden="true"></i>
+                            <strong data-sync-gomoku-score></strong>
+                            <i class="sync-gomoku-stone sync-gomoku-stone--white" aria-hidden="true"></i>
+                        </div>
+                    </div>
+                    <div class="sync-gomoku-result-actions">
+                        <div class="sync-gomoku-rematch" data-sync-gomoku-rematch-controls hidden>
+                            <button type="button" class="sync-button" data-sync-gomoku-rematch></button>
+                        </div>
+                        <button type="button" class="sync-button" data-sync-gomoku-result-close data-i18n="syncGameExit">退出对局</button>
                     </div>
                 </div>
                 <div class="sync-gomoku-board-frame" data-sync-gomoku-frame>

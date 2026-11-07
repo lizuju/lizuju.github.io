@@ -46,7 +46,7 @@
             computer: '电脑',
             chooseMode: '选择对局模式',
             modeCopy: '请选择双人对局或人机对局。',
-            backToModes: '返回选择',
+            backToModes: '返回选择(B)',
             localMode: '双人对局',
             computerMode: '人机对局',
             difficulty: '难度',
@@ -70,8 +70,8 @@
             computerWins: '电脑获胜，再来一局吧。',
             draw: '棋盘已满，本局平局。',
             helpTitle: '玩法说明',
-            helpCopy: '你执黑棋先手，电脑执白棋。\n在棋盘交叉点落子，横、竖或斜线率先连成五子即可获胜。\nF2：新游戏　Ctrl/Cmd+Z：悔棋　F：最大化',
-            localHelpCopy: '两位玩家在本设备轮流落子，黑棋先手。\n在棋盘交叉点落子，横、竖或斜线率先连成五子即可获胜。\nF2：新游戏　Ctrl/Cmd+Z：悔棋　F：最大化',
+            helpCopy: '你执黑棋先手，电脑执白棋。\n在棋盘交叉点落子，横、竖或斜线率先连成五子即可获胜。\nF2：新游戏　B / Shift+F2：返回选择\nCtrl/Cmd+Z：悔棋　F：最大化',
+            localHelpCopy: '两位玩家在本设备轮流落子，黑棋先手。\n在棋盘交叉点落子，横、竖或斜线率先连成五子即可获胜。\nF2：新游戏　B / Shift+F2：返回选择\nCtrl/Cmd+Z：悔棋　F：最大化',
             aboutTitle: '关于五子棋',
             aboutCopy: 'GavinOS 五子棋 1.0\n采用经典 Windows 扫雷式界面。\n电脑棋力由 Gomoku minimax 引擎提供。',
             launchLines: [
@@ -103,7 +103,7 @@
             computer: 'PC',
             chooseMode: 'Choose Game Mode',
             modeCopy: 'Choose two players or play against the computer.',
-            backToModes: 'Choose Mode',
+            backToModes: 'Choose Mode(B)',
             localMode: 'Two Players',
             computerMode: 'Vs Computer',
             difficulty: 'Difficulty',
@@ -127,8 +127,8 @@
             computerWins: 'Computer wins. Try another round.',
             draw: 'The board is full. Draw game.',
             helpTitle: 'How to Play',
-            helpCopy: 'You play black and move first. The computer plays white.\nPlace stones on intersections. The first to connect five horizontally, vertically, or diagonally wins.\nF2: New game　Ctrl/Cmd+Z: Undo　F: Maximize',
-            localHelpCopy: 'Two players take turns on this device. Black moves first.\nPlace stones on intersections. The first to connect five horizontally, vertically, or diagonally wins.\nF2: New game　Ctrl/Cmd+Z: Undo　F: Maximize',
+            helpCopy: 'You play black and move first. The computer plays white.\nPlace stones on intersections. The first to connect five horizontally, vertically, or diagonally wins.\nF2: New game　B / Shift+F2: Choose mode\nCtrl/Cmd+Z: Undo　F: Maximize',
+            localHelpCopy: 'Two players take turns on this device. Black moves first.\nPlace stones on intersections. The first to connect five horizontally, vertically, or diagonally wins.\nF2: New game　B / Shift+F2: Choose mode\nCtrl/Cmd+Z: Undo　F: Maximize',
             aboutTitle: 'About Gomoku',
             aboutCopy: 'GavinOS Gomoku 1.0\nA classic Windows Minesweeper-inspired interface.\nComputer moves use a Gomoku minimax engine.',
             launchLines: [
@@ -265,6 +265,7 @@
             gameWindow.querySelector('.gomoku-statusbar').hidden = choosing;
             difficultySelect.closest('label').hidden = mode !== 'computer';
             difficultySelect.value = difficulty;
+            difficultySelect.disabled = history.length > 0 && (phase === 'playing' || phase === 'thinking');
             status.textContent = getStatusText();
             movesOutput.textContent = String(history.length).padStart(3, '0');
             scoreOutput.textContent = `${humanScore}:${computerScore}`;
@@ -932,6 +933,7 @@
                 const key = element.getAttribute('data-gomoku-i18n');
                 if (copy()[key]) element.textContent = copy()[key];
             });
+            document.querySelector('[data-gomoku-back]').title = `${copy().backToModes} / Shift+F2`;
             if (gameWindow.classList.contains('is-launching')) startLaunchSequence();
             if (!dialog.hidden) showDialog(dialog.dataset.type || 'help');
             render();
@@ -965,9 +967,12 @@
         document.querySelectorAll('[data-gomoku-new]').forEach((button) => button.addEventListener('click', newGame));
         document.querySelector('[data-gomoku-back]').addEventListener('click', showModeSelection);
         difficultySelect.addEventListener('change', () => {
+            if (difficultySelect.disabled) {
+                difficultySelect.value = difficulty;
+                return;
+            }
             difficulty = difficultySelect.value;
-            if (phase === 'thinking') scheduleComputerMove();
-            else render();
+            render();
         });
         document.querySelector('[data-gomoku-undo]')?.addEventListener('click', undoMove);
         document.querySelector('[data-gomoku-help]')?.addEventListener('click', (event) => showDialog('help', event.currentTarget));
@@ -1051,6 +1056,14 @@
                 }
                 return;
             }
+            if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing
+                && event.key.toLowerCase() === 'b'
+                && !document.activeElement.matches('input, textarea, select')
+                && !document.activeElement.isContentEditable) {
+                event.preventDefault();
+                showModeSelection();
+                return;
+            }
             if (document.activeElement === canvas) {
                 const movement = {
                     ArrowUp: [-1, 0],
@@ -1076,9 +1089,11 @@
                     return;
                 }
             }
-            if (event.key === 'F2') {
+            if (event.key === 'F2' && !event.ctrlKey && !event.metaKey && !event.altKey) {
                 event.preventDefault();
-                newGame();
+                if (event.shiftKey) showModeSelection();
+                else newGame();
+                return;
             }
             if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
                 event.preventDefault();
@@ -1136,6 +1151,7 @@
                 'arrow keys move keyboard cursor',
                 'Enter or Space places stone',
                 'F2 new game',
+                'B or Shift+F2 mode selection',
                 'Ctrl/Cmd+Z undo',
                 'F maximize'
             ]

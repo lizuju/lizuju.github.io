@@ -153,18 +153,25 @@
     align-items: center;
     gap: 4px;
     margin-left: 4px;
+    margin-block: 2px;
     font: 12px/1.2 var(--font-system);
 }
 
 .gomoku-difficulty select {
     max-width: 92px;
     min-width: 0;
-    padding: 1px;
-    border: 2px inset #efefef;
+    height: 18px;
+    padding: 0 2px;
+    border: 1px inset #efefef;
     border-radius: 0;
     color: #111;
     background: #fff;
     font: inherit;
+}
+
+.gomoku-difficulty select:disabled {
+    color: #777;
+    background: #d4d4d4;
 }
 
 .gomoku-difficulty select:focus-visible {

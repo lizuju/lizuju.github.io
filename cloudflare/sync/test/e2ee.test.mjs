@@ -16,6 +16,7 @@ before(async () => {
     manifest: { mainModule: 'index.js', modules: {
       'index.js': { type: 'esm', contents: await readFile(new URL('../src/index.js', import.meta.url), 'utf8') },
       'daily-usage.js': { type: 'esm', contents: await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8') },
+      'web-push.js': { type: 'esm', contents: await readFile(new URL('../src/web-push.js', import.meta.url), 'utf8') },
       'api-version.js': { type: 'esm', contents: await readFile(new URL('../src/api-version.js', import.meta.url), 'utf8') }
     } }, env: { ALLOWED_ORIGINS: { type: 'text', value: origin },
       ...Object.fromEntries([['E2EE_PAIRING_REGISTRY','E2eePairingRegistry'],['E2EE_SYNC_ROOMS','E2eeSyncRoom'],['E2EE_FILE_SHARDS','E2eeFileShard']].map(([key,name]) => [key,{type:'durable-object',worker:'sync-e2ee-test',exportName:name}])) },

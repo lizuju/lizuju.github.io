@@ -1,0 +1,28 @@
+body.standalone-honors .project-folder-window {
+    top: 4px !important;
+    right: 4px !important;
+    bottom: 39px !important;
+    left: 4px !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: 0;
+    min-height: 0;
+}
+
+.standalone-honors .project-folder-window > .window-titlebar .window-controls,
+.standalone-honors .project-folder-window > .window-resize-handle,
+.standalone-honors [data-project-folder-back],
+.standalone-honors [data-open-honors],
+.standalone-honors [data-window-menu-popup="folder-file"] .window-menu-separator {
+    display: none;
+}
+
+.standalone-honors .honors-task-button {
+    width: auto;
+    min-width: 76px;
+    color: var(--window-dark);
+}
+
+.standalone-honors .honors-task-button > [data-i18n] {
+    width: auto;
+}

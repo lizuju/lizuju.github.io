@@ -1,0 +1,425 @@
+        <section class="app-window project-folder-window is-closed" data-project-folder-window
+            aria-label="Project files window">
+            <div class="window-titlebar" data-project-folder-drag>
+                <div class="window-title">
+                    <span class="window-app-icon window-app-icon--folder" aria-hidden="true"></span>
+                    <span data-project-folder-window-title data-i18n="folderWindowTitle">项目文件 - 资源管理器</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-project-folder-action="minimize" aria-label="Minimize folder window"
+                        title="Minimize"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-project-folder-action="maximize" aria-label="Maximize folder window"
+                        title="Maximize"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-project-folder-action="close" aria-label="Close folder window"
+                        title="Close"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+
+            <div class="window-menubar" data-window-menubar role="menubar" aria-label="Project folder commands">
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="folder-file"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuFile">文件</button>
+                    <div class="window-menu-popup" data-window-menu-popup="folder-file" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="folder-open">
+                            <span data-i18n="menuOpen">打开</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="folder-up">
+                            <span data-i18n="folderUp">上一级</span>
+                        </button>
+                        <div class="window-menu-separator" role="separator"></div>
+                        <button type="button" role="menuitem" data-menu-action="folder-close">
+                            <span data-i18n="menuClose">关闭</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="folder-edit"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuEdit">编辑</button>
+                    <div class="window-menu-popup" data-window-menu-popup="folder-edit" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="folder-select-all">
+                            <span data-i18n="menuSelectAll">全选</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="folder-clear-selection">
+                            <span data-i18n="menuClearSelection">取消选择</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="folder-view"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuView">查看</button>
+                    <div class="window-menu-popup window-menu-popup--compact" data-window-menu-popup="folder-view"
+                        role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="folder-refresh">
+                            <span data-i18n="menuRefresh">刷新</span>
+                        </button>
+                        <button type="button" role="menuitem" data-menu-action="folder-toggle-size">
+                            <span data-i18n="menuToggleWindowSize">最大化 / 还原</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="folder-help"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuHelp">帮助</button>
+                    <div class="window-menu-popup window-menu-popup--compact" data-window-menu-popup="folder-help"
+                        role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="folder-info">
+                            <span data-i18n="menuFolderInfo">关于此文件夹</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="address-toolbar">
+                <span class="address-label" data-i18n="addressLabel">地址</span>
+                <button class="folder-up-button" type="button" data-project-folder-back hidden
+                    aria-label="Up one level" title="Up one level"><span aria-hidden="true">↑</span><span
+                        data-i18n="folderUp">上一级</span></button>
+                <div class="address-field">
+                    <span class="address-page-icon address-page-icon--folder" aria-hidden="true"></span>
+                    <span data-project-folder-address data-i18n="folderAddress">C:\\GAVIN\\PROJECTS</span>
+                </div>
+                <a class="window-open-link" data-open-honors href="/honors/" target="_blank" rel="noopener" hidden>
+                    <img src="../portfolio/assets/open-in-new.svg" width="16" height="16" alt="">
+                    <span class="visually-hidden" data-i18n="folderOpenHonors">在新标签页打开荣誉奖状</span>
+                </a>
+            </div>
+
+            <div class="address-toolbar project-folder-search">
+                <input class="address-field" type="search" data-project-folder-search data-i18n-placeholder="folderSearch"
+                    placeholder="搜索" aria-label="搜索" autocomplete="off">
+            </div>
+            <div class="project-folder-scroll">
+                <p class="project-folder-empty" data-project-folder-empty data-i18n="folderSearchEmpty" role="status" hidden>没有匹配的文件。</p>
+                <div class="project-folder-grid" data-project-folder-root>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
+                        data-open-robomaster-folder data-folder="photos">
+                        <span class="folder-item-icon" aria-hidden="true"></span>
+                        <strong data-i18n="folderRoboMasterRecords">RoboMaster 比赛记录</strong>
+                        <small data-i18n="folderRoboMasterRecordsBody">13 张比赛照片</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
+                        data-open-music-folder data-folder="music">
+                        <span class="folder-item-icon folder-item-icon--music" aria-hidden="true"></span>
+                        <strong data-i18n="folderMusic">音乐作品集</strong>
+                        <small data-i18n="folderMusicBody">1 段视频</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
+                        data-open-papers-folder data-folder="papers">
+                        <span class="folder-item-icon" aria-hidden="true"></span>
+                        <strong data-i18n="folderPapers">数学建模论文</strong>
+                        <small data-i18n="folderPapersBody">2 篇论文 · PDF</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
+                        data-folder="honors">
+                        <span class="folder-item-icon" aria-hidden="true"></span>
+                        <strong data-i18n="folderHonors">荣誉奖状</strong>
+                        <small data-i18n="folderHonorsBody">35 张奖状图片</small>
+                    </button>
+                </div>
+
+                <div data-honors-folder-view hidden>
+                    <div class="project-folder-empty" data-honors-loading role="status">
+                        <span data-i18n="folderHonorsLoading">正在加载奖状…</span>
+                        <button class="folder-up-button" type="button" data-honors-retry data-i18n="previewImageRetry" hidden>重新加载</button>
+                    </div>
+                    <div class="project-folder-grid project-folder-grid--photos project-folder-grid--honors" data-honors-grid></div>
+                </div>
+
+                <div class="project-folder-grid project-folder-grid--photos" data-robomaster-folder-view hidden>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/01-match-multi-robot.jpg"
+                        data-photo-label-zh="01 对抗.jpg"
+                        data-photo-label-en="01 Match.jpg"
+                        data-photo-alt-zh="RoboMaster 赛场中的多机协同对抗"
+                        data-photo-alt-en="Multiple RoboMaster robots in match action">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/01-match-multi-robot.jpg" alt=""></span>
+                        <strong data-photo-label>01 对抗.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/02-pre-match-staging.jpg"
+                        data-photo-label-zh="02 检录.jpg"
+                        data-photo-label-en="02 Staging.jpg"
+                        data-photo-alt-zh="队员在 RoboMaster 赛场检录区准备机器人"
+                        data-photo-alt-en="Team preparing a RoboMaster robot in the staging area">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/02-pre-match-staging.jpg" alt=""></span>
+                        <strong data-photo-label>02 检录.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/03-no4-infantry-tuning.jpg"
+                        data-photo-label-zh="03 联调.jpg"
+                        data-photo-label-en="03 Tuning.jpg"
+                        data-photo-alt-zh="队员在赛场边联调 4 号步兵机器人"
+                        data-photo-alt-en="Team tuning the No. 4 infantry robot trackside">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/03-no4-infantry-tuning.jpg" alt=""></span>
+                        <strong data-photo-label>03 联调.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/04-pit-repair.jpg"
+                        data-photo-label-zh="04 检修.jpg"
+                        data-photo-label-en="04 Repair.jpg"
+                        data-photo-alt-zh="队员在比赛现场围绕机器人进行紧急检修"
+                        data-photo-alt-en="Team carrying out an emergency robot repair at the venue">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/04-pit-repair.jpg" alt=""></span>
+                        <strong data-photo-label>04 检修.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/05-no4-infantry-service.jpg"
+                        data-photo-label-zh="05 维护.jpg"
+                        data-photo-label-en="05 Service.jpg"
+                        data-photo-alt-zh="队员对 4 号步兵机器人进行现场检修"
+                        data-photo-alt-en="Team servicing the No. 4 infantry robot">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/05-no4-infantry-service.jpg" alt=""></span>
+                        <strong data-photo-label>05 维护.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/06-no4-infantry-closeup.jpg"
+                        data-photo-label-zh="06 4号.jpg"
+                        data-photo-label-en="06 No4.jpg"
+                        data-photo-alt-zh="4 号步兵机器人在赛场上的近景"
+                        data-photo-alt-en="Close-up of the No. 4 infantry robot on the field">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/06-no4-infantry-closeup.jpg" alt=""></span>
+                        <strong data-photo-label>06 4号.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/07-robot-lineup.jpg"
+                        data-photo-label-zh="07 整队.jpg"
+                        data-photo-label-en="07 Lineup.jpg"
+                        data-photo-alt-zh="多台 RoboMaster 参赛机器人整队展示"
+                        data-photo-alt-en="Lineup of RoboMaster competition robots">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/07-robot-lineup.jpg" alt=""></span>
+                        <strong data-photo-label>07 整队.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/08-no4-infantry-mobility.jpg"
+                        data-photo-label-zh="08 机动.jpg"
+                        data-photo-label-en="08 Mobility.jpg"
+                        data-photo-alt-zh="4 号步兵机器人在比赛场地中机动"
+                        data-photo-alt-en="No. 4 infantry robot moving through the competition field">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/08-no4-infantry-mobility.jpg" alt=""></span>
+                        <strong data-photo-label>08 机动.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/09-no3-infantry-front.jpg"
+                        data-photo-label-zh="09 3号.jpg"
+                        data-photo-label-en="09 No3.jpg"
+                        data-photo-alt-zh="3 号步兵机器人的正面特写"
+                        data-photo-alt-en="Front view of the No. 3 infantry robot">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/09-no3-infantry-front.jpg" alt=""></span>
+                        <strong data-photo-label>09 3号.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/10-operator-console.jpg"
+                        data-photo-label-zh="10 调试.jpg"
+                        data-photo-label-en="10 Console.jpg"
+                        data-photo-alt-zh="队员在赛场边使用终端调试机器人"
+                        data-photo-alt-en="Operator using a console to tune the robot trackside">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/10-operator-console.jpg" alt=""></span>
+                        <strong data-photo-label>10 调试.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/11-team-robot-maintenance.jpg"
+                        data-photo-label-zh="11 团队.jpg"
+                        data-photo-label-en="11 Team.jpg"
+                        data-photo-alt-zh="团队成员在赛场中共同维护机器人"
+                        data-photo-alt-en="Team members maintaining a robot at the competition venue">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/11-team-robot-maintenance.jpg" alt=""></span>
+                        <strong data-photo-label>11 团队.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/12-team-trackside-service.jpg"
+                        data-photo-label-zh="12 协作.jpg"
+                        data-photo-label-en="12 Service.jpg"
+                        data-photo-alt-zh="团队成员背对镜头进行赛场设备检修"
+                        data-photo-alt-en="Team working together on trackside equipment service">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/12-team-trackside-service.jpg" alt=""></span>
+                        <strong data-photo-label>12 协作.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image" type="button"
+                        data-robomaster-image data-image-src="assets/robomaster-match-records/previews/13-vision-device-tuning.jpg"
+                        data-photo-label-zh="13 视觉.jpg"
+                        data-photo-label-en="13 Vision.jpg"
+                        data-photo-alt-zh="队员在笔记本旁联调机器人视觉设备"
+                        data-photo-alt-en="Team member tuning a robot vision device beside a laptop">
+                        <span class="photo-file-icon"><img data-robomaster-thumbnail
+                                data-thumbnail-src="assets/robomaster-match-records/thumbs/13-vision-device-tuning.jpg" alt=""></span>
+                        <strong data-photo-label>13 视觉.jpg</strong>
+                        <small data-photo-type>JPEG 图像</small>
+                    </button>
+                </div>
+                <div class="project-folder-grid project-folder-grid--photos" data-music-folder-view hidden>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--image project-folder-item--video" type="button"
+                        data-music-video>
+                        <span class="photo-file-icon video-file-icon"><img data-music-thumbnail
+                                data-thumbnail-src="assets/music-portfolio/poster.webp" alt="" loading="lazy"></span>
+                        <strong>Last Christmas solo</strong>
+                        <small data-i18n="videoFileType">MP4 视频</small>
+                    </button>
+                </div>
+                <div class="project-folder-grid" data-papers-folder-view hidden>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
+                        data-modeling-paper data-paper-preview="assets/math-modeling-papers/national" data-paper-pages="21">
+                        <span class="text-file-icon pdf-file-icon" aria-hidden="true">PDF</span>
+                        <strong data-i18n="nationalPaper">国赛论文.pdf</strong>
+                        <small data-i18n="pdfFileType">PDF 文档</small>
+                    </button>
+                    <button class="project-folder-item project-folder-item--button project-folder-item--records" type="button"
+                        data-modeling-paper data-paper-preview="assets/math-modeling-papers/mcm" data-paper-pages="23">
+                        <span class="text-file-icon pdf-file-icon" aria-hidden="true">PDF</span>
+                        <strong data-i18n="mcmPaper">美赛论文.pdf</strong>
+                        <small data-i18n="pdfFileType">PDF 文档</small>
+                    </button>
+                </div>
+            </div>
+
+            <div class="window-statusbar project-folder-statusbar">
+                <span data-project-folder-status data-i18n="folderStatus">4 个对象</span>
+                <span data-i18n="statusZone">我的电脑</span>
+            </div>
+            <button class="window-resize-handle" type="button" data-project-folder-resize aria-label="Resize folder window"
+                title="Resize folder window"></button>
+        </section>
+
+        <section class="app-window image-preview-window is-closed" data-image-preview-window
+            aria-label="Image preview window">
+            <div class="window-titlebar" data-image-preview-drag>
+                <div class="window-title">
+                    <span class="window-app-icon window-app-icon--image" aria-hidden="true"></span>
+                    <span data-image-preview-title data-i18n="previewWindowTitle">图片预览</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-image-preview-action="minimize" aria-label="Minimize image preview"
+                        title="Minimize"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-image-preview-action="maximize" aria-label="Maximize image preview"
+                        title="Maximize"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-image-preview-action="close" aria-label="Close image preview"
+                        title="Close"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+            <div class="window-menubar" aria-hidden="true">
+                <span data-i18n="menuFile">文件</span>
+                <span data-i18n="menuEdit">编辑</span>
+                <span data-i18n="menuView">查看</span>
+                <span data-i18n="menuHelp">帮助</span>
+            </div>
+            <div class="preview-zoom-toolbar" data-image-preview-toolbar>
+                <button type="button" data-image-previous data-i18n-aria="previewPrevious" aria-label="上一张">‹</button>
+                <span data-image-counter aria-live="polite"></span>
+                <button type="button" data-image-next data-i18n-aria="previewNext" aria-label="下一张">›</button>
+                <button type="button" data-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
+                <button type="button" data-preview-zoom-fit data-i18n="syncPreviewFit">适应窗口</button>
+                <button type="button" data-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
+                <span data-preview-zoom-value>100%</span>
+            </div>
+            <div class="image-preview-body" tabindex="0" data-i18n-aria="previewWindowTitle" aria-label="图片预览">
+                <div class="project-image-loading" data-image-loading role="status" data-i18n-aria="previewImageLoading" aria-label="正在加载图片" hidden>
+                    <span aria-hidden="true"></span>
+                </div>
+                <div class="project-image-error" data-image-error role="status" hidden>
+                    <p data-i18n="previewImageFailed">图片加载失败</p>
+                    <button class="folder-up-button" type="button" data-i18n="previewImageRetry">重新加载</button>
+                </div>
+                <figure class="image-preview-figure">
+                    <picture>
+                        <source data-image-preview-source>
+                        <img data-image-preview-image alt="">
+                    </picture>
+                    <figcaption data-image-preview-caption></figcaption>
+                </figure>
+            </div>
+            <div class="window-statusbar image-preview-statusbar">
+                <span data-image-preview-status data-i18n="previewStatus">选择一张图片进行预览</span>
+                <span data-i18n="statusZone">我的电脑</span>
+            </div>
+            <button class="window-resize-handle" type="button" data-image-preview-resize aria-label="Resize image preview"
+                title="Resize image preview"></button>
+        </section>
+
+        <section class="app-window video-preview-window is-closed" data-video-preview-window
+            aria-label="Video player window">
+            <div class="window-titlebar" data-video-preview-drag>
+                <div class="window-title">
+                    <span class="window-app-icon window-app-icon--video" aria-hidden="true">▶</span>
+                    <span data-i18n="videoWindowTitle">视频播放器 - Last Christmas solo</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-video-preview-action="minimize" aria-label="Minimize video player"
+                        title="Minimize"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-video-preview-action="maximize" aria-label="Maximize video player"
+                        title="Maximize"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-video-preview-action="close" aria-label="Close video player"
+                        title="Close"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+            <div class="preview-zoom-toolbar" data-video-preview-toolbar>
+                <button type="button" data-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
+                <button type="button" data-preview-zoom-fit data-i18n="syncPreviewFit">适应窗口</button>
+                <button type="button" data-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
+                <span data-preview-zoom-value>100%</span>
+            </div>
+            <div class="video-preview-body" tabindex="0" data-i18n-aria="videoWindowTitle" aria-label="视频播放器 - Last Christmas solo">
+                <video data-music-player data-video-src="assets/music-portfolio/last-christmas-solo.mp4"
+                    controls playsinline preload="none" tabindex="0" aria-label="Last Christmas solo"></video>
+            </div>
+            <div class="window-statusbar">
+                <span data-i18n="videoFileType">MP4 视频</span>
+                <span data-i18n="statusZone">我的电脑</span>
+            </div>
+            <button class="window-resize-handle" type="button" data-video-preview-resize aria-label="Resize video player"
+                title="Resize video player"></button>
+        </section>
+
+        <section class="app-window paper-preview-window is-closed" data-paper-preview-window
+            aria-label="PDF preview window">
+            <div class="window-titlebar" data-paper-preview-drag>
+                <div class="window-title">
+                    <span class="window-app-icon" aria-hidden="true">P</span>
+                    <span data-paper-preview-title data-i18n="paperPreviewTitle">论文预览</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-paper-preview-action="minimize" aria-label="Minimize PDF preview"
+                        title="Minimize"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-paper-preview-action="maximize" aria-label="Maximize PDF preview"
+                        title="Maximize"><span aria-hidden="true">□</span></button>
+                    <button type="button" data-paper-preview-action="close" aria-label="Close PDF preview"
+                        title="Close"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+            <div class="preview-zoom-toolbar" data-paper-preview-toolbar>
+                <button type="button" data-preview-zoom-out data-i18n-aria="syncPreviewZoomOut" aria-label="缩小">−</button>
+                <button type="button" data-preview-zoom-fit data-i18n="syncPreviewFit">适应窗口</button>
+                <button type="button" data-preview-zoom-in data-i18n-aria="syncPreviewZoomIn" aria-label="放大">+</button>
+                <span data-preview-zoom-value>100%</span>
+            </div>
+            <div class="paper-preview-body" data-paper-preview-pages tabindex="0"></div>
+            <div class="window-statusbar">
+                <span data-paper-preview-status data-i18n="paperPreviewHint">上下滚动阅读论文</span>
+                <span data-i18n="pdfFileType">PDF 文档</span>
+            </div>
+            <button class="window-resize-handle" type="button" data-paper-preview-resize aria-label="Resize PDF preview"
+                title="Resize PDF preview"></button>
+        </section>
+

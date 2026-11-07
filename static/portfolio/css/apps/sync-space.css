@@ -631,6 +631,30 @@
     padding-top: 6px;
 }
 
+.sync-install-guide {
+    padding: 8px;
+    border: 2px inset #fff;
+    background: #eee;
+    font: 12px/1.5 var(--font-system);
+}
+
+.sync-install-guide summary {
+    cursor: pointer;
+}
+
+.sync-install-guide p {
+    margin: 8px 0;
+}
+
+.sync-install-guide a {
+    color: #000080;
+}
+
+.sync-install-guide .sync-button {
+    margin-top: 8px;
+    width: 100%;
+}
+
 .sync-tools-notes .sync-hint {
     margin: 0;
 }

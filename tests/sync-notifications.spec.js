@@ -11,6 +11,7 @@ const install = async page => {
         window.delivered = [];
         window.permissionRequests = 0;
         window.errors = [];
+        Object.defineProperty(navigator, 'standalone', { configurable: true, value: true });
         window.Notification = { permission: 'default', requestPermission: async () => { permissionRequests++; return Notification.permission = 'granted'; } };
         const { createSystemNotifications, testSystemNotification, getNotificationState, readNotificationDiagnostics } = await import('./sync-notifications.js');
         window.notificationTools = { testSystemNotification, getNotificationState, readNotificationDiagnostics };

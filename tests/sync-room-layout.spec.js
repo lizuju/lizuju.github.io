@@ -108,6 +108,33 @@ test('keeps the tools overlay closed in narrow windows and remembers only the wi
     await expect(panel).toBeVisible();
 });
 
+test('keeps the mobile sidebar open when notification setup reveals the Home Screen instructions', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => {
+        delete window.Notification;
+        Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' });
+        Object.defineProperty(navigator, 'standalone', { configurable: true, value: false });
+    });
+    await openChat(page);
+    const toggle = page.locator('[data-sync-tools-toggle]');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await toggle.click();
+    const notifications = page.locator('[data-sync-notifications]');
+    await expect(notifications).toHaveText('系统通知：需添加到主屏幕');
+    await notifications.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('[data-sync-tools-panel]')).toBeVisible();
+    const guide = page.locator('[data-sync-install-guide]');
+    await expect(guide).toHaveAttribute('open', '');
+    await expect(guide).toBeVisible();
+    await expect(guide).toContainText('Safari 分享');
+    await guide.scrollIntoViewIfNeeded();
+    const size = await guide.evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth }));
+    expect(size.scroll).toBeLessThanOrEqual(size.width + 1);
+    await toggle.click();
+    await expect(page.locator('[data-sync-tools-panel]')).toBeHidden();
+});
+
 // Records an element's top after each of the next frames is painted, starting from a change made in the first frame.
 const paintedTops = (page, selector, change) => page.evaluate(({ selector, change }) => new Promise(resolve => {
     const element = document.querySelector(selector);

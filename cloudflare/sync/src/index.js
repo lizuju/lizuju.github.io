@@ -1,8 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
 import { API_VERSION } from './api-version.js';
 import { collectDailyUsage, unavailableDailyUsage } from './daily-usage.js';
+import { getPushPublicKey, validatePushSubscription, sendWebPush } from './web-push.js';
 
-const ROOM_SCHEMA_VERSION = '1';
+const ROOM_SCHEMA_VERSION = '3';
 const INVITE_LIFETIME = 10 * 60 * 1000;
 const MESSAGE_LIFETIME = 7 * 24 * 60 * 60 * 1000;
 const STORAGE_HIGH_WATER = 4_800_000_000;
@@ -16,8 +17,7 @@ const BLOB_CHUNK_SIZE = 1024 * 1024;
 const UPLOAD_LIFETIME = 24 * 60 * 60 * 1000;
 const DOWNLOAD_LIFETIME = 24 * 60 * 60 * 1000;
 const DEVICE_IDLE_LIFETIME = 7 * 24 * 60 * 60 * 1000;
-const ROOM_IDLE_LIFETIME = 7 * 24 * 60 * 60 * 1000;
-const ACTIVITY_WRITE_INTERVAL = 60 * 60 * 1000;
+const ROOM_IDLE_LIFETIME = 14 * 24 * 60 * 60 * 1000;
 const DEVICE_ACTIVITY_WRITE_INTERVAL = 60 * 1000;
 const PAIR_CANDIDATE_LIMIT = 30;
 const PAIR_REQUEST_LIMIT = 100;
@@ -190,6 +190,10 @@ export default {
     if (request.method === 'GET' && url.pathname === '/health') {
       return json({ ok: true, service: 'portfolio-sync', apiVersion: API_VERSION, encryptionVersion: 1, revision: env.RELEASE_REVISION || null, sourceFingerprint: env.RELEASE_SOURCE || null, versionId: env.WORKER_VERSION?.id || null });
     }
+    if (request.method === 'GET' && url.pathname === '/v1/push/key') {
+      const publicKey = getPushPublicKey(env);
+      return publicKey ? json({ publicKey }) : json({ error: 'push_unavailable' }, 503);
+    }
 
     const registry = env.E2EE_PAIRING_REGISTRY.getByName('registry');
     if (request.method === 'GET' && url.pathname === '/v1/usage') {
@@ -268,7 +272,7 @@ export default {
       return json({ error: 'not_found' }, 404);
     }
 
-    const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/key-rotation|\/key-grants|\/pair-code|\/pair-challenge|\/pair-accept|\/pair-requests|\/messages|\/socket|\/profile|\/device|\/devices(?:\/([^/]+))?|\/gomoku\/[^/]+(?:\/(?:join|move|leave))?|\/files(?:\/.*)?|\/downloads\/[0-9a-f]{64})?$/);
+    const match = url.pathname.match(/^\/v1\/spaces\/([^/]+)(\/key-rotation|\/key-grants|\/pair-code|\/pair-challenge|\/pair-accept|\/pair-requests|\/messages|\/socket|\/profile|\/push-subscription|\/device|\/devices(?:\/([^/]+))?|\/gomoku\/[^/]+(?:\/(?:join|move|leave))?|\/files(?:\/.*)?|\/downloads\/[0-9a-f]{64})?$/);
     if (!match || !ROOM_ID.test(match[1]) || (match[3] && !ROOM_ID.test(match[3]))) return json({ error: 'not_found' }, 404);
     const roomId = match[1];
     const uploadChunk = match[2]?.match(/^\/files\/uploads\/([0-9a-f-]{36})\/chunks\/(0|[1-9][0-9]*)$/i);
@@ -305,6 +309,17 @@ export default {
     const deviceId = token ? await room.authorize(token) : null;
     if (!deviceId) return json({ error: 'unauthorized' }, 401);
     const keyId = request.headers.get('X-Sync-Key-Id');
+    if (match[2] === '/push-subscription') {
+      if (request.method === 'DELETE') return resultResponse(await room.removePushSubscription(deviceId));
+      if (request.method !== 'PUT') return json({ error: 'not_found' }, 404);
+      if (!getPushPublicKey(env)) return json({ error: 'push_unavailable' }, 503);
+      const body = await readJson(request, 4096);
+      if (body.error) return resultResponse(body);
+      const subscription = validatePushSubscription(body.value.subscription);
+      if (!subscription || !['zh-CN', 'en'].includes(body.value.language)
+          || Object.keys(body.value).some(key => !['subscription', 'language'].includes(key))) return json({ error: 'invalid_push_subscription' }, 400);
+      return resultResponse(await room.savePushSubscription(deviceId, subscription, body.value.language));
+    }
     if (match[2] === '/profile') {
       if (request.method === 'GET') return resultResponse(await room.readSpaceProfile(deviceId));
       if (request.method !== 'PATCH') return json({ error: 'not_found' }, 404);
@@ -592,9 +607,8 @@ export class E2eePairingRegistry extends DurableObject {
         }
         this.sql.exec("INSERT OR IGNORE INTO maintenance_jobs (room_id, request_id, prune_before, started_at, cleanup_id) VALUES (?, ?, ?, ?, coalesce((SELECT cleanup_id FROM cleanup), ''))", roomId, crypto.randomUUID(), pruneBefore, Date.now());
         const job = this.sql.exec('SELECT request_id AS requestId, prune_before AS pruneBefore FROM maintenance_jobs WHERE room_id = ?', roomId).one();
-        const invitation = this.currentInvite(roomId);
         const response = await this.env.E2EE_SYNC_ROOMS.getByName(roomId).fetch('https://maintenance.internal/', {
-          method: 'POST', body: JSON.stringify({ ...job, roomId, reclaim: !invitation?.offerId || invitation.locked }),
+          method: 'POST', body: JSON.stringify({ ...job, roomId }),
           signal: AbortSignal.timeout(MAINTENANCE_RPC_TIMEOUT)
         });
         if (!response.ok) throw new Error('maintenance_failed');
@@ -606,10 +620,7 @@ export class E2eePairingRegistry extends DurableObject {
             this.sql.exec("INSERT INTO registry_metadata (key, value) VALUES ('maintenanceFreedBytes', ?) ON CONFLICT(key) DO UPDATE SET value = value + excluded.value", freedBytes);
           }
           if (result.reclaimed) {
-            this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
-            this.sql.exec('DELETE FROM room_pairing WHERE room_id = ?', roomId);
-            const removed = this.sql.exec('DELETE FROM room_usage WHERE room_id = ? RETURNING bytes', roomId).toArray()[0];
-            if (this.accountedBytes != null) this.accountedBytes -= removed?.bytes || 0;
+            this.forgetRoom(roomId);
           } else this.rememberUsage(roomId, result.usage);
           this.releaseCapacity(roomId);
           this.sql.exec('DELETE FROM maintenance_jobs WHERE room_id = ?', roomId);
@@ -656,12 +667,8 @@ export class E2eePairingRegistry extends DurableObject {
     if (!this.hasRoom(roomId)) return null;
     const room = this.env.E2EE_SYNC_ROOMS.getByName(roomId);
     const usage = maintained ? await room.storageUsage() : await room.maintain(roomId, false);
-    const invitation = this.currentInvite(roomId);
-    if (usage.oldestAt === null && (!invitation?.offerId || invitation.locked) && await room.reclaimIfEmpty()) {
-      this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
-      this.sql.exec('DELETE FROM room_pairing WHERE room_id = ?', roomId);
-      const removed = this.sql.exec('DELETE FROM room_usage WHERE room_id = ? RETURNING bytes', roomId).toArray()[0];
-      if (this.accountedBytes != null) this.accountedBytes -= removed?.bytes || 0;
+    if (usage.oldestAt === null && await room.reclaimIfEmpty()) {
+      this.forgetRoom(roomId);
       this.releaseCapacity(roomId);
       return null;
     }
@@ -670,6 +677,19 @@ export class E2eePairingRegistry extends DurableObject {
       this.releaseCapacity(roomId);
     });
     return usage;
+  }
+
+  forgetRoom(roomId) {
+    const requests = this.sql.exec('DELETE FROM pair_candidates WHERE offer_id IN (SELECT offer_id FROM offers WHERE room_id = ?) OR request_id IN (SELECT request_id FROM pair_requests WHERE room_id = ?) RETURNING request_id', roomId, roomId).toArray();
+    this.sql.exec('DELETE FROM pair_requests WHERE room_id = ?', roomId);
+    for (const requestId of new Set(requests.map(row => row.request_id))) {
+      this.sql.exec('DELETE FROM pair_requests WHERE request_id = ? AND room_id IS NULL AND NOT EXISTS (SELECT 1 FROM pair_candidates WHERE request_id = ?)', requestId, requestId);
+    }
+    this.sql.exec('DELETE FROM offers WHERE room_id = ?', roomId);
+    this.sql.exec('DELETE FROM room_pairing WHERE room_id = ?', roomId);
+    const removed = this.sql.exec('DELETE FROM room_usage WHERE room_id = ? RETURNING bytes', roomId).toArray()[0];
+    if (this.accountedBytes != null) this.accountedBytes -= removed?.bytes || 0;
+    this.invalidateDiscovery();
   }
 
   reserveCapacity(roomId, bytes) {
@@ -1257,13 +1277,18 @@ export class E2eeSyncRoom extends DurableObject {
     this.uploadCompletions = new Map();
     this.uploadWrites = new Map();
     this.connectedActivity = new Map();
+    this.pushRequests = new Map();
     // Stale requests can wake reclaimed objects; only initialize may create their tables.
     const tables = this.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('devices', 'metadata')").toArray().map(row => row.name);
     this.initialized = tables.includes('devices');
     if (this.initialized) {
       const version = tables.includes('metadata') && this.sql.exec("SELECT value FROM metadata WHERE key = 'schemaVersion'").toArray()[0]?.value;
       if (version !== ROOM_SCHEMA_VERSION) this.ctx.storage.transactionSync(() => this.initializeStorage());
-      else this.lastActivity = Number(this.sql.exec("SELECT value FROM metadata WHERE key = 'lastActiveAt'").one().value);
+      else {
+        const activity = Object.fromEntries(this.sql.exec("SELECT key, value FROM metadata WHERE key IN ('lastMessageAt', 'roomExpired')").toArray().map(row => [row.key, row.value]));
+        this.lastMessageAt = Number(activity.lastMessageAt);
+        this.roomExpired = activity.roomExpired === '1';
+      }
     }
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
@@ -1285,14 +1310,18 @@ export class E2eeSyncRoom extends DurableObject {
       this.sql.exec('ALTER TABLE devices ADD COLUMN read_message_id INTEGER NOT NULL DEFAULT 0');
     }
     this.sql.exec('CREATE INDEX IF NOT EXISTS devices_activity ON devices(last_active_at)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS push_subscriptions (device_id TEXT PRIMARY KEY, subscription TEXT NOT NULL, language TEXT NOT NULL)');
+    this.sql.exec('CREATE TRIGGER IF NOT EXISTS delete_device_push AFTER DELETE ON devices BEGIN DELETE FROM push_subscriptions WHERE device_id = OLD.device_id; END');
     this.sql.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
-    this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'lastActiveAt', String(Date.now()));
-    if (migrateDeviceActivity) this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', String(Date.now()), 'lastActiveAt');
     this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'historyGeneration', crypto.randomUUID());
-    this.lastActivity = Number(this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt').one().value);
     this.sql.exec('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL, device_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, attachment TEXT, UNIQUE(device_id, client_id))');
     if (!this.sql.exec('PRAGMA table_info(messages)').toArray().some(column => column.name === 'attachment')) this.sql.exec('ALTER TABLE messages ADD COLUMN attachment TEXT');
     this.sql.exec('CREATE INDEX IF NOT EXISTS messages_expiry ON messages(created_at)');
+    // Deleted legacy history cannot reveal its last send time; give those rooms a full grace period.
+    this.sql.exec("INSERT OR IGNORE INTO metadata (key, value) VALUES ('lastMessageAt', coalesce((SELECT max(created_at) FROM messages), ?))", String(Date.now()));
+    this.sql.exec("DELETE FROM metadata WHERE key = 'lastActiveAt'");
+    this.lastMessageAt = Number(this.sql.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'").one().value);
+    this.roomExpired = this.sql.exec("SELECT value FROM metadata WHERE key = 'roomExpired'").toArray()[0]?.value === '1';
     this.sql.exec('CREATE TABLE IF NOT EXISTS message_tombstones (device_id TEXT NOT NULL, client_id TEXT NOT NULL, message_id INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(device_id, client_id))');
     this.sql.exec('CREATE INDEX IF NOT EXISTS message_tombstones_expiry ON message_tombstones(created_at)');
     // Keep only delivery identifiers when history is removed before the retry window ends.
@@ -1337,12 +1366,11 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   async addDevice() {
-    if (!this.initialized) return { error: 'not_found', status: 404 };
+    if (!this.initialized || this.expireIfInactive()) return { error: 'not_found', status: 404 };
     const token = credential();
     const deviceId = crypto.randomUUID();
     const now = Date.now();
     this.sql.exec('INSERT INTO devices (token_hash, device_id, created_at, last_active_at) VALUES (?, ?, ?, ?)', await hash(token), deviceId, now, now);
-    this.touchActivity();
     await this.scheduleAlarm();
     this.broadcast({ type: 'devices' });
     return { token, deviceId };
@@ -1355,6 +1383,7 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   checkWrite(keyId, envelope = null, allowRekey = false) {
+    if (!this.initialized || this.expireIfInactive()) return { error: 'not_found', status: 404 };
     const state = this.keyState();
     if (!keyId || keyId !== state.currentKeyId) return { error: 'key_changed', status: 409 };
     if (state.rekeyRequired && !allowRekey) return { error: 'rekey_required', status: 409 };
@@ -1363,6 +1392,7 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   deviceOnline(deviceId) {
+    if (!this.initialized || this.expireIfInactive()) return false;
     return this.ctx.getWebSockets().some(socket => socket.readyState === WebSocket.OPEN && socket.deserializeAttachment()?.deviceId === deviceId && !socket.deserializeAttachment()?.closing);
   }
 
@@ -1404,6 +1434,7 @@ export class E2eeSyncRoom extends DurableObject {
     this.sql.exec("INSERT INTO metadata (key, value) VALUES ('rekeyRequired', '0') ON CONFLICT(key) DO UPDATE SET value = '0'");
     if (!preserveUploads) this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0 WHERE status = 'uploading'");
     if (rotation.removedDeviceId) {
+      this.cancelDevicePush(rotation.removedDeviceId);
       this.sql.exec('DELETE FROM devices WHERE device_id = ?', rotation.removedDeviceId);
       this.connectedActivity.delete(rotation.removedDeviceId);
       this.downloadRevision++;
@@ -1431,11 +1462,13 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   pairingAcceptance(requestId) {
+    if (!this.initialized || this.expireIfInactive()) return null;
     return this.sql.exec('SELECT device_id AS deviceId, grant FROM pair_acceptances WHERE request_id = ? AND expires_at > ?', requestId, Date.now()).toArray()[0] || null;
   }
 
   cancelPairingAdmission(requestId) {
     return this.ctx.blockConcurrencyWhile(async () => {
+      if (!this.initialized || this.expireIfInactive()) return null;
       const accepted = this.pairingAcceptance(requestId);
       if (accepted) return accepted;
       this.sql.exec('DELETE FROM pair_cancellations WHERE expires_at <= ?', Date.now());
@@ -1446,6 +1479,7 @@ export class E2eeSyncRoom extends DurableObject {
 
   async admitDevice(deviceId, keyId, admission) {
     return this.ctx.blockConcurrencyWhile(async () => {
+      if (!this.initialized || this.expireIfInactive()) return { error: 'not_found', status: 404 };
       this.sql.exec('DELETE FROM pair_acceptances WHERE expires_at <= ?', Date.now());
       const accepted = this.sql.exec('SELECT * FROM pair_acceptances WHERE request_id = ?', admission.requestId).toArray()[0];
       if (accepted) return accepted.device_id === admission.joinedId && accepted.token_hash === admission.tokenHash && accepted.rotation_id === admission.rotationId && accepted.key_id === admission.newKeyId && accepted.grant === admission.grant ? { ok: true, currentKeyId: accepted.key_id } : { error: 'pairing_conflict', status: 409 };
@@ -1489,6 +1523,7 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   touchDevice(deviceId) {
+    if (this.expireIfInactive()) return false;
     this.refreshConnectedDevices();
     const device = this.sql.exec('SELECT last_active_at FROM devices WHERE device_id = ?', deviceId).toArray()[0];
     if (!device) return false;
@@ -1498,15 +1533,35 @@ export class E2eeSyncRoom extends DurableObject {
       return false;
     }
     if (now - device.last_active_at >= DEVICE_ACTIVITY_WRITE_INTERVAL) this.sql.exec('UPDATE devices SET last_active_at = ? WHERE device_id = ?', now, deviceId);
-    this.touchActivity();
     return true;
   }
 
-  touchActivity() {
-    const now = Date.now();
-    if (now - this.lastActivity < ACTIVITY_WRITE_INTERVAL) return;
-    this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', String(now), 'lastActiveAt');
-    this.lastActivity = now;
+  expireIfInactive() {
+    if (this.roomExpired) return true;
+    if (this.lastMessageAt + ROOM_IDLE_LIFETIME > Date.now()) return false;
+    for (const deviceId of this.pushRequests.keys()) this.cancelDevicePush(deviceId);
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec("INSERT INTO metadata (key, value) VALUES ('roomExpired', '1')");
+      this.sql.exec('DELETE FROM devices');
+      this.sql.exec('DELETE FROM messages');
+      this.sql.exec("UPDATE files SET status = 'deleting', reserved_bytes = 0");
+      this.sql.exec('DELETE FROM message_tombstones');
+      this.sql.exec('DELETE FROM download_tickets');
+      this.sql.exec('DELETE FROM key_grants');
+      this.sql.exec('DELETE FROM pair_acceptances');
+      this.sql.exec('DELETE FROM pair_cancellations');
+    });
+    this.roomExpired = true;
+    this.retainedMessageIds = [];
+    this.connectedActivity.clear();
+    this.downloadRevision++;
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      socket.serializeAttachment({ closing: true });
+      socket.close(4001, 'Space expired');
+    }
+    this.ctx.waitUntil(this.scheduleAlarm());
+    return true;
   }
 
   listDevices(deviceId) {
@@ -1517,6 +1572,70 @@ export class E2eeSyncRoom extends DurableObject {
       deviceId,
       devices: this.sql.exec('SELECT device_id AS deviceId, name, created_at AS createdAt FROM devices ORDER BY created_at, device_id').toArray()
     };
+  }
+
+  savePushSubscription(deviceId, subscription, language) {
+    if (!this.initialized || this.expireIfInactive()) return { error: 'not_found', status: 404 };
+    if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+    const value = JSON.stringify(subscription);
+    const changed = this.sql.exec(`INSERT INTO push_subscriptions (device_id, subscription, language) VALUES (?, ?, ?)
+      ON CONFLICT(device_id) DO UPDATE SET subscription = excluded.subscription, language = excluded.language
+      WHERE subscription <> excluded.subscription OR language <> excluded.language RETURNING device_id`, deviceId, value, language).toArray().length;
+    if (changed) this.cancelDevicePush(deviceId);
+    return { ok: true };
+  }
+
+  removePushSubscription(deviceId) {
+    if (!this.initialized || this.expireIfInactive()) return { error: 'not_found', status: 404 };
+    if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
+    this.sql.exec('DELETE FROM push_subscriptions WHERE device_id = ?', deviceId);
+    this.cancelDevicePush(deviceId);
+    return { ok: true };
+  }
+
+  cancelDevicePush(deviceId) {
+    for (const controller of this.pushRequests.get(deviceId) || []) controller.abort();
+    this.pushRequests.delete(deviceId);
+  }
+
+  queuePush(message) {
+    if (!getPushPublicKey(this.env)) return;
+    this.ctx.waitUntil(this.sendPushNotifications(message).catch(() => {
+      console.warn(JSON.stringify({ event: 'sync_push_error', status: 0 }));
+    }));
+  }
+
+  async sendPushNotifications(message) {
+    if (!this.initialized || this.roomExpired) return;
+    const subscriptions = this.sql.exec('SELECT p.device_id, p.subscription, p.language FROM push_subscriptions p JOIN devices d ON d.device_id = p.device_id WHERE p.device_id <> ? AND d.last_active_at > ?', message.deviceId, Date.now() - DEVICE_IDLE_LIFETIME).toArray();
+    if (!subscriptions.length) return;
+    const roomId = this.sql.exec("SELECT value FROM metadata WHERE key = 'roomId'").toArray()[0]?.value;
+    if (!roomId) return;
+    let index = 0;
+    await Promise.all(Array.from({ length: Math.min(3, subscriptions.length) }, async () => {
+      while (index < subscriptions.length) {
+        const recipient = subscriptions[index++];
+        if (!this.initialized || this.roomExpired) return;
+        if (!this.sql.exec('SELECT 1 FROM push_subscriptions p JOIN devices d ON d.device_id = p.device_id WHERE p.device_id = ? AND p.subscription = ? AND d.last_active_at > ?', recipient.device_id, recipient.subscription, Date.now() - DEVICE_IDLE_LIFETIME).toArray().length) continue;
+        const controller = new AbortController();
+        let requests = this.pushRequests.get(recipient.device_id);
+        if (!requests) this.pushRequests.set(recipient.device_id, requests = new Set());
+        requests.add(controller);
+        try {
+          const result = await sendWebPush(JSON.parse(recipient.subscription), {
+            roomId, messageId: message.id, language: recipient.language
+          }, this.env, { signal: controller.signal });
+          if (controller.signal.aborted || !this.initialized || this.roomExpired) continue;
+          if ([404, 410].includes(result.status)) this.sql.exec('DELETE FROM push_subscriptions WHERE device_id = ? AND subscription = ?', recipient.device_id, recipient.subscription);
+          else if (result.status < 200 || result.status >= 300) console.warn(JSON.stringify({ event: 'sync_push_error', status: result.status }));
+        } catch {
+          if (!controller.signal.aborted) console.warn(JSON.stringify({ event: 'sync_push_error', status: 0 }));
+        } finally {
+          requests.delete(controller);
+          if (!requests.size && this.pushRequests.get(recipient.device_id) === requests) this.pushRequests.delete(recipient.device_id);
+        }
+      }
+    }));
   }
 
   renameDevice(deviceId, targetDeviceId, name, keyId) {
@@ -1786,6 +1905,7 @@ export class E2eeSyncRoom extends DurableObject {
 
   pruneExpired() {
     if (!this.initialized) return 0;
+    if (this.expireIfInactive()) return 0;
     this.refreshConnectedDevices();
     const expiredDevices = this.sql.exec('SELECT device_id FROM devices WHERE last_active_at <= ?', Date.now() - DEVICE_IDLE_LIFETIME).toArray();
     for (const { device_id: deviceId } of expiredDevices) this.removeDevice(deviceId);
@@ -1811,7 +1931,7 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.initialized) return json({ done: true, reclaimed: true });
     const completed = this.sql.exec("SELECT value FROM metadata WHERE key = 'maintenanceDone'").toArray()[0]?.value;
     if (completed !== job.requestId) {
-      const usage = await this.storageUsage();
+      const usage = this.storageUsage();
       this.sql.exec("INSERT OR IGNORE INTO metadata (key, value) VALUES ('maintenanceJob', ?)", JSON.stringify({ ...job, storedBytes: usage.bytes - usage.reservedBytes }));
       if (!this.maintenanceCompletion) {
         let resolve;
@@ -1829,20 +1949,18 @@ export class E2eeSyncRoom extends DurableObject {
         if (!done) return json({ done: false });
       } finally { clearTimeout(timer); }
     }
-    const usage = await this.storageUsage();
+    if (!this.initialized) return json({ done: true, reclaimed: true });
+    const usage = this.storageUsage();
     const freedBytes = Number(this.sql.exec("SELECT value FROM metadata WHERE key = 'maintenanceFreedBytes'").toArray()[0]?.value || 0);
-    const reclaimed = job.reclaim && usage.oldestAt === null && await this.reclaimIfEmpty();
+    const reclaimed = usage.oldestAt === null && await this.reclaimIfEmpty();
     return json({ done: true, reclaimed, usage, freedBytes: freedBytes + (reclaimed ? usage.bytes : 0) });
   }
 
   async reclaimIfEmpty() {
     return this.ctx.blockConcurrencyWhile(async () => {
       if (this.initialized) {
+        if (!this.expireIfInactive()) return false;
         if (this.sql.exec('SELECT 1 FROM messages UNION ALL SELECT 1 FROM files UNION ALL SELECT 1 FROM file_shards UNION ALL SELECT 1 FROM file_upload_chunks LIMIT 1').toArray().length) return false;
-        if (this.sql.exec('SELECT 1 FROM devices LIMIT 1').toArray().length) {
-          const lastActivity = Number(this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'lastActiveAt').one().value);
-          if (lastActivity + ROOM_IDLE_LIFETIME + ACTIVITY_WRITE_INTERVAL > Date.now() || this.ctx.getWebSockets().some(socket => socket.readyState === WebSocket.OPEN && socket.deserializeAttachment()?.deviceId && !socket.deserializeAttachment()?.closing)) return false;
-        }
       }
       for (const socket of this.ctx.getWebSockets()) {
         if (socket.readyState !== WebSocket.OPEN) continue;
@@ -2034,16 +2152,19 @@ export class E2eeSyncRoom extends DurableObject {
             if (shard.bytes !== shards[index].bytes) this.sql.exec('UPDATE file_shards SET bytes = ? WHERE file_id = ? AND shard_index = ?', shard.bytes, uploadId, shard.shard_index);
           });
           const created = this.sql.exec('INSERT INTO messages (client_id, device_id, text, created_at, attachment) VALUES (?, ?, ?, ?, ?) RETURNING id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment', file.client_id, deviceId, file.text, Date.now(), JSON.stringify(attachment)).one();
+          this.sql.exec("UPDATE metadata SET value = ? WHERE key = 'lastMessageAt'", String(created.createdAt));
           this.sql.exec("UPDATE files SET status = 'complete', message_id = ?, created_at = ?, reserved_bytes = 0 WHERE file_id = ?", created.id, created.createdAt, uploadId);
           pruned = this.pruneMessageLimit(created.id);
           if (pruned.length) this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
           return publicMessage(created);
         });
         const removed = new Set(pruned);
+        this.lastMessageAt = message.createdAt;
         this.retainedMessageIds = [...this.retainedMessageIds.filter(id => !removed.has(id)), message.id];
         this.shardBytes = null;
         if (pruned.length) this.downloadRevision++;
         this.broadcast({ type: 'message', message, history: { ...this.historySnapshot(), ...(pruned.length ? { removedIds: pruned } : {}) }, ...(pruned.length ? { activeGames: this.activeGames() } : {}) });
+        this.queuePush(message);
         await this.scheduleAlarm();
         return { message, created: true };
       });
@@ -2142,6 +2263,7 @@ export class E2eeSyncRoom extends DurableObject {
         'INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?) RETURNING id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt',
         clientId, deviceId, text, Date.now()
       ).one();
+      this.sql.exec("UPDATE metadata SET value = ? WHERE key = 'lastMessageAt'", String(created.createdAt));
       if (gameType) {
         const score = previous && JSON.parse(previous.result);
         this.sql.exec("INSERT INTO gomoku_games (game_id, message_id, host_device_id, guest_device_id, status, revision, board, updated_at, previous_game_id, rematch_requested_by, base_score) VALUES (?, ?, ?, ?, 'waiting', 1, ?, ?, ?, ?, ?)",
@@ -2156,10 +2278,12 @@ export class E2eeSyncRoom extends DurableObject {
     });
     if (saved.error) return saved;
     const { message } = saved;
+    this.lastMessageAt = message.createdAt;
     const removed = new Set(pruned);
     this.retainedMessageIds = [...this.retainedMessageIds.filter(id => !removed.has(id)), message.id];
     if (pruned.length) this.downloadRevision++;
     this.broadcast({ type: 'message', message, history: { ...this.historySnapshot(), ...(pruned.length ? { removedIds: pruned } : {}) }, ...(pruned.length ? { activeGames: this.activeGames() } : {}) });
+    this.queuePush(message);
     if (gameType) this.broadcast({ type: 'gomoku', game: this.gameSnapshot(this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', clientId).one()) });
     if (previousGameId) {
       const previous = this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', previousGameId).toArray()[0];
@@ -2187,6 +2311,7 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.sql.exec('DELETE FROM devices WHERE device_id = ? RETURNING device_id', deviceId).toArray().length) {
       return { error: 'device_not_found', status: 404 };
     }
+    this.cancelDevicePush(deviceId);
     this.downloadRevision++;
     this.connectedActivity.delete(deviceId);
     const games = this.finishDeviceGames(deviceId);
@@ -2231,7 +2356,7 @@ export class E2eeSyncRoom extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
     if (url.hostname === 'maintenance.internal' && url.pathname === '/' && request.method === 'POST') return this.handleMaintenance(request);
-    if (!this.initialized) return json({ error: 'not_found' }, 404);
+    if (!this.initialized || this.expireIfInactive()) return json({ error: 'not_found' }, 404);
     const path = url.pathname;
     const uploadChunk = path.match(/^\/v1\/spaces\/[^/]+\/files\/uploads\/([0-9a-f-]{36})\/chunks\/(0|[1-9][0-9]*)$/i);
     if (request.method === 'PUT' && uploadChunk && ROOM_ID.test(uploadChunk[1])) {
@@ -2263,7 +2388,6 @@ export class E2eeSyncRoom extends DurableObject {
       }
       if (!deviceId || (ticketMatch && !this.touchDevice(deviceId))) return json({ error: 'unauthorized' }, 401);
       if (!file || !this.sql.exec('SELECT 1 FROM messages WHERE id = ?', file.message_id).toArray().length || file.created_at + MESSAGE_LIFETIME <= Date.now()) return json({ error: 'not_found' }, 404);
-      this.touchActivity();
       const headers = {
         'Content-Type': 'application/octet-stream', 'Content-Length': String(file.size),
         'Content-Disposition': 'attachment; filename="encrypted-file"',
@@ -2297,7 +2421,7 @@ export class E2eeSyncRoom extends DurableObject {
       // Only membership/history changes invalidate access; transport chunk boundaries do not.
       let revision = this.downloadRevision;
       const available = () => {
-        if (!this.initialized || file.created_at + MESSAGE_LIFETIME <= Date.now()) return false;
+        if (!this.initialized || this.expireIfInactive() || file.created_at + MESSAGE_LIFETIME <= Date.now()) return false;
         if (revision === this.downloadRevision) return true;
         if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length
             || !this.sql.exec("SELECT 1 FROM files WHERE file_id = ? AND status = 'complete'", file.file_id).toArray().length) return false;
@@ -2361,7 +2485,7 @@ export class E2eeSyncRoom extends DurableObject {
   }
 
   async webSocketMessage(socket, payload) {
-    if (!this.initialized) {
+    if (!this.initialized || this.expireIfInactive()) {
       socket.close(4001, 'Space expired');
       return;
     }
@@ -2417,7 +2541,7 @@ export class E2eeSyncRoom extends DurableObject {
         socket.close(1008, 'Authentication timed out');
         return false;
       }
-      if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) {
+      if (!this.initialized || this.expireIfInactive() || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) {
         socket.serializeAttachment({ closing: true });
         socket.close(4001, 'Invalid credential');
         return false;
@@ -2437,6 +2561,7 @@ export class E2eeSyncRoom extends DurableObject {
     const deadlines = this.ctx.getWebSockets()
       .map(socket => socket.deserializeAttachment()?.authDeadline)
       .filter(Boolean);
+    deadlines.push(this.roomExpired ? Date.now() + 60000 : this.lastMessageAt + ROOM_IDLE_LIFETIME);
     const expiry = this.sql.exec(`SELECT
       (SELECT min(created_at) FROM messages) AS message,
       (SELECT min(created_at) FROM message_tombstones) AS tombstone,
@@ -2460,7 +2585,8 @@ export class E2eeSyncRoom extends DurableObject {
     }
     this.nextPruneAt = deadlines.length ? Math.min(...deadlines) : Infinity;
     const nextAlarm = deadlines.length ? this.nextPruneAt : null;
-    if (nextAlarm === await this.ctx.storage.getAlarm()) return;
+    const scheduled = await this.ctx.storage.getAlarm();
+    if (!this.initialized || nextAlarm === scheduled) return;
     if (nextAlarm !== null) await this.ctx.storage.setAlarm(nextAlarm);
     else await this.ctx.storage.deleteAlarm();
   }
@@ -2498,7 +2624,9 @@ export class E2eeSyncRoom extends DurableObject {
           this.sql.exec("DELETE FROM metadata WHERE key IN ('maintenanceJob', 'maintenanceRetryAt')");
           this.sql.exec("INSERT INTO metadata (key, value) VALUES ('maintenanceDone', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", requestId);
         });
+        await this.scheduleAlarm();
         this.maintenanceCompletion?.resolve(true);
+        return;
       } catch (error) {
         this.maintenanceCompletion?.resolve(false);
         throw error;
@@ -2508,9 +2636,9 @@ export class E2eeSyncRoom extends DurableObject {
       hadPending = this.sql.exec("SELECT 1 FROM files WHERE status = 'deleting' LIMIT 1").toArray().length;
       await this.cleanupFiles();
     }
-    await this.scheduleAlarm();
     const roomId = this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'roomId').toArray()[0]?.value;
-    if ((deleted || hadPending) && roomId) this.ctx.waitUntil(this.env.E2EE_PAIRING_REGISTRY.getByName('registry').refreshRoom(roomId));
+    await this.scheduleAlarm();
+    if ((deleted || hadPending || this.roomExpired) && roomId) this.ctx.waitUntil(this.env.E2EE_PAIRING_REGISTRY.getByName('registry').refreshRoom(roomId));
   }
 
   async webSocketClose(socket) {

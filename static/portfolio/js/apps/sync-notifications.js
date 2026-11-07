@@ -75,38 +75,73 @@ export async function testSystemNotification({ title, body }) {
     return result;
 }
 
-export function createSystemNotifications({ button, translate, onError, onOpen }) {
+export function createSystemNotifications({ button, translate, onError, onOpen, push, installGuide, installButton }) {
     const supported = 'Notification' in window;
+    const iphone = /iPhone|iPad|iPod/.test(navigator.userAgent) || navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+    const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+    const needsInstall = () => iphone && !standalone();
+    let installPrompt;
+    let changing = false;
     const pending = new Map();
     const enabled = () => {
         try { return supported && Notification.permission === 'granted' && localStorage.getItem(preference) === 'on'; }
         catch { return false; }
     };
     const update = () => {
-        button.disabled = !supported;
-        button.textContent = translate(!supported ? 'syncNotificationsUnavailable' : enabled() ? 'syncNotificationsOn' : 'syncNotificationsOff');
+        button.disabled = changing || !supported && !needsInstall();
+        button.textContent = translate(needsInstall() ? 'syncNotificationsInstallRequired' : !supported ? 'syncNotificationsUnavailable' : enabled() ? 'syncNotificationsOn' : 'syncNotificationsOff');
         button.setAttribute('aria-pressed', String(enabled()));
+        if (installGuide) {
+            installGuide.hidden = standalone();
+            installGuide.querySelector('[data-sync-install-copy]').textContent = translate(iphone ? 'syncInstallIphone' : 'syncInstallBrowser');
+        }
+        if (installButton) installButton.hidden = !installPrompt;
         window.dispatchEvent(new Event('sync-diagnostics-change'));
     };
+    window.addEventListener('beforeinstallprompt', event => {
+        event.preventDefault(); installPrompt = event; update();
+    });
+    window.addEventListener('appinstalled', () => { installPrompt = null; update(); });
+    installButton?.addEventListener('click', async () => {
+        if (!installPrompt) return;
+        const prompt = installPrompt; installPrompt = null;
+        await prompt.prompt(); update();
+    });
     button.addEventListener('click', async () => {
-        if (!supported) return;
-        if (enabled()) localStorage.setItem(preference, 'off');
-        else {
-            try {
-                const permission = await Notification.requestPermission();
-                if (permission !== 'granted') { onError('syncNotificationsDenied'); update(); return; }
-                await prepareEncryptedFiles();
-                localStorage.setItem(preference, 'on');
-            } catch { onError('syncNotificationsUnavailable'); }
+        if (changing) return;
+        if (needsInstall()) {
+            if (installGuide) installGuide.open = true;
+            return;
         }
+        if (!supported) return;
+        changing = true;
         update();
+        try {
+            if (enabled()) {
+                await push?.disable();
+                if (!push?.supported()) localStorage.setItem(preference, 'off');
+            } else {
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') { onError('syncNotificationsDenied'); return; }
+                await prepareEncryptedFiles();
+                await push?.enable();
+                if (!push?.supported()) localStorage.setItem(preference, 'on');
+            }
+        } catch { onError(push?.supported() ? 'syncPushUnavailable' : 'syncNotificationsUnavailable'); }
+        finally { changing = false; update(); }
     });
     navigator.serviceWorker?.addEventListener('message', event => {
         const expected = new URL('/sync-e2ee-worker.js', document.baseURI).href;
         if (event.source?.scriptURL === expected && event.data?.source === 'gavin-sync-notification') onOpen(event.data.roomId);
     });
-    window.addEventListener('storage', event => { if (event.key === preference || event.key === null) update(); });
-    window.addEventListener('portfolio-language-change', update);
+    const syncPush = () => {
+        if (enabled()) push?.sync().catch(() => { record({ status: 'error' }); });
+    };
+    window.addEventListener('storage', event => { if (event.key === preference || event.key === null) { update(); syncPush(); } });
+    window.addEventListener('portfolio-language-change', () => { update(); syncPush(); });
+    window.addEventListener('online', syncPush);
+    window.addEventListener('pageshow', syncPush);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { update(); syncPush(); } });
     update();
     const deliver = async (entry, key) => {
         const queuedAt = Date.now();
@@ -131,9 +166,11 @@ export function createSystemNotifications({ button, translate, onError, onOpen }
         finally { clearTimeout(deadline); }
     };
     return {
+        syncPush,
         diagnostics: readNotificationDiagnostics,
         show(message, session, receivedAt = Date.now()) {
             if (!enabled()) return Promise.resolve();
+            if (push?.usesPush(session)) return Promise.resolve();
             if (!document.hidden && document.hasFocus()) {
                 record({ status: 'foreground', totalMs: Date.now() - receivedAt });
                 return Promise.resolve();

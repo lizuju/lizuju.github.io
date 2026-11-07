@@ -28,7 +28,8 @@ test.beforeEach(async () => {
             const body = Buffer.concat(chunks);
             if (body.length) wireBodies.push(body);
             if (incoming.method === 'POST' && /\/messages$/.test(incoming.url)) messageBodies.push(JSON.parse(body.toString()));
-            await beforeForward?.(incoming);
+            await beforeForward?.(incoming, outgoing);
+            if (outgoing.writableEnded) return;
             const response = await runtime.dispatchFetch(new URL(incoming.url, apiOrigin), {
                 method: incoming.method, headers: incoming.headers,
                 ...(!['GET', 'HEAD'].includes(incoming.method) ? { body } : {})
@@ -63,6 +64,7 @@ test.beforeEach(async () => {
             manifest: { mainModule: 'index.js', modules: {
                 'index.js': { type: 'esm', contents: await readFile(path.join(root, 'cloudflare/sync/src/index.js'), 'utf8') },
                 'daily-usage.js': { type: 'esm', contents: await readFile(path.join(root, 'cloudflare/sync/src/daily-usage.js'), 'utf8') },
+                'web-push.js': { type: 'esm', contents: await readFile(path.join(root, 'cloudflare/sync/src/web-push.js'), 'utf8') },
                 'api-version.js': { type: 'esm', contents: await readFile(path.join(root, 'cloudflare/sync/src/api-version.js'), 'utf8') }
             } },
             env: {
@@ -414,15 +416,56 @@ test('offers a rematch in settlement, waits for the opponent and swaps colors wi
         await expect(guest.locator('[data-sync-gomoku-role]')).toHaveText('你执白棋');
         await guest.locator('[data-sync-gomoku-action="close"]').click();
         await guest.locator('[data-sync-gomoku-leave]').click();
-        for (const page of [owner, guest]) await expect(page.locator('[data-sync-gomoku-result]')).toBeVisible();
+        for (const page of [owner, guest]) {
+            await expect(page.locator('[data-sync-gomoku-result]')).toBeVisible();
+            await expect(page.locator('[data-sync-gomoku-result-close]')).toHaveText('退出对局');
+            await expect(page.locator('[data-sync-gomoku-rematch-cancel]')).toHaveCount(0);
+            const [again, exit, result] = await Promise.all([
+                page.locator('[data-sync-gomoku-rematch]').boundingBox(),
+                page.locator('[data-sync-gomoku-result-close]').boundingBox(),
+                page.locator('[data-sync-gomoku-result]').boundingBox()
+            ]);
+            expect(again.x + again.width).toBeLessThanOrEqual(exit.x);
+            expect(Math.abs(again.y + again.height - exit.y - exit.height)).toBeLessThanOrEqual(1);
+            expect(result.x + result.width - exit.x - exit.width).toBeLessThanOrEqual(16);
+            expect(result.y + result.height - exit.y - exit.height).toBeLessThanOrEqual(16);
+            await expect(page.locator('[data-sync-gomoku-board]')).toHaveAttribute('aria-disabled', 'true');
+        }
         await owner.locator('[data-sync-gomoku-rematch]').click();
         await expect(owner.locator('[data-sync-gomoku-rematch]')).toHaveText('等待对方同意');
         await expect(owner.locator('[data-sync-gomoku-rematch]')).toBeDisabled();
-        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText('接受再来一局');
+        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText(`${await guest.locator('[data-sync-gomoku-host]').textContent()} 邀你再战`);
         await guest.reload();
         await awaitOnline(guest);
-        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText('接受再来一局');
+        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText(`${await guest.locator('[data-sync-gomoku-host]').textContent()} 邀你再战`);
         await expect(guest.locator('[data-sync-gomoku-result]')).toBeVisible();
+        for (const page of [owner, guest]) {
+            const layout = await page.locator('[data-sync-gomoku-window]').evaluate(element => ({ width: element.clientWidth, content: element.scrollWidth }));
+            expect(layout.content).toBeLessThanOrEqual(layout.width);
+            const [again, exit] = await Promise.all([
+                page.locator('[data-sync-gomoku-rematch]').boundingBox(),
+                page.locator('[data-sync-gomoku-result-close]').boundingBox()
+            ]);
+            expect(again.x + again.width).toBeLessThanOrEqual(exit.x);
+            expect(Math.abs(again.y + again.height - exit.y - exit.height)).toBeLessThanOrEqual(1);
+        }
+        await owner.locator('[data-taskbar-lang]').click();
+        await expect(owner.locator('[data-sync-gomoku-rematch]')).toHaveText('Waiting for opponent');
+        await expect(owner.locator('[data-sync-gomoku-result-close]')).toHaveText('Leave match');
+        const [englishAgain, englishExit, englishWindow] = await Promise.all([
+            owner.locator('[data-sync-gomoku-rematch]').boundingBox(),
+            owner.locator('[data-sync-gomoku-result-close]').boundingBox(),
+            owner.locator('[data-sync-gomoku-window]').boundingBox()
+        ]);
+        expect(englishAgain.x + englishAgain.width).toBeLessThanOrEqual(englishExit.x);
+        expect(Math.abs(englishAgain.y + englishAgain.height - englishExit.y - englishExit.height)).toBeLessThanOrEqual(1);
+        expect(englishAgain.x).toBeGreaterThanOrEqual(englishWindow.x);
+        expect(englishExit.x + englishExit.width).toBeLessThanOrEqual(englishWindow.x + englishWindow.width);
+        await owner.screenshot({ path: testInfo.outputPath('rematch-waiting-english.png') });
+        await owner.locator('[data-taskbar-lang]').click();
+        await guest.locator('[data-taskbar-lang]').click();
+        await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText(`${await guest.locator('[data-sync-gomoku-host]').textContent()} invites you`);
+        await guest.locator('[data-taskbar-lang]').click();
         await guest.screenshot({ path: testInfo.outputPath('rematch-offer.png') });
         await guest.locator('[data-sync-gomoku-rematch]').click();
         await expect(owner.locator('[data-sync-gomoku-role]')).toHaveText('你执白棋');
@@ -437,6 +480,63 @@ test('offers a rematch in settlement, waits for the opponent and swaps colors wi
         await expect(guest.locator('[data-sync-gomoku-board]')).toHaveAttribute('aria-disabled', 'false');
         await guest.locator('[data-sync-gomoku-board]').press('Enter');
         await expect(owner.locator('[data-sync-gomoku-move-count]')).toHaveText('1');
+        expect(pageErrors).toEqual([]);
+    } finally { await Promise.all(contexts.map(context => context.close())); }
+});
+
+test('exiting settlement cancels either side of a pending rematch and keeps the completed board available', async ({ browser, isMobile }, testInfo) => {
+    test.setTimeout(90000);
+    const { contexts, pages, sessions, pageErrors } = await pairDevices(browser, isMobile);
+    const [owner, guest] = pages;
+    try {
+        await owner.locator('[data-sync-game-share]').click();
+        await expect(owner.locator('[data-sync-game-card]')).toHaveCount(1);
+        const id = await owner.locator('[data-sync-game-card]').getAttribute('data-sync-game-card');
+        await guest.locator('[data-sync-game-join]').click();
+        await expect(guest.locator('[data-sync-gomoku-role]')).toHaveText('你执白棋');
+        await guest.locator('[data-sync-gomoku-action="close"]').click();
+        await guest.locator('[data-sync-gomoku-leave]').click();
+        await expect(owner.locator('[data-sync-gomoku-result]')).toBeVisible();
+        const finished = await readGame(sessions[0], id);
+        for (const [closingPage, selector] of [
+            [owner, '[data-sync-gomoku-result-close]'],
+            [guest, '[data-sync-gomoku-result-close]'],
+            [owner, '[data-sync-gomoku-action="close"]']
+        ]) {
+            await owner.locator('[data-sync-gomoku-rematch]').click();
+            await expect(owner.locator('[data-sync-gomoku-rematch]')).toHaveText('等待对方同意');
+            await expect(owner.locator('[data-sync-gomoku-rematch]')).toBeDisabled();
+            await expect(guest.locator('[data-sync-gomoku-rematch]')).toHaveText(`${await guest.locator('[data-sync-gomoku-host]').textContent()} 邀你再战`);
+            const invitationId = (await readGame(sessions[0], id)).nextGameId;
+            expect((await readGame(sessions[0], invitationId)).status).toBe('waiting');
+            if (closingPage === owner && selector === '[data-sync-gomoku-result-close]') {
+                beforeForward = (incoming, outgoing) => {
+                    if (incoming.method !== 'POST' || incoming.url !== `/v1/spaces/${sessions[0].roomId}/gomoku/${invitationId}/leave`) return;
+                    outgoing.writeHead(503, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': site.origin });
+                    outgoing.end(JSON.stringify({ error: 'temporary_failure' }));
+                };
+                await owner.locator(selector).click();
+                await expect(owner.locator('[data-sync-gomoku-error]')).toBeVisible();
+                await expect(owner.locator('[data-sync-gomoku-window]')).toBeVisible();
+                expect((await readGame(sessions[0], invitationId)).status).toBe('waiting');
+                beforeForward = null;
+            }
+            await closingPage.locator(selector).click();
+            await expect(closingPage.locator('[data-sync-gomoku-window]')).toBeHidden();
+            await expect.poll(async () => (await readGame(sessions[0], invitationId)).status).toBe('cancelled');
+            const remainingPage = closingPage === owner ? guest : owner;
+            await expect(remainingPage.locator('[data-sync-gomoku-rematch]')).toHaveText('再来一局');
+            await expect(remainingPage.locator('[data-sync-gomoku-rematch]')).toBeEnabled();
+            const retained = await readGame(sessions[0], id);
+            expect(retained.status).toBe('finished');
+            expect(retained.result).toEqual(finished.result);
+            expect(retained.board).toEqual(finished.board);
+            await closingPage.locator(`[data-sync-game-card="${id}"] [data-sync-game-view]`).click();
+            await expect(closingPage.locator('[data-sync-gomoku-result]')).toBeVisible();
+            await expect(closingPage.locator('[data-sync-gomoku-rematch]')).toHaveText('再来一局');
+            await expect(closingPage.locator('[data-sync-gomoku-board]')).toHaveAttribute('aria-disabled', 'true');
+        }
+        await owner.screenshot({ path: testInfo.outputPath('rematch-cancelled-settlement.png') });
         expect(pageErrors).toEqual([]);
     } finally { await Promise.all(contexts.map(context => context.close())); }
 });

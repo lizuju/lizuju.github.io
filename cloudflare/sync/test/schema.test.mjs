@@ -25,6 +25,7 @@ async function createRuntime() {
       manifest: { mainModule: 'harness.js', modules: {
         'index.js': { type: 'esm', contents: instrumented },
         'daily-usage.js': { type: 'esm', contents: await readFile(new URL('../src/daily-usage.js', import.meta.url), 'utf8') },
+        'web-push.js': { type: 'esm', contents: await readFile(new URL('../src/web-push.js', import.meta.url), 'utf8') },
         'api-version.js': { type: 'esm', contents: await readFile(new URL('../src/api-version.js', import.meta.url), 'utf8') },
         'harness.js': { type: 'esm', contents: `
           import { E2eeSyncRoom as ProductionRoom } from './index.js';
@@ -83,24 +84,57 @@ test('versioned rooms recover with read-only schema checks and preserve credenti
   assert.equal((await room.storageUsage()).reservedBytes, 100);
 });
 
-test('legacy schemas migrate once without losing existing encrypted rows or resetting activity', async t => {
+test('legacy schemas migrate once using the latest retained message instead of authentication activity', async t => {
   const { runtime, room, storage, wake } = await createRuntime(); t.after(() => runtime.dispose());
   const device = await room.initialize(randomUUID());
   const activeAt = Date.now() - 1000;
   await storage.exec("DELETE FROM metadata WHERE key = 'schemaVersion'");
-  await storage.exec("UPDATE metadata SET value = ? WHERE key = 'lastActiveAt'", String(activeAt));
+  await storage.exec("DELETE FROM metadata WHERE key = 'lastMessageAt'");
+  await storage.exec("INSERT INTO metadata (key, value) VALUES ('lastActiveAt', ?)", String(Date.now()));
   await storage.exec('ALTER TABLE files DROP COLUMN fingerprint');
   await storage.exec('ALTER TABLE gomoku_games DROP COLUMN base_score');
+  await storage.exec('INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?)', 'older-message', device.deviceId, 'older-encrypted-envelope', activeAt - 10000);
   await storage.exec('INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?)', 'legacy-message', device.deviceId, 'legacy-encrypted-envelope', activeAt);
   assert.equal(await wake(), true);
   assert.ok((await room.testQueries()).some(query => query.startsWith('ALTER TABLE')));
-  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'lastActiveAt'"))[0].value, String(activeAt));
-  assert.equal((await storage.exec('SELECT text FROM messages'))[0].text, 'legacy-encrypted-envelope');
+  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value, String(activeAt));
+  assert.deepEqual((await storage.exec('SELECT text FROM messages ORDER BY id')).map(row => row.text), ['older-encrypted-envelope', 'legacy-encrypted-envelope']);
   assert.ok((await storage.exec('PRAGMA table_info(files)')).some(column => column.name === 'fingerprint'));
   assert.ok((await storage.exec('PRAGMA table_info(gomoku_games)')).some(column => column.name === 'base_score'));
-  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'schemaVersion'")).length, 1);
+  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'schemaVersion'"))[0].value, '3');
   await wake();
   assert.ok((await room.testQueries()).every(query => query.startsWith('SELECT')));
+});
+
+test('an empty legacy room gets one fourteen-day grace period that reads and subsequent wakes cannot renew', async t => {
+  const { runtime, room, storage, wake } = await createRuntime(); t.after(() => runtime.dispose());
+  const device = await room.initialize(randomUUID());
+  await storage.exec("DELETE FROM metadata WHERE key = 'lastMessageAt'");
+  await storage.exec("UPDATE metadata SET value = '1' WHERE key = 'schemaVersion'");
+  await storage.exec("UPDATE metadata SET value = ? WHERE key = 'createdAt'", String(Date.now() - 30 * 24 * 60 * 60 * 1000));
+  const before = Date.now();
+  assert.equal(await wake(), true);
+  const deadlineStart = Number((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value);
+  assert.ok(deadlineStart >= before && deadlineStart <= Date.now());
+  assert.equal(await room.authorize(device.token), device.deviceId);
+  assert.equal(await wake(), true);
+  assert.equal(await room.authorize(device.token), device.deviceId);
+  assert.equal(Number((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value), deadlineStart);
+});
+
+test('push schema migration preserves the room inactivity deadline and existing devices', async t => {
+  const { runtime, room, storage, wake } = await createRuntime(); t.after(() => runtime.dispose());
+  const device = await room.initialize(randomUUID());
+  const activity = String(Date.now() - 10 * 86400000);
+  await storage.exec('DROP TRIGGER delete_device_push');
+  await storage.exec('DROP TABLE push_subscriptions');
+  await storage.exec("UPDATE metadata SET value = '2' WHERE key = 'schemaVersion'");
+  await storage.exec("UPDATE metadata SET value = ? WHERE key = 'lastMessageAt'", activity);
+  assert.equal(await wake(), true);
+  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'lastMessageAt'"))[0].value, activity);
+  assert.equal(await room.authorize(device.token), device.deviceId);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_subscriptions'), []);
+  assert.equal((await storage.exec("SELECT value FROM metadata WHERE key = 'schemaVersion'"))[0].value, '3');
 });
 
 test('failed migrations roll back the version marker and schema changes so the next wake retries', async t => {

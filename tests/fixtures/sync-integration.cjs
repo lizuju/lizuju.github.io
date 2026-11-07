@@ -44,6 +44,7 @@ module.exports = function setupSyncIntegration() {
                 manifest: { mainModule: 'index.js', modules: {
                     'index.js': { type: 'esm', contents: await readFile(path.join(root, 'cloudflare/sync/src/index.js'), 'utf8') },
                     'daily-usage.js': { type: 'esm', contents: await readFile(path.join(root, 'cloudflare/sync/src/daily-usage.js'), 'utf8') },
+                    'web-push.js': { type: 'esm', contents: await readFile(path.join(root, 'cloudflare/sync/src/web-push.js'), 'utf8') },
                     'api-version.js': { type: 'esm', contents: await readFile(path.join(root, 'cloudflare/sync/src/api-version.js'), 'utf8') }
                 } },
                 env: {
