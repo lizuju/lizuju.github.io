@@ -774,7 +774,7 @@
                         aria-haspopup="true" aria-expanded="false" data-i18n="satelliteMenuData">数据</button>
                     <div class="window-menu-popup" data-window-menu-popup="satellite-data" role="menu" hidden>
                         <button type="button" role="menuitem" data-menu-action="satellite-refresh">
-                            <span data-i18n="satelliteRefresh">刷新数据</span>
+                            <span data-i18n="satelliteRefresh">刷新轨迹</span>
                         </button>
                         <div class="window-menu-separator" role="separator"></div>
                         <button type="button" role="menuitem" data-menu-action="satellite-close">
@@ -833,6 +833,7 @@
                 </div>
 
                 <aside class="satellite-panel">
+                    <p class="satellite-detail-note satellite-panel-section" data-satellite-data-time aria-live="polite"></p>
                     <div class="satellite-panel-section">
                         <h2 data-i18n="satelliteSelectedTitle">卫星信息</h2>
                         <p class="satellite-empty" data-satellite-empty data-i18n="satelliteNoSelection">

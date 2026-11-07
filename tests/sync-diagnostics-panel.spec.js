@@ -139,3 +139,30 @@ test('keeps diagnostics readable and scrollable at short and phone window sizes'
         await page.locator('[data-control-panel-action="close"]').click();
     }
 });
+
+test('loads persisted background push timings on opening diagnostics and includes them in export', async ({ page }) => {
+    await page.addInitScript(() => {
+        const at = Date.now() - 1000;
+        const worker = { state: 'activated', postMessage(data, ports) {
+            if (data.source === 'gavin-sync-push-diagnostics') ports[0].postMessage({ entries: [
+                { at, submittedAt: at + 5, completedAt: at + 25, status: 'shown', source: 'push', workerMs: 20, totalMs: 25,
+                    roomId: 'secret-room', text: 'private text', token: 'secret-token' }
+            ] });
+        } };
+        Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { controller: worker, addEventListener() {} } });
+    });
+    await page.goto('/portfolio/');
+    const view = await openDiagnostics(page);
+    await expect(view.locator('[data-sync-diagnostics-timings]')).toContainText('25 ms');
+    await expect(view.locator('[data-sync-diagnostics-timings]')).toContainText('提交系统通知');
+    const downloaded = page.waitForEvent('download');
+    await view.locator('[data-sync-diagnostics-export]').click();
+    const stream = await (await downloaded).createReadStream();
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    const text = Buffer.concat(chunks).toString();
+    const { notifications } = JSON.parse(text);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({ source: 'push', workerMs: 20, totalMs: 25 });
+    expect(text).not.toMatch(/secret-|private text/);
+});

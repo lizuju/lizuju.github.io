@@ -500,7 +500,8 @@ import { ProjectImageCache } from './project-image-cache.js';
             for (const source of adjacentImageSources()) {
                 if (request !== imageRequest) return;
                 if (source === currentSource) continue;
-                try { await imageCache.get(source, { priority: 'low' }); } catch {}
+                const button = previewImages.find(item => item.dataset.imageSrc.replace(/\.jpg$/i, '.webp') === source);
+                try { await imageCache.get(source, { priority: 'low', width: Number(button?.dataset.imageWidth) || 0, height: Number(button?.dataset.imageHeight) || 0 }); } catch {}
             }
         };
         const updateImagePreview = async (button) => {
@@ -631,6 +632,8 @@ import { ProjectImageCache } from './project-image-cache.js';
                     Object.assign(button.dataset, {
                         honorImage: certificate.id,
                         honorCategory: certificate.category,
+                        imageWidth: certificate.width,
+                        imageHeight: certificate.height,
                         imageSrc: new URL(encodeURIComponent(certificate.image), honorsAssetRoot).href,
                         photoLabelZh: certificate.nameZh,
                         photoLabelEn: certificate.nameEn,

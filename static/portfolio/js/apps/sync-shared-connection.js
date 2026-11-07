@@ -36,6 +36,14 @@ export class SharedSyncConnection {
 
     post(value) { this.channel?.postMessage({ ...value, sender: this.id }); }
 
+    setForeground(active) {
+        if (this.state !== 'online' || this.socket.readyState !== WebSocket.OPEN) { this.foregroundSentAt = 0; return; }
+        if (this.foreground === active && (!active || Date.now() - this.foregroundSentAt < 10000)) return;
+        this.foreground = active;
+        this.foregroundSentAt = Date.now();
+        this.socket.send(JSON.stringify({ type: 'foreground', tabId: this.id, active }));
+    }
+
     invalidateResults(broadcast = true, paths = null) {
         if (paths) {
             for (const key of this.results.keys()) if (paths.some(path => key.endsWith(path))) this.results.delete(key);
@@ -106,6 +114,7 @@ export class SharedSyncConnection {
 
     setState(state) {
         this.state = state;
+        if (state !== 'online') { this.foreground = undefined; this.foregroundSentAt = 0; }
         if (!this.stopped) recordConnectionState(this, state);
         this.options.onState(state);
     }
@@ -140,6 +149,7 @@ export class SharedSyncConnection {
             this.transport = new SyncConnection({ ...this.options,
                 receive: (data, current) => {
                     if (!current() || this.stopped) return;
+                    if (this.options.isForeground) this.setForeground(this.options.isForeground());
                     if (data.type === 'devices') this.invalidateResults(false, ['/devices']);
                     else if (data.type === 'pairing') this.invalidateResults(false, ['/pair-code']);
                     else if (['ready', 'key-rotation', 'rekey-required', 'cleared', 'history'].includes(data.type)) this.invalidateResults(false);
@@ -256,6 +266,7 @@ export class SharedSyncConnection {
         }
         if (event.type === 'error') { this.options.onError?.(Object.assign(new Error(event.message), { code: event.code })); return; }
         if (!this.joined || !['welcome', 'frame'].includes(event.type) || event.type === 'frame' && !event.recipients.includes(this.id)) return;
+        if (this.options.isForeground) this.setForeground(this.options.isForeground());
         const generation = this.generation;
         const current = () => !this.stopped && !this.isLeader && generation === this.generation;
         const arrivedAt = Date.now();
@@ -280,6 +291,7 @@ export class SharedSyncConnection {
 
     close() {
         if (this.stopped) return;
+        if (this.foreground !== undefined) this.setForeground(false);
         this.stopped = true;
         this.cancelRequests();
         this.generation++;

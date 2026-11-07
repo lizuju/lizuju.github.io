@@ -23,12 +23,18 @@ export class ProjectImageCache {
         this.trim();
     }
 
-    get(source, { priority = 'high' } = {}) {
+    get(source, { priority = 'high', width = 0, height = 0 } = {}) {
         const cached = priority === 'low' ? this.entries.get(source) : this.peek(source);
         if (cached) return Promise.resolve(cached);
         if (this.pending.has(source)) return this.pending.get(source).promise;
 
-        const request = { controller: new AbortController(), image: null, url: null };
+        const reservedBytes = width * height * 4;
+        const pendingBytes = [...this.pending.values()].reduce((sum, request) => sum + request.reservedBytes, 0);
+        if (priority === 'low' && (this.bytes + pendingBytes + reservedBytes > this.maxBytes
+            || this.entries.size + this.pending.size >= this.maxEntries)) {
+            return Promise.reject(new DOMException('Image exceeds the preview cache budget', 'AbortError'));
+        }
+        const request = { controller: new AbortController(), image: null, url: null, reservedBytes };
         this.pending.set(source, request);
         request.promise = this.load(source, request, priority);
         return request.promise;
@@ -41,6 +47,10 @@ export class ProjectImageCache {
             if (!response.ok) throw new Error(`Image request failed: ${response.status}`);
             const blob = await response.blob();
             signal.throwIfAborted();
+            request.reservedBytes += blob.size;
+            if (priority === 'low' && source !== this.activeSource && this.bytes + [...this.pending.values()].reduce((sum, pending) => sum + pending.reservedBytes, 0) > this.maxBytes) {
+                throw new DOMException('Image exceeds the preview cache budget', 'AbortError');
+            }
             request.url = URL.createObjectURL(blob);
             request.image = new Image();
             request.image.decoding = 'async';

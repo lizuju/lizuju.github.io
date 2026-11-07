@@ -5,7 +5,7 @@ import EventEmitter from './EventEmitter';
 import Loading from './Loading';
 import UIEventBus from '../UI/EventBus';
 
-const RESOURCE_TIMEOUT_MS = 30000;
+const RESOURCE_TIMEOUT_MS = 60000;
 
 export default class Resources extends EventEmitter {
     sources: Resource[];

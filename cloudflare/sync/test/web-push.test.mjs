@@ -126,3 +126,25 @@ test('returns only provider status and aborts in-flight delivery when revoked', 
     assert.deepEqual(await sendWebPush(subscription, payload, env), { status: 410 });
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test('coalesces VAPID signing per provider, expires cached authorization and honors Retry-After headers', async t => {
+  const sent = [];
+  let retryAfter = '12';
+  t.mock.method(globalThis, 'fetch', async (url, options) => { sent.push({ url, ...options }); return new Response(null, { status: 503, headers: { 'Retry-After': retryAfter } }); });
+  const sign = crypto.subtle.sign.bind(crypto.subtle);
+  let signatures = 0;
+  t.mock.method(crypto.subtle, 'sign', (...args) => { signatures++; return sign(...args); });
+  const config = { ...env, PUSH_VAPID_SUBJECT: 'mailto:cache-test@example.test' };
+  const results = await Promise.all([sendWebPush(subscription, payload, config), sendWebPush({ ...subscription, endpoint: 'https://web.push.apple.com/another' }, payload, config)]);
+  assert.equal(signatures, 1);
+  assert.equal(sent[0].headers.Authorization, sent[1].headers.Authorization);
+  assert.deepEqual(results[0], { status: 503, retryAfterMs: 12000 });
+  const now = Date.now();
+  t.mock.method(Date, 'now', () => now + 11 * 3600000 + 1);
+  retryAfter = new Date(Date.now() + 60000).toUTCString();
+  const result = await sendWebPush(subscription, payload, config);
+  assert.equal(signatures, 2);
+  assert.ok(result.retryAfterMs >= 59000 && result.retryAfterMs <= 60000);
+  await sendWebPush({ ...subscription, endpoint: 'https://fcm.googleapis.com/other' }, payload, config);
+  assert.equal(signatures, 3);
+});

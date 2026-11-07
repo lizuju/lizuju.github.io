@@ -6,6 +6,7 @@ test.beforeEach(async ({ isMobile }) => {
 });
 
 test('keeps loading and ready focus above the scene, then restores scene navigation', async ({ page }) => {
+    await page.clock.install();
     let release;
     const gate = new Promise(resolve => { release = resolve; });
     await page.route('**/models/World/environment.glb', async route => {
@@ -21,6 +22,8 @@ test('keeps loading and ready focus above the scene, then restores scene navigat
             await page.keyboard.press(key);
             await expect(dialog).toBeFocused();
         }
+        await page.clock.fastForward(45000);
+        await expect(page.locator('[data-resource-retry]')).toHaveCount(0);
         release();
         const enter = page.locator('[data-start-scene]');
         await expect(enter).toBeFocused({ timeout: 30000 });

@@ -109,6 +109,10 @@ const trustedClient = (client) => client?.type === 'window' && new URL(client.ur
 
 self.addEventListener('message', (event) => {
     if (event.data?.source === 'gavin-sync-notification') { showSystemNotification(event); return; }
+    if (event.data?.source === 'gavin-sync-push-diagnostics' && trustedClient(event.source)) {
+        event.waitUntil(pushDiagnosticsTask.then(readPushDiagnostics).then(entries => event.ports[0]?.postMessage({ entries })));
+        return;
+    }
     if (event.data?.source !== 'gavin-sync-e2ee' || !trustedClient(event.source)) return;
     const { type, token, descriptor } = event.data;
     if (type === 'claim') {
@@ -520,6 +524,28 @@ const showSystemNotification = event => {
         reply('shown');
     })().catch(() => reply('error')));
 };
+const pushDiagnosticsCache = 'gavin-sync-push-diagnostics-v1';
+const pushDiagnosticsUrl = new URL('__sync-push-diagnostics__', self.registration.scope).href;
+let pushDiagnosticsTask = Promise.resolve();
+const readPushDiagnostics = async () => {
+    try {
+        const cache = await caches.open(pushDiagnosticsCache);
+        return await (await cache.match(pushDiagnosticsUrl))?.json() || [];
+    } catch { return []; }
+};
+const recordPushDiagnostic = entry => {
+    pushDiagnosticsTask = pushDiagnosticsTask.catch(() => {}).then(async () => {
+        try {
+            const entries = (await readPushDiagnostics()).filter(item => item.at > Date.now() - 7 * 86400000);
+            entries.push(entry);
+            const cache = await caches.open(pushDiagnosticsCache);
+            await cache.put(pushDiagnosticsUrl, new Response(JSON.stringify(entries.slice(-50)), { headers: { 'Content-Type': 'application/json' } }));
+        } catch { /* Notification delivery does not depend on optional diagnostics storage. */ }
+        const clients = await self.clients.matchAll({ type: 'window' });
+        for (const client of clients.filter(trustedClient)) client.postMessage({ source: 'gavin-sync-push-diagnostics', entry });
+    });
+    return pushDiagnosticsTask;
+};
 self.addEventListener('push', event => {
     let payload;
     try { payload = event.data?.json(); } catch {}
@@ -529,13 +555,20 @@ self.addEventListener('push', event => {
         && Number.isSafeInteger(payload.messageId) && payload.messageId > 0
         && ['zh-CN', 'en'].includes(payload.language);
     const english = valid && payload.language === 'en';
+    const receivedAt = Date.now();
     // iOS requires each push event to display a user-visible notification, even with an open window.
-    event.waitUntil(self.registration.showNotification(english ? 'Contact Hub' : '联络站', {
-        body: english ? 'You have a new message' : '有新消息',
-        tag: valid ? `sync:${payload.roomId}` : 'sync:message',
-        icon: new URL('../portfolio/assets/sync-icon-192.png', self.location.href).href,
-        data: valid ? { roomId: payload.roomId } : {}
-    }));
+    event.waitUntil((async () => {
+        const submittedAt = Date.now();
+        let status = 'shown';
+        try { await self.registration.showNotification(english ? 'Contact Hub' : '联络站', {
+            body: english ? 'You have a new message' : '有新消息',
+            tag: valid ? `sync:${payload.roomId}` : 'sync:message',
+            icon: new URL('../portfolio/assets/sync-icon-192.png', self.location.href).href,
+            data: valid ? { roomId: payload.roomId } : {}
+        }); } catch { status = 'error'; }
+        await recordPushDiagnostic({ at: receivedAt, submittedAt, completedAt: Date.now(), status, source: 'push',
+            receiveToRequestMs: submittedAt - receivedAt, workerMs: Date.now() - submittedAt, totalMs: Date.now() - receivedAt });
+    })());
 });
 self.addEventListener('notificationclick', event => {
     event.notification.close();

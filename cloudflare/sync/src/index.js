@@ -3,7 +3,7 @@ import { API_VERSION } from './api-version.js';
 import { collectDailyUsage, unavailableDailyUsage } from './daily-usage.js';
 import { getPushPublicKey, validatePushSubscription, sendWebPush } from './web-push.js';
 
-const ROOM_SCHEMA_VERSION = '4';
+const ROOM_SCHEMA_VERSION = '5';
 const INVITE_LIFETIME = 10 * 60 * 1000;
 const MESSAGE_LIFETIME = 7 * 24 * 60 * 60 * 1000;
 const STORAGE_HIGH_WATER = 4_800_000_000;
@@ -458,44 +458,50 @@ export class E2eePairingRegistry extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
-    this.sql.exec('CREATE TABLE IF NOT EXISTS offers (offer_id TEXT PRIMARY KEY, room_id TEXT NOT NULL UNIQUE, owner_device_id TEXT NOT NULL, secret TEXT NOT NULL, expires_at INTEGER NOT NULL)');
-    if (!this.sql.exec('PRAGMA table_info(offers)').toArray().some(column => column.name === 'locked')) this.sql.exec('ALTER TABLE offers ADD COLUMN locked INTEGER NOT NULL DEFAULT 0');
-    this.sql.exec('CREATE INDEX IF NOT EXISTS offers_expiry ON offers(expires_at)');
-    this.sql.exec('CREATE TABLE IF NOT EXISTS room_pairing (room_id TEXT PRIMARY KEY, locked INTEGER NOT NULL, enabled INTEGER NOT NULL, fixed_secret TEXT, revision INTEGER NOT NULL)');
-    this.sql.exec('CREATE TABLE IF NOT EXISTS pair_requests (request_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, selected_offer TEXT, finish_request TEXT, client_data TEXT, grant TEXT, accepted_device TEXT)');
-    this.sql.exec('CREATE INDEX IF NOT EXISTS pair_requests_expiry ON pair_requests(expires_at)');
-    const pairColumns = this.sql.exec('PRAGMA table_info(pair_requests)').toArray();
-    if (!pairColumns.some(column => column.name === 'room_id')) {
-      this.sql.exec('ALTER TABLE pair_requests ADD COLUMN room_id TEXT');
-      this.sql.exec('UPDATE pair_requests SET room_id = (SELECT room_id FROM offers WHERE offer_id = selected_offer) WHERE selected_offer IS NOT NULL');
-    }
-    if (!pairColumns.some(column => column.name === 'committing_until')) this.sql.exec('ALTER TABLE pair_requests ADD COLUMN committing_until INTEGER');
-    this.sql.exec("CREATE TABLE IF NOT EXISTS pair_candidates (request_id TEXT NOT NULL, offer_id TEXT NOT NULL, start_request TEXT NOT NULL, challenge TEXT, owner_device_id TEXT NOT NULL, source_id TEXT NOT NULL DEFAULT 'legacy', PRIMARY KEY(request_id, offer_id))");
-    this.sql.exec('CREATE INDEX IF NOT EXISTS pair_candidates_owner ON pair_candidates(offer_id, owner_device_id, request_id)');
-    if (!this.sql.exec('PRAGMA table_info(pair_candidates)').toArray().some(column => column.name === 'source_id')) {
-      this.sql.exec("ALTER TABLE pair_candidates ADD COLUMN source_id TEXT NOT NULL DEFAULT 'legacy'");
-    }
-    this.sql.exec('CREATE TABLE IF NOT EXISTS attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL)');
-    this.sql.exec('CREATE INDEX IF NOT EXISTS attempts_expiry ON attempts(expires_at)');
-    this.sql.exec('CREATE TABLE IF NOT EXISTS room_usage (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL, oldest_at INTEGER, deleting_files INTEGER)');
-    if (!this.sql.exec('PRAGMA table_info(room_usage)').toArray().some(column => column.name === 'deleting_files')) {
-      this.sql.exec('ALTER TABLE room_usage ADD COLUMN deleting_files INTEGER');
-    }
-    this.sql.exec('CREATE INDEX IF NOT EXISTS room_usage_oldest ON room_usage(oldest_at, room_id) WHERE oldest_at IS NOT NULL');
-    this.sql.exec('CREATE INDEX IF NOT EXISTS room_usage_deleting ON room_usage(oldest_at, room_id) WHERE deleting_files IS NULL OR deleting_files > 0');
-    const migrateReservations = !this.sql.exec('PRAGMA table_info(room_usage)').toArray().some(column => column.name === 'reserved_bytes');
-    if (migrateReservations) this.sql.exec('ALTER TABLE room_usage ADD COLUMN reserved_bytes INTEGER NOT NULL DEFAULT 0');
-    this.sql.exec("CREATE TABLE IF NOT EXISTS cleanup (id INTEGER PRIMARY KEY CHECK(id = 1), phase TEXT NOT NULL, cursor TEXT NOT NULL, target_bytes INTEGER, cleanup_id TEXT NOT NULL DEFAULT '')");
-    if (!this.sql.exec('PRAGMA table_info(cleanup)').toArray().some(column => column.name === 'cleanup_id')) this.sql.exec("ALTER TABLE cleanup ADD COLUMN cleanup_id TEXT NOT NULL DEFAULT ''");
-    this.sql.exec('CREATE TABLE IF NOT EXISTS maintenance_failures (room_id TEXT PRIMARY KEY, retry_at INTEGER NOT NULL, started_at INTEGER NOT NULL DEFAULT 0)');
-    if (!this.sql.exec('PRAGMA table_info(maintenance_failures)').toArray().some(column => column.name === 'started_at')) this.sql.exec('ALTER TABLE maintenance_failures ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0');
-    this.sql.exec("CREATE TABLE IF NOT EXISTS maintenance_jobs (room_id TEXT PRIMARY KEY, request_id TEXT NOT NULL, prune_before INTEGER, started_at INTEGER NOT NULL DEFAULT 0, permit_until INTEGER NOT NULL DEFAULT 0, cleanup_id TEXT NOT NULL DEFAULT '')");
-    const maintenanceColumns = this.sql.exec('PRAGMA table_info(maintenance_jobs)').toArray();
-    if (!maintenanceColumns.some(column => column.name === 'started_at')) this.sql.exec('ALTER TABLE maintenance_jobs ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0');
-    if (!maintenanceColumns.some(column => column.name === 'permit_until')) this.sql.exec('ALTER TABLE maintenance_jobs ADD COLUMN permit_until INTEGER NOT NULL DEFAULT 0');
-    if (!maintenanceColumns.some(column => column.name === 'cleanup_id')) this.sql.exec("ALTER TABLE maintenance_jobs ADD COLUMN cleanup_id TEXT NOT NULL DEFAULT ''");
-    this.sql.exec('CREATE TABLE IF NOT EXISTS reservations (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL)');
-    this.sql.exec('CREATE TABLE IF NOT EXISTS registry_metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL)');
+    let migrateReservations = false;
+    const hasMetadata = this.sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'registry_metadata'").toArray().length;
+    const version = hasMetadata && this.sql.exec("SELECT value FROM registry_metadata WHERE key = 'schemaVersion'").toArray()[0]?.value;
+    if (version !== 1) this.ctx.storage.transactionSync(() => {
+      this.sql.exec('CREATE TABLE IF NOT EXISTS offers (offer_id TEXT PRIMARY KEY, room_id TEXT NOT NULL UNIQUE, owner_device_id TEXT NOT NULL, secret TEXT NOT NULL, expires_at INTEGER NOT NULL)');
+      if (!this.sql.exec('PRAGMA table_info(offers)').toArray().some(column => column.name === 'locked')) this.sql.exec('ALTER TABLE offers ADD COLUMN locked INTEGER NOT NULL DEFAULT 0');
+      this.sql.exec('CREATE INDEX IF NOT EXISTS offers_expiry ON offers(expires_at)');
+      this.sql.exec('CREATE TABLE IF NOT EXISTS room_pairing (room_id TEXT PRIMARY KEY, locked INTEGER NOT NULL, enabled INTEGER NOT NULL, fixed_secret TEXT, revision INTEGER NOT NULL)');
+      this.sql.exec('CREATE TABLE IF NOT EXISTS pair_requests (request_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, selected_offer TEXT, finish_request TEXT, client_data TEXT, grant TEXT, accepted_device TEXT)');
+      this.sql.exec('CREATE INDEX IF NOT EXISTS pair_requests_expiry ON pair_requests(expires_at)');
+      const pairColumns = this.sql.exec('PRAGMA table_info(pair_requests)').toArray();
+      if (!pairColumns.some(column => column.name === 'room_id')) {
+        this.sql.exec('ALTER TABLE pair_requests ADD COLUMN room_id TEXT');
+        this.sql.exec('UPDATE pair_requests SET room_id = (SELECT room_id FROM offers WHERE offer_id = selected_offer) WHERE selected_offer IS NOT NULL');
+      }
+      if (!pairColumns.some(column => column.name === 'committing_until')) this.sql.exec('ALTER TABLE pair_requests ADD COLUMN committing_until INTEGER');
+      this.sql.exec("CREATE TABLE IF NOT EXISTS pair_candidates (request_id TEXT NOT NULL, offer_id TEXT NOT NULL, start_request TEXT NOT NULL, challenge TEXT, owner_device_id TEXT NOT NULL, source_id TEXT NOT NULL DEFAULT 'legacy', PRIMARY KEY(request_id, offer_id))");
+      this.sql.exec('CREATE INDEX IF NOT EXISTS pair_candidates_owner ON pair_candidates(offer_id, owner_device_id, request_id)');
+      if (!this.sql.exec('PRAGMA table_info(pair_candidates)').toArray().some(column => column.name === 'source_id')) {
+        this.sql.exec("ALTER TABLE pair_candidates ADD COLUMN source_id TEXT NOT NULL DEFAULT 'legacy'");
+      }
+      this.sql.exec('CREATE TABLE IF NOT EXISTS attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL)');
+      this.sql.exec('CREATE INDEX IF NOT EXISTS attempts_expiry ON attempts(expires_at)');
+      this.sql.exec('CREATE TABLE IF NOT EXISTS room_usage (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL, oldest_at INTEGER, deleting_files INTEGER)');
+      if (!this.sql.exec('PRAGMA table_info(room_usage)').toArray().some(column => column.name === 'deleting_files')) {
+        this.sql.exec('ALTER TABLE room_usage ADD COLUMN deleting_files INTEGER');
+      }
+      this.sql.exec('CREATE INDEX IF NOT EXISTS room_usage_oldest ON room_usage(oldest_at, room_id) WHERE oldest_at IS NOT NULL');
+      this.sql.exec('CREATE INDEX IF NOT EXISTS room_usage_deleting ON room_usage(oldest_at, room_id) WHERE deleting_files IS NULL OR deleting_files > 0');
+      migrateReservations = !this.sql.exec('PRAGMA table_info(room_usage)').toArray().some(column => column.name === 'reserved_bytes');
+      if (migrateReservations) this.sql.exec('ALTER TABLE room_usage ADD COLUMN reserved_bytes INTEGER NOT NULL DEFAULT 0');
+      this.sql.exec("CREATE TABLE IF NOT EXISTS cleanup (id INTEGER PRIMARY KEY CHECK(id = 1), phase TEXT NOT NULL, cursor TEXT NOT NULL, target_bytes INTEGER, cleanup_id TEXT NOT NULL DEFAULT '')");
+      if (!this.sql.exec('PRAGMA table_info(cleanup)').toArray().some(column => column.name === 'cleanup_id')) this.sql.exec("ALTER TABLE cleanup ADD COLUMN cleanup_id TEXT NOT NULL DEFAULT ''");
+      this.sql.exec('CREATE TABLE IF NOT EXISTS maintenance_failures (room_id TEXT PRIMARY KEY, retry_at INTEGER NOT NULL, started_at INTEGER NOT NULL DEFAULT 0)');
+      if (!this.sql.exec('PRAGMA table_info(maintenance_failures)').toArray().some(column => column.name === 'started_at')) this.sql.exec('ALTER TABLE maintenance_failures ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0');
+      this.sql.exec("CREATE TABLE IF NOT EXISTS maintenance_jobs (room_id TEXT PRIMARY KEY, request_id TEXT NOT NULL, prune_before INTEGER, started_at INTEGER NOT NULL DEFAULT 0, permit_until INTEGER NOT NULL DEFAULT 0, cleanup_id TEXT NOT NULL DEFAULT '')");
+      const maintenanceColumns = this.sql.exec('PRAGMA table_info(maintenance_jobs)').toArray();
+      if (!maintenanceColumns.some(column => column.name === 'started_at')) this.sql.exec('ALTER TABLE maintenance_jobs ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0');
+      if (!maintenanceColumns.some(column => column.name === 'permit_until')) this.sql.exec('ALTER TABLE maintenance_jobs ADD COLUMN permit_until INTEGER NOT NULL DEFAULT 0');
+      if (!maintenanceColumns.some(column => column.name === 'cleanup_id')) this.sql.exec("ALTER TABLE maintenance_jobs ADD COLUMN cleanup_id TEXT NOT NULL DEFAULT ''");
+      this.sql.exec('CREATE TABLE IF NOT EXISTS reservations (room_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL)');
+      this.sql.exec('CREATE TABLE IF NOT EXISTS registry_metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL)');
+      this.sql.exec("INSERT INTO registry_metadata (key, value) VALUES ('schemaVersion', 1) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+    });
     this.roomQueues = new Map();
     this.pairingQueues = new Map();
     this.maintenanceTasks = new Map();
@@ -1296,11 +1302,15 @@ export class E2eeSyncRoom extends DurableObject {
     this.sql.exec('CREATE INDEX IF NOT EXISTS devices_activity ON devices(last_active_at)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS push_subscriptions (device_id TEXT PRIMARY KEY, subscription TEXT NOT NULL, language TEXT NOT NULL)');
     this.sql.exec('CREATE TRIGGER IF NOT EXISTS delete_device_push AFTER DELETE ON devices BEGIN DELETE FROM push_subscriptions WHERE device_id = OLD.device_id; END');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS push_queue (device_id TEXT PRIMARY KEY, message_id INTEGER NOT NULL, created_at INTEGER NOT NULL, due_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0)');
+    this.sql.exec('CREATE INDEX IF NOT EXISTS push_queue_due ON push_queue(due_at)');
+    this.sql.exec('CREATE TRIGGER IF NOT EXISTS delete_subscription_queue AFTER DELETE ON push_subscriptions BEGIN DELETE FROM push_queue WHERE device_id = OLD.device_id; END');
     this.sql.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
     this.sql.exec('INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)', 'historyGeneration', crypto.randomUUID());
     this.sql.exec('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL, device_id TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL, attachment TEXT, UNIQUE(device_id, client_id))');
     if (!this.sql.exec('PRAGMA table_info(messages)').toArray().some(column => column.name === 'attachment')) this.sql.exec('ALTER TABLE messages ADD COLUMN attachment TEXT');
     this.sql.exec('CREATE INDEX IF NOT EXISTS messages_expiry ON messages(created_at)');
+    this.sql.exec('CREATE TRIGGER IF NOT EXISTS delete_message_push AFTER DELETE ON messages BEGIN DELETE FROM push_queue WHERE message_id = OLD.id; END');
     // Deleted legacy history cannot reveal its last send time; give those rooms a full grace period.
     this.sql.exec("INSERT OR IGNORE INTO metadata (key, value) VALUES ('lastMessageAt', coalesce((SELECT max(created_at) FROM messages), ?))", String(Date.now()));
     this.sql.exec("DELETE FROM metadata WHERE key = 'lastActiveAt'");
@@ -1578,49 +1588,78 @@ export class E2eeSyncRoom extends DurableObject {
     return { ok: true };
   }
 
-  cancelDevicePush(deviceId) {
-    for (const controller of this.pushRequests.get(deviceId) || []) controller.abort();
-    this.pushRequests.delete(deviceId);
+  cancelDevicePush(deviceId, through = Number.MAX_SAFE_INTEGER) {
+    this.sql.exec('DELETE FROM push_queue WHERE device_id = ? AND message_id <= ?', deviceId, through);
+    for (const controller of this.pushRequests.get(deviceId) || []) {
+      if (controller.messageId <= through) controller.abort();
+    }
+  }
+
+  deviceForeground(deviceId) {
+    return this.ctx.getWebSockets().some(socket => {
+      const state = socket.deserializeAttachment();
+      return socket.readyState === WebSocket.OPEN && !state?.closing && state?.deviceId === deviceId
+        && Object.values(state.foregroundTabs || {}).some(until => until > Date.now());
+    });
   }
 
   queuePush(message) {
     if (!getPushPublicKey(this.env)) return;
-    this.ctx.waitUntil(this.sendPushNotifications(message).catch(() => {
-      console.warn(JSON.stringify({ event: 'sync_push_error', status: 0 }));
-    }));
+    const queued = this.sql.exec(`INSERT INTO push_queue (device_id, message_id, created_at, due_at)
+      SELECT p.device_id, ?, ?, ? FROM push_subscriptions p JOIN devices d ON d.device_id = p.device_id
+      WHERE p.device_id <> ? AND d.last_active_at > ? AND d.read_message_id < ?
+      ON CONFLICT(device_id) DO UPDATE SET message_id = excluded.message_id, created_at = excluded.created_at
+      WHERE excluded.message_id > push_queue.message_id RETURNING due_at`,
+      message.id, Date.now(), Date.now() + 500, message.deviceId, Date.now() - DEVICE_IDLE_LIFETIME, message.id).toArray();
+    return queued.some(row => !this.scheduledPushAt || row.due_at < this.scheduledPushAt);
   }
 
-  async sendPushNotifications(message) {
-    if (!this.initialized || this.roomExpired) return;
-    const subscriptions = this.sql.exec('SELECT p.device_id, p.subscription, p.language FROM push_subscriptions p JOIN devices d ON d.device_id = p.device_id WHERE p.device_id <> ? AND d.last_active_at > ?', message.deviceId, Date.now() - DEVICE_IDLE_LIFETIME).toArray();
-    if (!subscriptions.length) return;
-    const roomId = this.sql.exec("SELECT value FROM metadata WHERE key = 'roomId'").toArray()[0]?.value;
-    if (!roomId) return;
-    let index = 0;
-    await Promise.all(Array.from({ length: Math.min(3, subscriptions.length) }, async () => {
-      while (index < subscriptions.length) {
-        const recipient = subscriptions[index++];
-        if (!this.initialized || this.roomExpired) return;
-        if (!this.sql.exec('SELECT 1 FROM push_subscriptions p JOIN devices d ON d.device_id = p.device_id WHERE p.device_id = ? AND p.subscription = ? AND d.last_active_at > ?', recipient.device_id, recipient.subscription, Date.now() - DEVICE_IDLE_LIFETIME).toArray().length) continue;
-        const controller = new AbortController();
-        let requests = this.pushRequests.get(recipient.device_id);
-        if (!requests) this.pushRequests.set(recipient.device_id, requests = new Set());
-        requests.add(controller);
-        try {
-          const result = await sendWebPush(JSON.parse(recipient.subscription), {
-            roomId, messageId: message.id, language: recipient.language
-          }, this.env, { signal: controller.signal });
-          if (controller.signal.aborted || !this.initialized || this.roomExpired) continue;
-          if ([404, 410].includes(result.status)) this.sql.exec('DELETE FROM push_subscriptions WHERE device_id = ? AND subscription = ?', recipient.device_id, recipient.subscription);
-          else if (result.status < 200 || result.status >= 300) console.warn(JSON.stringify({ event: 'sync_push_error', status: result.status }));
-        } catch {
-          if (!controller.signal.aborted) console.warn(JSON.stringify({ event: 'sync_push_error', status: 0 }));
-        } finally {
-          requests.delete(controller);
-          if (!requests.size && this.pushRequests.get(recipient.device_id) === requests) this.pushRequests.delete(recipient.device_id);
-        }
+  async sendPushNotifications() {
+    if (this.pushTask) return this.pushTask;
+    this.pushTask = (async () => {
+      const roomId = this.sql.exec("SELECT value FROM metadata WHERE key = 'roomId'").toArray()[0]?.value;
+      while (roomId && this.initialized && !this.roomExpired) {
+        const recipients = this.sql.exec('SELECT * FROM push_queue WHERE due_at <= ? ORDER BY due_at LIMIT 3', Date.now()).toArray();
+        if (!recipients.length) break;
+        await Promise.all(recipients.map(async recipient => {
+          const remove = () => this.sql.exec('DELETE FROM push_queue WHERE device_id = ? AND message_id = ?', recipient.device_id, recipient.message_id);
+          const subscription = this.sql.exec(`SELECT p.subscription, p.language FROM push_subscriptions p JOIN devices d ON d.device_id = p.device_id
+            WHERE p.device_id = ? AND d.last_active_at > ? AND d.read_message_id < ?`,
+            recipient.device_id, Date.now() - DEVICE_IDLE_LIFETIME, recipient.message_id).toArray()[0];
+          if (!subscription || recipient.created_at + 3600000 <= Date.now() || this.deviceForeground(recipient.device_id)) { remove(); return; }
+          const controller = new AbortController();
+          controller.messageId = recipient.message_id;
+          let requests = this.pushRequests.get(recipient.device_id);
+          if (!requests) this.pushRequests.set(recipient.device_id, requests = new Set());
+          requests.add(controller);
+          let result;
+          try {
+            result = await sendWebPush(JSON.parse(subscription.subscription), {
+              roomId, messageId: recipient.message_id, language: subscription.language
+            }, this.env, { signal: controller.signal });
+          } catch { result = { status: 0 }; }
+          finally {
+            requests.delete(controller);
+            if (!requests.size) this.pushRequests.delete(recipient.device_id);
+          }
+          if (!this.initialized || this.roomExpired) return;
+          if (controller.signal.aborted) return;
+          if ([404, 410].includes(result.status)) {
+            this.sql.exec('DELETE FROM push_subscriptions WHERE device_id = ? AND subscription = ?', recipient.device_id, subscription.subscription);
+            remove();
+          } else if (result.status >= 200 && result.status < 300) remove();
+          else {
+            const retryable = result.status === 0 || result.status === 408 || result.status === 429 || result.status >= 500;
+            const delay = Math.max(1000 * 2 ** recipient.attempts, result.retryAfterMs || 0);
+            if (retryable && recipient.attempts < 3 && Date.now() + delay < recipient.created_at + 3600000) {
+              this.sql.exec('UPDATE push_queue SET attempts = attempts + 1, due_at = ? WHERE device_id = ?', Date.now() + delay, recipient.device_id);
+            } else remove();
+            console.warn(JSON.stringify({ event: 'sync_push_error', status: result.status, attempt: recipient.attempts + 1, retryable }));
+          }
+        }));
       }
-    }));
+    })().finally(() => { this.pushTask = null; });
+    return this.pushTask;
   }
 
   renameDevice(deviceId, targetDeviceId, name, keyId) {
@@ -1817,6 +1856,7 @@ export class E2eeSyncRoom extends DurableObject {
     const latestId = this.sql.exec("SELECT min(?, seq) AS id FROM sqlite_sequence WHERE name = 'messages'", messageId).toArray()[0]?.id;
     if (!latestId) return;
     if (this.sql.exec('UPDATE devices SET read_message_id = ? WHERE device_id = ? AND read_message_id < ? RETURNING device_id', latestId, deviceId, latestId).toArray().length) {
+      this.cancelDevicePush(deviceId, latestId);
       this.broadcast({ type: 'read', deviceId, messageId: latestId });
     }
   }
@@ -1853,6 +1893,9 @@ export class E2eeSyncRoom extends DurableObject {
 
   historyChanged(removedIds = null) {
     const removed = new Set(removedIds);
+    for (const requests of this.pushRequests.values()) for (const controller of requests) {
+      if (removedIds === null || removed.has(controller.messageId)) controller.abort();
+    }
     this.retainedMessageIds = removedIds === null ? [] : this.retainedMessageIds?.filter(id => !removed.has(id)) ?? null;
     this.downloadRevision++;
     this.sql.exec('UPDATE metadata SET value = ? WHERE key = ?', crypto.randomUUID(), 'historyGeneration');
@@ -2270,13 +2313,13 @@ export class E2eeSyncRoom extends DurableObject {
     this.retainedMessageIds = [...this.retainedMessageIds.filter(id => !removed.has(id)), message.id];
     if (pruned.length) this.downloadRevision++;
     this.broadcast({ type: 'message', message, history: { ...this.historySnapshot(), ...(pruned.length ? { removedIds: pruned } : {}) }, ...(pruned.length ? { activeGames: this.activeGames() } : {}) });
-    this.queuePush(message);
+    const queuedPush = this.queuePush(message);
     if (gameType) this.broadcast({ type: 'gomoku', game: this.gameSnapshot(this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', clientId).one()) });
     if (previousGameId) {
       const previous = this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', previousGameId).toArray()[0];
       if (previous) this.broadcast({ type: 'gomoku', game: this.gameSnapshot(previous) });
     }
-    if (pruned.length || !(this.nextPruneAt > Date.now()) || this.nextPruneAt > message.createdAt + MESSAGE_LIFETIME) await this.scheduleAlarm();
+    if (queuedPush || pruned.length || !(this.nextPruneAt > Date.now()) || this.nextPruneAt > message.createdAt + MESSAGE_LIFETIME) await this.scheduleAlarm();
     return { message, created: true, usage: this.storageUsage() };
   }
 
@@ -2500,6 +2543,13 @@ export class E2eeSyncRoom extends DurableObject {
     if (attachment?.deviceId) {
       let frame;
       try { frame = typeof payload === 'string' && payload.length <= 1024 ? JSON.parse(payload) : null; } catch { frame = null; }
+      if (frame?.type === 'foreground' && typeof frame.active === 'boolean' && ROOM_ID.test(frame.tabId)) {
+        const tabs = Object.fromEntries(Object.entries(attachment.foregroundTabs || {}).filter(([, until]) => until > Date.now()));
+        if (frame.active && (tabs[frame.tabId] || Object.keys(tabs).length < 16)) tabs[frame.tabId] = Date.now() + 60000;
+        else delete tabs[frame.tabId];
+        socket.serializeAttachment({ ...attachment, foregroundTabs: tabs });
+        return;
+      }
       if (frame?.type !== 'read' || !Number.isSafeInteger(frame.messageId) || frame.messageId < 1) {
         socket.serializeAttachment({ closing: true });
         socket.close(1008, 'Invalid read receipt');
@@ -2590,7 +2640,10 @@ export class E2eeSyncRoom extends DurableObject {
       deadlines.push(Math.max(Date.now() + 1000, retryAt));
     }
     this.nextPruneAt = deadlines.length ? Math.min(...deadlines) : Infinity;
-    const nextAlarm = deadlines.length ? this.nextPruneAt : null;
+    const pushAt = this.sql.exec('SELECT min(due_at) AS due FROM push_queue').one().due;
+    this.scheduledPushAt = pushAt;
+    if (pushAt !== null) deadlines.push(pushAt);
+    const nextAlarm = deadlines.length ? Math.min(...deadlines) : null;
     const scheduled = await this.ctx.storage.getAlarm();
     if (!this.initialized || nextAlarm === scheduled) return;
     if (nextAlarm !== null) await this.ctx.storage.setAlarm(nextAlarm);
@@ -2599,6 +2652,7 @@ export class E2eeSyncRoom extends DurableObject {
 
   async alarm() {
     if (!this.initialized) return;
+    await this.sendPushNotifications();
     const now = Date.now();
     for (const socket of this.ctx.getWebSockets()) {
       const deadline = socket.deserializeAttachment()?.authDeadline;

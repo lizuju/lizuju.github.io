@@ -279,7 +279,7 @@ test('labels expired real-data cache fallback through selection, language change
     await page.locator('.desktop-shortcut[data-open-satellite]').click();
     const status = page.locator('[data-satellite-status]');
     await expect(status).toHaveAttribute('data-i18n', 'satelliteCached');
-    await expect(status).toHaveText('联网刷新失败，正在使用缓存轨道数据推算');
+    await expect(status).toHaveText('正在使用缓存轨道数据推算');
     await expect(page.locator('[data-satellite-count]')).toHaveText('1');
     await expect(page.locator('[data-satellite-loading]')).toBeHidden();
 
@@ -289,19 +289,19 @@ test('labels expired real-data cache fallback through selection, language change
     await expect(page.locator('[data-satellite-altitude]')).toHaveText(/\d+\.\d km/);
     await expect(page.locator('[data-satellite-epoch]')).toHaveText('2026-10-19 04:14:45 UTC');
     await expect(status).toHaveAttribute('data-i18n', 'satelliteCached');
-    await expect(status).toHaveText('联网刷新失败，正在使用缓存轨道数据推算');
+    await expect(status).toHaveText('正在使用缓存轨道数据推算');
     await page.locator('[data-taskbar-lang]').click();
-    await expect(status).toHaveText('Refresh failed; propagating from cached orbital data');
+    await expect(status).toHaveText('Propagating from cached orbital data');
 
     const satelliteWindow = page.locator('[data-satellite-window]');
     await satelliteWindow.locator('[data-satellite-action="minimize"]').click();
     await page.locator('[data-satellite-task]').click();
     await expect(status).toHaveAttribute('data-i18n', 'satelliteCached');
-    await expect(status).toHaveText('Refresh failed; propagating from cached orbital data');
+    await expect(status).toHaveText('Propagating from cached orbital data');
     await satelliteWindow.locator('[data-satellite-action="close"]').click();
     await page.locator('.desktop-shortcut[data-open-satellite]').click();
     await expect(status).toHaveAttribute('data-i18n', 'satelliteCached');
-    await expect(status).toHaveText('Refresh failed; propagating from cached orbital data');
+    await expect(status).toHaveText('Propagating from cached orbital data');
     await expect(page.locator('[data-satellite-name]')).toHaveText(cachedRecords[0].OBJECT_NAME);
     await expect(page.locator('[data-satellite-count]')).toHaveText('1');
     expect(requests).toBe(1);
