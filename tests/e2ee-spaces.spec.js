@@ -437,12 +437,14 @@ test('a notification deep link opens its saved space after the original tab clos
     await awaitOnline(page);
     const first = await readSession(page);
     await sendText(page, 'Notification target room');
+    await expect(page.locator('.sync-message[data-state="sent"]')).toContainText('Notification target room');
     await expandSpaces(page);
     await page.locator('[data-sync-add-space]').click();
     await page.locator('[data-sync-create]').click();
     await expect.poll(async () => (await readSession(page)).roomId).not.toBe(first.roomId);
     await awaitOnline(page);
     await sendText(page, 'Last selected room');
+    await expect(page.locator('.sync-message[data-state="sent"]')).toContainText('Last selected room');
     const reopened = await context.newPage();
     await page.close();
     await reopened.goto(`${siteOrigin}/chat/#space=${first.roomId}`);
