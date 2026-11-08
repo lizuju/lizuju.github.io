@@ -1637,20 +1637,31 @@ button.sync-attachment-info:focus-visible {
     background: #e4b83f;
 }
 
-/* Only the chat window follows the phone's visible viewport; other desktop windows keep their geometry. */
+/* Normal windows can override these defaults by dragging or resizing. */
 body .app-window.sync-window.is-mobile-layout {
     position: fixed;
+    top: calc(var(--sync-viewport-top, 0px) + 4px + env(safe-area-inset-top));
+    right: max(4px, env(safe-area-inset-right));
+    bottom: auto;
+    left: max(4px, env(safe-area-inset-left));
+    width: auto;
+    height: calc(var(--sync-viewport-height, 100dvh) - 4px - var(--sync-bottom-gap, 39px) - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    min-width: 0;
+    min-height: 0;
+}
+
+/* Temporarily fit above the keyboard without overwriting the user's window geometry. */
+body .app-window.sync-window.is-mobile-layout:is(.is-maximized, .is-keyboard-open),
+body.standalone-sync .app-window.sync-window.is-mobile-layout {
     top: calc(var(--sync-viewport-top, 0px) + 4px + env(safe-area-inset-top)) !important;
     right: max(4px, env(safe-area-inset-right)) !important;
     bottom: auto !important;
     left: max(4px, env(safe-area-inset-left)) !important;
     width: auto !important;
     height: calc(var(--sync-viewport-height, 100dvh) - 4px - var(--sync-bottom-gap, 39px) - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
-    min-width: 0;
-    min-height: 0;
 }
 
-.sync-window.is-mobile-layout .window-resize-handle { display: none; }
+.sync-window.is-keyboard-open .window-resize-handle { display: none; }
 .sync-window.is-mobile-layout input,
 .sync-window.is-mobile-layout textarea { font-size: 16px; }
 

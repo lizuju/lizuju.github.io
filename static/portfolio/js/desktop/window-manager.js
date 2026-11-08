@@ -291,7 +291,7 @@
         };
 
         const startPointerInteraction = (event, type, element, minWidth, minHeight) => {
-            if (event.button !== 0 || element.classList.contains('is-maximized')) return;
+            if (event.button !== 0 || element.classList.contains('is-maximized') || element.classList.contains('is-keyboard-open')) return;
 
             const geometry = getWindowGeometry(element);
             applyWindowGeometry(element, geometry);
