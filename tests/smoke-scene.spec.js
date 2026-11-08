@@ -400,6 +400,41 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
         const rect = element.getBoundingClientRect();
         return window.scrollY === 0 && rect.top === 0 && rect.bottom === window.innerHeight;
     })).toBe(true);
+
+    await computerFrame.locator('[data-window-action="minimize"]').evaluate(button => button.click());
+    const originalTaskbar = await computerFrame.locator('.desktop-taskbar').evaluate(element =>
+        element.getBoundingClientRect().toJSON()
+    );
+    for (const [shortcut, windowSelector, task, focusTarget, edge] of [
+        ['[data-open-mail-window]', '[data-mail-window]', '[data-mail-task]', '[data-mail-send]', 'right'],
+        ['[data-open-gomoku]', '[data-gomoku-window]', '[data-gomoku-task]', '[data-gomoku-mode="local"]', 'left']
+    ]) {
+        await computerFrame.locator(`.desktop-shortcut${shortcut}`).evaluate(button => button.click());
+        await expect(computerFrame.locator(focusTarget)).toBeVisible();
+        // Reproduce a window left partly beyond the screen after an edge drag.
+        await computerFrame.locator(windowSelector).evaluate((element, edge) => {
+            element.style.left = `${edge === 'right' ? window.innerWidth - 160 : 160 - element.offsetWidth}px`;
+            element.style.top = `${window.innerHeight - 80}px`;
+        }, edge);
+        await computerFrame.locator(task).evaluate(button => {
+            button.click();
+            button.click();
+        });
+        await computerFrame.locator(focusTarget).evaluate(element => {
+            element.focus();
+            element.scrollIntoView({ block: 'center' });
+        });
+
+        expect(await page.locator('#css > div').evaluate(element =>
+            [element.scrollLeft, element.scrollTop]
+        )).toEqual([0, 0]);
+        expect(await computerFrame.locator('[data-retro-desktop]').evaluate(element =>
+            [window.scrollX, window.scrollY, element.scrollLeft, element.scrollTop]
+        )).toEqual([0, 0, 0, 0]);
+        expect(await computerFrame.locator('.desktop-taskbar').evaluate(element =>
+            element.getBoundingClientRect().toJSON()
+        )).toEqual(originalTaskbar);
+    }
 });
 
 test('keeps the scene sharp without densifying film grain on high-DPI screens', async ({ browser, isMobile }) => {
