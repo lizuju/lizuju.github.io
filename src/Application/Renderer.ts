@@ -78,6 +78,8 @@ export default class Renderer {
             ?.appendChild(this.overlayInstance.domElement);
 
         this.cssInstance = new CSS3DRenderer();
+        // Focus inside an offscreen desktop window must not scroll the 3D screen layer.
+        this.cssInstance.domElement.style.overflow = 'clip';
         this.cssInstance.setSize(this.sizes.width, this.sizes.height);
         this.cssInstance.domElement.style.position = 'absolute';
         this.cssInstance.domElement.style.top = '0px';
