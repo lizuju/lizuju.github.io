@@ -51,14 +51,20 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const updateMobileViewport = () => {
             app.classList.toggle('is-mobile-layout', mobileLayout.matches);
-            if (!mobileLayout.matches) { input.style.removeProperty('height'); return; }
+            if (!mobileLayout.matches) {
+                app.classList.remove('is-keyboard-open');
+                input.style.removeProperty('height');
+                return;
+            }
             const viewport = window.visualViewport;
             // Pinch zoom should magnify the existing layout instead of shrinking it again.
             if (viewport && viewport.scale !== 1) return;
             const height = viewport?.height ?? innerHeight;
+            const keyboardOpen = innerHeight - height > 100;
+            app.classList.toggle('is-keyboard-open', keyboardOpen);
             app.style.setProperty('--sync-viewport-top', `${viewport?.offsetTop || 0}px`);
             app.style.setProperty('--sync-viewport-height', `${height}px`);
-            app.style.setProperty('--sync-bottom-gap', innerHeight - height > 100 ? '4px' : '39px');
+            app.style.setProperty('--sync-bottom-gap', keyboardOpen ? '4px' : '39px');
             resizeComposer();
         };
         mobileLayout.addEventListener('change', updateMobileViewport);
