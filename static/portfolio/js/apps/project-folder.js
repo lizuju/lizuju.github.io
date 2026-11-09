@@ -621,7 +621,9 @@ import { ProjectImageCache } from './project-image-cache.js';
             if (honorsRequest) return honorsRequest;
             honorsRetry.hidden = true;
             honorsLoading.querySelector('span').textContent = t().folderHonorsLoading;
-            honorsRequest = fetch(new URL('certificates.json', honorsAssetRoot)).then(response => {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 15000);
+            honorsRequest = fetch(new URL('certificates.json', honorsAssetRoot), { signal: controller.signal }).then(response => {
                 if (!response.ok) throw new Error('Certificates could not be loaded');
                 return response.json();
             }).then(certificates => {
@@ -677,7 +679,7 @@ import { ProjectImageCache } from './project-image-cache.js';
                 honorsRequest = null;
                 honorsLoading.querySelector('span').textContent = t().folderHonorsFailed;
                 honorsRetry.hidden = false;
-            });
+            }).finally(() => clearTimeout(timeout));
             return honorsRequest;
         };
         honorsRetry.addEventListener('click', loadHonors);

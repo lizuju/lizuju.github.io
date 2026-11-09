@@ -1,4 +1,5 @@
-const { test, expect } = require('@playwright/test');
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
 const { readFile } = require('node:fs/promises');
 const { webcrypto } = require('node:crypto');
 const vm = require('node:vm');
@@ -16,7 +17,7 @@ const installWorker = async () => {
         location: new URL('https://example.test/sync-e2ee-worker.js'),
         registration: {
             scope: 'https://example.test/',
-            showNotification: async (title, options) => notifications.push({ title, ...options })
+            showNotification: async (title, options) => notifications.push(structuredClone({ title, ...options }))
         },
         clients: {
             matchAll: async () => clients,
@@ -39,11 +40,11 @@ const installWorker = async () => {
         let pending;
         handlers.get('notificationclick')[0]({ notification: { ...notification, close() { closed = true; } }, waitUntil: promise => { pending = promise; } });
         await pending;
-        expect(closed).toBe(true);
+        assert.equal(closed, true);
     };
     const addClient = (id, url, active = false) => {
         clients.push({ id, url, type: 'window', focused: active, visibilityState: 'visible',
-            focus: async () => focused.push(id), postMessage: data => posted.push({ id, data }) });
+            focus: async () => focused.push(id), postMessage: data => posted.push(structuredClone({ id, data })) });
     };
     return { push, click, addClient, clients, notifications, opened, focused, posted, cacheEntries, worker };
 };
@@ -53,14 +54,14 @@ test('push always displays a fixed, private notification in either language, inc
     worker.addClient('foreground', 'https://example.test/chat/', true);
     await worker.push(JSON.stringify({ roomId, messageId: 1, language: 'zh-CN' }));
     await worker.push(JSON.stringify({ roomId, messageId: 2, language: 'en' }));
-    expect(worker.notifications.map(item => [item.title, item.body])).toEqual([
+    assert.deepEqual(worker.notifications.map(item => [item.title, item.body]), [
         ['联络站', '有新消息'], ['Contact Hub', 'You have a new message']
     ]);
-    expect(worker.notifications[0].tag).toBe(`sync:${roomId}`);
-    expect(worker.notifications[1].tag).toBe(worker.notifications[0].tag);
-    expect(worker.notifications[0].icon).toBe('https://example.test/portfolio/assets/sync-icon-192.png');
-    expect(worker.notifications[0].data).toEqual({ roomId });
-    expect(worker.notifications[0].silent).toBeUndefined();
+    assert.equal(worker.notifications[0].tag, `sync:${roomId}`);
+    assert.equal(worker.notifications[1].tag, worker.notifications[0].tag);
+    assert.equal(worker.notifications[0].icon, 'https://example.test/portfolio/assets/sync-icon-192.png');
+    assert.deepEqual(worker.notifications[0].data, { roomId });
+    assert.equal(worker.notifications[0].silent, undefined);
 });
 
 test('empty, malformed and untrusted push fields only produce a generic notification', async () => {
@@ -71,16 +72,16 @@ test('empty, malformed and untrusted push fields only produce a generic notifica
         JSON.stringify({ roomId, messageId: 1, language: 'invalid' }),
         JSON.stringify({ roomId, messageId: 1, language: 'en', body: 'private message', token: 'secret-key' })];
     for (const payload of invalid) await worker.push(payload);
-    expect(worker.notifications).toHaveLength(invalid.length);
+    assert.equal((worker.notifications).length, invalid.length);
     for (const notification of worker.notifications) {
-        expect(notification.title).toBe('联络站');
-        expect(notification.body).toBe('有新消息');
-        expect(notification.data).toEqual({});
+        assert.equal(notification.title, '联络站');
+        assert.equal(notification.body, '有新消息');
+        assert.deepEqual(notification.data, {});
     }
     await worker.click(worker.notifications.at(-1));
-    expect(worker.opened).toEqual(['https://example.test/chat/']);
-    expect(JSON.stringify(worker.notifications)).not.toContain('private message');
-    expect(JSON.stringify(worker.notifications)).not.toContain('secret-key');
+    assert.deepEqual(worker.opened, ['https://example.test/chat/']);
+    assert.ok(!(JSON.stringify(worker.notifications)).includes('private message'));
+    assert.ok(!(JSON.stringify(worker.notifications)).includes('secret-key'));
 });
 
 test('push clicks prefer a trusted chat app, reuse the desktop, or open the original room', async () => {
@@ -92,35 +93,35 @@ test('push clicks prefer a trusted chat app, reuse the desktop, or open the orig
     await worker.push(JSON.stringify({ roomId, messageId: 1, language: 'en' }));
     const notification = worker.notifications[0];
     await worker.click(notification);
-    expect(worker.focused).toEqual(['chat']);
-    expect(worker.posted.filter(item => item.data.source === 'gavin-sync-notification')).toEqual([{ id: 'chat', data: { source: 'gavin-sync-notification', roomId } }]);
+    assert.deepEqual(worker.focused, ['chat']);
+    assert.deepEqual(worker.posted.filter(item => item.data.source === 'gavin-sync-notification'), [{ id: 'chat', data: { source: 'gavin-sync-notification', roomId } }]);
     worker.clients.pop();
     await worker.click(notification);
-    expect(worker.focused).toEqual(['chat', 'desktop']);
+    assert.deepEqual(worker.focused, ['chat', 'desktop']);
     worker.clients.pop();
     await worker.click(notification);
-    expect(worker.opened).toEqual([`https://example.test/chat/#space=${roomId}`]);
+    assert.deepEqual(worker.opened, [`https://example.test/chat/#space=${roomId}`]);
 });
 
 test('the chat installation manifest opens the hub with its own identity and app icons', async () => {
     const html = await readFile('static/chat/index.html', 'utf8');
-    expect(html).toContain('rel="manifest" href="manifest.webmanifest"');
-    expect(html).toContain('name="apple-mobile-web-app-capable" content="yes"');
-    expect(html).toContain('rel="apple-touch-icon" sizes="180x180" href="../portfolio/assets/sync-app-icon-180.png"');
+    assert.ok((html).includes('rel="manifest" href="manifest.webmanifest"'));
+    assert.ok((html).includes('name="apple-mobile-web-app-capable" content="yes"'));
+    assert.ok((html).includes('rel="apple-touch-icon" sizes="180x180" href="../portfolio/assets/sync-app-icon-180.png"'));
     const appleIcon = await readFile('static/portfolio/assets/sync-app-icon-180.png');
-    expect([appleIcon.readUInt32BE(16), appleIcon.readUInt32BE(20)]).toEqual([180, 180]);
-    expect(appleIcon[25]).toBe(2);
+    assert.deepEqual([appleIcon.readUInt32BE(16), appleIcon.readUInt32BE(20)], [180, 180]);
+    assert.equal(appleIcon[25], 2);
     const manifest = JSON.parse(await readFile('static/chat/manifest.webmanifest', 'utf8'));
-    expect(manifest.id).toBe('/chat/');
-    expect(manifest.start_url).toBe('/chat/');
-    expect(manifest.scope).toBe('/chat/');
-    expect(manifest.display).toBe('standalone');
+    assert.equal(manifest.id, '/chat/');
+    assert.equal(manifest.start_url, '/chat/');
+    assert.equal(manifest.scope, '/chat/');
+    assert.equal(manifest.display, 'standalone');
     for (const icon of manifest.icons) {
-        expect(icon.purpose).toBe('any maskable');
-        expect(icon.src).toContain('/sync-app-icon-');
-        const data = await readFile(new URL(icon.src, new URL('../static/chat/manifest.webmanifest', `file://${__filename}`)));
-        expect(`${data.readUInt32BE(16)}x${data.readUInt32BE(20)}`).toBe(icon.sizes);
-        expect(data[25]).toBe(2);
+        assert.equal(icon.purpose, 'any maskable');
+        assert.ok((icon.src).includes('/sync-app-icon-'));
+        const data = await readFile(new URL(icon.src, new URL('../../static/chat/manifest.webmanifest', `file://${__filename}`)));
+        assert.equal(`${data.readUInt32BE(16)}x${data.readUInt32BE(20)}`, icon.sizes);
+        assert.equal(data[25], 2);
     }
 });
 
@@ -131,13 +132,13 @@ test('push diagnostics persist only timing and results and report showNotificati
     worker.worker.registration.showNotification = async () => { throw new Error('denied'); };
     await worker.push(JSON.stringify({ roomId, messageId: 2, language: 'en' }));
     const entries = await worker.cacheEntries.get('https://example.test/__sync-push-diagnostics__').clone().json();
-    expect(entries.map(entry => entry.status)).toEqual(['shown', 'error']);
+    assert.deepEqual(entries.map(entry => entry.status), ['shown', 'error']);
     for (const entry of entries) {
-        expect(entry.source).toBe('push');
-        expect(entry.submittedAt).toBeGreaterThanOrEqual(entry.at);
-        expect(entry.completedAt).toBeGreaterThanOrEqual(entry.submittedAt);
-        expect(entry.totalMs).toBeGreaterThanOrEqual(0);
+        assert.equal(entry.source, 'push');
+        assert.ok(entry.submittedAt >= entry.at);
+        assert.ok(entry.completedAt >= entry.submittedAt);
+        assert.ok(entry.totalMs >= 0);
     }
-    expect(JSON.stringify(entries)).not.toContain(roomId);
-    expect(JSON.stringify(entries)).not.toContain('messageId');
+    assert.ok(!(JSON.stringify(entries)).includes(roomId));
+    assert.ok(!(JSON.stringify(entries)).includes('messageId'));
 });

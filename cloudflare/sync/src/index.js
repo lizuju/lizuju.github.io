@@ -1576,7 +1576,8 @@ export class E2eeSyncRoom extends DurableObject {
     const changed = this.sql.exec(`INSERT INTO push_subscriptions (device_id, subscription, language) VALUES (?, ?, ?)
       ON CONFLICT(device_id) DO UPDATE SET subscription = excluded.subscription, language = excluded.language
       WHERE subscription <> excluded.subscription OR language <> excluded.language RETURNING device_id`, deviceId, value, language).toArray().length;
-    if (changed) this.cancelDevicePush(deviceId);
+    // Keep queued work so delivery can retry with the latest subscription.
+    if (changed) for (const controller of this.pushRequests.get(deviceId) || []) controller.abort();
     return { ok: true };
   }
 
@@ -1595,22 +1596,27 @@ export class E2eeSyncRoom extends DurableObject {
     }
   }
 
-  deviceForeground(deviceId) {
-    return this.ctx.getWebSockets().some(socket => {
+  foregroundDevices() {
+    const devices = new Set();
+    const now = Date.now();
+    for (const socket of this.ctx.getWebSockets()) {
       const state = socket.deserializeAttachment();
-      return socket.readyState === WebSocket.OPEN && !state?.closing && state?.deviceId === deviceId
-        && Object.values(state.foregroundTabs || {}).some(until => until > Date.now());
-    });
+      if (socket.readyState === WebSocket.OPEN && !state?.closing && state?.deviceId
+        && Object.values(state.foregroundTabs || {}).some(until => until > now)) devices.add(state.deviceId);
+    }
+    return devices;
   }
 
   queuePush(message) {
     if (!getPushPublicKey(this.env)) return;
+    const foreground = [...this.foregroundDevices()];
     const queued = this.sql.exec(`INSERT INTO push_queue (device_id, message_id, created_at, due_at)
       SELECT p.device_id, ?, ?, ? FROM push_subscriptions p JOIN devices d ON d.device_id = p.device_id
       WHERE p.device_id <> ? AND d.last_active_at > ? AND d.read_message_id < ?
+      ${foreground.length ? `AND p.device_id NOT IN (${foreground.map(() => '?').join(',')})` : ''}
       ON CONFLICT(device_id) DO UPDATE SET message_id = excluded.message_id, created_at = excluded.created_at
       WHERE excluded.message_id > push_queue.message_id RETURNING due_at`,
-      message.id, Date.now(), Date.now() + 500, message.deviceId, Date.now() - DEVICE_IDLE_LIFETIME, message.id).toArray();
+      message.id, Date.now(), Date.now() + 500, message.deviceId, Date.now() - DEVICE_IDLE_LIFETIME, message.id, ...foreground).toArray();
     return queued.some(row => !this.scheduledPushAt || row.due_at < this.scheduledPushAt);
   }
 
@@ -1626,7 +1632,7 @@ export class E2eeSyncRoom extends DurableObject {
           const subscription = this.sql.exec(`SELECT p.subscription, p.language FROM push_subscriptions p JOIN devices d ON d.device_id = p.device_id
             WHERE p.device_id = ? AND d.last_active_at > ? AND d.read_message_id < ?`,
             recipient.device_id, Date.now() - DEVICE_IDLE_LIFETIME, recipient.message_id).toArray()[0];
-          if (!subscription || recipient.created_at + 3600000 <= Date.now() || this.deviceForeground(recipient.device_id)) { remove(); return; }
+          if (!subscription || recipient.created_at + 3600000 <= Date.now() || this.foregroundDevices().has(recipient.device_id)) { remove(); return; }
           const controller = new AbortController();
           controller.messageId = recipient.message_id;
           let requests = this.pushRequests.get(recipient.device_id);
