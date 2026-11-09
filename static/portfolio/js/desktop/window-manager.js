@@ -323,6 +323,7 @@
             pointerInteraction = {
                 type,
                 pointerId: event.pointerId,
+                captureTarget: event.currentTarget,
                 startX: event.clientX,
                 startY: event.clientY,
                 geometry,
@@ -337,6 +338,10 @@
 
         const updatePointerInteraction = (event) => {
             if (!pointerInteraction || event.pointerId !== pointerInteraction.pointerId) return;
+            if (!(event.buttons & 1)) {
+                finishPointerInteraction(event);
+                return;
+            }
 
             const { type, startX, startY, geometry, element, minWidth, minHeight } = pointerInteraction;
             const deltaX = event.clientX - startX;
@@ -363,9 +368,11 @@
 
         const finishPointerInteraction = (event) => {
             if (!pointerInteraction || (event?.pointerId !== undefined && event.pointerId !== pointerInteraction.pointerId)) return;
-            const { element } = pointerInteraction;
+            const { element, captureTarget, pointerId } = pointerInteraction;
+            if (event?.type === 'lostpointercapture' && event.target !== captureTarget) return;
             pointerInteraction = undefined;
             element.classList.remove('is-dragging', 'is-resizing');
+            if (captureTarget.hasPointerCapture(pointerId)) captureTarget.releasePointerCapture(pointerId);
         };
 
         const showWindow = (element, task, { target, revealTask = false } = {}) => {
@@ -559,6 +566,8 @@
             document.addEventListener('pointermove', updatePointerInteraction);
             document.addEventListener('pointerup', finishPointerInteraction);
             document.addEventListener('pointercancel', finishPointerInteraction);
+            document.addEventListener('lostpointercapture', finishPointerInteraction);
+            window.addEventListener('blur', finishPointerInteraction);
             window.addEventListener('portfolio-language-change', () => {
                 windowEntries.filter((entry) => !entry.external).forEach(({ element, maximizeSelector }) => {
                     updateMaximizeButtons(element, maximizeSelector);

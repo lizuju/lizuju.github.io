@@ -199,9 +199,9 @@ test('clicks satellites and keeps the selected ground track live across window a
         const ray = new THREE.Ray(camera.position, position.clone().sub(camera.position).normalize());
         const hit = ray.intersectSphere(new THREE.Sphere(new THREE.Vector3(), 1), new THREE.Vector3());
         const projected = position.clone().project(camera);
-        return { index, projected, visible: (!hit || hit.distanceTo(camera.position) > position.distanceTo(camera.position))
+        return { index, projected, distance: position.distanceTo(camera.position), visible: (!hit || hit.distanceTo(camera.position) > position.distanceTo(camera.position))
             && Math.abs(projected.x) < 0.8 && Math.abs(projected.y) < 0.8 };
-    }).filter((entry) => entry.visible);
+    }).filter((entry) => entry.visible).sort((a, b) => a.distance - b.distance);
     expect(visible.length).toBeGreaterThan(0);
     const selected = visible[0];
     await canvas.click({ position: {
