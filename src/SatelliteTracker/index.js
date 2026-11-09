@@ -670,16 +670,19 @@ function about() {
     setStatus('satelliteAboutStatus');
 }
 
-window.addEventListener('portfolio-language-change', () => {
-    updateDataTime();
-    updateSelectedDetails();
-});
+// A timed-out script may finish after a retry; only the attached loader may publish its tracker.
+if (document.currentScript?.isConnected) {
+    window.addEventListener('portfolio-language-change', () => {
+        updateDataTime();
+        updateSelectedDetails();
+    });
 
-window.SatelliteTracker = {
-    about,
-    open,
-    refresh,
-    renderNow,
-    resetView,
-    toggleOrbit
-};
+    window.SatelliteTracker = {
+        about,
+        open,
+        refresh,
+        renderNow,
+        resetView,
+        toggleOrbit
+    };
+}

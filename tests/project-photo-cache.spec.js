@@ -63,3 +63,64 @@ test('photo switching shows the selected thumbnail, cancels obsolete work and re
     await expect(page.locator('[data-image-counter]')).toHaveText('1 / 35');
     await page.unrouteAll({ behavior: 'ignoreErrors' });
 });
+
+test('a stalled full image times out, keeps its thumbnail and retries without reopening', async ({ page }) => {
+    await page.goto('/honors/');
+    await page.clock.install();
+    const photo = page.locator('[data-honor-image]').first();
+    await expect(photo).toBeVisible();
+    const source = await photo.getAttribute('data-image-src');
+    let requests = 0;
+    let stalled;
+    await page.route(source, route => {
+        requests++;
+        if (requests === 1) { stalled = route; return; }
+        return route.continue();
+    });
+    await photo.click();
+    await expect.poll(() => requests).toBe(1);
+    const image = page.locator('[data-image-preview-image]');
+    await expect.poll(() => image.evaluate(element => element.currentSrc)).toBe(await photo.locator('img').evaluate(element => element.currentSrc));
+    await expect.poll(() => image.evaluate(element => element.naturalWidth)).toBeGreaterThan(0);
+    await page.clock.fastForward(30001);
+    await expect(page.locator('[data-image-loading]')).toBeHidden();
+    await expect(page.locator('[data-image-error]')).toBeVisible();
+    await expect(image).toBeVisible();
+    await expect(page.locator('.image-preview-body')).toHaveAttribute('aria-busy', 'false');
+    await page.locator('[data-taskbar-lang]').click();
+    await page.getByRole('button', { name: 'Reload image', exact: true }).click();
+    await expect.poll(() => image.evaluate(element => element.currentSrc)).toMatch(/^blob:/);
+    await expect(page.locator('[data-image-error]')).toBeHidden();
+    await expect(page.locator('[data-image-loading]')).toBeHidden();
+    expect(requests).toBe(2);
+    await stalled.continue().catch(() => {});
+    await expect(image).toBeVisible();
+});
+
+test('minimizing keeps an image request but closing and reopening starts a fresh request', async ({ page }) => {
+    await page.goto('/honors/');
+    const photo = page.locator('[data-honor-image]').first();
+    await expect(photo).toBeVisible();
+    const source = await photo.getAttribute('data-image-src');
+    const requests = [];
+    let cancelled = 0;
+    page.on('requestfailed', request => { if (request.url() === source) cancelled++; });
+    await page.route(source, route => { requests.push(route); });
+    await photo.click();
+    await expect.poll(() => requests.length).toBe(1);
+    await page.locator('[data-image-preview-action="minimize"]').click();
+    await page.locator('[data-image-preview-task]').click();
+    expect(requests.length).toBe(1);
+    expect(cancelled).toBe(0);
+    await page.locator('[data-image-preview-action="close"]').click();
+    await expect.poll(() => cancelled).toBe(1);
+    await photo.click();
+    await expect.poll(() => requests.length).toBe(2);
+    await requests[1].continue();
+    await expect(page.locator('[data-image-loading]')).toBeHidden();
+    await expect(page.locator('[data-image-error]')).toBeHidden();
+    const image = page.locator('[data-image-preview-image]');
+    await expect.poll(() => image.evaluate(element => element.currentSrc)).toMatch(/^blob:/);
+    await requests[0].continue().catch(() => {});
+    await expect(page.locator('.image-preview-body')).toHaveAttribute('aria-busy', 'false');
+});

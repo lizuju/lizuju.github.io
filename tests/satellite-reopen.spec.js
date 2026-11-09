@@ -230,3 +230,40 @@ test('a stalled orbital request times out and reopening does not reuse it or bur
     await expect(page.locator('[data-satellite-status]')).toHaveAttribute('data-i18n', 'satelliteLoadError');
     expect(requests).toBe(1);
 });
+
+for (const failure of ['network', 'timeout']) test(`refresh retries a satellite module ${failure} failure without bypassing the data cooldown`, async ({ page, isMobile }) => {
+    test.skip(isMobile, 'satellite windows are only available in the desktop layout');
+    let moduleRequests = 0;
+    let dataRequests = 0;
+    await page.route('**/js/satellite-tracker.js*', route => {
+        moduleRequests++;
+        if (moduleRequests > 1) return route.continue();
+        if (failure === 'network') return route.abort();
+    });
+    await page.route('https://celestrak.org/**', route => {
+        dataRequests++;
+        return route.fulfill({ contentType: 'application/json', body: JSON.stringify(satelliteRecords) });
+    });
+    await page.goto('/portfolio/');
+    await page.clock.install();
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-satellite]').click();
+    await expect.poll(() => moduleRequests).toBe(1);
+    if (failure === 'timeout') await page.clock.fastForward(30001);
+    const status = page.locator('[data-satellite-status]');
+    await expect(status).toHaveAttribute('data-i18n', 'satelliteLoadError');
+    expect(dataRequests).toBe(0);
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(status).toHaveText('Unable to load orbital data. Please try again later.');
+    const refresh = async () => {
+        await page.locator('[data-window-menu="satellite-data"]').click();
+        await page.locator('[data-menu-action="satellite-refresh"]').click();
+    };
+    await refresh();
+    await expect(status).toHaveAttribute('data-i18n', 'satelliteReady');
+    await expect(page.locator('[data-satellite-loading]')).toBeHidden();
+    await refresh();
+    expect(moduleRequests).toBe(2);
+    expect(dataRequests).toBe(1);
+    await expect(page.locator('script[src*="satellite-tracker.js"]')).toHaveCount(1);
+});

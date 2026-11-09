@@ -75,6 +75,7 @@ import { ProjectImageCache } from './project-image-cache.js';
         let selectedImageButton;
         let previewImageButton;
         let imageRequest = 0;
+        let imageLoaded = false;
         let imagePreloadTimer;
         const compactImageCache = window.matchMedia('(max-width: 600px), (pointer: coarse)').matches;
         const imageCache = new ProjectImageCache({
@@ -178,6 +179,11 @@ import { ProjectImageCache } from './project-image-cache.js';
             minHeight: 300,
             hide: (state) => {
                 manager.hideWindow(imagePreviewWindow, imagePreviewTask, state, { hideTask: state === 'is-closed' });
+                if (state === 'is-closed') {
+                    imageRequest++;
+                    clearTimeout(imagePreloadTimer);
+                    imageCache.cancelPending();
+                }
                 if (standaloneHonors && state === 'is-closed') {
                     const url = new URL(location.href);
                     url.searchParams.delete('certificate');
@@ -516,8 +522,9 @@ import { ProjectImageCache } from './project-image-cache.js';
                 if (standaloneHonors && new URLSearchParams(location.search).has('certificate')) history.replaceState(null, '', url);
             }
             updateImageCopy();
-            if (!changed && imageError.hidden) return;
+            if (!changed && imageLoaded) return;
             const request = ++imageRequest;
+            imageLoaded = false;
             clearTimeout(imagePreloadTimer);
             imageError.hidden = true;
             imagePreviewFigure.hidden = false;
@@ -538,6 +545,7 @@ import { ProjectImageCache } from './project-image-cache.js';
             if (!cached) {
                 initialDecode.then(() => {
                     if (request !== imageRequest || imagePreviewSource.getAttribute('srcset') !== placeholder) return;
+                    imagePreviewFigure.hidden = false;
                     layoutImage();
                     imagePreviewBody.classList.remove('is-image-pending');
                 }).catch(() => {});
@@ -556,13 +564,15 @@ import { ProjectImageCache } from './project-image-cache.js';
                     await imagePreviewImage.decode();
                 }
                 if (request !== imageRequest) return;
+                imageLoaded = true;
                 imageLoading.hidden = true;
                 layoutImage();
                 imagePreloadTimer = setTimeout(() => preloadAdjacentImages(request), 250);
             } catch {
                 if (request !== imageRequest) return;
                 imageLoading.hidden = true;
-                imagePreviewFigure.hidden = true;
+                imagePreviewSource.srcset = placeholder;
+                imagePreviewFigure.hidden = !imagePreviewImage.naturalWidth;
                 imageError.hidden = false;
             }
             imagePreviewBody.classList.remove('is-image-pending');

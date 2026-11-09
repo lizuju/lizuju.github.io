@@ -27,6 +27,7 @@ const MAINTENANCE_CONCURRENCY = 10;
 const PAIR_DISCOVERY_CACHE_LIFETIME = 2000;
 const statusRefreshes = new Map();
 const usageRefreshes = new Map();
+const knownReadRooms = new Map();
 const ROOM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function json(data, status = 200, headers = {}) {
@@ -282,8 +283,25 @@ export default {
     const directRead = request.method === 'GET' && (['/devices', '/messages', '/profile', '/key-grants'].includes(match[2]) || (gamePath && !gamePath[2]));
     const directFile = (['GET', 'HEAD'].includes(request.method) && /^\/files\/[1-9][0-9]*$/.test(match[2] || ''))
       || (request.method === 'POST' && /^\/files\/[1-9][0-9]*\/download$/.test(match[2] || ''));
-    if (!gamePath && match[2] !== '/profile' && !await registry.hasRoom(roomId)) return json({ error: 'not_found' }, 404);
-    if (directRead || directFile) return env.E2EE_SYNC_ROOMS.getByName(roomId).fetch(request);
+    if (!gamePath && match[2] !== '/profile') {
+      const cached = (directRead || directFile) && knownReadRooms.get(roomId) > Date.now();
+      if (!cached) {
+        if (!await registry.hasRoom(roomId)) {
+          knownReadRooms.delete(roomId);
+          return json({ error: 'not_found' }, 404);
+        }
+        if (directRead || directFile) {
+          knownReadRooms.delete(roomId);
+          knownReadRooms.set(roomId, Date.now() + 60000);
+          if (knownReadRooms.size > 256) knownReadRooms.delete(knownReadRooms.keys().next().value);
+        }
+      }
+    }
+    if (directRead || directFile) {
+      const response = await env.E2EE_SYNC_ROOMS.getByName(roomId).fetch(request);
+      if (response.status === 404) knownReadRooms.delete(roomId);
+      return response;
+    }
     const room = env.E2EE_SYNC_ROOMS.getByName(roomId);
     if (request.method === 'GET' && match[2] === '/socket') {
       const protocols = (request.headers.get('Sec-WebSocket-Protocol') || '').split(',').map(value => value.trim());
@@ -1878,7 +1896,10 @@ export class E2eeSyncRoom extends DurableObject {
 
   messagePage({ before = null, after = null, limit = 50, generation = null } = {}) {
     if (!this.initialized) return { error: 'not_found', status: 404 };
-    this.pruneExpired();
+    if (!(this.nextPruneAt > Date.now())) {
+      this.pruneExpired();
+      this.ctx.waitUntil(this.scheduleAlarm());
+    }
     const bounds = this.historySnapshot();
     let historyMode = 'replace';
     let rows;
@@ -1891,7 +1912,8 @@ export class E2eeSyncRoom extends DurableObject {
     } else {
       rows = this.sql.exec('SELECT id, client_id AS clientId, device_id AS deviceId, text, created_at AS createdAt, attachment FROM messages ORDER BY id DESC LIMIT ?', limit).toArray().reverse();
     }
-    const history = this.historySnapshot(rows[0]?.id ?? before ?? after ?? undefined);
+    const firstId = rows[0]?.id ?? before ?? after;
+    const history = { ...bounds, hasMore: firstId !== null && bounds.oldestId !== null && bounds.oldestId < firstId };
     history.continuationId = rows.at(-1)?.id ?? after ?? null;
     history.hasNewer = history.continuationId !== null && history.latestId > history.continuationId;
     return { messages: this.decorateMessages(rows), history, historyMode, readReceipts: this.readReceipts() };

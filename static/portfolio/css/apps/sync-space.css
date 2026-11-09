@@ -801,11 +801,18 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
     gap: 4px 10px;
     margin-bottom: 4px;
     color: #5c6868;
     font-size: 10px;
+}
+
+.sync-message-actions {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 10px;
+    margin-left: auto;
 }
 
 .sync-message-copy,
@@ -875,7 +882,6 @@
 }
 
 .sync-message-read {
-    margin-left: auto;
     color: #777;
     font-size: 12px;
 }

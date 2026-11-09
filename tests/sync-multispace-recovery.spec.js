@@ -63,7 +63,7 @@ const openChat = async page => {
     if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
     await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
     await expect.poll(() => sockets.size).toBe(2);
-    await expect(page.locator('.sync-message-meta span:first-child')).toContainText('Alice');
+    await expect(page.locator('.sync-message-meta > span:first-child')).toContainText('Alice');
     await page.clock.runFor(1000);
     return {
         deviceRequests, connections, ready, rename: name => { otherName = name; },
@@ -220,7 +220,7 @@ test('loads members on first background-room entry, reuses the cache, and refres
     const room = rooms[1];
     expect(chat.deviceRequests).toEqual([rooms[0]]);
     await chat.switchRoom(room);
-    await expect(page.locator('.sync-message-meta span:first-child')).toContainText('Alice');
+    await expect(page.locator('.sync-message-meta > span:first-child')).toContainText('Alice');
     await page.locator('[data-sync-input]').fill('@');
     await expect(page.locator('[data-sync-mention-device]')).toHaveText('Alice设备 2');
     expect(chat.deviceRequests).toEqual(rooms);
@@ -231,7 +231,7 @@ test('loads members on first background-room entry, reuses the cache, and refres
     chat.rename('Bob');
     await chat.reconnect(room, { messages: [message(room, 1)], history: bounds(1), historyMode: 'replace' });
     await chat.switchRoom(room);
-    await expect(page.locator('.sync-message-meta span:first-child')).toContainText('Bob');
+    await expect(page.locator('.sync-message-meta > span:first-child')).toContainText('Bob');
     await page.locator('[data-sync-input]').fill('@');
     await expect(page.locator('[data-sync-mention-device]')).toHaveText('Bob设备 2');
     expect(chat.deviceRequests).toEqual([rooms[0], room, room]);

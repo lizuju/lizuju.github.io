@@ -35,6 +35,7 @@ async function createRuntime() {
           } };
           export class Room extends ProductionRoom {
             testQueries() { return this.queries.splice(0); }
+            testPruneAt(time) { this.nextPruneAt = time; }
             testInitialized() { return this.initialized; }
             async testReclaim() { await this.ctx.storage.deleteAll(); this.initialized = false; }
             testFailure() {
@@ -65,6 +66,48 @@ async function createRuntime() {
   };
   return { runtime, room, storage, wake };
 }
+
+test('history pages reuse boundaries and expiry hints while cold and overdue reads still prune', async t => {
+  const { runtime, room, storage, wake } = await createRuntime(); t.after(() => runtime.dispose());
+  const device = await room.initialize(randomUUID());
+  const now = Date.now();
+  await storage.exec("WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 120) INSERT INTO messages (client_id, device_id, text, created_at) SELECT 'message-' || n, ?, 'encrypted-envelope', ? FROM seq", device.deviceId, now);
+  await room.scheduleAlarm();
+  await room.testQueries();
+  const recent = await room.messagePage();
+  assert.equal(recent.messages.length, 50);
+  assert.equal(recent.history.hasMore, true);
+  const recentQueries = await room.testQueries();
+  assert.equal(recentQueries.filter(query => query.includes('AS oldestId')).length, 1);
+  assert.ok(recentQueries.every(query => query.startsWith('SELECT')));
+  assert.equal(recentQueries.length, 5);
+  const earlier = await room.messagePage({ before: recent.messages[0].id, generation: recent.history.generation });
+  assert.equal(earlier.messages.length, 50);
+  assert.equal(earlier.history.hasNewer, true);
+  const oldest = await room.messagePage({ before: earlier.messages[0].id, generation: earlier.history.generation });
+  assert.equal(oldest.messages.length, 20);
+  assert.equal(oldest.history.hasMore, false);
+  const incremental = await room.messagePage({ after: recent.history.latestId, generation: recent.history.generation });
+  assert.deepEqual(incremental.messages, []);
+  assert.equal(incremental.history.hasNewer, false);
+
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id = 1', now - 7 * 86400000 - 1);
+  await wake();
+  await room.testQueries();
+  const recovered = await room.messagePage({ before: 21, generation: recent.history.generation });
+  assert.notEqual(recovered.history.generation, recent.history.generation);
+  assert.equal(recovered.history.oldestId, 2);
+  assert.equal(recovered.historyMode, 'replace');
+  await room.testQueries();
+  await room.messagePage();
+  assert.equal((await room.testQueries()).length, 5);
+
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id = 2', now - 7 * 86400000 - 1);
+  await room.testPruneAt(now - 1);
+  const overdue = await room.messagePage();
+  assert.equal(overdue.history.oldestId, 3);
+  assert.notEqual(overdue.history.generation, recovered.history.generation);
+});
 
 test('versioned rooms recover with read-only schema checks and preserve credentials, history and file metadata', async t => {
   const { runtime, room, storage, wake } = await createRuntime(); t.after(() => runtime.dispose());
