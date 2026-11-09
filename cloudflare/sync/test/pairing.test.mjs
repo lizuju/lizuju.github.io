@@ -2383,6 +2383,7 @@ test('history cursors return deltas and reset safely after clear, expiry and pru
   const afterClear = delta.body.history, fourth = await post('survivor');
   const storage = await runtime.unsafeGetDurableObjectStorage('sync-test', 'SyncRoom', { name: space.roomId });
   await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - sevenDays - 1, third.id);
+  await (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId).testScheduleAlarm();
   delta = await request(`/v1/spaces/${space.roomId}/messages?before=${fourth.id}&generation=${afterClear.generation}`, { token: space.token });
   assert.equal(delta.body.historyMode, 'replace'); assert.deepEqual(delta.body.messages, [fourth]);
   assert.notEqual(delta.body.history.generation, afterClear.generation);

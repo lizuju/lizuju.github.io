@@ -42,6 +42,7 @@ export class ProjectImageCache {
 
     async load(source, request, priority) {
         const { signal } = request.controller;
+        const timeout = setTimeout(() => request.controller.abort(new DOMException('Image loading timed out', 'TimeoutError')), 30000);
         try {
             const response = await fetch(source, { signal, priority });
             if (!response.ok) throw new Error(`Image request failed: ${response.status}`);
@@ -55,7 +56,10 @@ export class ProjectImageCache {
             request.image = new Image();
             request.image.decoding = 'async';
             request.image.src = request.url;
-            await request.image.decode();
+            await Promise.race([
+                request.image.decode(),
+                new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+            ]);
             signal.throwIfAborted();
 
             const { naturalWidth: width, naturalHeight: height } = request.image;
@@ -73,6 +77,7 @@ export class ProjectImageCache {
             if (!this.entries.has(source)) throw new DOMException('Image exceeds the preview cache budget', 'AbortError');
             return entry;
         } finally {
+            clearTimeout(timeout);
             this.release(request);
             if (this.pending.get(source) === request) this.pending.delete(source);
         }

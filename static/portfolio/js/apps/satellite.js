@@ -14,6 +14,7 @@
             || !satelliteStatus) return null;
 
         let satelliteTrackerPromise;
+        let satelliteLoadAttempt = 0;
         const loadSatelliteTracker = () => {
             if (window.SatelliteTracker) return Promise.resolve(window.SatelliteTracker);
             if (satelliteTrackerPromise) return satelliteTrackerPromise;
@@ -22,9 +23,22 @@
                 const mainScript = Array.from(document.scripts).find((script) => script.src.includes('/main.js'));
                 const version = mainScript ? new URL(mainScript.src).search : '';
                 const script = document.createElement('script');
-                script.src = `js/satellite-tracker.js${version}`;
-                script.onload = () => resolve(window.SatelliteTracker);
-                script.onerror = reject;
+                const source = new URL(`js/satellite-tracker.js${version}`, document.baseURI);
+                // Removed scripts can keep downloading in Chromium; retries need a fresh request.
+                if (satelliteLoadAttempt) source.searchParams.set('retry', String(satelliteLoadAttempt));
+                satelliteLoadAttempt++;
+                script.src = source.href;
+                const timeout = setTimeout(() => script.onerror(), 30000);
+                script.onload = () => {
+                    clearTimeout(timeout);
+                    resolve(window.SatelliteTracker);
+                };
+                script.onerror = () => {
+                    clearTimeout(timeout);
+                    script.onload = script.onerror = null;
+                    script.remove();
+                    reject(new Error('Satellite module failed to load'));
+                };
                 document.head.append(script);
             }).catch((error) => {
                 satelliteTrackerPromise = null;
@@ -61,7 +75,7 @@
         });
 
         manager.addMenuActions({
-            'satellite-refresh': () => window.SatelliteTracker?.refresh(),
+            'satellite-refresh': () => window.SatelliteTracker ? window.SatelliteTracker.refresh() : showSatelliteWindow(),
             'satellite-close': () => entry.hide('is-closed'),
             'satellite-reset-view': () => window.SatelliteTracker?.resetView(),
             'satellite-toggle-orbit': () => window.SatelliteTracker?.toggleOrbit(),
@@ -79,6 +93,7 @@
             loadSatelliteTracker()
                 .then((tracker) => tracker.open())
                 .catch(() => {
+                    satelliteStatus.dataset.i18n = 'satelliteLoadError';
                     satelliteStatus.textContent = t().satelliteLoadError;
                 });
         };

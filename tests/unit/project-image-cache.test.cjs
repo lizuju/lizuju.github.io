@@ -33,3 +33,47 @@ test('encoded image bytes are included before allocating the decoded bitmap', as
     await assert.rejects(cache.get('image.webp', { priority: 'low', width: 32, height: 32 }), { name: 'AbortError' });
     assert.equal(cache.pending.size, 0);
 });
+
+for (const stage of ['body', 'decode']) test(`an image timeout releases ${stage} work and permits a fresh request`, async t => {
+    const { ProjectImageCache } = await modulePromise;
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let resolveDecode;
+    let requests = 0;
+    const revoked = [];
+    const images = [];
+    const originalImage = globalThis.Image;
+    globalThis.Image = class {
+        naturalWidth = 32;
+        naturalHeight = 32;
+        constructor() { images.push(this); }
+        decode() { return requests === 1 ? new Promise(resolve => { resolveDecode = resolve; }) : Promise.resolve(); }
+        removeAttribute() { this.src = ''; }
+    };
+    t.after(() => { if (originalImage) globalThis.Image = originalImage; else delete globalThis.Image; });
+    t.mock.method(URL, 'createObjectURL', () => `blob:image-${requests}`);
+    t.mock.method(URL, 'revokeObjectURL', value => revoked.push(value));
+    t.mock.method(globalThis, 'fetch', async (_source, { signal }) => {
+        requests++;
+        if (requests > 1 || stage === 'decode') return new Response(new Uint8Array(10));
+        return new Response(new ReadableStream({ start(controller) {
+            controller.enqueue(new Uint8Array(1));
+            signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+        } }));
+    });
+    const cache = new ProjectImageCache();
+    const rejected = assert.rejects(cache.get('photo.webp'), { name: 'TimeoutError' });
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(30000);
+    await rejected;
+    assert.equal(cache.pending.size, 0);
+    assert.equal(cache.bytes, 0);
+    if (stage === 'decode') {
+        assert.deepEqual(revoked, ['blob:image-1']);
+        assert.equal(images[0].src, '');
+    }
+    const fresh = await cache.get('photo.webp');
+    resolveDecode?.();
+    assert.equal(fresh.url, 'blob:image-2');
+    assert.equal(cache.peek('photo.webp'), fresh);
+    cache.clear();
+});

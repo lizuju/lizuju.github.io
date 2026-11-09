@@ -537,8 +537,12 @@
 }
 
 .project-image-error {
-    margin: auto;
-    padding: 24px;
+    position: absolute;
+    inset: auto 8px 8px;
+    z-index: 1;
+    padding: 8px;
+    border: 1px solid #808080;
+    background: var(--window-gray);
     text-align: center;
     font: 13px/1.5 var(--font-system);
 }
