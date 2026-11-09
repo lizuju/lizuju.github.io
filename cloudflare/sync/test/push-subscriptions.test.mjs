@@ -47,11 +47,21 @@ before(async () => {
         export class E2eeSyncRoom extends ProductionRoom {
           async testDrain() { await this.sendPushNotifications(); await this.scheduleAlarm(); }
           testRead(deviceId, messageId) { this.markRead(deviceId, messageId); }
+          testForeground() { return [...this.foregroundDevices()]; }
+          testExpireForeground() {
+            for (const socket of this.ctx.getWebSockets()) {
+              const state = socket.deserializeAttachment();
+              state.foregroundTabs = Object.fromEntries(Object.keys(state.foregroundTabs || {}).map(id => [id, Date.now() - 1]));
+              socket.serializeAttachment(state);
+            }
+          }
         }
         export default { async fetch(request, env) {
           const path = new URL(request.url).pathname;
           if (path === '/test/drain') { const { roomId } = await request.json(); await env.E2EE_SYNC_ROOMS.getByName(roomId).testDrain(); return Response.json({ ok: true }); }
           if (path === '/test/read') { const { roomId, deviceId, messageId } = await request.json(); await env.E2EE_SYNC_ROOMS.getByName(roomId).testRead(deviceId, messageId); return Response.json({ ok: true }); }
+          if (path === '/test/expire-foreground') { const { roomId } = await request.json(); await env.E2EE_SYNC_ROOMS.getByName(roomId).testExpireForeground(); return Response.json({ ok: true }); }
+          if (path === '/test/foreground') { const { roomId } = await request.json(); return Response.json(await env.E2EE_SYNC_ROOMS.getByName(roomId).testForeground()); }
           if (path === '/test/push') {
             if (request.method === 'POST') {
               const input = await request.json();
@@ -82,9 +92,9 @@ async function request(path, device, { method = 'GET', body } = {}) {
   return { status: response.status, body: await response.json() };
 }
 const control = async (body) => (await request('/test/push', null, body ? { method: 'POST', body } : {})).body;
-async function waitFor(predicate) {
+async function waitFor(predicate, read = control) {
   for (let attempt = 0; attempt < 100; attempt++) {
-    const result = await control();
+    const result = await read();
     if (predicate(result)) return result;
     await new Promise(resolve => setTimeout(resolve, 10));
   }
@@ -200,6 +210,44 @@ test('device and room expiry release push subscriptions along with membership', 
 
 const drain = host => request('/test/drain', null, { method: 'POST', body: { roomId: host.roomId } });
 
+test('changing notification language preserves queued reminders and their retry deadline', async () => {
+  await control({ reset: true, status: 503, hold: false, retryAfterMs: 60000 });
+  const { host, peers: [peer], path, storage } = await room();
+  const target = subscription();
+  await subscribe(path, peer, target);
+  await send(path, host);
+  await waitFor(state => state.calls.length === 1 && state.active === 0);
+  const queued = await storage.exec('SELECT * FROM push_queue');
+  await subscribe(path, peer, target, 'en');
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), queued);
+  await control({ status: 201, retryAfterMs: 0 });
+  await storage.exec('UPDATE push_queue SET due_at = ?', Date.now() - 1);
+  await drain(host);
+  const { calls } = await control();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].payload.language, 'en');
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), []);
+});
+
+for (const change of ['language', 'endpoint']) test(`updating the ${change} during delivery retries with the current subscription`, async () => {
+  await control({ reset: true, status: 201, hold: true, retryAfterMs: 0 });
+  const { host, peers: [peer], path, storage } = await room();
+  const original = subscription();
+  const updated = change === 'endpoint' ? subscription() : original;
+  await subscribe(path, peer, original);
+  await send(path, host);
+  await waitFor(state => state.active === 1);
+  await control({ hold: false });
+  await subscribe(path, peer, updated, 'en');
+  const final = await waitFor(state => state.calls.length === 2 && state.active === 0);
+  assert.equal(final.calls[0].cancelled, true);
+  assert.equal(final.calls[1].endpoint, updated.endpoint);
+  assert.equal(final.calls[1].payload.language, 'en');
+  assert.equal(final.calls[1].payload.messageId, final.calls[0].payload.messageId);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), []);
+  await control({ release: true });
+});
+
 test('coalesces bursts per recipient and limits the entire room to three deliveries', async () => {
   await control({ reset: true, status: 201, hold: true, retryAfterMs: 0 });
   const { host, peers, storage, path } = await room(3);
@@ -275,6 +323,9 @@ test('retries are finite and expire or disappear when the message is cleared', a
 test('foreground hints from shared tabs are independent and suppress push only while their lease is live', async () => {
   await control({ reset: true, status: 201, hold: false });
   const { host, peers: [peer], path, storage } = await room();
+  await storage.exec('CREATE TABLE push_write_audit (operation TEXT)');
+  await storage.exec("CREATE TRIGGER audit_push_insert AFTER INSERT ON push_queue BEGIN INSERT INTO push_write_audit VALUES ('insert'); END");
+  await storage.exec("CREATE TRIGGER audit_push_update AFTER UPDATE ON push_queue BEGIN INSERT INTO push_write_audit VALUES ('update'); END");
   await subscribe(path, peer);
   const response = await runtime.dispatchFetch(`https://push.test${path}/socket`, { headers: { Origin: origin, Upgrade: 'websocket' } });
   const socket = response.webSocket;
@@ -285,15 +336,30 @@ test('foreground hints from shared tabs are independent and suppress push only w
   const first = randomUUID(); const second = randomUUID();
   socket.send(JSON.stringify({ type: 'foreground', tabId: first, active: true }));
   socket.send(JSON.stringify({ type: 'foreground', tabId: second, active: false }));
-  await send(path, host);
+  const foreground = async () => (await request('/test/foreground', null, { method: 'POST', body: { roomId: host.roomId } })).body;
+  await waitFor(devices => devices.includes(peer.deviceId), foreground);
+  for (let index = 0; index < 12; index++) await send(path, host);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), []);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_write_audit'), []);
   await storage.exec('UPDATE push_queue SET due_at = ?', Date.now() - 1);
   await drain(host);
   assert.equal((await control()).calls.length, 0);
   socket.send(JSON.stringify({ type: 'foreground', tabId: first, active: false }));
+  await waitFor(devices => !devices.includes(peer.deviceId), foreground);
   await send(path, host);
   await storage.exec('UPDATE push_queue SET due_at = ?', Date.now() - 1);
   await drain(host);
   assert.equal((await control()).calls.length, 1);
+  assert.equal((await storage.exec("SELECT * FROM push_write_audit WHERE operation = 'insert'")).length, 1);
+  socket.send(JSON.stringify({ type: 'foreground', tabId: first, active: true }));
+  await waitFor(devices => devices.includes(peer.deviceId), foreground);
+  await send(path, host);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), []);
+  await request('/test/expire-foreground', null, { method: 'POST', body: { roomId: host.roomId } });
+  await send(path, host);
+  await storage.exec('UPDATE push_queue SET due_at = ?', Date.now() - 1);
+  await drain(host);
+  assert.equal((await control()).calls.length, 2);
   socket.close();
 });
 

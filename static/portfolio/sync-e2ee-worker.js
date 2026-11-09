@@ -72,14 +72,18 @@ const bytes = (value, length) => {
     return decoded;
 };
 const getApi = () => {
-    if (!configPromise) configPromise = fetch(new URL('portfolio/sync-config.json', self.registration.scope), { cache: 'no-store' })
-        .then(async response => {
-            if (!response.ok) throw new Error('unavailable');
-            const { apiBase } = await response.json();
-            const api = new URL(apiBase);
-            if (api.protocol !== 'https:' && !(api.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(api.hostname))) throw new Error('invalid_endpoint');
-            return api;
-        }).catch(error => { configPromise = null; throw error; });
+    if (!configPromise) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        configPromise = fetch(new URL('portfolio/sync-config.json', self.registration.scope), { cache: 'no-store', signal: controller.signal })
+            .then(async response => {
+                if (!response.ok) throw new Error('unavailable');
+                const { apiBase } = await response.json();
+                const api = new URL(apiBase);
+                if (api.protocol !== 'https:' && !(api.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(api.hostname))) throw new Error('invalid_endpoint');
+                return api;
+            }).catch(error => { configPromise = null; throw error; }).finally(() => clearTimeout(timeout));
+    }
     return configPromise;
 };
 const prepare = async (descriptor, owner, token) => {

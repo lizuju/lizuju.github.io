@@ -423,6 +423,8 @@
     z-index: 40;
     width: 205px;
     max-width: calc(100vw - 16px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 3px;
     border: 2px outset #fff;
     background: #c0c0c0;

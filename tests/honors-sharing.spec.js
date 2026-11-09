@@ -2,6 +2,41 @@ const { test, expect } = require('@playwright/test');
 
 test.use({ serviceWorkers: 'block' });
 
+for (const stage of ['headers', 'body']) test(`a stalled honors ${stage} request times out and can be retried after reopening`, async ({ page }) => {
+    await page.clock.install();
+    await page.addInitScript(stage => {
+        const original = window.fetch.bind(window);
+        window.honorsRequests = 0;
+        window.fetch = (url, options) => {
+            if (!String(url).endsWith('/certificates.json') || ++window.honorsRequests > 1) return original(url, options);
+            const { signal } = options;
+            if (stage === 'headers') return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+            return Promise.resolve(new Response(new ReadableStream({ start(controller) {
+                controller.enqueue(new TextEncoder().encode('['));
+                signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+            } })));
+        };
+    }, stage);
+    await page.goto('/portfolio/');
+    if (await page.locator('[data-window-action="minimize"]').isVisible()) await page.locator('[data-window-action="minimize"]').click();
+    const open = async () => {
+        await page.locator('.desktop-shortcut[data-open-project-folder]').click();
+        await page.locator('[data-folder="honors"]').click();
+    };
+    await open();
+    await expect.poll(() => page.evaluate(() => window.honorsRequests)).toBe(1);
+    await page.locator('[data-project-folder-action="close"]').click();
+    await open();
+    expect(await page.evaluate(() => window.honorsRequests)).toBe(1);
+    await page.clock.fastForward(15001);
+    const retry = page.locator('[data-honors-retry]');
+    await expect(retry).toBeVisible();
+    await retry.click();
+    await expect(page.locator('[data-honor-image]')).toHaveCount(35);
+    await expect(retry).toBeHidden();
+    expect(await page.evaluate(() => window.honorsRequests)).toBe(2);
+});
+
 test('categories combine with search, translate and survive reload', async ({ page }) => {
     await page.goto('/honors/');
     const category = page.locator('[data-honors-category]');

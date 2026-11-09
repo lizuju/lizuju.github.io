@@ -2,6 +2,56 @@ const { test, expect } = require('@playwright/test');
 
 test.use({ serviceWorkers: 'block' });
 
+test('keeps edge window menus inside the work area and scrolls short menus with the keyboard', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the desktop menubar is hidden on small screens');
+    await page.setViewportSize({ width: 1200, height: 793 });
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-project-folder]').click();
+    const app = page.locator('[data-project-folder-window]');
+    const title = await app.locator('.window-titlebar').boundingBox();
+    await page.mouse.move(title.x + 40, title.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(1100, 710, { steps: 8 });
+    await page.mouse.up();
+    const trigger = app.locator('[data-window-menu="folder-file"]');
+    const popup = app.locator('[data-window-menu-popup="folder-file"]');
+    const assertContained = async () => {
+        const menu = await popup.boundingBox();
+        const taskbar = await page.locator('.desktop-taskbar').boundingBox();
+        expect(menu.x).toBeGreaterThanOrEqual(0);
+        expect(menu.y).toBeGreaterThanOrEqual(0);
+        expect(menu.x + menu.width).toBeLessThanOrEqual(page.viewportSize().width);
+        expect(menu.y + menu.height).toBeLessThanOrEqual(taskbar.y);
+    };
+    await trigger.click();
+    await assertContained();
+    expect((await popup.boundingBox()).y).toBeLessThan((await trigger.boundingBox()).y);
+    await popup.locator('[role="menuitem"]').last().click();
+    await expect(app).toBeHidden();
+    await page.locator('.desktop-shortcut[data-open-project-folder]').click();
+    await app.evaluate(element => { element.style.left = '-70px'; element.style.top = '0px'; });
+    await trigger.focus();
+    await page.keyboard.press('ArrowDown');
+    await assertContained();
+    await page.setViewportSize({ width: 980, height: 120 });
+    await expect(popup).toBeHidden();
+    await trigger.focus();
+    await page.keyboard.press('ArrowUp');
+    await assertContained();
+    const last = popup.locator('[role="menuitem"]').last();
+    await expect(last).toBeFocused();
+    expect(await popup.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+    const item = await last.boundingBox();
+    const menu = await popup.boundingBox();
+    expect(item.y + item.height).toBeLessThanOrEqual(menu.y + menu.height);
+    await page.keyboard.press('Home');
+    await expect(popup.locator('[role="menuitem"]').first()).toBeFocused();
+    const first = await popup.locator('[role="menuitem"]').first().boundingBox();
+    expect(first.y).toBeGreaterThanOrEqual(menu.y);
+    expect(first.y + first.height).toBeLessThanOrEqual(menu.y + menu.height);
+});
+
 test('places mobile navigation targets below the sticky header after closing the menu', async ({ page, isMobile }) => {
     test.skip(!isMobile, 'this regression concerns the mobile navigation layout');
     await page.setViewportSize({ width: 390, height: 844 });

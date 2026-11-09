@@ -139,6 +139,20 @@
             closeStartMenu();
             popup.hidden = false;
             trigger.setAttribute('aria-expanded', 'true');
+            const desktopRect = desktop.getBoundingClientRect();
+            const workArea = getWorkArea();
+            popup.style.maxHeight = `${workArea.height - 8}px`;
+            popup.style.left = '0px';
+            popup.style.top = '0px';
+            const menuRect = popup.getBoundingClientRect();
+            const triggerRect = trigger.getBoundingClientRect();
+            const bottom = desktopRect.top + workArea.height - 4;
+            const left = Math.max(desktopRect.left + 4, Math.min(triggerRect.left, desktopRect.left + workArea.width - menuRect.width - 4));
+            const preferredTop = triggerRect.bottom + menuRect.height <= bottom
+                ? triggerRect.bottom : triggerRect.top - menuRect.height;
+            const top = Math.max(desktopRect.top + 4, Math.min(preferredTop, bottom - menuRect.height));
+            popup.style.left = `${left - menuRect.left}px`;
+            popup.style.top = `${top - menuRect.top}px`;
 
             if (!focusPosition) return;
             const items = getMenuItems(popup);
@@ -191,6 +205,14 @@
         });
 
         document.querySelectorAll('[data-window-menu-popup]').forEach((popup) => {
+            popup.addEventListener('focusin', (event) => {
+                const item = event.target.closest?.('[role="menuitem"]');
+                if (!item) return;
+                const menuRect = popup.getBoundingClientRect();
+                const itemRect = item.getBoundingClientRect();
+                popup.scrollTop += Math.min(0, itemRect.top - menuRect.top - popup.clientTop)
+                    + Math.max(0, itemRect.bottom - menuRect.top - popup.clientTop - popup.clientHeight);
+            });
             popup.addEventListener('keydown', (event) => {
                 const item = event.target.closest?.('[role="menuitem"]');
                 if (!item) return;
@@ -278,6 +300,7 @@
         };
 
         const toggleMaximize = (element, selector) => {
+            closeWindowMenus();
             if (element.classList.contains('is-maximized')) {
                 element.classList.remove('is-maximized');
                 const geometry = restoreGeometry.get(element);
@@ -293,6 +316,7 @@
         const startPointerInteraction = (event, type, element, minWidth, minHeight) => {
             if (event.button !== 0 || element.classList.contains('is-maximized') || element.classList.contains('is-keyboard-open')) return;
 
+            closeWindowMenus();
             const geometry = getWindowGeometry(element);
             applyWindowGeometry(element, geometry);
             const mobileWindow = window.innerWidth <= 900;
@@ -542,6 +566,7 @@
             });
 
             window.addEventListener('resize', () => {
+                closeWindowMenus();
                 finishPointerInteraction();
                 if (window.innerWidth <= 900) {
                     windowEntries.filter((entry) => !entry.external).forEach(({ element, maximizeSelector }) => {
