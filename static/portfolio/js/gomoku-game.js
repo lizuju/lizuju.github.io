@@ -858,6 +858,7 @@
             pointerInteraction = {
                 type,
                 pointerId: event.pointerId,
+                captureTarget: event.currentTarget,
                 startX: event.clientX,
                 startY: event.clientY,
                 geometry
@@ -869,6 +870,10 @@
 
         function updatePointerInteraction(event) {
             if (!pointerInteraction || event.pointerId !== pointerInteraction.pointerId) return;
+            if (!(event.buttons & 1)) {
+                finishPointerInteraction(event);
+                return;
+            }
             const { type, startX, startY, geometry } = pointerInteraction;
             const workArea = getWorkArea();
             const deltaX = event.clientX - startX;
@@ -894,8 +899,11 @@
 
         function finishPointerInteraction(event) {
             if (!pointerInteraction || (event?.pointerId !== undefined && event.pointerId !== pointerInteraction.pointerId)) return;
+            const { captureTarget, pointerId } = pointerInteraction;
+            if (event?.type === 'lostpointercapture' && event.target !== captureTarget) return;
             pointerInteraction = undefined;
             gameWindow.classList.remove('is-dragging', 'is-resizing');
+            if (captureTarget.hasPointerCapture(pointerId)) captureTarget.releasePointerCapture(pointerId);
             resizeBoard();
         }
 
@@ -1015,6 +1023,8 @@
         document.addEventListener('pointermove', updatePointerInteraction);
         document.addEventListener('pointerup', finishPointerInteraction);
         document.addEventListener('pointercancel', finishPointerInteraction);
+        document.addEventListener('lostpointercapture', finishPointerInteraction);
+        window.addEventListener('blur', finishPointerInteraction);
 
         document.addEventListener('keydown', (event) => {
             if (event.defaultPrevented
