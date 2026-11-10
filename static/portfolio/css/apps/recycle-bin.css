@@ -11,15 +11,14 @@
 }
 
 .recycle-window {
-    top: 110px;
+    top: 90px;
     right: auto;
     bottom: auto;
-    left: max(100px, calc(50% - 220px));
-    width: min(440px, calc(100% - 120px));
-    height: min(330px, calc(100% - 64px));
+    left: max(100px, calc(50% - 280px));
+    width: min(560px, calc(100% - 120px));
+    height: min(460px, calc(100% - 118px));
     min-width: 320px;
-    min-height: min(280px, calc(100% - 36px));
-    padding: 3px;
+    min-height: min(320px, calc(100% - 36px));
     color: var(--window-dark);
     font: 12px/1.45 var(--font-system);
 }
@@ -29,73 +28,16 @@
     height: auto;
 }
 
-.recycle-intro {
-    margin: 12px 10px 8px;
-}
-
-.recycle-content {
-    display: grid;
-    flex: 1;
-    min-height: 0;
-    margin: 0 8px;
-    padding: 14px 12px;
-    border: 2px inset var(--window-light);
-    background: var(--window-light);
-    overflow: auto;
-}
-
-.recycle-files {
-    display: grid;
-    align-content: start;
-    gap: 13px;
-    padding: 0;
-    margin: 0;
-    list-style: none;
-}
-
-.recycle-files li {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    overflow-wrap: anywhere;
-}
-
-.recycle-files li::before {
-    width: 14px;
-    height: 18px;
-    flex: 0 0 14px;
-    border: 1px solid #666;
-    background: repeating-linear-gradient(#fff 0 3px, #a6b4c3 3px 4px);
-    box-shadow: inset 2px 2px #fff, 1px 1px #bbb;
-    content: "";
-}
-
-.recycle-empty-hint {
-    align-self: center;
-    margin: 0;
-    color: #3c6155;
-    text-align: center;
-    white-space: pre-line;
-}
-
 .recycle-actions {
     display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 12px 8px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px;
 }
 
-.recycle-actions button {
-    min-width: 76px;
-    padding: 5px 10px;
-    border: 2px outset var(--window-light);
-    color: var(--window-dark);
-    background: var(--window-gray);
-    font: inherit;
-}
-
-.recycle-actions button:active:not(:disabled) {
-    border-style: inset;
+.recycle-actions [data-recycle-action="close"] {
+    margin-left: auto;
 }
 
 .recycle-actions button:disabled {
@@ -103,9 +45,122 @@
     text-shadow: 1px 1px #fff;
 }
 
-.recycle-status {
-    flex-shrink: 0;
+.recycle-content {
+    margin: 0 3px;
+    border: 2px inset var(--window-light);
+}
+
+.recycle-intro {
     margin: 0;
-    padding: 3px 6px;
-    border: 1px inset var(--window-light);
+    padding: 12px 16px 0;
+    color: #555;
+}
+
+.recycle-files {
+    grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+    gap: 12px;
+    padding: 16px;
+    margin: 0;
+    list-style: none;
+}
+
+.recycle-files li {
+    min-width: 0;
+}
+
+.recycle-files button {
+    width: 100%;
+    height: 100%;
+    gap: 8px;
+    padding: 8px;
+}
+
+.recycle-files button[aria-pressed="true"] {
+    border-color: #2b58c2;
+    background: #d7e5f8;
+}
+
+.recycle-files strong {
+    font-weight: 400;
+}
+
+.recycle-file-icon--archive {
+    background: repeating-linear-gradient(#8c710e 0 3px, #f9e59c 3px 6px) 11px 0 / 5px 100% no-repeat, #f5da6b;
+}
+
+.recycle-file-icon--bug {
+    border-color: #c8d5ee;
+    background: linear-gradient(#000080 0 7px, transparent 7px), #e2e8f2;
+}
+
+.recycle-file-icon--bug::after {
+    inset: 12px 0 auto;
+    width: auto;
+    height: auto;
+    border: 0;
+    background: none;
+    content: ">_";
+    color: #333;
+    font: 700 12px/1 monospace;
+    text-align: center;
+}
+
+.recycle-detail {
+    margin: 0 16px 16px;
+    padding: 12px;
+    border: 1px solid #b4bdc8;
+    background: #f1f4f8;
+    overflow-wrap: anywhere;
+}
+
+.recycle-detail strong {
+    color: #000080;
+}
+
+.recycle-detail p {
+    margin: 6px 0 0;
+    white-space: pre-line;
+}
+
+.recycle-empty-hint {
+    display: grid;
+    min-height: 210px;
+    justify-items: center;
+    align-content: center;
+    gap: 10px;
+    padding: 20px;
+    color: #3c6155;
+    text-align: center;
+}
+
+.recycle-empty-symbol {
+    color: #24756b;
+    font-size: 40px;
+    line-height: 1;
+}
+
+.recycle-empty-hint strong {
+    font-size: 15px;
+}
+
+.recycle-empty-hint p {
+    margin: 0;
+    white-space: pre-line;
+}
+
+.recycle-window .recycle-statusbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 96px;
+}
+
+@media (max-width: 400px) {
+    .recycle-files {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        padding: 12px;
+        gap: 8px;
+    }
+
+    .recycle-detail {
+        margin: 0 12px 12px;
+    }
 }
