@@ -437,7 +437,7 @@
                     showApp();
                     return;
                 }
-                if (element.classList.contains('is-active')) {
+                if (element.classList.contains('is-active') && !task.hasAttribute('data-task-focus-only')) {
                     hideApp('is-minimized');
                     return;
                 }
