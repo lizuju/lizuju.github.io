@@ -356,6 +356,22 @@ test('keeps an encrypted invitation and one opponent through concurrent joins, r
             await expectBlackStone(page, 7, 7);
             await expect(gameWindow.getByRole('button', { name: /回放|重播|上一手|下一手|Replay|Previous move|Next move/i })).toHaveCount(0);
             await expect(gameWindow.locator('input[type="range"], [role="slider"]')).toHaveCount(0);
+            if (new URL(page.url()).pathname === '/chat/') {
+                const chat = page.locator('[data-sync-window]');
+                const chatTask = page.locator('[data-sync-task]');
+                await board.focus();
+                await expect(board).toBeFocused();
+                await chatTask.click();
+                await expect(chat).toHaveClass(/is-active/);
+                await expect(page.locator('[data-sync-input]')).toBeFocused();
+                await expect(gameWindow).toBeVisible();
+                await chatTask.click();
+                await expect(chat).toBeVisible();
+                await expect(page.locator('[data-sync-input]')).toBeFocused();
+                await page.locator('[data-sync-gomoku-task]').click();
+                await expect(gameWindow).toHaveClass(/is-active/);
+                await expect(board).toBeFocused();
+            }
             await clickCell(page, 0, 0, isMobile);
             await board.press('ArrowRight');
             await board.press('Enter');
