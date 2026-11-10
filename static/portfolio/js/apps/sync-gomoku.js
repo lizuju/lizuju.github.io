@@ -247,7 +247,7 @@ export function createGomokuWindow({ manager, translate, deviceLabel, getDeviceI
         show: () => {
             if (!current) return;
             manager.showWindow(app, task, { revealTask: true });
-            requestAnimationFrame(resize);
+            resize();
         },
         hide: state => {
             if (state === 'is-closed') requestClose();

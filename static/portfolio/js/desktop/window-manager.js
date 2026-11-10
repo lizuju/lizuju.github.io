@@ -32,6 +32,10 @@
         const focusTargets = new Map();
         const menuActionHandlers = {};
         const sessionHooks = [];
+        let desktopSnapshot = null;
+        let updatingDesktopVisibility = false;
+
+        const notifyDesktopVisibility = () => window.dispatchEvent(new Event('gavin:desktop-visibility-change'));
 
         const isWindowVisible = (element) => (
             !element.classList.contains('is-minimized')
@@ -60,6 +64,11 @@
         const focusWindow = (element, moveFocus = false) => {
             const entry = windowEntries.find((candidate) => candidate.element === element);
             if (!entry || !isWindowVisible(element)) return null;
+            if (updatingDesktopVisibility) return entry;
+            if (desktopSnapshot?.entries.delete(entry)) {
+                if (!desktopSnapshot.entries.size) desktopSnapshot = null;
+                notifyDesktopVisibility();
+            }
 
             const windowStack = windowEntries
                 .filter((candidate) => isWindowVisible(candidate.element) && candidate !== entry)
@@ -100,6 +109,7 @@
         };
 
         const restoreFocusAfterWindowHidden = (hiddenElement, fallbackTask) => {
+            if (updatingDesktopVisibility) return;
             const nextEntry = focusTopWindow(hiddenElement);
             const target = nextEntry
                 ? getWindowFocusTarget(nextEntry.element)
@@ -460,7 +470,9 @@
 
         // For windows that manage their own chrome (Gomoku): they only join focus and stacking.
         const registerExternalWindow = ({ id, element, task, focusTarget }) => {
-            windowEntries.push({ id, element, task, external: true });
+            windowEntries.push({ id, element, task, external: true,
+                show: () => window.GomokuGame.open(),
+                hide: () => element.querySelector('[data-gomoku-window-action="minimize"]').click() });
             if (focusTarget) focusTargets.set(element, focusTarget);
         };
 
@@ -468,6 +480,32 @@
 
         const addMenuActions = (handlers) => Object.assign(menuActionHandlers, handlers);
         const onSession = (hooks) => sessionHooks.push(hooks);
+
+        const toggleDesktop = () => {
+            finishPointerInteraction();
+            closeStartMenu();
+            if (desktopSnapshot) {
+                const snapshot = desktopSnapshot;
+                desktopSnapshot = null;
+                const active = windowEntries.find(({ element }) => isWindowVisible(element) && element.classList.contains('is-active'));
+                const restored = [...snapshot.entries].filter(({ element }) => !element.classList.contains('is-closed'));
+                updatingDesktopVisibility = true;
+                restored.forEach(entry => entry.show());
+                updatingDesktopVisibility = false;
+                const next = active || (restored.includes(snapshot.active) ? snapshot.active : restored.at(-1));
+                if (next) focusWindow(next.element, true);
+            } else {
+                const entries = windowEntries.filter(({ element }) => isWindowVisible(element))
+                    .sort((a, b) => getWindowZIndex(a.element) - getWindowZIndex(b.element));
+                if (!entries.length) return;
+                const active = entries.find(({ element }) => element.classList.contains('is-active'));
+                updatingDesktopVisibility = true;
+                entries.forEach(entry => entry.hide('is-minimized'));
+                updatingDesktopVisibility = false;
+                desktopSnapshot = { entries: new Set(entries), active };
+            }
+            notifyDesktopVisibility();
+        };
 
         const getWindowSessionState = ({ element, task }) => ({
             minimized: element.classList.contains('is-minimized'),
@@ -629,6 +667,8 @@
             getWindow,
             addMenuActions,
             onSession,
+            toggleDesktop,
+            isDesktopShown: () => Boolean(desktopSnapshot),
             restoreDesktopSession,
             bindGlobalListeners
         };
