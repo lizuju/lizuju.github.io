@@ -229,7 +229,7 @@ test('restores photo search, list scroll and the independent preview sequence af
     await openFolder(page);
     await page.locator('[data-folder="photos"]').click();
     const search = page.locator('[data-project-folder-search]');
-    const scroll = page.locator('.project-folder-scroll');
+    const scroll = page.locator('[data-project-folder-window] .project-folder-scroll');
     await search.fill('service');
     await page.locator('[data-robomaster-image]:visible').first().click();
     await page.locator('[data-image-next]').click();
@@ -337,7 +337,7 @@ test('restores a filtered certificate list and independent preview after its man
     await page.locator('[data-folder="honors"]').click();
     await expect(page.locator('[data-honor-image]')).toHaveCount(18);
     const search = page.locator('[data-project-folder-search]');
-    const scroll = page.locator('.project-folder-scroll');
+    const scroll = page.locator('[data-project-folder-window] .project-folder-scroll');
     await search.fill('Alpha');
     await page.locator('[data-honor-image]:visible').first().click();
     await page.locator('[data-image-next]').click();

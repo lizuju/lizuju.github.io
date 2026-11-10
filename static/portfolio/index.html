@@ -106,20 +106,46 @@
                         title="Close"><span aria-hidden="true">×</span></button>
                 </div>
             </div>
-            <p class="recycle-intro" data-i18n="recycleIntro">一些不小心丢掉的东西。</p>
-            <div class="recycle-content">
-                <ul class="recycle-files" data-recycle-files>
-                    <li data-i18n="recycleDraft">最终版_真的不改了_v7.zip</li>
-                    <li data-i18n="recycleIdea">还没想好的点子.txt</li>
-                    <li data-i18n="recycleBug">明天再修的_bug.exe</li>
-                </ul>
-                <p class="recycle-empty-hint" data-recycle-hint hidden data-i18n="recycleEmptyHint">烦恼已清空，灵感还在。<br>今天也辛苦了。</p>
+            <div class="address-toolbar">
+                <span class="address-label" data-i18n="addressLabel">地址</span>
+                <div class="address-field"><span aria-hidden="true">♻</span><span data-i18n="desktopRecycleBin">回收站</span></div>
             </div>
             <div class="recycle-actions">
-                <button type="button" data-recycle-empty data-i18n="recycleEmpty">清空回收站</button>
-                <button type="button" data-recycle-action="close" data-i18n="menuClose">关闭</button>
+                <button class="folder-up-button" type="button" data-recycle-restore disabled><span aria-hidden="true">↶</span><span data-i18n="recycleRestore">还原所选</span></button>
+                <button class="folder-up-button" type="button" data-recycle-empty data-i18n="recycleEmpty">清空回收站</button>
+                <button class="folder-up-button" type="button" data-recycle-action="close" data-i18n="menuClose">关闭</button>
             </div>
-            <p class="recycle-status" role="status" aria-live="polite" data-recycle-status></p>
+            <div class="project-folder-scroll recycle-content">
+                <p class="recycle-intro" data-i18n="recycleIntro">一些不小心丢掉的东西，点开看看。</p>
+                <ul class="project-folder-grid recycle-files" data-recycle-files>
+                    <li><button class="project-folder-item project-folder-item--button" type="button" data-recycle-file="Draft" aria-pressed="false" aria-controls="recycle-detail">
+                        <span class="text-file-icon recycle-file-icon--archive" aria-hidden="true"></span>
+                        <strong data-i18n="recycleDraft">最终版_真的不改了_v7.zip</strong>
+                        <small data-i18n="recycleDraftType">压缩过的纠结</small>
+                    </button></li>
+                    <li><button class="project-folder-item project-folder-item--button" type="button" data-recycle-file="Idea" aria-pressed="false" aria-controls="recycle-detail">
+                        <span class="text-file-icon" aria-hidden="true"></span>
+                        <strong data-i18n="recycleIdea">还没想好的点子.txt</strong>
+                        <small data-i18n="recycleIdeaType">未完成的灵感</small>
+                    </button></li>
+                    <li><button class="project-folder-item project-folder-item--button" type="button" data-recycle-file="Bug" aria-pressed="false" aria-controls="recycle-detail">
+                        <span class="text-file-icon recycle-file-icon--bug" aria-hidden="true"></span>
+                        <strong data-i18n="recycleBug">明天再修的_bug.exe</strong>
+                        <small data-i18n="recycleBugType">延期执行的任务</small>
+                    </button></li>
+                </ul>
+                <div class="recycle-detail" id="recycle-detail" data-recycle-detail hidden role="status">
+                    <strong data-recycle-detail-title></strong>
+                    <p data-recycle-detail-text></p>
+                </div>
+                <div class="recycle-empty-hint" data-recycle-hint hidden>
+                    <span class="recycle-empty-symbol" aria-hidden="true">♻</span>
+                    <strong data-i18n="recycleEmptyTitle">腾出一点空间</strong>
+                    <p data-i18n="recycleEmptyHint">烦恼已清空，灵感还在。\n今天也辛苦了。</p>
+                    <button class="folder-up-button" type="button" data-recycle-reset data-i18n="recycleReset">再逛一次</button>
+                </div>
+            </div>
+            <div class="window-statusbar recycle-statusbar"><span role="status" aria-live="polite" data-recycle-status></span><span data-i18n="recycleStatusHint">脑容量另算</span></div>
             <button class="window-resize-handle" type="button" data-recycle-resize aria-label="Resize recycle bin window"
                 title="Resize recycle bin window"></button>
         </section>
