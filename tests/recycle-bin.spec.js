@@ -39,14 +39,15 @@ test('runs the recycle bin alongside other windows with taskbar controls', async
     await folderTask.click();
     await page.locator('[data-open-recycle-bin]').click();
     await page.locator('[data-recycle-empty]').click();
+    await page.locator('[data-recycle-confirm]').click();
     await expect(page.locator('[data-recycle-files]')).toBeHidden();
     await expect(page.locator('[data-recycle-hint]')).toBeVisible();
     await expect(page.locator('[data-recycle-empty]')).toBeDisabled();
-    await expect(bin.locator('.recycle-actions [data-recycle-action="close"]')).toBeFocused();
+    await expect(bin.locator('.window-controls [data-recycle-action="close"]')).toBeFocused();
     await page.locator('[data-taskbar-lang]').click();
     await expect(task).toContainText('Recycle Bin');
     await expect(page.locator('[data-recycle-status]')).toContainText('0 objects');
-    await bin.locator('.recycle-actions [data-recycle-action="close"]').click();
+    await bin.locator('.window-controls [data-recycle-action="close"]').click();
     await expect(task).toBeHidden();
     await page.locator('[data-open-recycle-bin]').click();
     await expect(page.locator('[data-recycle-hint]')).toBeVisible();
@@ -115,15 +116,15 @@ test('keeps the immersive desktop aligned after closing the recycle bin', async 
     }));
     for (const action of ['titlebar', 'empty', 'minimize']) {
         await frame.locator('[data-open-recycle-bin]').click();
-        if (action === 'empty') await frame.locator('[data-recycle-empty]').click();
+        if (action === 'empty') {
+            await frame.locator('[data-recycle-empty]').click();
+            await frame.locator('[data-recycle-confirm]').click();
+        }
         if (action === 'minimize') {
             await frame.locator('[data-recycle-action="minimize"]').click();
             await frame.locator('[data-recycle-task]').click();
         }
-        const closeButton = action === 'titlebar'
-            ? frame.locator('.window-controls [data-recycle-action="close"]')
-            : frame.locator('.recycle-actions [data-recycle-action="close"]');
-        await closeButton.click();
+        await frame.locator('.window-controls [data-recycle-action="close"]').click();
         await expect(frame.locator('[data-recycle-window]')).toBeHidden();
         await expect(frame.locator('[data-recycle-task]')).toBeHidden();
         expect(await frame.locator('[data-retro-desktop]').evaluate((desktop) => ({
@@ -139,4 +140,93 @@ test('keeps the immersive desktop aligned after closing the recycle bin', async 
             return window.scrollY === 0 && window.scrollX === 0;
         })).toBe(true);
     }
+});
+
+test('uses the project folder grid with multiselection and cancellable deletion', async ({ page }) => {
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('[data-open-recycle-bin]').click();
+    const bin = page.locator('[data-recycle-window]');
+    const items = bin.locator('[data-recycle-file]');
+    const dialog = bin.locator('[data-recycle-dialog]');
+    await expect(bin.locator('.address-field')).toHaveText('C:\\GAVIN\\RECYCLE');
+    await expect(bin.locator('[data-recycle-view], [data-recycle-heading]')).toHaveCount(0);
+    expect(await bin.locator('[data-recycle-files]').evaluate(element => getComputedStyle(element).display)).toBe('grid');
+    await items.first().click();
+    await items.last().click({ modifiers: ['Shift'] });
+    await expect(bin.locator('[data-recycle-file][aria-pressed="true"]')).toHaveCount(3);
+    await expect(bin.locator('[data-recycle-selection-status]')).toHaveText('已选择 3 项');
+    await items.first().focus();
+    await page.keyboard.press('Delete');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('[data-recycle-dialog-copy]')).toContainText('3');
+    await expect(dialog.locator('[data-recycle-cancel]')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(items.last()).toBeFocused();
+    await expect(items).toHaveCount(3);
+    await items.first().click();
+    await items.last().click({ modifiers: ['ControlOrMeta'] });
+    await bin.locator('[data-recycle-restore]').click();
+    await expect(bin.locator('[data-recycle-file]:visible')).toHaveCount(1);
+    await expect(bin.locator('[data-recycle-status]')).toContainText('1 个对象');
+    await bin.locator('[data-recycle-empty]').click();
+    await dialog.locator('[data-recycle-confirm]').click();
+    await expect(bin.locator('[data-recycle-hint]')).toBeVisible();
+    await bin.locator('[data-recycle-reset]').click();
+    await expect(bin.locator('[data-recycle-file]:visible')).toHaveCount(3);
+});
+
+test('opens file properties and preserves selection while changing language', async ({ page }) => {
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('[data-open-recycle-bin]').click();
+    const bin = page.locator('[data-recycle-window]');
+    const file = bin.locator('[data-recycle-file="Idea"]');
+    const dialog = bin.locator('[data-recycle-dialog]');
+    await file.dblclick();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('[data-recycle-dialog-title]')).toContainText('还没想好的点子.txt');
+    await expect(dialog.locator('[data-recycle-property="location"]')).toHaveText('C:\\GAVIN\\IDEAS');
+    await expect(dialog.locator('[data-recycle-dialog-copy]')).toContainText('先写下一行');
+    await expect(dialog.locator('[data-recycle-confirm]')).toBeHidden();
+    await dialog.locator('[data-recycle-cancel]').click();
+    await expect(file).toBeFocused();
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(file).toHaveAttribute('aria-pressed', 'true');
+    await expect(bin.locator('.address-field')).toHaveText('C:\\GAVIN\\RECYCLE');
+    await file.press('Enter');
+    await expect(dialog.locator('[data-recycle-dialog-title]')).toContainText('Properties');
+    await expect(dialog.locator('[data-recycle-property="type"]')).toHaveText('Text document');
+    await dialog.locator('[data-recycle-dismiss]').click();
+    await expect(file).toBeFocused();
+});
+
+test('uses the file context menu without losing a multi-selection', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'touch devices use the same commands from the menu bar');
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('[data-open-recycle-bin]').click();
+    const bin = page.locator('[data-recycle-window]');
+    const items = bin.locator('[data-recycle-file]');
+    const context = bin.locator('[data-recycle-context]');
+    await items.first().click();
+    await items.last().click({ modifiers: ['ControlOrMeta'] });
+    await items.last().click({ button: 'right' });
+    await expect(context).toBeVisible();
+    await expect(bin.locator('[data-recycle-file][aria-pressed="true"]')).toHaveCount(2);
+    await page.keyboard.press('Escape');
+    await expect(context).toBeHidden();
+    await expect(items.last()).toBeFocused();
+    await items.last().press('Shift+F10');
+    await expect(context).toBeVisible();
+    await context.locator('[data-recycle-command="delete"]').click();
+    const dialog = bin.locator('[data-recycle-dialog]');
+    await expect(dialog.locator('[data-recycle-dialog-copy]')).toContainText('2');
+    await dialog.locator('[data-recycle-confirm]').click();
+    await expect(bin.locator('[data-recycle-file]:visible')).toHaveCount(1);
+    await expect(bin.locator('.window-controls [data-recycle-action="close"]')).toBeFocused();
+    await items.nth(1).focus();
+    await page.keyboard.press('ControlOrMeta+a');
+    await expect(items.nth(1)).toHaveAttribute('aria-pressed', 'true');
 });
