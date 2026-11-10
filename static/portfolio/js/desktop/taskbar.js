@@ -10,6 +10,7 @@
         const shutdownLog = document.querySelector('[data-shutdown-log]');
         const restartButton = document.querySelector('[data-restart]');
         const clock = document.querySelector('[data-retro-clock]');
+        const desktopButton = document.querySelector('[data-show-desktop]');
         const taskButtons = document.querySelectorAll('.task-window-button');
         const taskList = document.createElement('div');
         taskList.className = 'taskbar-tasks';
@@ -17,6 +18,22 @@
         taskList.append(...taskButtons);
         let shutdownTimers = [];
         let shutdownBackground = [];
+
+        const updateDesktopButton = () => {
+            const shown = manager.isDesktopShown();
+            const label = shown ? t().taskbarRestoreWindows : t().taskbarShowDesktop;
+            desktopButton.setAttribute('aria-pressed', String(shown));
+            desktopButton.setAttribute('aria-label', label);
+            desktopButton.title = label;
+        };
+        desktopButton.addEventListener('click', () => {
+            manager.toggleDesktop();
+            updateDesktopButton();
+            desktopButton.focus({ preventScroll: true });
+        });
+        window.addEventListener('portfolio-language-change', updateDesktopButton);
+        window.addEventListener('gavin:desktop-visibility-change', updateDesktopButton);
+        updateDesktopButton();
 
         const clearShutdownTimers = () => {
             shutdownTimers.forEach((timer) => window.clearTimeout(timer));

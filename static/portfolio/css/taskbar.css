@@ -345,6 +345,7 @@
 }
 
 .taskbar-audio-toggle,
+.taskbar-desktop-toggle,
 .taskbar-language-toggle {
     display: grid;
     height: 22px;
@@ -356,7 +357,8 @@
     cursor: default;
 }
 
-.taskbar-audio-toggle {
+.taskbar-audio-toggle,
+.taskbar-desktop-toggle {
     width: 22px;
 }
 
@@ -373,6 +375,9 @@
 
 .taskbar-audio-toggle:hover,
 .taskbar-audio-toggle:focus-visible,
+.taskbar-desktop-toggle:hover,
+.taskbar-desktop-toggle:focus-visible,
+.taskbar-desktop-toggle[aria-pressed="true"],
 .taskbar-language-toggle:hover,
 .taskbar-language-toggle:focus-visible {
     padding: 2px;
@@ -381,6 +386,8 @@
 }
 
 .taskbar-audio-toggle:active,
+.taskbar-desktop-toggle:active,
+.taskbar-desktop-toggle[aria-pressed="true"],
 .taskbar-language-toggle:active {
     border-style: inset;
 }
@@ -397,6 +404,7 @@
     height: 12px;
     border: 1px solid #333;
     background: #63a8be;
+    transform: translate(-2px, -2px);
 }
 
 .tray-network::after {
@@ -475,10 +483,6 @@
 
     .taskbar-tray {
         padding: 0 6px;
-    }
-
-    .tray-network {
-        display: none;
     }
 
     .start-button {
