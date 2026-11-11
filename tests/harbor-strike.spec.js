@@ -13,7 +13,9 @@ test('ships Harbor Strike without the original author branding', async ({ reques
     expect(html).not.toContain('极高');
     expect(html).not.toContain('name:"ultra"');
     expect(html.split('w.gain.value=window.__harborStrikeMuted?0:me').length - 1).toBe(2);
-    expect(html).toContain('if(document.hidden||window.__harborStrikeHold)return;');
+    expect(html).toContain('if(document.hidden)return;if(window.__harborStrikeHold){');
+    // While drawing is held the audio mixer still runs, so a paused round fades its sound.
+    expect(html).toContain('u("audio",Math.min(d,.05))');
     expect(html).toContain('if(h-l<(q?30:13))return;');
     // Window resizes settle before the render targets are rebuilt.
     expect(html).toContain('N._rt=setTimeout(');
