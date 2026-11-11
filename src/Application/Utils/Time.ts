@@ -10,6 +10,7 @@ export default class Time extends EventEmitter {
     removeLoadingListener: () => void;
     isPaused: boolean;
     pausedAt: number;
+    throttleWhen?: () => boolean;
 
     constructor() {
         super();
@@ -36,6 +37,14 @@ export default class Time extends EventEmitter {
         if (this.isPaused) return;
 
         const currentTime = Date.now();
+        // A throttled scene still schedules every frame but only redraws ten times a second.
+        if (this.throttleWhen?.() && currentTime - this.current < 100) {
+            this.animationFrameId = window.requestAnimationFrame(() => {
+                this.tick();
+            });
+            return;
+        }
+
         this.delta = currentTime - this.current;
         this.current = currentTime;
         this.elapsed = this.current - this.start;

@@ -61,6 +61,21 @@
                 <span class="shortcut-icon shortcut-icon--gomoku" aria-hidden="true"></span>
                 <span data-gomoku-i18n="appName">五子棋</span>
             </button>
+            <button class="desktop-shortcut" type="button" data-open-harbor-strike>
+                <span class="shortcut-icon shortcut-icon--harbor" aria-hidden="true">
+                    <svg viewBox="0 0 34 32" width="34" height="32" fill="none" shape-rendering="crispEdges">
+                        <path d="M2 9H32V29H2Z" fill="#d2622a" stroke="#2b1a10" stroke-width="2"/>
+                        <path d="M3 10H31V12H3Z" fill="#ec8a4c"/>
+                        <path d="M6 13H8V26H6ZM11 13H13V26H11ZM21 13H23V26H21ZM26 13H28V26H26Z" fill="#9b4219"/>
+                        <path d="M3 26H31V28H3Z" fill="#9b4219"/>
+                        <path d="M16 1H18V11H16ZM16 23H18V31H16ZM6 18H14V20H6ZM20 18H28V20H20Z" fill="#14181b"/>
+                        <path d="M16 2H18V10H16ZM16 24H18V30H16ZM7 18H14V19H7ZM20 18H27V19H20Z" fill="#ffd36e"/>
+                        <path d="M15 17H19V21H15Z" fill="#14181b"/>
+                        <path d="M16 18H18V20H16Z" fill="#ff5a40"/>
+                    </svg>
+                </span>
+                <span data-i18n="desktopHarborStrike">港区突击</span>
+            </button>
             <a class="desktop-shortcut" href="https://github.com/lizuju" target="_blank" rel="noreferrer">
                 <span class="shortcut-icon shortcut-icon--network" aria-hidden="true"></span>
                 <span>GitHub</span>
@@ -991,6 +1006,76 @@
                 aria-label="Resize satellite tracker window" title="Resize satellite tracker window"></button>
         </section>
 
+        <section class="app-window harbor-window is-closed" data-harbor-window aria-labelledby="harbor-window-title">
+            <div class="window-titlebar" data-harbor-drag>
+                <div class="window-title">
+                    <span class="window-app-icon window-app-icon--harbor" aria-hidden="true">港</span>
+                    <span id="harbor-window-title" data-i18n="harborWindowTitle">港区突击</span>
+                </div>
+                <div class="window-controls">
+                    <button type="button" data-harbor-action="minimize" data-i18n-aria="harborMinimize" aria-label="最小化港区突击"
+                        title="Minimize"><span aria-hidden="true">_</span></button>
+                    <button type="button" data-harbor-action="maximize" aria-label="Maximize"
+                        title="Maximize"><span class="window-maximize-icon" aria-hidden="true"></span></button>
+                    <button type="button" data-harbor-action="close" data-i18n-aria="harborClose" aria-label="关闭港区突击"
+                        title="Close"><span aria-hidden="true">×</span></button>
+                </div>
+            </div>
+            <div class="window-menubar" data-window-menubar role="menubar" aria-label="Harbor Strike game commands">
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="harbor-game"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="harborMenuGame">游戏</button>
+                    <div class="window-menu-popup" data-window-menu-popup="harbor-game" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="harbor-reload" data-harbor-desktop-only
+                            data-i18n="harborReload">重新载入</button>
+                        <button type="button" role="menuitem" data-menu-action="harbor-open-tab" data-harbor-desktop-only
+                            data-i18n="harborOpenTab">在新标签页打开</button>
+                        <div class="window-menu-separator" role="separator" data-harbor-desktop-only></div>
+                        <button type="button" role="menuitem" data-menu-action="harbor-close"
+                            data-i18n="menuClose">关闭</button>
+                    </div>
+                </div>
+                <div class="window-menu">
+                    <button class="window-menu-trigger" type="button" data-window-menu="harbor-view"
+                        aria-haspopup="true" aria-expanded="false" data-i18n="menuView">查看</button>
+                    <div class="window-menu-popup" data-window-menu-popup="harbor-view" role="menu" hidden>
+                        <button type="button" role="menuitem" data-menu-action="harbor-toggle-size"
+                            data-i18n="menuToggleWindowSize">最大化 / 还原</button>
+                    </div>
+                </div>
+                <a class="window-open-link harbor-open-link" href="games/harbor-strike/" target="_blank" rel="noopener"
+                    data-harbor-open-link data-harbor-desktop-only data-i18n-aria="harborOpenTab"
+                    aria-label="在新标签页打开" title="在新标签页打开">
+                    <img src="assets/open-in-new.svg" width="16" height="16" alt="">
+                </a>
+            </div>
+            <div class="harbor-stage" data-harbor-stage>
+                <div class="harbor-loading" data-harbor-loading role="status" aria-live="polite" hidden>
+                    <strong>港区突击</strong>
+                    <span data-i18n="harborLoading">正在载入港区...</span>
+                    <i aria-hidden="true"></i>
+                </div>
+                <div class="harbor-phone-notice" data-harbor-phone role="alert" hidden>
+                    <svg class="harbor-phone-icon" viewBox="0 0 48 40" width="48" height="40" fill="none"
+                        shape-rendering="crispEdges" aria-hidden="true">
+                        <path d="M4 2H44V30H4Z" fill="#c0c0c0" stroke="#000" stroke-width="2"/>
+                        <path d="M8 6H40V26H8Z" fill="#14181b"/>
+                        <path d="M14 13H19V15H14ZM29 13H34V15H29Z" fill="#ffb347"/>
+                        <path d="M20 20H28V22H20Z" fill="#f29a38"/>
+                        <path d="M18 31H30V35H36V38H12V35H18Z" fill="#808080" stroke="#000" stroke-width="2"/>
+                    </svg>
+                    <h2 data-i18n="harborPhoneTitle">请使用电脑打开</h2>
+                    <p data-i18n="harborPhoneCopy">港区突击是一款第一人称射击游戏，需要键盘和鼠标操作。请在电脑浏览器中打开本站后再玩。</p>
+                </div>
+            </div>
+            <div class="window-statusbar harbor-statusbar">
+                <span data-harbor-status></span>
+                <span data-i18n="harborEngine">Three.js · WebGL</span>
+            </div>
+            <button class="window-resize-handle" type="button" data-harbor-resize data-i18n-aria="harborResize"
+                aria-label="调整港区突击窗口大小" title="Resize window"></button>
+        </section>
+
         <section class="app-window gomoku-window is-closed" data-gomoku-window aria-label="Gomoku game window">
             <div class="window-titlebar" data-gomoku-drag>
                 <div class="window-title">
@@ -1222,6 +1307,10 @@
             <button class="task-window-button satellite-task-button" type="button" data-satellite-task hidden>
                 <span class="window-app-icon window-app-icon--satellite" aria-hidden="true"></span>
                 <span data-i18n="satelliteTaskTitle">卫星轨迹</span>
+            </button>
+            <button class="task-window-button harbor-task-button" type="button" data-harbor-task hidden>
+                <span class="window-app-icon window-app-icon--harbor" aria-hidden="true">港</span>
+                <span data-i18n="harborTaskTitle">港区突击</span>
             </button>
             <button class="task-window-button project-folder-task-button" type="button" data-project-folder-task hidden>
                 <span class="window-app-icon window-app-icon--folder" aria-hidden="true"></span>

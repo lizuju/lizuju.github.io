@@ -39,8 +39,14 @@
     left: 8px;
     z-index: 2;
     display: grid;
-    gap: 20px;
-    width: 76px;
+    /* Icons fill a column down to the recycle bin, then wrap into the next column. Each row fits
+       a two-line label, so the 75px pitch holds whether a name wraps or not. */
+    max-height: calc(100% - 161px);
+    grid-auto-columns: 76px;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(auto-fill, minmax(69px, auto));
+    align-items: start;
+    gap: 6px 4px;
 }
 
 .desktop-shortcut {

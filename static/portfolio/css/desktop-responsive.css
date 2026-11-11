@@ -27,7 +27,9 @@ body.direct-portfolio .direct-return-button {
         top: 12px;
         left: 8px;
         display: grid;
-        gap: 12px;
+        max-height: calc(100% - 131px);
+        grid-template-rows: repeat(auto-fill, minmax(61px, auto));
+        gap: 6px 4px;
     }
 
     .app-window,
@@ -120,7 +122,9 @@ body.direct-portfolio .direct-return-button {
         top: 12px;
         width: 168px;
         max-height: calc(100% - 132px);
+        grid-auto-flow: row;
         grid-template-columns: repeat(2, 76px);
+        grid-template-rows: none;
         align-content: start;
         gap: 8px 0;
         overflow-y: auto;
