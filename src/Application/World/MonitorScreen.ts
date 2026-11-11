@@ -5,7 +5,7 @@ import Application from '../Application';
 import Debug from '../Utils/Debug';
 import Resources from '../Utils/Resources';
 import Sizes from '../Utils/Sizes';
-import Camera from '../Camera/Camera';
+import Camera, { CameraKey } from '../Camera/Camera';
 import EventEmitter from '../Utils/EventEmitter';
 import UIEventBus from '../UI/EventBus';
 import { getMuteState, toggleMuteState } from '../Audio/MuteState';
@@ -173,6 +173,13 @@ export default class MonitorScreen extends EventEmitter {
             );
         });
 
+        // While a full-window game runs on the desktop, the settled monitor view barely changes,
+        // so the room redraws at a slow pace and leaves the GPU and main thread to the game.
+        let heavyAppActive = false;
+        this.application.time.throttleWhen = () => heavyAppActive
+            && !this.camera.freeCam
+            && this.camera.currentKeyframe === CameraKey.MONITOR;
+
         // Bubble iframe input to the main application without duplicating the bridge on reload.
         window.addEventListener('message', (event) => {
             if (
@@ -183,7 +190,14 @@ export default class MonitorScreen extends EventEmitter {
                 return;
             }
 
+            if (event.data.type === 'heavy-app-state') {
+                heavyAppActive = event.data.active === true;
+                return;
+            }
+
             if (event.data.type === 'audio-mute-ready') {
+                // A fresh desktop starts with no game running.
+                heavyAppActive = false;
                 iframe.contentWindow?.postMessage(
                     {
                         source: 'gavin-shell',

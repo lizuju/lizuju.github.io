@@ -306,7 +306,7 @@ test('serves the immersive desktop shell and lightweight mobile shell', async ({
         await mobilePortfolio.locator('[data-window-action="minimize"]').click();
         await expect(mobilePortfolio.locator('[data-app-window]')).toHaveClass(/is-minimized/);
         await expect(mobilePortfolio.locator('.desktop-shortcuts')).toBeVisible();
-        await expect(mobilePortfolio.locator('.desktop-shortcut')).toHaveCount(8);
+        await expect(mobilePortfolio.locator('.desktop-shortcut')).toHaveCount(9);
         for (const icon of await mobilePortfolio.locator('.desktop-shortcut .shortcut-icon').all()) {
             await expect(icon).toBeVisible();
         }

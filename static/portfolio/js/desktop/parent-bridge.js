@@ -10,8 +10,12 @@
         if (window.parent === window || desktopApi.isMobileHomepage()) return;
 
         let muted = false;
+        // Apps with their own sound (Harbor Strike) follow the scene's mute state.
+        desktopApi.isAudioMuted = () => muted;
         const updateAudioToggle = (nextMuted) => {
+            const changed = muted !== Boolean(nextMuted);
             muted = Boolean(nextMuted);
+            if (changed) window.dispatchEvent(new Event('gavin:audio-mute-change'));
             if (!audioToggle || !audioToggleIcon) return;
             const label = muted ? t().taskbarAudioUnmute : t().taskbarAudioMute;
             audioToggle.hidden = false;

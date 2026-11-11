@@ -2,6 +2,7 @@ import '../css/base.css';
 import '../css/desktop.css';
 import '../css/desktop-pet.css';
 import '../css/apps/satellite.css';
+import '../css/apps/harbor-strike.css';
 import '../css/apps/preview-zoom.css';
 import '../css/apps/project-folder.css';
 import '../css/apps/mail.css';
@@ -24,6 +25,7 @@ import './apps/portfolio.js';
 import './apps/project-folder.js';
 import './apps/mail.js';
 import './apps/satellite.js';
+import './apps/harbor-strike.js';
 import './apps/recycle-bin.js';
 import './apps/sync-space.js';
 import './apps/sync-preview.js';
@@ -49,6 +51,7 @@ import { prepareEncryptedFiles } from './apps/sync-e2ee-files.js';
         desktopApi.apps.projectFolder(manager);
         desktopApi.apps.mail(manager);
         const satellite = desktopApi.apps.satellite(manager);
+        const harborStrike = desktopApi.apps.harborStrike(manager);
         desktopApi.apps.recycleBin(manager);
         const syncPreview = desktopApi.apps.syncPreview(manager);
         desktopApi.apps.syncSpace(manager, syncPreview);
@@ -83,6 +86,7 @@ import { prepareEncryptedFiles } from './apps/sync-e2ee-files.js';
             manager.focusWindow(portfolio.entry.element);
         }
         satellite?.resumeIfVisible();
+        harborStrike?.resumeIfVisible();
         if (!restoredActiveEntry && document.body.classList.contains('direct-portfolio') && window.innerWidth > 900) {
             portfolio.entry.toggleMaximize();
         }
