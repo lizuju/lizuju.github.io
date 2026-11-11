@@ -1266,9 +1266,31 @@
                     aria-label="显示桌面" title="显示桌面" aria-pressed="false">
                     <span class="tray-network" aria-hidden="true"></span>
                 </button>
-                <time data-retro-clock>00:00</time>
+                <button class="taskbar-clock-toggle" type="button" data-calendar-toggle
+                    aria-expanded="false" aria-controls="taskbar-calendar" aria-haspopup="dialog">
+                    <time data-retro-clock>00:00</time>
+                </button>
             </div>
         </footer>
+
+        <section class="taskbar-calendar" id="taskbar-calendar" data-taskbar-calendar hidden
+            role="dialog" aria-modal="false" aria-labelledby="taskbar-calendar-month">
+            <header class="taskbar-calendar-header">
+                <button type="button" data-calendar-prev data-i18n-aria="calendarPreviousMonth" aria-label="上个月">‹</button>
+                <strong id="taskbar-calendar-month" data-calendar-month aria-live="polite"></strong>
+                <button type="button" data-calendar-next data-i18n-aria="calendarNextMonth" aria-label="下个月">›</button>
+            </header>
+            <div class="taskbar-calendar-weekdays" data-calendar-weekdays></div>
+            <div class="taskbar-calendar-days" data-calendar-days></div>
+            <footer class="taskbar-calendar-footer">
+                <button type="button" data-calendar-today data-i18n="calendarToday">今天</button>
+                <div class="taskbar-calendar-current">
+                    <time data-calendar-date></time>
+                    <time data-calendar-time></time>
+                </div>
+                <span data-calendar-zone></span>
+            </footer>
+        </section>
 
         <section class="shutdown-screen" data-shutdown-screen hidden aria-live="polite" aria-label="System shutdown">
             <div class="shutdown-bios">
