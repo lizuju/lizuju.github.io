@@ -117,7 +117,6 @@ export default class Renderer {
     }
 
     update() {
-        this.application.camera.instance.updateProjectionMatrix();
         if (this.uniforms && !this.application.reducedMotion) {
             this.uniforms.u_time.value = Math.sin(this.time.current * 0.01);
         }

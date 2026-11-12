@@ -1,7 +1,8 @@
 /* Golden Hour game window. The game itself runs from /games/golden-hour/ inside .golden-frame. */
 
-.shortcut-icon--golden svg {
+.shortcut-icon--golden img {
     display: block;
+    margin: auto;
 }
 
 .golden-window {
@@ -22,9 +23,14 @@
 }
 
 .window-app-icon--golden {
-    color: #ffb35c;
-    background: #1a0e08;
-    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    border: 0;
+    background: transparent;
+}
+
+.window-app-icon--golden img {
+    display: block;
+    width: 100%;
+    height: 100%;
 }
 
 .golden-stage {

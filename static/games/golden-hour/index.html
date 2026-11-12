@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" type="image/png" sizes="32x32" href="../../images/favicon-32x32.png"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" type="image/png" sizes="16x16" href="icon-16.png"><link rel="icon" type="image/png" sizes="32x32" href="icon-32.png"><link rel="icon" type="image/svg+xml" sizes="any" href="icon.svg"><link rel="apple-touch-icon" sizes="180x180" href="icon-180.png"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
 <script>
 (() => {
   // Computer only: the game needs a keyboard and mouse, so phones get a notice instead.
@@ -14,7 +14,12 @@
   const embedded = window.parent !== window;
   let muted = false;
   let hold = false;
-  let hidden = false;
+  let hostHidden = false;
+  let hidden = document.hidden;
+  const bootWaiters = new Set();
+  window.__goldenHourWaitForBoot = () => hidden || hold
+    ? new Promise((resolve) => bootWaiters.add(resolve))
+    : Promise.resolve();
   let resolveReady;
   window.__goldenHourReady = new Promise((resolve) => { resolveReady = resolve; });
 
@@ -36,9 +41,32 @@
   }
 
   // Mute: everything the game sends to the speakers passes one gain node per audio context.
-  const outputs = new Set();
+  const outputs = new Map();
+  const updateOutput = (output, state) => {
+    const context = output.context;
+    output.hidden = hidden;
+    if (context.state === 'closed') {
+      outputs.delete(output);
+      return;
+    }
+    output.gain.setTargetAtTime(muted || hidden ? 0 : 1, context.currentTime, 0.02);
+    if (state.pending) return;
+    const suspend = hidden && context.state === 'running';
+    const resume = !hidden && state.suspended && context.state === 'suspended';
+    if (!suspend && !resume) return;
+    state.pending = true;
+    if (suspend) state.suspended = true;
+    (suspend ? context.suspend() : context.resume()).then(() => {
+      state.pending = false;
+      if (resume) state.suspended = false;
+      updateOutput(output, state);
+    }, () => {
+      state.pending = false;
+      if (suspend) state.suspended = false;
+    });
+  };
   const applyMute = () => {
-    for (const output of outputs) output.gain.setTargetAtTime(muted || hidden ? 0 : 1, output.context.currentTime, 0.02);
+    for (const [output, state] of outputs) updateOutput(output, state);
   };
   if (typeof AudioNode !== 'undefined' && typeof AudioDestinationNode !== 'undefined') {
     const connect = AudioNode.prototype.connect;
@@ -50,7 +78,10 @@
         output.gain.value = muted || hidden ? 0 : 1;
         connect.call(output, destination);
         context.__goldenHourOutput = output;
-        outputs.add(output);
+        const state = { suspended: false, pending: false };
+        outputs.set(output, state);
+        context.addEventListener('statechange', () => updateOutput(output, state));
+        updateOutput(output, state);
       }
       return context.__goldenHourOutput;
     };
@@ -72,36 +103,70 @@
   let nextId = 1;
   let decidedAt = -1;
   let runThisFrame = true;
-  let lastRun = -Infinity;
+  let nextRun = -Infinity;
+  let frameInterval = 0;
   const allowFrame = (time) => {
     if (time !== decidedAt) {
+      const state = window.GH?.G?.state || 'playing';
+      const interval = hidden ? Infinity : hold ? 200 : ['menu', 'paused', 'over'].includes(state) ? 1000 / 30 : 1000 / 60;
+      if (interval !== frameInterval || time - decidedAt > interval * 2) {
+        frameInterval = interval;
+        nextRun = time;
+      }
       decidedAt = time;
-      let state = 'playing';
-      try { state = window.GH?.debug?.stats?.().state || state; } catch {}
-      const interval = hidden ? Infinity : hold ? 200 : ['menu', 'paused', 'over'].includes(state) ? 30 : 13;
-      runThisFrame = time - lastRun >= interval;
-      if (runThisFrame) lastRun = time;
+      runThisFrame = time + 0.001 >= nextRun;
+      // Keep refresh jitter from moving the cadence, without accumulating work during slow frames.
+      if (runThisFrame) nextRun = Math.max(nextRun + interval, time);
     }
     return runThisFrame;
   };
   window.requestAnimationFrame = (callback) => {
     const id = nextId++;
+    const entry = { nativeId: null, tick: null };
     const tick = (time) => {
       if (!waiting.has(id)) return;
+      entry.nativeId = null;
+      if (hidden) return;
       if (allowFrame(time)) {
         waiting.delete(id);
         callback(time);
       } else {
-        waiting.set(id, nativeFrame(tick));
+        entry.nativeId = nativeFrame(tick);
       }
     };
-    waiting.set(id, nativeFrame(tick));
+    entry.tick = tick;
+    waiting.set(id, entry);
+    if (!hidden) entry.nativeId = nativeFrame(tick);
     return id;
   };
   window.cancelAnimationFrame = (id) => {
-    if (waiting.has(id)) nativeCancel(waiting.get(id));
+    const entry = waiting.get(id);
+    if (entry && entry.nativeId !== null) nativeCancel(entry.nativeId);
     waiting.delete(id);
   };
+  const applyVisibility = () => {
+    const nextHidden = hostHidden || document.hidden;
+    if (hidden !== nextHidden) {
+      hidden = nextHidden;
+      nextRun = -Infinity;
+      frameInterval = 0;
+      decidedAt = -1;
+      for (const entry of waiting.values()) {
+        if (hidden) {
+          if (entry.nativeId !== null) nativeCancel(entry.nativeId);
+          entry.nativeId = null;
+        } else if (entry.nativeId === null) {
+          entry.nativeId = nativeFrame(entry.tick);
+        }
+      }
+    }
+    applyMute();
+    if (!hidden && !hold) {
+      for (const resolve of bootWaiters) resolve();
+      bootWaiters.clear();
+    }
+  };
+  document.addEventListener('visibilitychange', applyVisibility);
 
   if (!embedded) {
     resolveReady();
@@ -112,12 +177,12 @@
     if (event.source !== window.parent || state?.source !== 'gavin-desktop' || state.type !== 'game-state') return;
     muted = Boolean(state.muted);
     hold = Boolean(state.hold);
-    hidden = Boolean(state.hidden);
+    hostHidden = Boolean(state.hidden);
     if (!ownStorage && !savedLoaded && state.storage && typeof state.storage === 'object') {
       for (const [key, value] of Object.entries(state.storage)) if (typeof value === 'string') saved.set(key, value);
       savedLoaded = true;
     }
-    applyMute();
+    applyVisibility();
     resolveReady();
   });
   window.parent.postMessage({ source: 'golden-hour', type: 'ready' }, '*');

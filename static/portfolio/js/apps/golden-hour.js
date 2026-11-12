@@ -113,6 +113,10 @@
             }
             if (!frame || event.source !== frame.contentWindow || event.data?.source !== 'golden-hour') return;
             if (event.data.type === 'ready') postState();
+            if (event.data.type === 'game-ready') {
+                loading.hidden = true;
+                setStatus('goldenReady');
+            }
             if (event.data.type === 'storage') writeStorage(event.data.value);
         });
 
@@ -152,7 +156,6 @@
                 pendingFrame.addEventListener('load', () => {
                     postState();
                     loading.hidden = true;
-                    setStatus('goldenReady');
                 }, { once: true });
                 pendingFrame.src = GAME_URL;
             };
