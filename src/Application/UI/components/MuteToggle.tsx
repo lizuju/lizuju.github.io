@@ -43,7 +43,7 @@ const MuteToggle: React.FC<MuteToggleProps> = ({ disabled }) => {
             onClick={toggleMuteState}
             className="icon-control-container"
             data-audio-mute-toggle
-            aria-label={muted ? 'Unmute background music' : 'Mute background music'}
+            aria-label={muted ? 'Unmute sound' : 'Mute sound'}
             aria-pressed={muted}
             id="prevent-click"
         >

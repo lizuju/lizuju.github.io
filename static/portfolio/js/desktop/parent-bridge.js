@@ -2,22 +2,23 @@
     const desktopApi = window.GavinDesktop;
     const { t } = desktopApi;
 
-    // When the desktop runs inside the 3D monitor, forward input to the parent scene and
-    // mirror its audio mute state in the taskbar tray.
+    // The taskbar tray's system mute button. Inside the 3D monitor it mirrors and toggles the
+    // scene's mute, and input is forwarded to the parent scene; opened directly, the desktop keeps
+    // its own mute state. Every desktop sound follows it (see desktop/sound.js).
     function setupParentEventBridge() {
         const audioToggle = document.querySelector('[data-audio-toggle]');
         const audioToggleIcon = document.querySelector('[data-audio-toggle-icon]');
-        if (window.parent === window || desktopApi.isMobileHomepage()) return;
+        if (desktopApi.isMobileHomepage()) return;
+        const embedded = window.parent !== window;
 
         let muted = false;
-        // Apps with their own sound (Harbor Strike) follow the scene's mute state.
         desktopApi.isAudioMuted = () => muted;
         const updateAudioToggle = (nextMuted) => {
             const changed = muted !== Boolean(nextMuted);
             muted = Boolean(nextMuted);
             if (changed) window.dispatchEvent(new Event('gavin:audio-mute-change'));
             if (!audioToggle || !audioToggleIcon) return;
-            const label = muted ? t().taskbarAudioUnmute : t().taskbarAudioMute;
+            const label = muted ? t().taskbarSoundUnmute : t().taskbarSoundMute;
             audioToggle.hidden = false;
             audioToggle.classList.toggle('is-muted', muted);
             audioToggle.setAttribute('aria-pressed', String(muted));
@@ -29,11 +30,21 @@
         };
 
         audioToggle?.addEventListener('click', () => {
+            if (!embedded) {
+                updateAudioToggle(!muted);
+                return;
+            }
             window.parent.postMessage({
                 source: 'gavin-portfolio',
                 type: 'audio-mute-toggle'
             }, window.location.origin);
         });
+        window.addEventListener('portfolio-language-change', () => updateAudioToggle(muted));
+
+        if (!embedded) {
+            updateAudioToggle(false);
+            return;
+        }
 
         window.addEventListener('message', (event) => {
             if (
@@ -46,7 +57,6 @@
             updateAudioToggle(event.data.muted);
         });
 
-        window.addEventListener('portfolio-language-change', () => updateAudioToggle(muted));
         window.parent.postMessage({
             source: 'gavin-portfolio',
             type: 'audio-mute-ready'

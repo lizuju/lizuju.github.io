@@ -1,9 +1,9 @@
 (() => {
     const desktopApi = window.GavinDesktop;
     const { t } = desktopApi;
-    const GAME_URL = 'games/harbor-strike/';
+    const GAME_URL = '../games/harbor-strike/';
 
-    // The shooter needs a keyboard and mouse. games/harbor-strike/index.html repeats this check for direct visits.
+    // The shooter needs a keyboard and mouse. games/harbor-strike/index.html at the site root repeats this check for direct visits.
     const isPhone = () => {
         const coarseOnly = window.matchMedia('(any-pointer: coarse)').matches
             && !window.matchMedia('(any-pointer: fine)').matches;
@@ -36,57 +36,40 @@
             status.textContent = key ? t()[key] : '';
         };
 
-        // The frame is same-origin, so a minimized window reports itself hidden to the game:
-        // it pauses an active round and suspends its audio, as it does for a background tab.
-        const setGameHidden = (hidden) => {
-            const gameDocument = frame?.contentDocument;
-            if (!gameDocument) return;
-            try {
-                if (hidden) {
-                    Object.defineProperty(gameDocument, 'hidden', { configurable: true, get: () => true });
-                    Object.defineProperty(gameDocument, 'visibilityState', { configurable: true, get: () => 'hidden' });
-                } else {
-                    delete gameDocument.hidden;
-                    delete gameDocument.visibilityState;
-                }
-                gameDocument.dispatchEvent(new Event('visibilitychange'));
-            } catch {
-                // A failed hint only leaves the game running in the background.
-            }
-        };
-
-        // The game reads this flag every audio frame; it starts from the same state on load.
-        const syncAudioMute = () => {
-            try {
-                if (frame?.contentWindow) {
-                    frame.contentWindow.__harborStrikeMuted = Boolean(desktopApi.isAudioMuted?.());
-                }
-            } catch {
-                // The frame is same-origin; a failure only leaves the game's own volume in charge.
-            }
-        };
-        window.addEventListener('gavin:audio-mute-change', syncAudioMute);
-
-        // The game shares this page's thread, so it stops drawing (keeping its last frame) while
-        // its window is behind another one, being dragged or resized, or the 3D camera has left
-        // the monitor. The 3D scene in turn slows its own redraw while the game is on screen.
+        // The game runs in a sandboxed frame. Its opaque origin lets Chromium give it its own
+        // process, so its heavy startup and rendering no longer stall this desktop. Everything it
+        // needs from here arrives as one state message: hidden (minimized: pause and suspend audio),
+        // hold (stop drawing while behind another window, dragged, resized or off-camera), muted
+        // (the system mute) and the settings it saved last time.
+        const SETTINGS_KEY = 'saltline.settings.v1';
+        let gameHidden = false;
         let viewingMonitor = true;
-        window.addEventListener('message', (event) => {
-            if (event.origin !== window.location.origin || event.source !== window.parent
-                || event.data?.source !== 'gavin-shell' || event.data?.type !== 'portfolio-view-state') return;
-            viewingMonitor = event.data.active === true;
-            syncWindowState();
-        });
-
         let reportedRunning = false;
-        const syncWindowState = () => {
-            const hold = !viewingMonitor || !gameWindow.classList.contains('is-active')
-                || gameWindow.classList.contains('is-dragging') || gameWindow.classList.contains('is-resizing');
+
+        const readSettings = () => {
             try {
-                if (frame?.contentWindow) frame.contentWindow.__harborStrikeHold = hold;
+                return localStorage.getItem(SETTINGS_KEY);
             } catch {
-                // Holding is only a saving; without it the game keeps drawing at its normal pace.
+                return null;
             }
+        };
+
+        const postState = () => {
+            // An opaque origin can only be addressed with '*'; the state holds nothing private.
+            frame?.contentWindow?.postMessage({
+                source: 'gavin-desktop',
+                type: 'harbor-strike-state',
+                hidden: gameHidden,
+                hold: !viewingMonitor || !gameWindow.classList.contains('is-active')
+                    || gameWindow.classList.contains('is-dragging') || gameWindow.classList.contains('is-resizing'),
+                muted: Boolean(desktopApi.isAudioMuted?.()),
+                settings: readSettings()
+            }, '*');
+        };
+
+        // The 3D scene slows its own redraw while the game is on screen in the monitor.
+        const syncWindowState = () => {
+            postState();
             const running = Boolean(frame) && manager.isWindowVisible(gameWindow);
             if (running === reportedRunning || window.parent === window) return;
             reportedRunning = running;
@@ -97,10 +80,36 @@
             }, window.location.origin);
         };
         new MutationObserver(syncWindowState).observe(gameWindow, { attributes: true, attributeFilter: ['class'] });
+        window.addEventListener('gavin:audio-mute-change', postState);
+
+        const setGameHidden = (hidden) => {
+            gameHidden = hidden;
+            postState();
+        };
+
+        window.addEventListener('message', (event) => {
+            if (event.origin === window.location.origin && event.source === window.parent
+                && event.data?.source === 'gavin-shell' && event.data?.type === 'portfolio-view-state') {
+                viewingMonitor = event.data.active === true;
+                syncWindowState();
+                return;
+            }
+            if (!frame || event.source !== frame.contentWindow || event.data?.source !== 'harbor-strike') return;
+            if (event.data.type === 'ready') postState();
+            if (event.data.type === 'settings' && typeof event.data.value === 'string' && event.data.value.length < 4096) {
+                try {
+                    JSON.parse(event.data.value);
+                    localStorage.setItem(SETTINGS_KEY, event.data.value);
+                } catch {
+                    // Malformed or unsaved settings leave the previous ones in place.
+                }
+            }
+        });
 
         const unloadGame = () => {
             frame?.remove();
             frame = null;
+            gameHidden = false;
             loading.hidden = true;
             syncWindowState();
         };
@@ -113,18 +122,18 @@
             frame.className = 'harbor-frame';
             frame.title = t().harborWindowTitle;
             frame.allow = 'fullscreen; autoplay';
+            frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock');
             stage.append(frame);
             syncWindowState();
 
-            // A same-origin frame shares this thread and the game's startup briefly blocks it,
-            // so the window and its loading screen paint before the game page is requested.
+            // Browsers without out-of-process frames (Safari) still run the game's startup on this
+            // thread, so the window and its loading screen paint before the game page is requested.
             // The timeout covers background tabs, where animation frames never run.
             const pendingFrame = frame;
             const startGame = () => {
                 if (frame !== pendingFrame || pendingFrame.hasAttribute('src')) return;
                 pendingFrame.addEventListener('load', () => {
-                    syncAudioMute();
-                    syncWindowState();
+                    postState();
                     loading.hidden = true;
                     setStatus('harborReady');
                 }, { once: true });

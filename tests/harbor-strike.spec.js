@@ -1,7 +1,17 @@
 const { test, expect } = require('@playwright/test');
 
+// Matches only the game's own address, not the redirect left at /portfolio/games/harbor-strike/.
+const GAME_PAGE = (url) => new URL(url).pathname === '/games/harbor-strike/';
+// Stand-in for the game page: records the state messages the desktop sends over the sandbox bridge.
+const GAME_STUB = '<!doctype html><meta charset="utf-8"><title>港区突击 Harbor Strike</title><canvas id="view" tabindex="0"></canvas>'
+    + '<script>window.lastState = null; addEventListener("message", (event) => {'
+    + ' if (event.source === parent && event.data?.type === "harbor-strike-state") window.lastState = event.data; });'
+    + ' parent.postMessage({ source: "harbor-strike", type: "ready" }, "*");</script>';
+const gameState = (page, key) => page.frames().find((frame) => GAME_PAGE(frame.url()))
+    ?.evaluate((name) => window.lastState?.[name], key);
+
 test('ships Harbor Strike without the original author branding', async ({ request }) => {
-    const response = await request.get('/portfolio/games/harbor-strike/');
+    const response = await request.get('/games/harbor-strike/');
     expect(response.ok()).toBe(true);
     const html = await response.text();
     expect(html).toContain('<title>港区突击 Harbor Strike</title>');
@@ -14,6 +24,9 @@ test('ships Harbor Strike without the original author branding', async ({ reques
     expect(html).not.toContain('name:"ultra"');
     expect(html.split('w.gain.value=window.__harborStrikeMuted?0:me').length - 1).toBe(2);
     expect(html).toContain('if(document.hidden)return;if(window.__harborStrikeHold){');
+    // Inside the window the page is sandboxed: state arrives by message and settings save through the desktop.
+    expect(html).toContain("state.type !== 'harbor-strike-state'");
+    expect(html).toContain('(window.__harborStrikeStore||localStorage).getItem(fM)');
     // While drawing is held the audio mixer still runs, so a paused round fades its sound.
     expect(html).toContain('u("audio",Math.min(d,.05))');
     expect(html).toContain('if(h-l<(q?30:13))return;');
@@ -31,9 +44,9 @@ test('mutes Harbor Strike with the system audio toggle', async ({ page, isMobile
         contentType: 'text/html; charset=utf-8',
         body: '<!doctype html><iframe id="desk" src="/portfolio/" style="width:1366px;height:768px;border:0"></iframe>'
     }));
-    await page.route('**/portfolio/games/harbor-strike/', (route) => route.fulfill({
+    await page.route(GAME_PAGE, (route) => route.fulfill({
         contentType: 'text/html; charset=utf-8',
-        body: '<!doctype html><title>港区突击 Harbor Strike</title><canvas id="view" tabindex="0"></canvas>'
+        body: GAME_STUB
     }));
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.goto('/harbor-strike-harness');
@@ -42,9 +55,7 @@ test('mutes Harbor Strike with the system audio toggle', async ({ page, isMobile
         document.getElementById('desk').contentWindow.postMessage(
             { source: 'gavin-shell', type: 'audio-mute-state', muted: value }, location.origin);
     }, muted);
-    const gameMuted = () => page.frames()
-        .find((frame) => frame.url().endsWith('/portfolio/games/harbor-strike/'))
-        ?.evaluate(() => window.__harborStrikeMuted);
+    const gameMuted = () => gameState(page, 'muted');
 
     await desktop.locator('[data-window-action="minimize"]').click();
     await setSystemMute(true);
@@ -68,17 +79,15 @@ test('holds Harbor Strike drawing when it is not in front and tells the 3D scene
                 if (event.data?.type === 'heavy-app-state') window.heavyApp.push(event.data.active);
             });</script>`
     }));
-    await page.route('**/portfolio/games/harbor-strike/', (route) => route.fulfill({
+    await page.route(GAME_PAGE, (route) => route.fulfill({
         contentType: 'text/html; charset=utf-8',
-        body: '<!doctype html><title>港区突击 Harbor Strike</title><canvas id="view" tabindex="0"></canvas>'
+        body: GAME_STUB
     }));
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.goto('/harbor-strike-harness');
     const desktop = page.frameLocator('#desk');
     const heavyApp = () => page.evaluate(() => window.heavyApp);
-    const held = () => page.frames()
-        .find((frame) => frame.url().endsWith('/portfolio/games/harbor-strike/'))
-        ?.evaluate(() => window.__harborStrikeHold);
+    const held = () => gameState(page, 'hold');
     const setMonitorView = (active) => page.evaluate((value) => {
         document.getElementById('desk').contentWindow.postMessage(
             { source: 'gavin-shell', type: 'portfolio-view-state', active: value }, location.origin);
@@ -111,9 +120,9 @@ test('holds Harbor Strike drawing when it is not in front and tells the 3D scene
 test('slows the 3D room while Harbor Strike runs on the settled monitor', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the mobile shell does not create the 3D monitor');
     test.setTimeout(90000);
-    await page.route('**/portfolio/games/harbor-strike/', (route) => route.fulfill({
+    await page.route(GAME_PAGE, (route) => route.fulfill({
         contentType: 'text/html; charset=utf-8',
-        body: '<!doctype html><title>港区突击 Harbor Strike</title><canvas id="view" tabindex="0"></canvas>'
+        body: GAME_STUB
     }));
     // Counts animation frames in which the room's own WebGL contexts drew anything.
     await page.addInitScript(() => {
@@ -173,11 +182,11 @@ test('runs Harbor Strike as a lazy desktop window and unloads it on close', asyn
     test.skip(isMobile, 'phones get the use-a-computer notice instead');
     // The real game needs a GPU; software WebGL in CI takes far longer to start than the window logic under test.
     const gameRequests = [];
-    await page.context().route('**/portfolio/games/harbor-strike/', (route) => {
+    await page.context().route(GAME_PAGE, (route) => {
         gameRequests.push(route.request().url());
         return route.fulfill({
             contentType: 'text/html; charset=utf-8',
-            body: '<!doctype html><title>港区突击 Harbor Strike</title><canvas id="view" tabindex="0"></canvas>'
+            body: GAME_STUB
         });
     });
     await page.goto('/portfolio/');
@@ -194,7 +203,7 @@ test('runs Harbor Strike as a lazy desktop window and unloads it on close', asyn
     await expect(task).toBeVisible();
     await expect(task).toHaveClass(/is-active/);
     await expect(page.locator('[data-harbor-phone]')).toBeHidden();
-    await expect(frame).toHaveAttribute('src', 'games/harbor-strike/');
+    await expect(frame).toHaveAttribute('src', '../games/harbor-strike/');
     await expect(status).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
     await expect(page.locator('[data-harbor-loading]')).toBeHidden();
     await expect(page.frameLocator('iframe.harbor-frame').locator('#view')).toBeAttached();
@@ -202,10 +211,10 @@ test('runs Harbor Strike as a lazy desktop window and unloads it on close', asyn
 
     await gameWindow.locator('[data-harbor-action="minimize"]').click();
     await expect(gameWindow).toHaveClass(/is-minimized/);
-    expect(await frame.evaluate((element) => element.contentDocument.hidden)).toBe(true);
+    await expect.poll(() => gameState(page, 'hidden')).toBe(true);
     await task.click();
     await expect(gameWindow).toBeVisible();
-    expect(await frame.evaluate((element) => element.contentDocument.hidden)).toBe(false);
+    await expect.poll(() => gameState(page, 'hidden')).toBe(false);
     expect(gameRequests).toHaveLength(1);
 
     await page.locator('[data-taskbar-lang]').click();
@@ -228,7 +237,7 @@ test('runs Harbor Strike as a lazy desktop window and unloads it on close', asyn
     const popupPromise = page.waitForEvent('popup');
     await openLink.click();
     const popup = await popupPromise;
-    await expect(popup).toHaveURL(/\/portfolio\/games\/harbor-strike\/$/);
+    await expect(popup).toHaveURL(/^http:\/\/[^/]+\/games\/harbor-strike\/$/);
     await expect(gameWindow).toHaveClass(/is-closed/);
     await expect(frame).toHaveCount(0);
     await popup.close();
@@ -238,7 +247,7 @@ test('asks phone visitors to open Harbor Strike on a computer', async ({ page, i
     test.skip(!isMobile, 'computers load the game');
     const gameRequests = [];
     page.on('request', (request) => {
-        if (request.url().includes('/portfolio/games/harbor-strike/')) gameRequests.push(request.url());
+        if (request.url().includes('/games/harbor-strike/')) gameRequests.push(request.url());
     });
     await page.goto('/portfolio/');
     const gameWindow = page.locator('[data-harbor-window]');
@@ -251,9 +260,76 @@ test('asks phone visitors to open Harbor Strike on a computer', async ({ page, i
     await expect(gameWindow.locator('[data-menu-action="harbor-open-tab"]')).toBeHidden();
     expect(gameRequests).toHaveLength(0);
 
-    await page.goto('/portfolio/games/harbor-strike/');
+    await page.goto('/games/harbor-strike/');
     await expect(page.locator('.harbor-phone-notice')).toBeVisible();
     await expect(page.locator('.harbor-phone-notice')).toContainText('请使用电脑打开');
     await expect(page.locator('#app')).toBeHidden();
     expect(await page.locator('#ui').evaluate((element) => element.childElementCount)).toBe(0);
+});
+
+test('redirects the old Harbor Strike address to /games/harbor-strike/', async ({ page }) => {
+    await page.route(GAME_PAGE, (route) => route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: GAME_STUB
+    }));
+    await page.goto('/portfolio/games/harbor-strike/');
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/games/harbor-strike/');
+    await expect(page).toHaveTitle('港区突击 Harbor Strike');
+});
+
+test('mutes Harbor Strike from the taskbar on the directly opened desktop', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'phones get the use-a-computer notice instead');
+    await page.route(GAME_PAGE, (route) => route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: GAME_STUB
+    }));
+    await page.goto('/portfolio/');
+    const audioToggle = page.locator('[data-audio-toggle]');
+    const gameMuted = () => gameState(page, 'muted');
+    await expect(audioToggle).toBeVisible();
+    await expect(audioToggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(audioToggle).toHaveAttribute('title', '静音');
+
+    // Muted before the game opens: it starts muted.
+    await audioToggle.click();
+    await expect(audioToggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(audioToggle).toHaveAttribute('title', '取消静音');
+    await expect(page.locator('[data-audio-toggle-icon]')).toHaveAttribute('src', '../textures/UI/volume_off.svg');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-harbor-strike]').click();
+    await expect(page.locator('[data-harbor-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
+    await expect.poll(gameMuted).toBe(true);
+
+    await audioToggle.click();
+    await expect.poll(gameMuted).toBe(false);
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(audioToggle).toHaveAttribute('title', 'Mute sound');
+    await audioToggle.click();
+    await expect.poll(gameMuted).toBe(true);
+    await expect(audioToggle).toHaveAttribute('title', 'Unmute sound');
+});
+
+test('runs the game in a sandboxed frame that still loads and reports ready', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'phones get the use-a-computer notice instead');
+    // In Chrome the opaque-origin frame gets its own process, so a heavy startup (here three
+    // seconds of busy work) no longer stalls the desktop. Playwright's bundled Chromium does not
+    // isolate frames, so this checks the frame setup and the message handshake.
+    await page.route(GAME_PAGE, (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: GAME_STUB }));
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-harbor-strike]').click();
+    const frame = page.locator('iframe.harbor-frame');
+    await expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-pointer-lock');
+    await expect(page.locator('[data-harbor-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
+    const gameFrame = page.frames().find((candidate) => GAME_PAGE(candidate.url()));
+    expect(await gameFrame.evaluate(() => window.origin)).toBe('null');
+    await expect.poll(() => gameFrame.evaluate(() => window.lastState && {
+        hidden: window.lastState.hidden, hold: window.lastState.hold, muted: window.lastState.muted
+    })).toEqual({ hidden: false, hold: false, muted: false });
+    // The game page saves its settings through the desktop, which keeps them for the next launch.
+    await gameFrame.evaluate(() => parent.postMessage({ source: 'harbor-strike', type: 'settings', value: '{"quality":"medium"}' }, '*'));
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('saltline.settings.v1'))).toBe('{"quality":"medium"}');
+    await page.locator('.window-controls [data-harbor-action="close"]').click();
+    await page.locator('.desktop-shortcut[data-open-harbor-strike]').click();
+    await expect.poll(() => gameState(page, 'settings')).toBe('{"quality":"medium"}');
 });

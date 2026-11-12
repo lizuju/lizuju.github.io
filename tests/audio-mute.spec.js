@@ -246,7 +246,7 @@ for (const delayedTransition of ['resume', 'suspend']) {
     });
 }
 
-test('keeps native media playback and volume independent of both background mute controls', async ({ page }) => {
+test('silences native media with the system mute without pausing it or changing its volume', async ({ page }) => {
     await startScene(page);
     await page.keyboard.press('Shift');
     const sceneAudio = page.locator('[data-audio-mute-toggle]');
@@ -292,10 +292,14 @@ test('keeps native media playback and volume independent of both background mute
     await expect.poll(() => page.evaluate(() => window.__sceneAudio.contexts[0].state)).toBe('suspended');
     const taskbarAudio = desktop.locator('[data-audio-toggle]');
     await expect(taskbarAudio).toHaveAttribute('aria-pressed', 'true');
+    // The scene and taskbar buttons are one system mute: desktop media goes silent but keeps playing.
+    await expect.poll(() => desktop.locator('[data-test-independent-audio]').evaluate((audio) => audio.muted)).toBe(true);
+    await expect.poll(() => desktop.locator('[data-test-independent-video]').evaluate((video) => video.muted)).toBe(true);
     await expect.poll(() => desktop.locator('[data-test-independent-audio]').evaluate((audio) => audio.currentTime)).toBeGreaterThan(mediaBefore[0].time + 0.1);
     await taskbarAudio.evaluate((button) => button.click());
     await expect(sceneAudio).toHaveAttribute('aria-pressed', 'false');
     await expect.poll(() => page.evaluate(() => window.__sceneAudio.contexts[0].state)).toBe('running');
+    await expect.poll(() => desktop.locator('[data-test-independent-video]').evaluate((video) => video.currentTime)).toBeGreaterThan(mediaBefore[1].time);
     const mediaAfter = await desktop.locator('body').evaluate((body) => (
         [...body.querySelectorAll('[data-test-independent-audio], [data-test-independent-video]')].map((media) => ({
             time: media.currentTime, volume: media.volume, muted: media.muted, paused: media.paused,
