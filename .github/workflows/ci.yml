@@ -134,16 +134,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Sized from measured timings so each shard runs about seven minutes of tests;
+        # scripts/browser-shards.test.cjs reads these counts and checks the balance.
         include:
-          - { project: chromium-desktop, browser: chromium, shard: '1/2', artifact: chromium-desktop-1 }
-          - { project: chromium-desktop, browser: chromium, shard: '2/2', artifact: chromium-desktop-2 }
-          - { project: webkit-desktop, browser: webkit, shard: '1/4', artifact: webkit-desktop-1 }
-          - { project: webkit-desktop, browser: webkit, shard: '2/4', artifact: webkit-desktop-2 }
-          - { project: webkit-desktop, browser: webkit, shard: '3/4', artifact: webkit-desktop-3 }
-          - { project: webkit-desktop, browser: webkit, shard: '4/4', artifact: webkit-desktop-4 }
-          - { project: chromium-mobile, browser: chromium, shard: '1/1', artifact: chromium-mobile }
-          - { project: webkit-mobile, browser: webkit, shard: '1/2', artifact: webkit-mobile-1 }
-          - { project: webkit-mobile, browser: webkit, shard: '2/2', artifact: webkit-mobile-2 }
+          - { project: chromium-desktop, browser: chromium, shard: '1/3', artifact: chromium-desktop-1 }
+          - { project: chromium-desktop, browser: chromium, shard: '2/3', artifact: chromium-desktop-2 }
+          - { project: chromium-desktop, browser: chromium, shard: '3/3', artifact: chromium-desktop-3 }
+          - { project: webkit-desktop, browser: webkit, shard: '1/8', artifact: webkit-desktop-1 }
+          - { project: webkit-desktop, browser: webkit, shard: '2/8', artifact: webkit-desktop-2 }
+          - { project: webkit-desktop, browser: webkit, shard: '3/8', artifact: webkit-desktop-3 }
+          - { project: webkit-desktop, browser: webkit, shard: '4/8', artifact: webkit-desktop-4 }
+          - { project: webkit-desktop, browser: webkit, shard: '5/8', artifact: webkit-desktop-5 }
+          - { project: webkit-desktop, browser: webkit, shard: '6/8', artifact: webkit-desktop-6 }
+          - { project: webkit-desktop, browser: webkit, shard: '7/8', artifact: webkit-desktop-7 }
+          - { project: webkit-desktop, browser: webkit, shard: '8/8', artifact: webkit-desktop-8 }
+          - { project: chromium-mobile, browser: chromium, shard: '1/2', artifact: chromium-mobile-1 }
+          - { project: chromium-mobile, browser: chromium, shard: '2/2', artifact: chromium-mobile-2 }
+          - { project: webkit-mobile, browser: webkit, shard: '1/3', artifact: webkit-mobile-1 }
+          - { project: webkit-mobile, browser: webkit, shard: '2/3', artifact: webkit-mobile-2 }
+          - { project: webkit-mobile, browser: webkit, shard: '3/3', artifact: webkit-mobile-3 }
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
