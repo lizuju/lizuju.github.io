@@ -2,7 +2,21 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { allocate, testFiles } = require('./run-browser-shard.cjs');
 
-for (const [project, count] of Object.entries({ 'chromium-desktop': 2, 'webkit-desktop': 4, 'chromium-mobile': 1, 'webkit-mobile': 2 })) {
+// The shard counts come from the CI matrix, so changing them there is checked here too.
+const ciMatrix = require('node:fs').readFileSync(require('node:path').join(__dirname, '../.github/workflows/ci.yml'), 'utf8');
+const shardCounts = {};
+for (const [, project, index, count] of ciMatrix.matchAll(/project: ([\w-]+), browser: \w+, shard: '(\d+)\/(\d+)'/g)) {
+    (shardCounts[project] ||= { count: Number(count), indexes: [] }).indexes.push(Number(index));
+}
+
+test('the CI matrix lists every shard of each browser project exactly once', () => {
+    assert.deepEqual(Object.keys(shardCounts).sort(), ['chromium-desktop', 'chromium-mobile', 'webkit-desktop', 'webkit-mobile']);
+    for (const { count, indexes } of Object.values(shardCounts)) {
+        assert.deepEqual(indexes.sort((a, b) => a - b), Array.from({ length: count }, (_, index) => index + 1));
+    }
+});
+
+for (const [project, { count }] of Object.entries(shardCounts)) {
     test(`${project} runs each file once and balances the measured work`, () => {
         const files = [...testFiles(), 'tests/new-coverage.spec.js'];
         const shards = allocate(files, project, count);

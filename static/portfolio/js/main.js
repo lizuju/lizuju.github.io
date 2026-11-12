@@ -20,6 +20,7 @@ import './desktop/core.js';
 import './desktop/window-manager.js';
 import './desktop/taskbar.js';
 import './desktop/parent-bridge.js';
+import './desktop/sound.js';
 import './desktop/robot-pet.js';
 import './apps/portfolio.js';
 import './apps/project-folder.js';

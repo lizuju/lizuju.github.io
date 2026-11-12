@@ -302,7 +302,8 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const notifyMessage = (message, session = credentials, receivedAt = Date.now()) => {
             if (session && !message.decryptionFailed) systemNotifications.show(message, session, receivedAt).catch(() => {});
-            if (!soundEnabled || !soundReady || !session || message.decryptionFailed) return;
+            const systemMuted = () => Boolean(window.GavinDesktop?.isAudioMuted?.());
+            if (!soundEnabled || !soundReady || !session || message.decryptionFailed || systemMuted()) return;
             const version = soundVersion;
             const key = `portfolio-sync-notification:${session.roomId}:${session.deviceId}`;
             navigator.locks.request(key, async () => {
@@ -321,7 +322,7 @@ import { pendingMessages } from './sync-outbox.js';
                     });
                     if (version !== soundVersion || !liveSession(session) || !soundEnabled || !soundReady || message.id <= (previous?.id || 0)) return;
                     let at = previous?.at;
-                    if (!previous || Date.now() - previous.at >= 750) {
+                    if ((!previous || Date.now() - previous.at >= 750) && !systemMuted()) {
                         messageSound.currentTime = 0;
                         try { await messageSound.play(); }
                         catch (error) {
