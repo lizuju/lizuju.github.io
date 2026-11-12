@@ -270,7 +270,8 @@ test('asks phone visitors to open Golden Hour on a computer', async ({ page, isM
     test.skip(!isMobile, 'computers load the game');
     const gameRequests = [];
     page.on('request', (request) => {
-        if (request.url().includes('/games/golden-hour/')) gameRequests.push(request.url());
+        const path = new URL(request.url()).pathname;
+        if (path === '/games/golden-hour/' || path.startsWith('/games/golden-hour/dist/')) gameRequests.push(request.url());
     });
     await page.goto('/portfolio/');
     const gameWindow = page.locator('[data-golden-window]');
