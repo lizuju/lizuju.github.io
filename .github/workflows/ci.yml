@@ -217,6 +217,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # One required check for the whole browser suite, so branch protection does not depend on the
+  # shard names and counts above.
+  browser-tests-passed:
+    name: Browser tests passed
+    needs: browser-tests
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every browser shard to pass
+        run: test "${{ needs.browser-tests.result }}" = success
+
   browser-timings:
     name: Calibrate browser shard timings
     needs: browser-tests
