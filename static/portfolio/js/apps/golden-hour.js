@@ -1,9 +1,9 @@
 (() => {
     const desktopApi = window.GavinDesktop;
     const { t } = desktopApi;
-    const GAME_URL = '../games/harbor-strike/';
+    const GAME_URL = '../games/golden-hour/';
 
-    // The shooter needs a keyboard and mouse. games/harbor-strike/index.html at the site root repeats this check for direct visits.
+    // The shooter needs a keyboard and mouse. games/golden-hour/index.html at the site root repeats this check for direct visits.
     const isPhone = () => {
         const coarseOnly = window.matchMedia('(any-pointer: coarse)').matches
             && !window.matchMedia('(any-pointer: fine)').matches;
@@ -12,17 +12,17 @@
             || coarseOnly;
     };
 
-    // Harbor Strike game window. The game page is only fetched when the window opens and is
+    // Golden Hour game window. The game page is only fetched when the window opens and is
     // unloaded on close so its WebGL context and audio stop with it.
-    function setupHarborStrike(manager) {
-        const gameWindow = document.querySelector('[data-harbor-window]');
-        const titlebar = document.querySelector('[data-harbor-drag]');
-        const resizeHandle = document.querySelector('[data-harbor-resize]');
-        const task = document.querySelector('[data-harbor-task]');
-        const stage = document.querySelector('[data-harbor-stage]');
-        const loading = document.querySelector('[data-harbor-loading]');
-        const phoneNotice = document.querySelector('[data-harbor-phone]');
-        const status = document.querySelector('[data-harbor-status]');
+    function setupGoldenHour(manager) {
+        const gameWindow = document.querySelector('[data-golden-window]');
+        const titlebar = document.querySelector('[data-golden-drag]');
+        const resizeHandle = document.querySelector('[data-golden-resize]');
+        const task = document.querySelector('[data-golden-task]');
+        const stage = document.querySelector('[data-golden-stage]');
+        const loading = document.querySelector('[data-golden-loading]');
+        const phoneNotice = document.querySelector('[data-golden-phone]');
+        const status = document.querySelector('[data-golden-status]');
         if (!gameWindow || !titlebar || !resizeHandle || !task || !stage || !loading || !phoneNotice || !status) {
             return null;
         }
@@ -41,16 +41,33 @@
         // needs from here arrives as one state message: hidden (minimized: pause and suspend audio),
         // hold (stop drawing while behind another window, dragged, resized or off-camera), muted
         // (the system mute) and the settings it saved last time.
-        const SETTINGS_KEY = 'saltline.settings.v1';
+        const STORAGE_PREFIX = 'golden-hour-';
         let gameHidden = false;
         let viewingMonitor = true;
         let reportedRunning = false;
 
-        const readSettings = () => {
+        // The game's own settings (golden-hour-*), shared with the copy that runs at its own address.
+        const readStorage = () => {
+            const values = {};
             try {
-                return localStorage.getItem(SETTINGS_KEY);
+                for (let index = 0; index < localStorage.length; index++) {
+                    const key = localStorage.key(index);
+                    if (key?.startsWith(STORAGE_PREFIX)) values[key] = localStorage.getItem(key);
+                }
             } catch {
-                return null;
+                // Without storage the game starts with its defaults.
+            }
+            return values;
+        };
+        const writeStorage = (values) => {
+            if (!values || typeof values !== 'object') return;
+            const entries = Object.entries(values).filter(([key, value]) => key.startsWith(STORAGE_PREFIX)
+                && /^[\w-]+$/.test(key) && typeof value === 'string');
+            if (entries.reduce((size, [key, value]) => size + key.length + value.length, 0) > 256 * 1024) return;
+            try {
+                for (const [key, value] of entries) localStorage.setItem(key, value);
+            } catch {
+                // A full or blocked storage keeps the previous settings.
             }
         };
 
@@ -58,12 +75,12 @@
             // An opaque origin can only be addressed with '*'; the state holds nothing private.
             frame?.contentWindow?.postMessage({
                 source: 'gavin-desktop',
-                type: 'harbor-strike-state',
+                type: 'game-state',
                 hidden: gameHidden,
                 hold: !viewingMonitor || !gameWindow.classList.contains('is-active')
                     || gameWindow.classList.contains('is-dragging') || gameWindow.classList.contains('is-resizing'),
                 muted: Boolean(desktopApi.isAudioMuted?.()),
-                settings: readSettings()
+                storage: readStorage()
             }, '*');
         };
 
@@ -94,17 +111,15 @@
                 syncWindowState();
                 return;
             }
-            if (!frame || event.source !== frame.contentWindow || event.data?.source !== 'harbor-strike') return;
+            if (!frame || event.source !== frame.contentWindow || event.data?.source !== 'golden-hour') return;
             if (event.data.type === 'ready') postState();
-            if (event.data.type === 'settings' && typeof event.data.value === 'string' && event.data.value.length < 4096) {
-                try {
-                    JSON.parse(event.data.value);
-                    localStorage.setItem(SETTINGS_KEY, event.data.value);
-                } catch {
-                    // Malformed or unsaved settings leave the previous ones in place.
-                }
-            }
+            if (event.data.type === 'storage') writeStorage(event.data.value);
         });
+
+        // Other desktop extras (the robot) step aside while the game is open.
+        const announceGame = () => window.dispatchEvent(new CustomEvent('gavin:game-change', {
+            detail: { running: Boolean(frame) }
+        }));
 
         const unloadGame = () => {
             frame?.remove();
@@ -112,19 +127,21 @@
             gameHidden = false;
             loading.hidden = true;
             syncWindowState();
+            announceGame();
         };
 
         const loadGame = () => {
             if (phone || frame) return;
             loading.hidden = false;
-            setStatus('harborLoading');
+            setStatus('goldenLoading');
             frame = document.createElement('iframe');
-            frame.className = 'harbor-frame';
-            frame.title = t().harborWindowTitle;
+            frame.className = 'golden-frame';
+            frame.title = t().goldenWindowTitle;
             frame.allow = 'fullscreen; autoplay';
             frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock');
             stage.append(frame);
             syncWindowState();
+            announceGame();
 
             // Browsers without out-of-process frames (Safari) still run the game's startup on this
             // thread, so the window and its loading screen paint before the game page is requested.
@@ -135,7 +152,7 @@
                 pendingFrame.addEventListener('load', () => {
                     postState();
                     loading.hidden = true;
-                    setStatus('harborReady');
+                    setStatus('goldenReady');
                 }, { once: true });
                 pendingFrame.src = GAME_URL;
             };
@@ -145,7 +162,7 @@
 
         const showGame = () => {
             phoneNotice.hidden = !phone;
-            if (phone) setStatus('harborPhoneStatus');
+            if (phone) setStatus('goldenPhoneStatus');
             else if (frame) setGameHidden(false);
             else loadGame();
         };
@@ -166,12 +183,12 @@
         };
 
         const entry = manager.registerWindow({
-            id: 'harbor-strike',
+            id: 'golden-hour',
             element: gameWindow,
             task,
             titlebar,
             resizeHandle,
-            actionAttribute: 'data-harbor-action',
+            actionAttribute: 'data-golden-action',
             minWidth: 520,
             minHeight: 380,
             show,
@@ -179,30 +196,30 @@
             focusTarget: () => frame
         });
 
-        gameWindow.querySelectorAll('[data-harbor-desktop-only]').forEach((element) => {
+        gameWindow.querySelectorAll('[data-golden-desktop-only]').forEach((element) => {
             element.hidden = phone;
         });
 
         manager.addMenuActions({
-            'harbor-reload': () => {
+            'golden-reload': () => {
                 unloadGame();
                 loadGame();
                 manager.focusWindow(gameWindow, true);
             },
-            'harbor-open-tab': () => {
+            'golden-open-tab': () => {
                 window.open(new URL(GAME_URL, document.baseURI).href, '_blank', 'noopener');
                 entry.hide('is-closed');
             },
-            'harbor-close': () => entry.hide('is-closed'),
-            'harbor-toggle-size': entry.toggleMaximize
+            'golden-close': () => entry.hide('is-closed'),
+            'golden-toggle-size': entry.toggleMaximize
         });
 
-        document.querySelectorAll('[data-open-harbor-strike]').forEach((button) => {
+        document.querySelectorAll('[data-open-golden-hour]').forEach((button) => {
             button.addEventListener('click', show);
         });
 
         // The link opens the game at its own address; the copy in this window closes so only one runs.
-        const openLink = gameWindow.querySelector('[data-harbor-open-link]');
+        const openLink = gameWindow.querySelector('[data-golden-open-link]');
         openLink?.addEventListener('click', () => window.setTimeout(() => entry.hide('is-closed')));
 
         // Clicks inside the frame never reach this document; the frame taking focus raises the window.
@@ -216,8 +233,8 @@
             gameWindow.querySelectorAll('[data-i18n-aria]').forEach((element) => {
                 if (t()[element.dataset.i18nAria]) element.setAttribute('aria-label', t()[element.dataset.i18nAria]);
             });
-            if (frame) frame.title = t().harborWindowTitle;
-            if (openLink) openLink.title = t().harborOpenTab;
+            if (frame) frame.title = t().goldenWindowTitle;
+            if (openLink) openLink.title = t().goldenOpenTab;
             setStatus(statusKey);
         };
         window.addEventListener('portfolio-language-change', updateCopy);
@@ -231,5 +248,5 @@
         return { open: show, resumeIfVisible };
     }
 
-    desktopApi.apps.harborStrike = setupHarborStrike;
+    desktopApi.apps.goldenHour = setupGoldenHour;
 })();

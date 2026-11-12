@@ -1,10 +1,10 @@
-/* Harbor Strike game window. The game itself runs from /games/harbor-strike/ inside .harbor-frame. */
+/* Golden Hour game window. The game itself runs from /games/golden-hour/ inside .golden-frame. */
 
-.shortcut-icon--harbor svg {
+.shortcut-icon--golden svg {
     display: block;
 }
 
-.harbor-window {
+.golden-window {
     top: 44px;
     right: auto;
     bottom: auto;
@@ -16,18 +16,18 @@
     min-height: min(380px, calc(100% - 36px));
 }
 
-.harbor-window.is-maximized {
+.golden-window.is-maximized {
     width: auto;
     height: auto;
 }
 
-.window-app-icon--harbor {
-    color: #ffb347;
-    background: #14181b;
+.window-app-icon--golden {
+    color: #ffb35c;
+    background: #1a0e08;
     font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
-.harbor-stage {
+.golden-stage {
     position: relative;
     min-width: 0;
     min-height: 0;
@@ -37,7 +37,7 @@
     background: #0b0d0f;
 }
 
-.harbor-frame {
+.golden-frame {
     position: absolute;
     inset: 0;
     display: block;
@@ -47,7 +47,7 @@
     background: #0b0d0f;
 }
 
-.harbor-loading {
+.golden-loading {
     position: absolute;
     inset: 0;
     z-index: 1;
@@ -62,26 +62,26 @@
     letter-spacing: 0.12em;
 }
 
-.harbor-loading strong {
+.golden-loading strong {
     margin-right: -0.16em;
     color: #e8e4da;
     font: 900 40px/1 "PingFang SC", "Microsoft YaHei", sans-serif;
     letter-spacing: 0.16em;
 }
 
-.harbor-loading i {
+.golden-loading i {
     width: min(220px, 60%);
     height: 2px;
     background: linear-gradient(90deg, transparent 0 30%, #ffb347 30% 60%, transparent 60%) 0 0 / 200% 100%, #23282c;
-    animation: harbor-loading 1.4s steps(14) infinite;
+    animation: golden-loading 1.4s steps(14) infinite;
 }
 
-@keyframes harbor-loading {
+@keyframes golden-loading {
     from { background-position: 100% 0, 0 0; }
     to { background-position: -100% 0, 0 0; }
 }
 
-.harbor-phone-notice {
+.golden-phone-notice {
     position: absolute;
     inset: 0;
     display: grid;
@@ -95,24 +95,24 @@
     text-align: center;
 }
 
-.harbor-phone-notice h2 {
+.golden-phone-notice h2 {
     margin: 0;
     font-size: 15px;
 }
 
-.harbor-phone-notice p {
+.golden-phone-notice p {
     max-width: 300px;
     margin: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .harbor-loading i {
+    .golden-loading i {
         animation: none;
         background: #ffb347;
     }
 }
 
-.harbor-open-link {
+.golden-open-link {
     display: inline-flex;
     width: 23px;
     height: 21px;
@@ -125,11 +125,11 @@
     background: #c0c0c0;
 }
 
-.harbor-open-link:active {
+.golden-open-link:active {
     border-style: inset;
 }
 
-.harbor-open-link:focus-visible {
+.golden-open-link:focus-visible {
     outline: 1px dotted #000;
     outline-offset: -4px;
 }

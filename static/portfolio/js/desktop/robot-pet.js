@@ -28,6 +28,11 @@
         let destination = 0;
         let movementSpeed = 15;
         let speechTimer;
+        // While a game is open the robot steps aside to leave the game its frame budget, and comes
+        // back afterwards if it was out before.
+        let gameRunning = false;
+        let returnAfterGame = false;
+        let returnCenter = 0;
 
         const updateLanguage = () => {
             const copy = desktopApi.t();
@@ -119,7 +124,7 @@
         };
 
         const syncAutoShow = () => {
-            if (!autoShowPending || !desktopMode.matches || document.hidden || pet.inert
+            if (!autoShowPending || !desktopMode.matches || document.hidden || pet.inert || gameRunning
                 || !viewingMonitor || !manager.isWindowVisible(portfolioWindow)) {
                 window.clearTimeout(autoShowTimer);
                 autoShowTimer = null;
@@ -215,6 +220,22 @@
             if (event.origin !== window.location.origin || event.source !== window.parent
                 || event.data?.source !== 'gavin-shell' || event.data?.type !== 'portfolio-view-state') return;
             viewingMonitor = event.data.active === true;
+            syncAutoShow();
+        });
+        window.addEventListener('gavin:game-change', (event) => {
+            const running = event.detail?.running === true;
+            if (running === gameRunning) return;
+            gameRunning = running;
+            if (running) {
+                returnAfterGame = !pet.hidden;
+                if (!pet.hidden) {
+                    returnCenter = position + pet.offsetWidth / 2;
+                    hide(false);
+                }
+            } else if (returnAfterGame) {
+                returnAfterGame = false;
+                show(returnCenter);
+            }
             syncAutoShow();
         });
         window.addEventListener('portfolio-language-change', updateLanguage);

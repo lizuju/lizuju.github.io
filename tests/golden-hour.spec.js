@@ -1,46 +1,49 @@
 const { test, expect } = require('@playwright/test');
 
-// Matches only the game's own address, not the redirect left at /portfolio/games/harbor-strike/.
-const GAME_PAGE = (url) => new URL(url).pathname === '/games/harbor-strike/';
+// Matches only the game's own address, not the redirects left at the Harbor Strike addresses.
+const GAME_PAGE = (url) => new URL(url).pathname === '/games/golden-hour/';
 // Stand-in for the game page: records the state messages the desktop sends over the sandbox bridge.
-const GAME_STUB = '<!doctype html><meta charset="utf-8"><title>港区突击 Harbor Strike</title><canvas id="view" tabindex="0"></canvas>'
+const GAME_STUB = '<!doctype html><meta charset="utf-8"><title>GOLDEN HOUR — Solstice Hotel</title><canvas tabindex="0"></canvas>'
     + '<script>window.lastState = null; addEventListener("message", (event) => {'
-    + ' if (event.source === parent && event.data?.type === "harbor-strike-state") window.lastState = event.data; });'
-    + ' parent.postMessage({ source: "harbor-strike", type: "ready" }, "*");</script>';
+    + ' if (event.source === parent && event.data?.type === "game-state") window.lastState = event.data; });'
+    + ' parent.postMessage({ source: "golden-hour", type: "ready" }, "*");</script>';
 const gameState = (page, key) => page.frames().find((frame) => GAME_PAGE(frame.url()))
     ?.evaluate((name) => window.lastState?.[name], key);
 
-test('ships Harbor Strike without the original author branding', async ({ request }) => {
-    const response = await request.get('/games/harbor-strike/');
-    expect(response.ok()).toBe(true);
-    const html = await response.text();
-    expect(html).toContain('<title>港区突击 Harbor Strike</title>');
-    for (const removed of ['几猫', '猫', '3A大作', '各位老师', 'Fable5.2', '项目介绍', 'data-act="about"', 'data-tab="about"']) {
-        expect(html).not.toContain(removed);
+test('ships Golden Hour without the copy label or ULTRA preset, and redirects Harbor Strike', async ({ request }) => {
+    const page = await request.get('/games/golden-hour/');
+    expect(page.ok()).toBe(true);
+    const html = await page.text();
+    expect(html).toContain('<title>GOLDEN HOUR — Solstice Hotel</title>');
+    expect(html).not.toContain('(Copy)');
+    // Desktop bridge: sandbox state by message, settings saved through the desktop, a speaker
+    // gain for mute, paced frames, and a loader that waits for the saved settings.
+    expect(html).toContain("state.type !== 'game-state'");
+    expect(html).toContain("type: 'storage'");
+    expect(html).toContain('AudioNode.prototype.connect = function');
+    expect(html).toContain("hidden ? Infinity : hold ? 200 :");
+    expect(html).toContain("window.__goldenHourReady.then(");
+    expect(html).toContain('请使用电脑打开');
+
+    const game = await request.get('/games/golden-hour/dist/game.js');
+    expect(game.ok()).toBe(true);
+    const code = await game.text();
+    expect(code).toContain('opts:[["low","LOW"],["medium","MEDIUM"],["high","HIGH"]]');
+    expect(code).not.toContain('["ultra","ULTRA"]');
+    expect(code).toContain('["low","medium","high"].includes(_s.quality)||(_s.quality=Ib.quality);');
+    // Medium is the default preset; three.js skips its synchronous shader checks.
+    expect(code).toContain('quality:"medium",motionBlur:"high"');
+    expect(code).toContain('this.debug={checkShaderErrors:!1,onShaderError:null}');
+
+    for (const old of ['/games/harbor-strike/', '/portfolio/games/harbor-strike/']) {
+        expect(await (await request.get(old)).text()).toContain('golden-hour/');
     }
-    // "高" is the highest quality; the master gain obeys the desktop mute flag; frames are paced.
-    expect(html).toContain('dM=["low","medium","high"]');
-    expect(html).not.toContain('极高');
-    expect(html).not.toContain('name:"ultra"');
-    expect(html.split('w.gain.value=window.__harborStrikeMuted?0:me').length - 1).toBe(2);
-    expect(html).toContain('if(document.hidden)return;if(window.__harborStrikeHold){');
-    // Inside the window the page is sandboxed: state arrives by message and settings save through the desktop.
-    expect(html).toContain("state.type !== 'harbor-strike-state'");
-    expect(html).toContain('(window.__harborStrikeStore||localStorage).getItem(fM)');
-    // While drawing is held the audio mixer still runs, so a paused round fades its sound.
-    expect(html).toContain('u("audio",Math.min(d,.05))');
-    expect(html).toContain('if(h-l<(q?30:13))return;');
-    // Window resizes settle before the render targets are rebuilt.
-    expect(html).toContain('N._rt=setTimeout(');
-    // Image quality is untouched: native retina output and the original pixel budgets.
-    expect(html).toContain('X=Math.min(window.devicePixelRatio||1,2)');
-    expect(html).toContain('$={low:1e6,medium:15e5,high:23e5}');
 });
 
-test('mutes Harbor Strike with the system audio toggle', async ({ page, isMobile }) => {
+test('mutes Golden Hour with the system audio toggle', async ({ page, isMobile }) => {
     test.skip(isMobile, 'phones get the use-a-computer notice instead');
     // Embeds the desktop the way the 3D scene does, so the taskbar mute toggle is active.
-    await page.route('**/harbor-strike-harness', (route) => route.fulfill({
+    await page.route('**/game-harness', (route) => route.fulfill({
         contentType: 'text/html; charset=utf-8',
         body: '<!doctype html><iframe id="desk" src="/portfolio/" style="width:1366px;height:768px;border:0"></iframe>'
     }));
@@ -49,7 +52,7 @@ test('mutes Harbor Strike with the system audio toggle', async ({ page, isMobile
         body: GAME_STUB
     }));
     await page.setViewportSize({ width: 1366, height: 768 });
-    await page.goto('/harbor-strike-harness');
+    await page.goto('/game-harness');
     const desktop = page.frameLocator('#desk');
     const setSystemMute = (muted) => page.evaluate((value) => {
         document.getElementById('desk').contentWindow.postMessage(
@@ -60,8 +63,8 @@ test('mutes Harbor Strike with the system audio toggle', async ({ page, isMobile
     await desktop.locator('[data-window-action="minimize"]').click();
     await setSystemMute(true);
     await expect(desktop.locator('[data-audio-toggle]')).toHaveAttribute('aria-pressed', 'true');
-    await desktop.locator('.desktop-shortcut[data-open-harbor-strike]').click();
-    await expect(desktop.locator('[data-harbor-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
+    await desktop.locator('.desktop-shortcut[data-open-golden-hour]').click();
+    await expect(desktop.locator('[data-golden-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
     await expect.poll(gameMuted).toBe(true);
 
     await setSystemMute(false);
@@ -70,9 +73,9 @@ test('mutes Harbor Strike with the system audio toggle', async ({ page, isMobile
     await expect.poll(gameMuted).toBe(true);
 });
 
-test('holds Harbor Strike drawing when it is not in front and tells the 3D scene while it runs', async ({ page, isMobile }) => {
+test('holds Golden Hour drawing when it is not in front and tells the 3D scene while it runs', async ({ page, isMobile }) => {
     test.skip(isMobile, 'phones get the use-a-computer notice instead');
-    await page.route('**/harbor-strike-harness', (route) => route.fulfill({
+    await page.route('**/game-harness', (route) => route.fulfill({
         contentType: 'text/html; charset=utf-8',
         body: `<!doctype html><iframe id="desk" src="/portfolio/" style="width:1366px;height:768px;border:0"></iframe>
             <script>window.heavyApp = []; addEventListener('message', (event) => {
@@ -84,7 +87,7 @@ test('holds Harbor Strike drawing when it is not in front and tells the 3D scene
         body: GAME_STUB
     }));
     await page.setViewportSize({ width: 1366, height: 768 });
-    await page.goto('/harbor-strike-harness');
+    await page.goto('/game-harness');
     const desktop = page.frameLocator('#desk');
     const heavyApp = () => page.evaluate(() => window.heavyApp);
     const held = () => gameState(page, 'hold');
@@ -94,14 +97,14 @@ test('holds Harbor Strike drawing when it is not in front and tells the 3D scene
     }, active);
 
     await desktop.locator('[data-window-action="minimize"]').click();
-    await desktop.locator('.desktop-shortcut[data-open-harbor-strike]').click();
-    await expect(desktop.locator('[data-harbor-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
+    await desktop.locator('.desktop-shortcut[data-open-golden-hour]').click();
+    await expect(desktop.locator('[data-golden-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
     await expect.poll(heavyApp).toEqual([true]);
     await expect.poll(held).toBe(false);
 
     await desktop.locator('.desktop-shortcut[data-open-project-folder]').click();
     await expect.poll(held).toBe(true);
-    await desktop.locator('[data-harbor-task]').click();
+    await desktop.locator('[data-golden-task]').click();
     await expect.poll(held).toBe(false);
 
     await setMonitorView(false);
@@ -109,15 +112,15 @@ test('holds Harbor Strike drawing when it is not in front and tells the 3D scene
     await setMonitorView(true);
     await expect.poll(held).toBe(false);
 
-    await desktop.locator('[data-harbor-action="minimize"]').click();
+    await desktop.locator('[data-golden-action="minimize"]').click();
     await expect.poll(heavyApp).toEqual([true, false]);
-    await desktop.locator('[data-harbor-task]').click();
+    await desktop.locator('[data-golden-task]').click();
     await expect.poll(heavyApp).toEqual([true, false, true]);
-    await desktop.locator('.window-controls [data-harbor-action="close"]').click();
+    await desktop.locator('.window-controls [data-golden-action="close"]').click();
     await expect.poll(heavyApp).toEqual([true, false, true, false]);
 });
 
-test('slows the 3D room while Harbor Strike runs on the settled monitor', async ({ page, isMobile }) => {
+test('slows the 3D room while Golden Hour runs on the settled monitor', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the mobile shell does not create the 3D monitor');
     test.setTimeout(90000);
     await page.route(GAME_PAGE, (route) => route.fulfill({
@@ -167,18 +170,18 @@ test('slows the 3D room while Harbor Strike runs on the settled monitor', async 
 
     const desktop = page.frameLocator('#computer-screen');
     await desktop.locator('[data-window-action="minimize"]').click();
-    await desktop.locator('.desktop-shortcut[data-open-harbor-strike]').click();
-    await expect(desktop.locator('[data-harbor-window]')).toBeVisible();
+    await desktop.locator('.desktop-shortcut[data-open-golden-hour]').click();
+    await expect(desktop.locator('[data-golden-window]')).toBeVisible();
     const gameFps = await roomFps();
     expect(gameFps).toBeLessThanOrEqual(11);
 
-    await desktop.locator('.window-controls [data-harbor-action="close"]').click();
-    await expect(desktop.locator('[data-harbor-window]')).toBeHidden();
+    await desktop.locator('.window-controls [data-golden-action="close"]').click();
+    await expect(desktop.locator('[data-golden-window]')).toBeHidden();
     // Software-rendered browsers may not draw the room much faster than the throttle anyway.
     if (settledFps >= 20) expect(await roomFps()).toBeGreaterThan(15);
 });
 
-test('runs Harbor Strike as a lazy desktop window and unloads it on close', async ({ page, isMobile }) => {
+test('runs Golden Hour as a lazy desktop window and unloads it on close', async ({ page, isMobile }) => {
     test.skip(isMobile, 'phones get the use-a-computer notice instead');
     // The real game needs a GPU; software WebGL in CI takes far longer to start than the window logic under test.
     const gameRequests = [];
@@ -190,26 +193,26 @@ test('runs Harbor Strike as a lazy desktop window and unloads it on close', asyn
         });
     });
     await page.goto('/portfolio/');
-    const gameWindow = page.locator('[data-harbor-window]');
-    const task = page.locator('[data-harbor-task]');
-    const frame = gameWindow.locator('iframe.harbor-frame');
-    const status = page.locator('[data-harbor-status]');
+    const gameWindow = page.locator('[data-golden-window]');
+    const task = page.locator('[data-golden-task]');
+    const frame = gameWindow.locator('iframe.golden-frame');
+    const status = page.locator('[data-golden-status]');
     await expect(gameWindow).toHaveClass(/is-closed/);
     expect(gameRequests).toHaveLength(0);
 
     await page.locator('[data-window-action="minimize"]').click();
-    await page.locator('.desktop-shortcut[data-open-harbor-strike]').click();
+    await page.locator('.desktop-shortcut[data-open-golden-hour]').click();
     await expect(gameWindow).toBeVisible();
     await expect(task).toBeVisible();
     await expect(task).toHaveClass(/is-active/);
-    await expect(page.locator('[data-harbor-phone]')).toBeHidden();
-    await expect(frame).toHaveAttribute('src', '../games/harbor-strike/');
+    await expect(page.locator('[data-golden-phone]')).toBeHidden();
+    await expect(frame).toHaveAttribute('src', '../games/golden-hour/');
     await expect(status).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
-    await expect(page.locator('[data-harbor-loading]')).toBeHidden();
-    await expect(page.frameLocator('iframe.harbor-frame').locator('#view')).toBeAttached();
+    await expect(page.locator('[data-golden-loading]')).toBeHidden();
+    await expect(page.frameLocator('iframe.golden-frame').locator('canvas')).toBeAttached();
     await expect(frame).toBeFocused();
 
-    await gameWindow.locator('[data-harbor-action="minimize"]').click();
+    await gameWindow.locator('[data-golden-action="minimize"]').click();
     await expect(gameWindow).toHaveClass(/is-minimized/);
     await expect.poll(() => gameState(page, 'hidden')).toBe(true);
     await task.click();
@@ -218,66 +221,69 @@ test('runs Harbor Strike as a lazy desktop window and unloads it on close', asyn
     expect(gameRequests).toHaveLength(1);
 
     await page.locator('[data-taskbar-lang]').click();
-    await expect(task).toContainText('Harbor Strike');
+    await expect(task).toContainText('Golden Hour');
     await expect(status).toHaveText('Click the view to lock the mouse · Esc to release');
-    await expect(gameWindow.locator('[data-harbor-open-link]')).toHaveAttribute('title', 'Open in new tab');
+    await expect(gameWindow.locator('[data-golden-open-link]')).toHaveAttribute('title', 'Open in new tab');
     await page.locator('[data-taskbar-lang]').click();
 
-    await gameWindow.locator('.window-controls [data-harbor-action="close"]').click();
+    await gameWindow.locator('.window-controls [data-golden-action="close"]').click();
     await expect(gameWindow).toHaveClass(/is-closed/);
     await expect(task).toBeHidden();
     await expect(frame).toHaveCount(0);
 
     // The pop-out button plays the game at its own address and closes the in-window copy.
-    await page.locator('.desktop-shortcut[data-open-harbor-strike]').click();
+    await page.locator('.desktop-shortcut[data-open-golden-hour]').click();
     await expect(frame).toHaveCount(1);
-    const openLink = gameWindow.locator('[data-harbor-open-link]');
+    const openLink = gameWindow.locator('[data-golden-open-link]');
     await expect(openLink).toBeVisible();
     await expect(openLink).toHaveAttribute('target', '_blank');
     const popupPromise = page.waitForEvent('popup');
     await openLink.click();
     const popup = await popupPromise;
-    await expect(popup).toHaveURL(/^http:\/\/[^/]+\/games\/harbor-strike\/$/);
+    await expect(popup).toHaveURL(/^http:\/\/[^/]+\/games\/golden-hour\/$/);
     await expect(gameWindow).toHaveClass(/is-closed/);
     await expect(frame).toHaveCount(0);
     await popup.close();
 });
 
-test('asks phone visitors to open Harbor Strike on a computer', async ({ page, isMobile }) => {
+test('asks phone visitors to open Golden Hour on a computer', async ({ page, isMobile }) => {
     test.skip(!isMobile, 'computers load the game');
     const gameRequests = [];
     page.on('request', (request) => {
-        if (request.url().includes('/games/harbor-strike/')) gameRequests.push(request.url());
+        if (request.url().includes('/games/golden-hour/')) gameRequests.push(request.url());
     });
     await page.goto('/portfolio/');
-    const gameWindow = page.locator('[data-harbor-window]');
+    const gameWindow = page.locator('[data-golden-window]');
     await page.locator('[data-window-action="minimize"]').click();
-    await page.locator('.desktop-shortcut[data-open-harbor-strike]').click();
+    await page.locator('.desktop-shortcut[data-open-golden-hour]').click();
     await expect(gameWindow).toBeVisible();
-    await expect(page.locator('[data-harbor-phone]')).toBeVisible();
-    await expect(page.locator('[data-harbor-phone]')).toContainText('请使用电脑打开');
+    await expect(page.locator('[data-golden-phone]')).toBeVisible();
+    await expect(page.locator('[data-golden-phone]')).toContainText('请使用电脑打开');
     await expect(gameWindow.locator('iframe')).toHaveCount(0);
-    await expect(gameWindow.locator('[data-menu-action="harbor-open-tab"]')).toBeHidden();
+    await expect(gameWindow.locator('[data-menu-action="golden-open-tab"]')).toBeHidden();
     expect(gameRequests).toHaveLength(0);
 
-    await page.goto('/games/harbor-strike/');
-    await expect(page.locator('.harbor-phone-notice')).toBeVisible();
-    await expect(page.locator('.harbor-phone-notice')).toContainText('请使用电脑打开');
-    await expect(page.locator('#app')).toBeHidden();
-    expect(await page.locator('#ui').evaluate((element) => element.childElementCount)).toBe(0);
+    const scriptRequests = [];
+    page.on('request', (request) => {
+        if (request.url().includes('/games/golden-hour/dist/')) scriptRequests.push(request.url());
+    });
+    await page.goto('/games/golden-hour/');
+    await expect(page.locator('.gh-phone-notice')).toBeVisible();
+    await expect(page.locator('.gh-phone-notice')).toContainText('请使用电脑打开');
+    await expect(page.locator('body > :not(.gh-phone-notice):not(script):not(style):not(title)').first()).toBeHidden();
+    expect(scriptRequests).toHaveLength(0);
 });
 
-test('redirects the old Harbor Strike address to /games/harbor-strike/', async ({ page }) => {
-    await page.route(GAME_PAGE, (route) => route.fulfill({
-        contentType: 'text/html; charset=utf-8',
-        body: GAME_STUB
-    }));
-    await page.goto('/portfolio/games/harbor-strike/');
-    await expect.poll(() => new URL(page.url()).pathname).toBe('/games/harbor-strike/');
-    await expect(page).toHaveTitle('港区突击 Harbor Strike');
+test('redirects the old Harbor Strike addresses to Golden Hour', async ({ page }) => {
+    await page.route(GAME_PAGE, (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: GAME_STUB }));
+    for (const old of ['/games/harbor-strike/', '/portfolio/games/harbor-strike/']) {
+        await page.goto(old);
+        await expect.poll(() => new URL(page.url()).pathname).toBe('/games/golden-hour/');
+        await expect(page).toHaveTitle('GOLDEN HOUR — Solstice Hotel');
+    }
 });
 
-test('mutes Harbor Strike from the taskbar on the directly opened desktop', async ({ page, isMobile }) => {
+test('mutes Golden Hour from the taskbar on the directly opened desktop', async ({ page, isMobile }) => {
     test.skip(isMobile, 'phones get the use-a-computer notice instead');
     await page.route(GAME_PAGE, (route) => route.fulfill({
         contentType: 'text/html; charset=utf-8',
@@ -296,8 +302,8 @@ test('mutes Harbor Strike from the taskbar on the directly opened desktop', asyn
     await expect(audioToggle).toHaveAttribute('title', '取消静音');
     await expect(page.locator('[data-audio-toggle-icon]')).toHaveAttribute('src', '../textures/UI/volume_off.svg');
     await page.locator('[data-window-action="minimize"]').click();
-    await page.locator('.desktop-shortcut[data-open-harbor-strike]').click();
-    await expect(page.locator('[data-harbor-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
+    await page.locator('.desktop-shortcut[data-open-golden-hour]').click();
+    await expect(page.locator('[data-golden-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
     await expect.poll(gameMuted).toBe(true);
 
     await audioToggle.click();
@@ -317,19 +323,63 @@ test('runs the game in a sandboxed frame that still loads and reports ready', as
     await page.route(GAME_PAGE, (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: GAME_STUB }));
     await page.goto('/portfolio/');
     await page.locator('[data-window-action="minimize"]').click();
-    await page.locator('.desktop-shortcut[data-open-harbor-strike]').click();
-    const frame = page.locator('iframe.harbor-frame');
+    await page.locator('.desktop-shortcut[data-open-golden-hour]').click();
+    const frame = page.locator('iframe.golden-frame');
     await expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-pointer-lock');
-    await expect(page.locator('[data-harbor-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
+    await expect(page.locator('[data-golden-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
     const gameFrame = page.frames().find((candidate) => GAME_PAGE(candidate.url()));
     expect(await gameFrame.evaluate(() => window.origin)).toBe('null');
     await expect.poll(() => gameFrame.evaluate(() => window.lastState && {
         hidden: window.lastState.hidden, hold: window.lastState.hold, muted: window.lastState.muted
     })).toEqual({ hidden: false, hold: false, muted: false });
     // The game page saves its settings through the desktop, which keeps them for the next launch.
-    await gameFrame.evaluate(() => parent.postMessage({ source: 'harbor-strike', type: 'settings', value: '{"quality":"medium"}' }, '*'));
-    await expect.poll(() => page.evaluate(() => localStorage.getItem('saltline.settings.v1'))).toBe('{"quality":"medium"}');
-    await page.locator('.window-controls [data-harbor-action="close"]').click();
-    await page.locator('.desktop-shortcut[data-open-harbor-strike]').click();
-    await expect.poll(() => gameState(page, 'settings')).toBe('{"quality":"medium"}');
+    await gameFrame.evaluate(() => parent.postMessage({ source: 'golden-hour', type: 'storage',
+        value: { 'golden-hour-settings-v1': '{"quality":"medium"}', 'unrelated-key': 'ignored' } }, '*'));
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('golden-hour-settings-v1'))).toBe('{"quality":"medium"}');
+    expect(await page.evaluate(() => localStorage.getItem('unrelated-key'))).toBeNull();
+    await page.locator('.window-controls [data-golden-action="close"]').click();
+    await page.locator('.desktop-shortcut[data-open-golden-hour]').click();
+    await expect.poll(() => gameState(page, 'storage')).toEqual({ 'golden-hour-settings-v1': '{"quality":"medium"}' });
+});
+
+test('sends the desktop robot away while Golden Hour is open and brings it back after', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the robot only walks on the desktop layout');
+    await page.route(GAME_PAGE, (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: GAME_STUB }));
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    const pet = page.locator('[data-desktop-pet]');
+    await page.locator('[data-start-toggle]').click();
+    await page.locator('[data-pet-toggle]').click();
+    await expect(pet).toBeVisible();
+    const before = await pet.evaluate((element) => element.getBoundingClientRect().left);
+
+    await page.locator('.desktop-shortcut[data-open-golden-hour]').click();
+    await expect(page.locator('iframe.golden-frame')).toHaveCount(1);
+    await expect(pet).toBeHidden();
+    // Minimizing keeps the game open, so the robot stays away.
+    await page.locator('[data-golden-action="minimize"]').click();
+    await expect(pet).toBeHidden();
+
+    await page.locator('[data-golden-task]').click();
+    await page.locator('.window-controls [data-golden-action="close"]').click();
+    await expect(pet).toBeVisible();
+    expect(Math.abs(await pet.evaluate((element) => element.getBoundingClientRect().left) - before)).toBeLessThan(2);
+});
+
+test('keeps the robot from appearing on its own while Golden Hour is open', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the robot only walks on the desktop layout');
+    await page.clock.install();
+    await page.route(GAME_PAGE, (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: GAME_STUB }));
+    await page.goto('/portfolio/');
+    // The robot introduces itself ten seconds after the homepage shows; the homepage stays open here.
+    await page.locator('.desktop-shortcut[data-open-golden-hour]').evaluate((button) => button.click());
+    await expect(page.locator('iframe.golden-frame')).toHaveCount(1);
+    await page.locator('[data-app-window]').evaluate((element) => element.dispatchEvent(new Event('pointerdown', { bubbles: true })));
+    await page.clock.runFor(15000);
+    await expect(page.locator('[data-desktop-pet]')).toBeHidden();
+
+    // The homepage is in front now, so close the game window from its button directly.
+    await page.locator('.window-controls [data-golden-action="close"]').evaluate((button) => button.click());
+    await page.clock.runFor(11000);
+    await expect(page.locator('[data-desktop-pet]')).toBeVisible();
 });

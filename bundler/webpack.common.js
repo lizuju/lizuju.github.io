@@ -71,6 +71,11 @@ module.exports = {
                 { from: path.resolve(rootDirectory, 'build'), noErrorOnMissing: true },
                 {
                 from: path.resolve(rootDirectory, 'static'),
+                // Games under static/games ship as built by their authors; minifying them again only
+                // risks breaking them.
+                info: (file) => ({
+                    minimized: file.absoluteFilename.includes(`${path.sep}static${path.sep}games${path.sep}`),
+                }),
                 globOptions: {
                     ignore: [
                         'static/portfolio/assets/robomaster-match-records/*.jpg',
