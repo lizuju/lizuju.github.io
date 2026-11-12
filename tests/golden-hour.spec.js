@@ -6,9 +6,29 @@ const GAME_PAGE = (url) => new URL(url).pathname === '/games/golden-hour/';
 const GAME_STUB = '<!doctype html><meta charset="utf-8"><title>GOLDEN HOUR — Solstice Hotel</title><canvas tabindex="0"></canvas>'
     + '<script>window.lastState = null; addEventListener("message", (event) => {'
     + ' if (event.source === parent && event.data?.type === "game-state") window.lastState = event.data; });'
-    + ' parent.postMessage({ source: "golden-hour", type: "ready" }, "*");</script>';
+    + ' parent.postMessage({ source: "golden-hour", type: "ready" }, "*");'
+    + ' parent.postMessage({ source: "golden-hour", type: "game-ready" }, "*");</script>';
 const gameState = (page, key) => page.frames().find((frame) => GAME_PAGE(frame.url()))
     ?.evaluate((name) => window.lastState?.[name], key);
+
+test('shows loading until the current game finishes initializing', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'phones do not load the game');
+    await page.route(GAME_PAGE, (route) => route.fulfill({
+        contentType: 'text/html',
+        body: GAME_STUB.replace(' parent.postMessage({ source: "golden-hour", type: "game-ready" }, "*");', '')
+    }));
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-golden-hour]').click();
+    const status = page.locator('[data-golden-status]');
+    await expect.poll(() => gameState(page, 'hidden')).toBe(false);
+    await expect(status).toHaveText('正在载入至日酒店...');
+    await page.evaluate(() => window.postMessage({ source: 'golden-hour', type: 'game-ready' }, '*'));
+    await expect(status).toHaveText('正在载入至日酒店...');
+    const frame = page.frames().find((candidate) => GAME_PAGE(candidate.url()));
+    await frame.evaluate(() => parent.postMessage({ source: 'golden-hour', type: 'game-ready' }, '*'));
+    await expect(status).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
+});
 
 test('ships Golden Hour without the copy label or ULTRA preset, and redirects Harbor Strike', async ({ request }) => {
     const page = await request.get('/games/golden-hour/');
@@ -250,7 +270,8 @@ test('asks phone visitors to open Golden Hour on a computer', async ({ page, isM
     test.skip(!isMobile, 'computers load the game');
     const gameRequests = [];
     page.on('request', (request) => {
-        if (request.url().includes('/games/golden-hour/')) gameRequests.push(request.url());
+        const path = new URL(request.url()).pathname;
+        if (path === '/games/golden-hour/' || path.startsWith('/games/golden-hour/dist/')) gameRequests.push(request.url());
     });
     await page.goto('/portfolio/');
     const gameWindow = page.locator('[data-golden-window]');
@@ -342,8 +363,9 @@ test('runs the game in a sandboxed frame that still loads and reports ready', as
     await expect.poll(() => gameState(page, 'storage')).toEqual({ 'golden-hour-settings-v1': '{"quality":"medium"}' });
 });
 
-test('sends the desktop robot away while Golden Hour is open and brings it back after', async ({ page, isMobile }) => {
+test('dismisses the desktop robot when Golden Hour opens without restoring it on close', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the robot only walks on the desktop layout');
+    await page.clock.install();
     await page.route(GAME_PAGE, (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: GAME_STUB }));
     await page.goto('/portfolio/');
     await page.locator('[data-window-action="minimize"]').click();
@@ -351,7 +373,6 @@ test('sends the desktop robot away while Golden Hour is open and brings it back 
     await page.locator('[data-start-toggle]').click();
     await page.locator('[data-pet-toggle]').click();
     await expect(pet).toBeVisible();
-    const before = await pet.evaluate((element) => element.getBoundingClientRect().left);
 
     await page.locator('.desktop-shortcut[data-open-golden-hour]').click();
     await expect(page.locator('iframe.golden-frame')).toHaveCount(1);
@@ -362,8 +383,15 @@ test('sends the desktop robot away while Golden Hour is open and brings it back 
 
     await page.locator('[data-golden-task]').click();
     await page.locator('.window-controls [data-golden-action="close"]').click();
+    await expect(pet).toBeHidden();
+    await expect(page.locator('[data-pet-toggle]')).toHaveAttribute('aria-expanded', 'false');
+    await page.locator('.desktop-shortcut[data-open-window]').click();
+    await page.clock.runFor(11000);
+    await expect(pet).toBeHidden();
+
+    await page.locator('[data-start-toggle]').click();
+    await page.locator('[data-pet-toggle]').click();
     await expect(pet).toBeVisible();
-    expect(Math.abs(await pet.evaluate((element) => element.getBoundingClientRect().left) - before)).toBeLessThan(2);
 });
 
 test('keeps the robot from appearing on its own while Golden Hour is open', async ({ page, isMobile }) => {

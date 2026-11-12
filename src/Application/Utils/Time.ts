@@ -7,6 +7,7 @@ export default class Time extends EventEmitter {
     elapsed: number;
     delta: number;
     animationFrameId: number;
+    frameTimerId: number | undefined;
     removeLoadingListener: () => void;
     isPaused: boolean;
     pausedAt: number;
@@ -37,11 +38,8 @@ export default class Time extends EventEmitter {
         if (this.isPaused) return;
 
         const currentTime = Date.now();
-        // A throttled scene still schedules every frame but only redraws ten times a second.
         if (this.throttleWhen?.() && currentTime - this.current < 100) {
-            this.animationFrameId = window.requestAnimationFrame(() => {
-                this.tick();
-            });
+            this.scheduleTick();
             return;
         }
 
@@ -51,9 +49,20 @@ export default class Time extends EventEmitter {
 
         this.trigger('tick');
 
-        this.animationFrameId = window.requestAnimationFrame(() => {
-            this.tick();
-        });
+        this.scheduleTick();
+    }
+
+    scheduleTick() {
+        if (this.isPaused) return;
+        const delay = this.throttleWhen?.()
+            ? Math.max(0, 100 - (Date.now() - this.current))
+            : 0;
+        const requestTick = () => {
+            this.frameTimerId = undefined;
+            this.animationFrameId = window.requestAnimationFrame(() => this.tick());
+        };
+        if (delay > 0) this.frameTimerId = window.setTimeout(requestTick, delay);
+        else requestTick();
     }
 
     pause() {
@@ -62,6 +71,8 @@ export default class Time extends EventEmitter {
         this.isPaused = true;
         this.pausedAt = Date.now();
         window.cancelAnimationFrame(this.animationFrameId);
+        window.clearTimeout(this.frameTimerId);
+        this.frameTimerId = undefined;
     }
 
     resume() {
@@ -88,6 +99,7 @@ export default class Time extends EventEmitter {
 
     destroy() {
         window.cancelAnimationFrame(this.animationFrameId);
+        window.clearTimeout(this.frameTimerId);
         this.removeLoadingListener();
         document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     }

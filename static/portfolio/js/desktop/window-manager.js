@@ -1,9 +1,9 @@
 (() => {
     const desktopApi = window.GavinDesktop;
 
-    const constrainWindowPosition = (element, geometry, workArea) => {
+    const constrainWindowPosition = (element, geometry, workArea,
+        titleHeight = element.querySelector('.window-titlebar').offsetHeight + 2 * element.clientTop) => {
         const visibleWidth = Math.min(160, geometry.width, workArea.width);
-        const titleHeight = element.querySelector('.window-titlebar').offsetHeight + 2 * element.clientTop;
         return {
             ...geometry,
             left: Math.min(Math.max(visibleWidth - geometry.width, geometry.left), workArea.width - visibleWidth),
@@ -328,6 +328,8 @@
 
             closeWindowMenus();
             const geometry = getWindowGeometry(element);
+            const workArea = getWorkArea();
+            const titleHeight = element.querySelector('.window-titlebar').offsetHeight + 2 * element.clientTop;
             applyWindowGeometry(element, geometry);
             const mobileWindow = window.innerWidth <= 900;
             pointerInteraction = {
@@ -337,7 +339,11 @@
                 startX: event.clientX,
                 startY: event.clientY,
                 geometry,
+                workArea,
+                titleHeight,
                 element,
+                pendingPosition: null,
+                animationFrame: null,
                 minWidth: mobileWindow ? Math.min(minWidth, 260) : minWidth,
                 minHeight: mobileWindow ? Math.min(minHeight, 280) : minHeight
             };
@@ -346,24 +352,24 @@
             event.preventDefault();
         };
 
-        const updatePointerInteraction = (event) => {
-            if (!pointerInteraction || event.pointerId !== pointerInteraction.pointerId) return;
-            if (!(event.buttons & 1)) {
-                finishPointerInteraction(event);
-                return;
-            }
-
-            const { type, startX, startY, geometry, element, minWidth, minHeight } = pointerInteraction;
-            const deltaX = event.clientX - startX;
-            const deltaY = event.clientY - startY;
-            const workArea = getWorkArea();
+        const flushPointerInteraction = () => {
+            if (!pointerInteraction) return;
+            const { type, startX, startY, geometry, workArea, titleHeight, element, minWidth, minHeight,
+                pendingPosition } = pointerInteraction;
+            pointerInteraction.animationFrame = null;
+            if (!pendingPosition) return;
+            pointerInteraction.pendingPosition = null;
+            const deltaX = pendingPosition.x - startX;
+            const deltaY = pendingPosition.y - startY;
 
             if (type === 'drag') {
-                applyWindowGeometry(element, constrainWindowPosition(element, {
+                const { left, top } = constrainWindowPosition(element, {
                     ...geometry,
                     left: geometry.left + deltaX,
                     top: geometry.top + deltaY
-                }, workArea));
+                }, workArea, titleHeight);
+                element.style.left = `${Math.round(left)}px`;
+                element.style.top = `${Math.round(top)}px`;
                 return;
             }
 
@@ -376,10 +382,28 @@
             });
         };
 
+        const updatePointerInteraction = (event) => {
+            if (!pointerInteraction || event.pointerId !== pointerInteraction.pointerId) return;
+            if (!(event.buttons & 1)) {
+                finishPointerInteraction(event);
+                return;
+            }
+
+            pointerInteraction.pendingPosition = { x: event.clientX, y: event.clientY };
+            if (pointerInteraction.animationFrame === null) {
+                pointerInteraction.animationFrame = window.requestAnimationFrame(flushPointerInteraction);
+            }
+        };
+
         const finishPointerInteraction = (event) => {
             if (!pointerInteraction || (event?.pointerId !== undefined && event.pointerId !== pointerInteraction.pointerId)) return;
-            const { element, captureTarget, pointerId } = pointerInteraction;
+            const { element, captureTarget, pointerId, animationFrame } = pointerInteraction;
             if (event?.type === 'lostpointercapture' && event.target !== captureTarget) return;
+            if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+            if (event?.type === 'pointerup') {
+                pointerInteraction.pendingPosition = { x: event.clientX, y: event.clientY };
+            }
+            flushPointerInteraction();
             pointerInteraction = undefined;
             element.classList.remove('is-dragging', 'is-resizing');
             if (captureTarget.hasPointerCapture(pointerId)) captureTarget.releasePointerCapture(pointerId);

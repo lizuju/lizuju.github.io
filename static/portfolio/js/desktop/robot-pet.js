@@ -28,11 +28,7 @@
         let destination = 0;
         let movementSpeed = 15;
         let speechTimer;
-        // While a game is open the robot steps aside to leave the game its frame budget, and comes
-        // back afterwards if it was out before.
         let gameRunning = false;
-        let returnAfterGame = false;
-        let returnCenter = 0;
 
         const updateLanguage = () => {
             const copy = desktopApi.t();
@@ -226,16 +222,7 @@
             const running = event.detail?.running === true;
             if (running === gameRunning) return;
             gameRunning = running;
-            if (running) {
-                returnAfterGame = !pet.hidden;
-                if (!pet.hidden) {
-                    returnCenter = position + pet.offsetWidth / 2;
-                    hide(false);
-                }
-            } else if (returnAfterGame) {
-                returnAfterGame = false;
-                show(returnCenter);
-            }
+            if (running && !pet.hidden) hide(false);
             syncAutoShow();
         });
         window.addEventListener('portfolio-language-change', updateLanguage);
