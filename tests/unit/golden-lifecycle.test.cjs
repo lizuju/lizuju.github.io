@@ -182,6 +182,95 @@ test('standalone startup waits for a hidden page to become visible', async () =>
     assert.equal(continued, true);
 });
 
+test('boot work rechecks visibility after a released waiter and propagates task errors', async () => {
+    const h = harness();
+    const completed = [];
+    h.state({ hold: true });
+    const pending = h.context.__goldenHourWaitForBoot(() => completed.push('ready'));
+    h.state({ hold: false });
+    h.state({ hidden: true });
+    await new Promise(setImmediate);
+    assert.deepEqual(completed, [], 'a new hidden state wins before queued boot work starts');
+    h.state({ hidden: false });
+    await pending;
+    assert.deepEqual(completed, ['ready']);
+    const error = new Error('animation build failed');
+    await assert.rejects(h.context.__goldenHourWaitForBoot(() => { throw error; }), error);
+});
+
+test('each released boot task checks the state left by the previous task', async () => {
+    const h = harness();
+    const completed = [];
+    h.state({ hold: true });
+    const first = h.context.__goldenHourWaitForBoot(() => {
+        completed.push('first');
+        h.state({ hold: true });
+    });
+    const second = h.context.__goldenHourWaitForBoot(() => completed.push('second'));
+    h.state({ hold: false });
+    await first;
+    await new Promise(setImmediate);
+    assert.deepEqual(completed, ['first']);
+    h.state({ hold: false });
+    await second;
+    assert.deepEqual(completed, ['first', 'second']);
+});
+
+test('weapon warm-up keeps its complete sequence and timer cadence across drag and minimize', async () => {
+    const game = fs.readFileSync(path.join(__dirname, '../../static/games/golden-hour/dist/game.js'), 'utf8');
+    const start = game.indexOf('o.warm=');
+    const end = game.indexOf('}let P0=', start);
+    assert.ok(start >= 0 && end > start);
+    const warm = `if(${game.slice(start, end)}}`;
+    const h = harness();
+    const timers = [];
+    const completed = [];
+    h.context.setTimeout = (callback, delay) => timers.push({ callback, delay });
+    h.context.o = { need: (name) => completed.push(name) };
+    h.context.u0 = Object.fromEntries(['first', 'reload', 'reloadEmpty', 'inspect', 'throw', 'k9'].map(name => [name, null]));
+    for (const name of Object.keys(h.context.u0)) {
+        Object.defineProperty(h.context.u0, name, { get: () => completed.push(name) });
+    }
+    vm.runInNewContext(warm, h.context);
+    assert.equal(timers.length, 1);
+    const initial = timers.shift();
+    assert.equal(initial.delay, 450);
+    h.state({ hold: true });
+    const waiting = initial.callback();
+    await new Promise(setImmediate);
+    assert.deepEqual(completed, []);
+    assert.equal(timers.length, 0, 'paused warm-up does not poll or create extra timers');
+    h.state({ hold: false });
+    h.visibility(true);
+    await new Promise(setImmediate);
+    assert.deepEqual(completed, [], 'hiding again before the waiter runs keeps warm-up suspended');
+    h.visibility(false);
+    await waiting;
+    assert.deepEqual(completed, ['rack']);
+    const next = timers.shift();
+    assert.equal(next.delay, 110);
+    h.state({ hidden: true });
+    const minimized = next.callback();
+    await new Promise(setImmediate);
+    assert.deepEqual(completed, ['rack']);
+    h.state({ hidden: false, hold: true });
+    await new Promise(setImmediate);
+    assert.deepEqual(completed, ['rack'], 'restoring into a drag still holds the next step');
+    h.state({ hold: false });
+    await minimized;
+    while (timers.length) {
+        const timer = timers.shift();
+        assert.equal(timer.delay, 110);
+        await timer.callback();
+    }
+    assert.deepEqual(completed, ['rack', 'ctrl', 'first', 'mag', 'reload', 'reloadEmpty', 'inspect', 'frag', 'throw', 'k9']);
+    h.context.GH_NOWARM = true;
+    vm.runInNewContext(warm, h.context);
+    assert.equal(timers.length, 0, 'GH_NOWARM still disables automatic warm-up');
+    h.context.o.warm();
+    assert.equal(completed.at(-1), 'rack', 'explicit synchronous warm-up remains available');
+});
+
 test('frame pacing changes modes promptly without using expensive game diagnostics', () => {
     const h = harness();
     const seen = [];

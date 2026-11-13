@@ -106,6 +106,56 @@ test('runtime quality rebuild keeps the effects pass before the weapon and relea
     gfx._dispose();
 });
 
+test('selecting the active quality preserves targets, exposure and the paused image', () => {
+    for (const quality of ['low', 'medium', 'high']) {
+        const { Graphics, allocations } = runtime();
+        const gfx = new Graphics({ addEventListener() {} }, quality);
+        gfx.setFx(effects());
+        const resources = [gfx.composer, gfx.bloom, gfx.fxPass, gfx.meter, gfx.uniforms];
+        const before = { ...allocations };
+        let notifications = 0;
+        gfx.onQuality = () => notifications++;
+        gfx.meter.reset = false;
+        gfx.pausedFrame = true;
+        gfx._hasPrev = true;
+        for (let count = 0; count < 3; count++) gfx.setQuality(quality);
+        assert.deepEqual(allocations, before);
+        assert.deepEqual([gfx.composer, gfx.bloom, gfx.fxPass, gfx.meter, gfx.uniforms], resources);
+        assert.equal(gfx.meter.reset, false);
+        assert.equal(gfx.pausedFrame, true);
+        assert.equal(gfx._hasPrev, true);
+        assert.equal(notifications, 0);
+        gfx._dispose();
+    }
+});
+
+test('the settings UI ignores the active quality before persisting or notifying the game', () => {
+    const start = source.indexOf('_set(t,e){let s=this._rowDef(t);');
+    const stop = source.indexOf('_syncRow(t,e){', start);
+    assert.ok(start >= 0 && stop > start);
+    const settings = { quality: 'medium' };
+    const events = [];
+    const set = vm.runInNewContext(`({${source.slice(start, stop)}})._set`, {
+        _s: settings,
+        Pw: () => events.push('persist'),
+    });
+    const row = {};
+    const ui = {
+        _rowDef: () => ({ k: 'quality' }),
+        cb: { onSetting: key => events.push(key) },
+        _syncRow: () => events.push('sync'),
+        _side: () => events.push('side'),
+    };
+    set.call(ui, row, 'medium');
+    assert.deepEqual(events, []);
+    assert.equal(settings.quality, 'medium');
+    set.call(ui, row, 'high');
+    assert.equal(settings.quality, 'high');
+    assert.deepEqual(events, ['persist', 'quality', 'sync', 'side']);
+    set.call(ui, row, 'high');
+    assert.deepEqual(events, ['persist', 'quality', 'sync', 'side']);
+});
+
 test('default construction remains high quality and boot passes validated saved quality directly', () => {
     const { Graphics } = runtime();
     const gfx = new Graphics({ addEventListener() {} });

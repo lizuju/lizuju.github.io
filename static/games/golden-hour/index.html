@@ -17,9 +17,10 @@
   let hostHidden = false;
   let hidden = document.hidden;
   const bootWaiters = new Set();
-  window.__goldenHourWaitForBoot = () => hidden || hold
-    ? new Promise((resolve) => bootWaiters.add(resolve))
-    : Promise.resolve();
+  window.__goldenHourWaitForBoot = async (task) => {
+    while (hidden || hold) await new Promise((resolve) => bootWaiters.add(resolve));
+    return task?.();
+  };
   let resolveReady;
   window.__goldenHourReady = new Promise((resolve) => { resolveReady = resolve; });
 
