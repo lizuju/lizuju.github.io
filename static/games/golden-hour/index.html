@@ -42,12 +42,21 @@
 
   // Mute: everything the game sends to the speakers passes one gain node per audio context.
   const outputs = new Map();
+  const connect = typeof AudioNode === 'undefined' ? null : AudioNode.prototype.connect;
+  const disconnect = typeof AudioNode === 'undefined' ? null : AudioNode.prototype.disconnect;
   const updateOutput = (output, state) => {
     const context = output.context;
     output.hidden = hidden;
+    output.muted = muted;
     if (context.state === 'closed') {
       outputs.delete(output);
       return;
+    }
+    // Keep the audio clock and sustained sounds current without an audible DSP output.
+    if (state.connected === muted) {
+      if (muted) disconnect.call(output);
+      else connect.call(output, state.destination);
+      state.connected = !muted;
     }
     output.gain.setTargetAtTime(muted || hidden ? 0 : 1, context.currentTime, 0.02);
     if (state.pending) return;
@@ -69,16 +78,13 @@
     for (const [output, state] of outputs) updateOutput(output, state);
   };
   if (typeof AudioNode !== 'undefined' && typeof AudioDestinationNode !== 'undefined') {
-    const connect = AudioNode.prototype.connect;
-    const disconnect = AudioNode.prototype.disconnect;
     const outputFor = (destination) => {
       const context = destination.context;
       if (!context.__goldenHourOutput) {
         const output = context.createGain();
         output.gain.value = muted || hidden ? 0 : 1;
-        connect.call(output, destination);
         context.__goldenHourOutput = output;
-        const state = { suspended: false, pending: false };
+        const state = { suspended: false, pending: false, connected: false, destination };
         outputs.set(output, state);
         context.addEventListener('statechange', () => updateOutput(output, state));
         updateOutput(output, state);
@@ -94,9 +100,8 @@
     };
   }
 
-  // Frame pacing without touching image quality: at most 60 fps in play and 30 fps on menus;
-  // 5 fps while the window is behind another one, dragged or off-camera (game logic and sound
-  // fades keep running); nothing while minimized.
+  // Keep simulation at its normal pace while reducing only draws behind another window,
+  // during dragging or off-camera. Minimized games stop their callbacks entirely.
   const nativeFrame = window.requestAnimationFrame.bind(window);
   const nativeCancel = window.cancelAnimationFrame.bind(window);
   const waiting = new Map();
@@ -105,10 +110,20 @@
   let runThisFrame = true;
   let nextRun = -Infinity;
   let frameInterval = 0;
+  let nextDraw = -Infinity;
+  window.__goldenHourClockEpoch = 0;
+  window.__goldenHourShouldRender = (time) => {
+    if (hidden) return false;
+    if (!hold) return true;
+    if (time - nextDraw > 400) nextDraw = time;
+    if (time + 0.001 < nextDraw) return false;
+    nextDraw = Math.max(nextDraw + 200, time);
+    return true;
+  };
   const allowFrame = (time) => {
     if (time !== decidedAt) {
       const state = window.GH?.G?.state || 'playing';
-      const interval = hidden ? Infinity : hold ? 200 : ['menu', 'paused', 'over'].includes(state) ? 1000 / 30 : 1000 / 60;
+      const interval = hidden ? Infinity : ['menu', 'paused', 'over'].includes(state) ? 1000 / 30 : 1000 / 60;
       if (interval !== frameInterval || time - decidedAt > interval * 2) {
         frameInterval = interval;
         nextRun = time;
@@ -149,8 +164,10 @@
     if (hidden !== nextHidden) {
       hidden = nextHidden;
       nextRun = -Infinity;
+      nextDraw = -Infinity;
       frameInterval = 0;
       decidedAt = -1;
+      if (!hidden) window.__goldenHourClockEpoch++;
       for (const entry of waiting.values()) {
         if (hidden) {
           if (entry.nativeId !== null) nativeCancel(entry.nativeId);
@@ -176,7 +193,9 @@
     const state = event.data;
     if (event.source !== window.parent || state?.source !== 'gavin-desktop' || state.type !== 'game-state') return;
     muted = Boolean(state.muted);
-    hold = Boolean(state.hold);
+    const nextHold = Boolean(state.hold);
+    if (hold !== nextHold) nextDraw = -Infinity;
+    hold = nextHold;
     hostHidden = Boolean(state.hidden);
     if (!ownStorage && !savedLoaded && state.storage && typeof state.storage === 'object') {
       for (const [key, value] of Object.entries(state.storage)) if (typeof value === 'string') saved.set(key, value);
