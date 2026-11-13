@@ -46,6 +46,8 @@ function linearRaycast(world, origin, direction, maxDistance, ignoreWater = fals
 
 function assertRay(world, origin, direction, distance, ignoreWater = false) {
     const expected = linearRaycast(world, origin, direction, distance, ignoreWater);
+    assert.equal(world.raycast(...origin, ...direction, distance, null, ignoreWater),
+        expected !== null, JSON.stringify({ origin, direction, distance, boolean: true }));
     const actual = {};
     const hit = world.raycast(...origin, ...direction, distance, actual, ignoreWater);
     assert.equal(hit, expected !== null, JSON.stringify({ origin, direction, distance }));
@@ -110,6 +112,75 @@ test('nearby ray checks only local candidates and observes collider state change
     target.off = false;
     target.noRay = true;
     assertRay(world, [.5, 1, 0], [0, 0, 1], 4);
+});
+
+test('boolean rays preserve inside, surface, tangent and exclusive-distance contacts', () => {
+    const world = new World();
+    world.addCollider(0, 0, 0, 4, 4, 4);
+    const cases = [
+        [[2, 2, 2], [1, 0, 0], 10, false],
+        [[0, 2, 2], [-1, 0, 0], 10, false],
+        [[0, 2, 2], [1, 0, 0], 10, true],
+        [[-1, 2, 2], [1, 0, 0], 1, false],
+        [[-1, 2, 2], [1, 0, 0], 1.00001, true],
+        [[-1, 3, 2], [1, 1, 0], 10, true],
+        [[-1, 3.001, 2], [1, 1, 0], 10, false],
+        [[5, 5, 2], [-1, -1, 0], 10, true],
+        [[2, -1, 2], [0, 1, 0], 10, true],
+        [[2, -1, 2], [0, 1, 0], 0, false]
+    ];
+    for (const [origin, direction, distance, expected] of cases) {
+        assert.equal(world.raycast(...origin, ...direction, distance, null), expected);
+        assertRay(world, origin, direction, distance);
+    }
+});
+
+test('boolean rays keep glass, water and collider flags live between queries', () => {
+    const world = new World();
+    const col = world.addCollider(0, 0, 2, 1, 2, 3);
+    const ray = () => world.raycast(.5, 1, 0, 0, 0, 1, 20, null);
+    assert.equal(ray(), true);
+    for (const key of ['off', 'noRay', 'pane']) {
+        col[key] = true;
+        assert.equal(ray(), false, key);
+        assertRay(world, [.5, 1, 0], [0, 0, 1], 20);
+        col[key] = false;
+        assert.equal(ray(), true, key);
+    }
+    col.water = true;
+    assert.equal(ray(), true);
+    assert.equal(world.raycast(.5, 1, 0, 0, 0, 1, 20, null, true), false);
+    assertRay(world, [.5, 1, 0], [0, 0, 1], 20, true);
+    world.addCollider(0, 0, 10, 1, 2, 11);
+    assert.equal(world.raycast(.5, 1, 0, 0, 0, 1, 20, null, true), true);
+    assertRay(world, [.5, 1, 0], [0, 0, 1], 20, true);
+});
+
+test('boolean occlusion stops after its first blocker while detailed rays retain the nearest hit', () => {
+    const world = new World();
+    const far = world.addCollider(0, 0, 3, 1, 2, 3.5);
+    const near = world.addCollider(0, 0, 2, 1, 2, 2.5);
+    world.addCollider(0, 0, 2, 1, 2, 2.5, 'metal');
+    for (let z = 8; z < 300; z += 4) world.addCollider(0, 0, z, 1, 2, z + 1);
+    let candidates = 0;
+    let cells = 0;
+    for (const col of world.cols) Object.defineProperty(col, 'noRay', {
+        get() { candidates++; return false; }
+    });
+    const get = world.grid.get.bind(world.grid);
+    world.grid.get = (key) => { cells++; return get(key); };
+    assert.equal(world.raycast(.5, 1, 0, 0, 0, 1, 300, null), true);
+    const booleanWork = { candidates, cells };
+    candidates = cells = 0;
+    const hit = {};
+    assert.equal(world.raycast(.5, 1, 0, 0, 0, 1, 300, hit), true);
+    assert.equal(hit.col, near);
+    assert.notEqual(hit.col, far);
+    assert.equal(hit.t, 2);
+    assert.deepEqual([hit.nx, hit.ny, hit.nz], [0, 0, -1]);
+    assert.ok(booleanWork.candidates < candidates / 10);
+    assert.ok(booleanWork.cells < cells / 10);
+    assertRay(world, [.5, 1, 0], [0, 0, 1], 300);
 });
 
 function expandedAttribute(geometry, name) {
