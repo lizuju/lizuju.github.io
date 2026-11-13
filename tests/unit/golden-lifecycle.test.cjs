@@ -14,9 +14,9 @@ function harness({ embedded = true, hidden = false } = {}) {
     let nextFrame = 1;
     let scheduled = 0;
     class AudioNode {
-        constructor(context) { this.context = context; }
-        connect(target) { this.target = target; return target; }
-        disconnect() { this.target = null; }
+        constructor(context) { this.context = context; this.connects = 0; this.disconnects = 0; }
+        connect(target) { this.target = target; this.connects++; return target; }
+        disconnect() { this.target = null; this.disconnects++; }
     }
     class AudioDestinationNode extends AudioNode {}
     const parent = { postMessage() {} };
@@ -195,28 +195,79 @@ test('frame pacing changes modes promptly without using expensive game diagnosti
     h.frame(48);
     h.state({ hold: true });
     h.frame(64);
+    h.frame(66);
     h.frame(248);
     h.frame(264);
     h.state({ hold: false });
     h.context.GH.G.state = 'playing';
     h.frame(272);
-    assert.deepEqual(seen, [0, 1000 / 60, 32, 64, 264, 272]);
+    assert.deepEqual(seen, [0, 1000 / 60, 32, 66, 248, 272]);
 });
 
 for (const refreshRate of [60, 75, 90, 120, 144, 165, 240]) {
-    test(`frame pacing preserves 60 / 30 / 5 fps at ${refreshRate} Hz`, () => {
-        for (const [state, hold, fps] of [['playing', false, 60], ['menu', false, 30], ['paused', false, 30], ['playing', true, 5]]) {
+    test(`frame pacing keeps simulation independent of held drawing at ${refreshRate} Hz`, () => {
+        for (const [state, hold, fps] of [
+            ['playing', false, 60], ['menu', false, 30], ['paused', false, 30],
+            ['playing', true, 60], ['menu', true, 30]
+        ]) {
             const h = harness();
             h.context.GH.G.state = state;
             h.state({ hold });
+            let simulated = 0;
             let rendered = 0;
-            const loop = () => { rendered++; h.context.requestAnimationFrame(loop); };
+            const loop = time => {
+                simulated++;
+                if (h.context.__goldenHourShouldRender(time)) rendered++;
+                h.context.requestAnimationFrame(loop);
+            };
             h.context.requestAnimationFrame(loop);
             for (let frame = 0; frame < refreshRate * 10; frame++) h.frame(frame * 1000 / refreshRate);
-            assert.equal(rendered, fps * 10, `${state}, hold=${hold}`);
+            assert.equal(simulated, fps * 10, `${state} simulation, hold=${hold}`);
+            assert.equal(rendered, (hold ? 5 : fps) * 10, `${state} drawing, hold=${hold}`);
         }
     });
 }
+
+test('held drawing resumes immediately and does not catch up after a long gap', () => {
+    const h = harness();
+    const draw = time => h.context.__goldenHourShouldRender(time);
+    assert.equal(draw(0), true);
+    h.state({ hold: true });
+    assert.equal(draw(10), true);
+    assert.equal(draw(20), false);
+    assert.equal(draw(209), false);
+    assert.equal(draw(210), true);
+    assert.equal(draw(1000), true);
+    assert.equal(draw(1001), false);
+    h.state({ hold: false });
+    assert.equal(draw(1010), true);
+    h.state({ hold: true });
+    assert.equal(draw(1020), true);
+    assert.equal(draw(1030), false);
+});
+
+test('clock reset epoch changes only when the game returns from actual suspension', () => {
+    const h = harness();
+    assert.equal(h.context.__goldenHourClockEpoch, 0);
+    h.state({ hold: true });
+    h.state({ hold: false });
+    assert.equal(h.context.__goldenHourClockEpoch, 0, 'drawing holds must not discard simulation time');
+    h.state({ hidden: true });
+    h.visibility(true);
+    h.state({ hidden: false });
+    assert.equal(h.context.__goldenHourShouldRender(100), false);
+    assert.equal(h.context.__goldenHourClockEpoch, 0, 'the page remains hidden');
+    h.visibility(false);
+    assert.equal(h.context.__goldenHourClockEpoch, 1);
+    assert.equal(h.context.__goldenHourShouldRender(101), true);
+    h.state({ hidden: false });
+    h.visibility(false);
+    assert.equal(h.context.__goldenHourClockEpoch, 1, 'duplicate visibility reports keep the clock');
+    h.state({ hold: true, hidden: true });
+    h.state({ hold: true, hidden: false });
+    assert.equal(h.context.__goldenHourClockEpoch, 2);
+    assert.equal(h.context.__goldenHourShouldRender(102), true, 'restoring a held game draws immediately');
+});
 
 test('playing cadence stays steady when the display refresh rate changes', () => {
     const h = harness();
@@ -372,4 +423,81 @@ test('delayed UI sounds are discarded while hidden without suppressing Safari fi
     sound.audio.state = 'running';
     play('click');
     assert.deepEqual(heard, ['click', 'click']);
+});
+
+
+test('system mute disconnects only the game output without freezing time or duplicating connections', () => {
+    const h = harness();
+    const sound = h.audio();
+    const output = sound.audio.__goldenHourOutput;
+    const destination = output.target;
+    assert.ok(destination);
+    assert.equal(output.connects, 1);
+    h.state({ muted: true });
+    h.state({ muted: true });
+    assert.equal(output.target, null);
+    assert.equal(output.disconnects, 1);
+    assert.equal(output.muted, true);
+    assert.equal(sound.audio.state, 'running');
+    assert.equal(sound.operations.length, 0);
+    sound.audio.currentTime += 60;
+    h.state({ muted: false });
+    h.state({ muted: false });
+    assert.equal(output.target, destination);
+    assert.equal(output.connects, 2);
+    assert.equal(output.muted, false);
+    assert.equal(sound.audio.currentTime, 62);
+});
+
+test('audio first created while muted starts disconnected and unmute attaches exactly once', () => {
+    const h = harness();
+    h.state({ muted: true });
+    const sound = h.audio();
+    const output = sound.audio.__goldenHourOutput;
+    assert.equal(output.connects, 0);
+    assert.equal(output.disconnects, 0);
+    assert.equal(output.muted, true);
+    h.state({ muted: false });
+    h.state({ muted: false });
+    assert.equal(output.connects, 1);
+    assert.ok(output.target);
+});
+
+test('mute changes during pending visibility transitions preserve the latest connection and context state', async () => {
+    const h = harness();
+    const sound = h.audio();
+    const output = sound.audio.__goldenHourOutput;
+    h.state({ hidden: true, muted: true });
+    h.state({ hidden: false, muted: false });
+    await sound.complete();
+    h.state({ hidden: false, muted: true });
+    await sound.complete();
+    assert.equal(sound.audio.state, 'running');
+    assert.equal(output.target, null);
+    assert.equal(output.muted, true);
+    assert.equal(output.connects, 2);
+    assert.equal(output.disconnects, 2);
+    h.state({ hidden: true, muted: false });
+    await sound.complete();
+    assert.equal(sound.audio.state, 'suspended');
+    assert.equal(output.muted, false);
+    assert.equal(output.hidden, true);
+    assert.equal(sound.gain, 0);
+    h.state({ hidden: false, muted: false });
+    await sound.complete();
+    assert.equal(sound.audio.state, 'running');
+    assert.equal(sound.gain, 1);
+});
+
+test('closed contexts are removed from system mute updates', () => {
+    const h = harness();
+    const sound = h.audio();
+    const output = sound.audio.__goldenHourOutput;
+    sound.audio.state = 'closed';
+    h.state({ muted: true });
+    const counts = [output.connects, output.disconnects];
+    h.state({ muted: false });
+    h.state({ hidden: true, muted: true });
+    assert.deepEqual([output.connects, output.disconnects], counts);
+    assert.equal(sound.operations.length, 0);
 });

@@ -130,7 +130,7 @@ test('boot prepares a suspended audio context without resuming or changing the s
     assert.equal(events[0].latencyHint, 'interactive');
     assert.deepEqual(events.slice(1), ['suspend', 44100]);
     const boot = source.slice(source.indexOf('async function As0()'));
-    assert.ok(boot.indexOf('let audioReady=fo.prepare()') < boot.indexOf('new BM(o)'));
+    assert.ok(boot.indexOf('let audioReady=fo.prepare()') < boot.indexOf('new BM(o,_s.quality)'));
     assert.ok(boot.indexOf('await audioReady') < boot.indexOf('window.GH.ready=!0'));
 });
 

@@ -41,7 +41,8 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     expect(html).toContain("state.type !== 'game-state'");
     expect(html).toContain("type: 'storage'");
     expect(html).toContain('AudioNode.prototype.connect = function');
-    expect(html).toContain("hidden ? Infinity : hold ? 200 :");
+    expect(html).toContain('window.__goldenHourShouldRender =');
+    expect(html).toContain('window.__goldenHourClockEpoch');
     expect(html).toContain("window.__goldenHourReady.then(");
     expect(html).toContain('请使用电脑打开');
 
@@ -168,9 +169,11 @@ test('slows the 3D room while Golden Hour runs on the settled monitor', async ({
         requestAnimationFrame(count);
     });
     const roomFps = async () => {
-        const start = await page.evaluate(() => window.roomFrames);
+        const sample = () => page.evaluate(() => ({ frames: window.roomFrames, time: performance.now() }));
+        const start = await sample();
         await page.waitForTimeout(2000);
-        return ((await page.evaluate(() => window.roomFrames)) - start) / 2;
+        const end = await sample();
+        return (end.frames - start.frames) * 1000 / (end.time - start.time);
     };
 
     await page.goto('/');
@@ -192,6 +195,7 @@ test('slows the 3D room while Golden Hour runs on the settled monitor', async ({
     await desktop.locator('[data-window-action="minimize"]').click();
     await desktop.locator('.desktop-shortcut[data-open-golden-hour]').click();
     await expect(desktop.locator('[data-golden-window]')).toBeVisible();
+    await expect(desktop.locator('[data-golden-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
     const gameFps = await roomFps();
     expect(gameFps).toBeLessThanOrEqual(11);
 
