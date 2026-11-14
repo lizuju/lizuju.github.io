@@ -486,7 +486,7 @@ html.gh-zh body :where(button, b, h1, h2, h3, h4, label, span, em, div, p, kbd) 
   #gs-fu { position: absolute; right: 4.8rem; bottom: 3.8rem; display: flex; align-items: center; gap: 1.1rem; font-size: var(--f0); letter-spacing: .18em; white-space: nowrap; opacity: .9; }
   #gs-fu .ri { width: 3.2rem; height: 3.2rem; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.9rem; background: rgba(12, 9, 8, .7); box-shadow: inset 0 0 0 .2rem var(--or); --k9v: var(--or2); flex: none; }
   #gs-fu b { letter-spacing: .2em; } #gs-fu b em { color: var(--or2); } #gs-fu span { opacity: .65; text-transform: none; letter-spacing: .08em; }
-  @media (max-aspect-ratio: 3/2) { #gs-fu span, #gs-fu kbd { display: none; } }
+  @media (max-aspect-ratio: 3/2), (max-height: 669px) { #gs-fu span, #gs-fu kbd { display: none; } }
   .e-stats .k9c b { color: var(--fr); } .e-stats .k9c b svg.ic { font-size: .7em; margin-right: .2em; vertical-align: .02em; --k9v: #fff; }
   #toast { position: absolute; right: 3.6rem; top: 34%; display: flex; align-items: center; gap: 1.4rem; padding: 1rem 1.6rem 1rem 1rem; background: linear-gradient(270deg, rgba(10, 8, 7, .88), rgba(30, 20, 10, .78)); border-right: .3rem solid var(--or); opacity: 0; clip-path: var(--cut); }
   #toast canvas { width: 5.4rem; height: 5.4rem; display: block; clip-path: polygon(.8rem 0, 100% 0, 100% calc(100% - .8rem), calc(100% - .8rem) 100%, 0 100%, 0 .8rem); }
@@ -608,7 +608,7 @@ html.gh-zh body :where(button, b, h1, h2, h3, h4, label, span, em, div, p, kbd) 
   /* ---- settings ---- */
   .st-body { position: absolute; left: 4.8rem; right: 4.8rem; top: 12.4rem; bottom: 12rem; }
   .st-panel { position: absolute; inset: 0; opacity: 0; visibility: hidden; transform: translateY(.8rem); transition: opacity .16s, transform .2s var(--ease), visibility 0s .2s; display: grid; grid-template-columns: 86rem 1fr; column-gap: 6rem; align-content: start; }
-  .st-panel.on { opacity: 1; visibility: visible; transform: none; transition-delay: 0s; }
+  .st-panel.on { opacity: 1; visibility: inherit; transform: none; transition-delay: 0s; } /* inherit: a closed settings page must not leave its open tab catching clicks over the menus */
   .st-rows { display: flex; flex-direction: column; gap: .4rem; }
   .row { display: grid; grid-template-columns: 30rem 1fr 7rem; align-items: center; height: 5.2rem; padding: 0 2rem; background: linear-gradient(90deg, rgba(255, 255, 255, .055), rgba(255, 255, 255, .015)); border-left: .3rem solid transparent; outline: none; transition: background .12s, border-color .12s; }
   .row:focus-within, .row:hover { border-left-color: var(--or); background: linear-gradient(90deg, rgba(255, 138, 42, .2), rgba(255, 255, 255, .02)); }
@@ -665,7 +665,7 @@ html.gh-zh body :where(button, b, h1, h2, h3, h4, label, span, em, div, p, kbd) 
   .slot { position: absolute; z-index: 3; width: 23rem; padding: .8rem 1.2rem .9rem; background: linear-gradient(rgba(16, 12, 10, .92), rgba(10, 8, 7, .86)); border: 0; box-shadow: inset 0 0 0 1px var(--line); border-top: .2rem solid rgba(255, 255, 255, .5); cursor: pointer; text-align: left; outline: none; transition: transform .14s var(--ease), box-shadow .12s, border-color .12s, opacity .2s; }
   .slot:hover, .slot:focus { transform: translateY(-.3rem); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .5); } .slot.on { border-top-color: var(--or); box-shadow: inset 0 0 0 1px var(--or), 0 0 2.4rem rgba(255, 138, 42, .22); }
   .slot[data-slot=optic] { left: 50%; top: 6%; margin-left: -11.5rem; } .slot[data-slot=stock] { left: 1%; top: 20%; } .slot[data-slot=muzzle] { right: 1%; top: 20%; } .slot[data-slot=magazine] { left: 17%; top: 69%; } .slot[data-slot=underbarrel] { right: 7%; top: 67%; }
-  @media (max-aspect-ratio: 3/2) { .slot { width: 19rem; } .slot[data-slot=optic] { margin-left: -9.5rem; top: 4%; } .slot[data-slot=magazine] { left: 3%; top: 72%; } .slot[data-slot=underbarrel] { right: 3%; top: 72%; } .slot[data-slot=stock], .slot[data-slot=muzzle] { top: 23%; } }
+  @media (max-aspect-ratio: 3/2), (max-height: 669px) { .slot { width: 19rem; } .slot[data-slot=optic] { margin-left: -9.5rem; top: 4%; } .slot[data-slot=magazine] { left: 3%; top: 72%; } .slot[data-slot=underbarrel] { right: 3%; top: 72%; } .slot[data-slot=stock], .slot[data-slot=muzzle] { top: 23%; } }
   .slot .sk { display: flex; align-items: center; gap: .7rem; font-size: var(--f0); letter-spacing: .34em; opacity: .7; } .slot .sk svg.ic { font-size: var(--f3); } .slot .sk kbd { margin-left: auto; font-size: var(--f0); opacity: .8; }
   .slot .sv { font-size: var(--f3); font-weight: 700; letter-spacing: .1em; margin-top: .3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .slot.mod .sv { color: var(--or2); }
   .gs-stage.camo .slot { opacity: 0; pointer-events: none; } .gs-stage.camo #gs-lines { opacity: 0; } #gs-lines { transition: opacity .2s; }
@@ -736,7 +736,18 @@ html.gh-zh body :where(button, b, h1, h2, h3, h4, label, span, em, div, p, kbd) 
   #mm-tapew { height: calc(1.4rem + var(--f0) + 2px); margin-top: 1.2rem; }
   #gs-cinfo .ci-r { flex-direction: column; gap: .3rem; }
   .tab span { white-space: nowrap; }
-  @media (max-aspect-ratio: 3/2) { .slot { width: 22rem; } .slot[data-slot=optic] { margin-left: -11rem; } .slot .sk { letter-spacing: .14em; } #pg-gunsmith .tb-keys, #pg-gunsmith .tab em { display: none; } #pg-gunsmith .tab { padding: 0 1.2rem; } }
+  @media (max-aspect-ratio: 3/2), (max-height: 669px) { .slot { width: 22rem; } .slot[data-slot=optic] { margin-left: -11rem; } .slot .sk { letter-spacing: .14em; } #pg-gunsmith .tb-keys, #pg-gunsmith .tab em { display: none; } #pg-gunsmith .tab { padding: 0 1.2rem; } }
+  /* Short windows, such as the GavinOS desktop window (about 952x538): below 669px the rem stops at
+     its 6.2px floor, so the 108rem-tall layout no longer fits. Move the loadout card under the
+     weapon mastery panel, drop the gunsmith's field-upgrade line (the menu's loadout card shows it),
+     and tighten the end screen so its buttons stay on screen. */
+  @media (max-height: 669px) {
+    #loadcard { left: auto; right: 4.8rem; top: 52.4rem; width: max(40rem, 316px); }
+    #gs-fu { display: none; }
+    .slot[data-slot=magazine], .slot[data-slot=underbarrel] { top: 63%; }
+    #pg-gunsmith .legend { gap: 1.4rem; letter-spacing: .1em; }
+    .e-k { margin-top: 2.4rem; } .e-t { font-size: 9rem; } .e-cols { margin-top: 2rem; } .e-btns { margin-top: 1.8rem; }
+  }
   #err { position: fixed; left: 0; right: 0; bottom: 0; background: #400; color: #fcc; font: 12px/1.4 Consolas, monospace; padding: 8px 12px; white-space: pre-wrap; z-index: 99; letter-spacing: 0; text-transform: none; }
 </style>
 <canvas id="c"></canvas>
