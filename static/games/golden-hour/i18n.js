@@ -276,6 +276,8 @@
         '85% resolution, 2× MSAA, half-rate floor reflections and light shafts.': '85% 分辨率，2× MSAA，半速率地面反射和光束。',
         'Full resolution, 4× MSAA, ambient occlusion and 4K sun shadows. Recommended.': '全分辨率，4× MSAA，环境光遮蔽和 4K 日光阴影。推荐。',
         'MOTION BLUR': '动态模糊',
+        'FLOOR REFLECTIONS': '地面反射',
+        'Mirror reflections on the marble, wood and stone floors. They redraw the whole hotel a second time every frame, so turning them off is the biggest saving: smoother play and a cooler laptop.': '大理石、木地板和石材地面上的镜面反射。开启时每帧都要把整个酒店再画一遍，关掉是最省性能的一项：游戏更流畅，笔记本也更凉。',
         'Film-style blur on fast camera turns and on the weapon and hands as they move (reload, recoil, swap). The weapon stays sharp at rest. Off is the competitive choice.':
             '镜头快速转动以及武器和双手移动（换弹、后坐、切枪）时的电影式模糊。武器静止时保持清晰。竞技玩家建议关闭。',
         'FULLSCREEN': '全屏',

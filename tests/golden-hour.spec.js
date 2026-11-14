@@ -63,6 +63,11 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     // Medium is the default preset; three.js skips its synchronous shader checks.
     expect(code).toContain('quality:"medium",motionBlur:"high"');
     expect(code).toContain('this.debug={checkShaderErrors:!1,onShaderError:null}');
+    // Floor reflections can be switched off in GRAPHICS; they stay on by default and switch live.
+    expect(code).toContain('motionBlur:"high",reflections:"on"');
+    expect(code).toContain('{k:"reflections",label:"FLOOR REFLECTIONS",type:"seg",opts:[["off","OFF"],["on","ON"]]');
+    expect(code).toContain('y.setSize(n.size.x,n.size.y,_s.reflections==="off"?0:f0.refl)');
+    expect(code).toContain('f0==="reflections"&&n.onQuality&&n.onQuality(n.q)');
 
     for (const old of ['/games/harbor-strike/', '/portfolio/games/harbor-strike/']) {
         expect(await (await request.get(old)).text()).toContain('golden-hour/');
@@ -444,10 +449,10 @@ test('shows Golden Hour in Chinese by default and switches back to English from 
     // Text the gunsmith, pause menu, match and end screen write as you play.
     expect(await page.evaluate(() => [
         'EQUIP AS PRIMARY', 'SIDEARM — ALWAYS CARRIED', 'PRESS AGAIN TO FORFEIT',
-        'STRIX 9 · DUNE', 'EXTENDED MAG FITTED', 'MATCH SCORE +1,200', '1 TAKEDOWN · RECHARGING'
+        'STRIX 9 · DUNE', 'EXTENDED MAG FITTED', 'MATCH SCORE +1,200', '1 TAKEDOWN · RECHARGING', 'FLOOR REFLECTIONS'
     ].map((text) => window.GoldenHourI18n.translate(text)))).toEqual([
         '设为主武器', '副武器 — 始终携带', '再按一次确认认输',
-        'STRIX 9 · 沙丘', '已安装扩容弹匣', '比赛得分 +1,200', '1 次击杀 · 充能中'
+        'STRIX 9 · 沙丘', '已安装扩容弹匣', '比赛得分 +1,200', '1 次击杀 · 充能中', '地面反射'
     ]);
     // Text the game writes later is translated as it appears.
     await page.locator('[data-test="deploy"]').evaluate((element) => { element.textContent = 'GUNSMITH'; });
