@@ -80,6 +80,7 @@
                 hold: !viewingMonitor || !gameWindow.classList.contains('is-active')
                     || gameWindow.classList.contains('is-dragging') || gameWindow.classList.contains('is-resizing'),
                 muted: Boolean(desktopApi.isAudioMuted?.()),
+                lang: desktopApi.getLanguage(),
                 storage: readStorage()
             }, '*');
         };
@@ -113,6 +114,12 @@
             }
             if (!frame || event.source !== frame.contentWindow || event.data?.source !== 'golden-hour') return;
             if (event.data.type === 'ready') postState();
+            // The game's own language switch flips the system language through the taskbar button,
+            // so the desktop and the game always agree.
+            if (event.data.type === 'language' && ['zh-CN', 'en'].includes(event.data.lang)
+                && event.data.lang !== desktopApi.getLanguage()) {
+                document.querySelector('[data-taskbar-lang]')?.click();
+            }
             if (event.data.type === 'game-ready') {
                 loading.hidden = true;
                 setStatus('goldenReady');
@@ -241,6 +248,7 @@
             setStatus(statusKey);
         };
         window.addEventListener('portfolio-language-change', updateCopy);
+        window.addEventListener('portfolio-language-change', postState);
         updateCopy();
 
         // Loads the game when a restored session left the window open.
