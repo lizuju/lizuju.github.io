@@ -48,6 +48,11 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     // The interface language follows the desktop's taskbar 中/EN button.
     expect(html).toContain('<script src="i18n.js"></script>');
     expect(html).toContain('window.GoldenHourI18n?.setLanguage(state.lang)');
+    // A closed settings page must not leave its open tab catching clicks over the menus, and short
+    // windows (the desktop window is about 952x538) get a layout that keeps everything on screen.
+    expect(html).toContain('.st-panel.on { opacity: 1; visibility: inherit;');
+    expect(html).not.toContain('.st-panel.on { opacity: 1; visibility: visible;');
+    expect(html).toContain('@media (max-height: 669px) {');
 
     const game = await request.get('/games/golden-hour/dist/game.js');
     expect(game.ok()).toBe(true);
