@@ -148,7 +148,16 @@ async function createRuntime({ virtualMessageBytes = 0, virtualBaseBytes = 0, al
                     super(ctx, env);
                     const setAlarm = ctx.storage.setAlarm.bind(ctx.storage);
                     ctx.storage.setAlarm = (...args) => { this.alarmWrites = (this.alarmWrites || 0) + 1; return setAlarm(...args); };
+                    const waitUntil = ctx.waitUntil.bind(ctx);
+                    this.backgroundWork = new Set();
+                    ctx.waitUntil = promise => {
+                      const settled = Promise.resolve(promise).then(() => {}, () => {});
+                      this.backgroundWork.add(settled);
+                      settled.then(() => this.backgroundWork.delete(settled));
+                      return waitUntil(promise);
+                    };
                   }
+                  async testSettleBackground() { while (this.backgroundWork.size) await Promise.all(this.backgroundWork); }
                   testAlarmWrites() { return this.alarmWrites || 0; }
                   testScheduleAlarm() { return super.scheduleAlarm(); }
                   async alarm(...args) {
@@ -906,19 +915,25 @@ test('the room deadline closes every online device and releases the space withou
   const one = (await authenticateSocket(space, instance)).socket;
   const two = (await authenticateSocket({ ...peer, roomId: space.roomId }, instance)).socket;
   const room = (await instance.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(space.roomId);
-  const oneClosed = socketEvent(one, 'close'), twoClosed = socketEvent(two, 'close');
-  const deadline = Date.now() + 300;
+  // Arm the deadline an hour out so the stored alarm can be read before the runtime fires it.
+  const deadline = Date.now() + 60 * 60 * 1000;
   await room.testAgeActivity(deadline - fourteenDays);
   await room.testScheduleAlarm();
   assert.equal(await room.testReadAlarm(), deadline);
   const ping = socketEvent(one);
   one.send('ping');
   assert.equal((await ping).data, 'pong');
+  // Then let the deadline pass and re-arm: the runtime fires the room's own alarm with no request.
+  // Listen for the closures only now, so their timeout covers the expiry and not the steps above.
+  const oneClosed = socketEvent(one, 'close'), twoClosed = socketEvent(two, 'close');
+  await room.testAgeActivity(Date.now() - fourteenDays - 1000);
+  await room.testScheduleAlarm();
   assert.equal((await oneClosed).code, 4004);
   assert.equal((await twoClosed).code, 4004);
   await room.testWaitAlarm();
+  // The alarm hands the release to the registry in the background; wait for that work, not a timer.
+  await room.testSettleBackground();
   const registry = (await instance.getDurableObjectNamespace('E2EE_PAIRING_REGISTRY')).getByName('registry');
-  for (let attempt = 0; attempt < 100 && await registry.hasRoom(space.roomId); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(await registry.hasRoom(space.roomId), false);
   assert.deepEqual(await room.testSchema(), []);
 });
@@ -1206,7 +1221,8 @@ test('offer generation rechecks expiry and the thirty-space limit after an onlin
     const storage = await instance.unsafeGetDurableObjectStorage('sync-test', 'PairingRegistry', { name: 'registry' });
     const hostSession = request.state.sessions.get(space.token), peerSession = request.state.sessions.get(peer.token);
     const secret = await cryptoClient.decryptPayload(hostSession.keyring, space.roomId, `offer:${old.offerId}`, old.secret);
-    const expiresAt = Date.now() + 1000;
+    // The offer must still be live when the registry probes its owner, so give it a minute rather than racing a short timer.
+    const expiresAt = Date.now() + 60000;
     const encrypted = await cryptoClient.encryptPayload(hostSession.keyring, space.roomId, `offer:${old.offerId}`, { ...secret, expiresAt });
     await storage.exec('UPDATE offers SET secret = ?, expires_at = ? WHERE room_id = ?', encrypted, expiresAt, space.roomId);
     await room.testHoldOnlineProbe();
@@ -1219,7 +1235,10 @@ test('offer generation rechecks expiry and the thirty-space limit after an onlin
     } });
     const pending = pairing.createOffer().then(value => ({ value }), error => ({ error }));
     await room.testWaitOnlineProbes(probes + 1);
-    await new Promise(resolve => setTimeout(resolve, Math.max(1, expiresAt - Date.now() + 10)));
+    // While the probe is held, expire the offer explicitly instead of sleeping past its deadline.
+    const expiredAt = Date.now() - 1;
+    const expired = await cryptoClient.encryptPayload(hostSession.keyring, space.roomId, `offer:${old.offerId}`, { ...secret, expiresAt: expiredAt });
+    await storage.exec('UPDATE offers SET secret = ?, expires_at = ? WHERE room_id = ?', expired, expiredAt, space.roomId);
     if (fillExpiredSlot) await authenticateSocket(await createSpace(client(instance)), instance);
     await room.testReleaseOnlineProbe();
     const result = await pending;
@@ -2028,14 +2047,15 @@ test('unchanged read-only deadlines skip alarm writes while deadline changes and
   assert.equal(await room.testReadAlarm(), laterDeadline);
   assert.equal(await room.testAlarmWrites(), beforeEarly + 2);
 
-  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - sevenDays + 300, sent.body.id);
-  await room.testScheduleAlarm();
+  // Make the message already due and count writes before arming, so the alarm firing early cannot skew the count.
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - sevenDays - 1000, sent.body.id);
   const beforeExpiry = await room.testAlarmWrites();
+  await room.testScheduleAlarm();
   await room.testWaitAlarm();
   const cycle = await room.testAlarmCycle();
   assert.equal(cycle.running, null, 'A running alarm has no scheduled timestamp until explicitly rearmed');
   assert.equal(cycle.scheduled, initialAlarm);
-  assert.equal(await room.testAlarmWrites(), beforeExpiry + 1);
+  assert.equal(await room.testAlarmWrites(), beforeExpiry + 2, 'Arming the expiry and rearming after it are the only alarm writes');
   assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM messages'), [{ count: 0 }]);
 });
 
