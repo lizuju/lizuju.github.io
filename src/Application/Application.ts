@@ -106,6 +106,8 @@ export default class Application {
     resize() {
         this.camera.resize();
         this.renderer.resize();
+        // Redraw the new size even while the room is frozen behind a game.
+        this.time.wake();
     }
 
     update() {

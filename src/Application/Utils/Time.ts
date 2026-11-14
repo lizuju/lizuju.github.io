@@ -7,11 +7,14 @@ export default class Time extends EventEmitter {
     elapsed: number;
     delta: number;
     animationFrameId: number;
-    frameTimerId: number | undefined;
     removeLoadingListener: () => void;
     isPaused: boolean;
     pausedAt: number;
-    throttleWhen?: () => boolean;
+    // While this returns true the loop draws the frame it is on and then stops scheduling
+    // frames; wake() starts it again (see MonitorScreen: the room freezes behind a game).
+    freezeWhen?: () => boolean;
+    isFrozen: boolean;
+    frozenAt: number;
 
     constructor() {
         super();
@@ -23,6 +26,8 @@ export default class Time extends EventEmitter {
         this.delta = 16;
         this.isPaused = false;
         this.pausedAt = 0;
+        this.isFrozen = false;
+        this.frozenAt = 0;
 
         this.animationFrameId = window.requestAnimationFrame(() => {
             this.tick();
@@ -35,44 +40,47 @@ export default class Time extends EventEmitter {
     }
 
     tick() {
-        if (this.isPaused) return;
+        if (this.isPaused || this.isFrozen) return;
 
         const currentTime = Date.now();
-        if (this.throttleWhen?.() && currentTime - this.current < 100) {
-            this.scheduleTick();
-            return;
-        }
-
         this.delta = currentTime - this.current;
         this.current = currentTime;
         this.elapsed = this.current - this.start;
 
         this.trigger('tick');
 
-        this.scheduleTick();
+        if (this.freezeWhen?.()) {
+            this.isFrozen = true;
+            this.frozenAt = Date.now();
+            return;
+        }
+        this.animationFrameId = window.requestAnimationFrame(() => this.tick());
     }
 
-    scheduleTick() {
-        if (this.isPaused) return;
-        const delay = this.throttleWhen?.()
-            ? Math.max(0, 100 - (Date.now() - this.current))
-            : 0;
-        const requestTick = () => {
-            this.frameTimerId = undefined;
-            this.animationFrameId = window.requestAnimationFrame(() => this.tick());
-        };
-        if (delay > 0) this.frameTimerId = window.setTimeout(requestTick, delay);
-        else requestTick();
+    // Draws again after a freeze, or redraws once while the freeze still holds (a resize, a camera
+    // move). Time spent frozen is skipped, so animations continue where they stopped.
+    wake() {
+        if (!this.isFrozen || this.isPaused) return;
+        this.isFrozen = false;
+        const currentTime = Date.now();
+        this.start += currentTime - this.frozenAt;
+        this.current = currentTime;
+        this.delta = 16;
+        window.cancelAnimationFrame(this.animationFrameId);
+        this.animationFrameId = window.requestAnimationFrame(() => this.tick());
     }
 
     pause() {
         if (this.isPaused) return;
 
+        // A hidden tab stops either way; resuming draws a frame and freezes again if it should.
+        if (this.isFrozen) {
+            this.isFrozen = false;
+            this.start += Date.now() - this.frozenAt;
+        }
         this.isPaused = true;
         this.pausedAt = Date.now();
         window.cancelAnimationFrame(this.animationFrameId);
-        window.clearTimeout(this.frameTimerId);
-        this.frameTimerId = undefined;
     }
 
     resume() {
@@ -99,7 +107,6 @@ export default class Time extends EventEmitter {
 
     destroy() {
         window.cancelAnimationFrame(this.animationFrameId);
-        window.clearTimeout(this.frameTimerId);
         this.removeLoadingListener();
         document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     }

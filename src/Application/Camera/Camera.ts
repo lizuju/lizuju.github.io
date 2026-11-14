@@ -102,6 +102,8 @@ export default class Camera extends EventEmitter {
         callback?: () => void
     ) {
         if (this.currentKeyframe === key) return;
+        // A frozen room (a game is open) has to draw again to animate the move.
+        this.time.wake();
 
         if (this.targetKeyframe) TWEEN.removeAll();
 

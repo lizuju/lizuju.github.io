@@ -33,6 +33,7 @@ export default class MonitorScreen extends EventEmitter {
     shouldLeaveMonitor: boolean;
     inComputer: boolean;
     mouseClickInProgress: boolean;
+    gameOpen: boolean;
     dimmingPlane: THREE.Mesh;
     videoTextures: { [key in string]: THREE.VideoTexture };
 
@@ -50,6 +51,7 @@ export default class MonitorScreen extends EventEmitter {
         this.videoTextures = {};
         this.mouseClickInProgress = false;
         this.shouldLeaveMonitor = false;
+        this.gameOpen = false;
 
         // Create screen
         this.initializeScreenEvents();
@@ -59,9 +61,23 @@ export default class MonitorScreen extends EventEmitter {
         this.createPerspectiveDimmer(maxOffset);
     }
 
+    // While a game window is open on the desktop (not minimized), the camera stays on the monitor:
+    // the pointer drifting off the screen no longer pulls it back to the desk. Closing or
+    // minimizing the game hands the view back to the mouse.
+    lockedToGame() {
+        return this.gameOpen
+            && !this.camera.freeCam
+            && (this.camera.currentKeyframe === CameraKey.MONITOR
+                || this.camera.targetKeyframe === CameraKey.MONITOR);
+    }
+
     initializeScreenEvents() {
         document.addEventListener('focusin', (event) => {
-            if ((event.target as HTMLElement).id === 'computer-screen' || !this.prevInComputer) return;
+            if (
+                (event.target as HTMLElement).id === 'computer-screen'
+                || !this.prevInComputer
+                || this.lockedToGame()
+            ) return;
             this.inComputer = this.prevInComputer = false;
             this.camera.trigger('leftMonitor');
         }, { signal: this.application.eventController.signal });
@@ -76,7 +92,7 @@ export default class MonitorScreen extends EventEmitter {
                 }
 
                 // @ts-ignore
-                this.inComputer = event.inComputer;
+                this.inComputer = event.inComputer || this.lockedToGame();
 
                 if (this.inComputer && !this.prevInComputer) {
                     this.camera.trigger('enterMonitor');
@@ -110,7 +126,7 @@ export default class MonitorScreen extends EventEmitter {
             'mousedown',
             (event) => {
                 // @ts-ignore
-                this.inComputer = event.inComputer;
+                this.inComputer = event.inComputer || this.lockedToGame();
                 this.application.mouse.trigger('mousedown', [event]);
 
                 this.mouseClickInProgress = true;
@@ -122,10 +138,10 @@ export default class MonitorScreen extends EventEmitter {
             'mouseup',
             (event) => {
                 // @ts-ignore
-                this.inComputer = event.inComputer;
+                this.inComputer = event.inComputer || this.lockedToGame();
                 this.application.mouse.trigger('mouseup', [event]);
 
-                if (this.shouldLeaveMonitor) {
+                if (this.shouldLeaveMonitor && !this.lockedToGame()) {
                     this.camera.trigger('leftMonitor');
                     this.shouldLeaveMonitor = false;
                 }
@@ -173,10 +189,10 @@ export default class MonitorScreen extends EventEmitter {
             );
         });
 
-        // While a full-window game runs on the desktop, the settled monitor view barely changes,
-        // so the room redraws at a slow pace and leaves the GPU and main thread to the game.
-        let heavyAppActive = false;
-        this.application.time.throttleWhen = () => heavyAppActive
+        // While a game window is open on the desktop, the settled monitor view does not change, so
+        // the room (its 3D scene, the screen's surface layers, the coffee steam) stops drawing and
+        // leaves the GPU and main thread to the game. A resize or camera move draws again.
+        this.application.time.freezeWhen = () => this.gameOpen
             && !this.camera.freeCam
             && this.camera.currentKeyframe === CameraKey.MONITOR;
 
@@ -191,13 +207,15 @@ export default class MonitorScreen extends EventEmitter {
             }
 
             if (event.data.type === 'heavy-app-state') {
-                heavyAppActive = event.data.active === true;
+                this.gameOpen = event.data.active === true;
+                this.application.time.wake();
                 return;
             }
 
             if (event.data.type === 'audio-mute-ready') {
                 // A fresh desktop starts with no game running.
-                heavyAppActive = false;
+                this.gameOpen = false;
+                this.application.time.wake();
                 iframe.contentWindow?.postMessage(
                     {
                         source: 'gavin-shell',

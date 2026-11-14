@@ -48,52 +48,62 @@ function clock() {
     };
 }
 
-test('the immersive room sleeps between throttled updates without polling every display frame', () => {
+test('the immersive room draws its frame, then freezes until woken, skipping the frozen time', () => {
     const c = clock();
-    c.time.throttleWhen = () => true;
+    c.time.freezeWhen = () => true;
     c.advance(16);
-    c.frame();
-    assert.equal(c.ticks, 0);
-    assert.equal(c.frames.size, 0);
-    assert.equal(c.timers.size, 1);
-    c.advance(83);
-    assert.equal(c.frames.size, 0);
-    c.advance(1);
     c.frame();
     assert.equal(c.ticks, 1);
-    assert.equal(c.time.delta, 100);
     assert.equal(c.frames.size, 0);
-    assert.equal(c.timers.size, 1);
-
-    c.time.throttleWhen = () => false;
-    c.advance(100);
-    c.frame();
-    assert.equal(c.ticks, 2);
-    assert.equal(c.timers.size, 0);
-    assert.equal(c.frames.size, 1);
-    c.advance(16);
-    c.frame();
-    assert.equal(c.ticks, 3);
-});
-
-test('hiding or destroying the scene cancels the delayed wake and resume creates one loop', () => {
-    const c = clock();
-    c.time.throttleWhen = () => true;
-    c.frame();
-    c.visibility(true);
     assert.equal(c.timers.size, 0);
     c.advance(5000);
     c.frame();
-    assert.equal(c.ticks, 0);
+    assert.equal(c.ticks, 1);
+    const elapsed = c.time.elapsed;
+
+    // A resize or camera move draws once, then the freeze holds again.
+    c.time.wake();
+    assert.equal(c.frames.size, 1);
+    c.advance(16);
+    c.frame();
+    assert.equal(c.ticks, 2);
+    assert.equal(c.time.delta, 16);
+    assert.equal(c.time.elapsed, elapsed + 16);
     assert.equal(c.frames.size, 0);
+
+    // Lifting the freeze brings back the normal loop, and waking a running loop adds nothing.
+    c.time.freezeWhen = () => false;
+    c.time.wake();
+    c.advance(16);
+    c.frame();
+    assert.equal(c.ticks, 3);
+    assert.equal(c.frames.size, 1);
+    c.time.wake();
+    assert.equal(c.frames.size, 1);
+    c.advance(16);
+    c.frame();
+    assert.equal(c.ticks, 4);
+});
+
+test('hiding a frozen scene and showing it again draws one frame, and destroy stops the loop', () => {
+    const c = clock();
+    c.time.freezeWhen = () => true;
+    c.frame();
+    assert.equal(c.ticks, 1);
+    c.visibility(true);
+    c.advance(5000);
+    c.frame();
+    assert.equal(c.ticks, 1);
     c.visibility(false);
     c.time.resume();
     assert.equal(c.frames.size, 1);
-    c.advance(100);
+    c.advance(16);
     c.frame();
-    assert.equal(c.ticks, 1);
-    assert.equal(c.time.delta, 100);
-    c.time.destroy();
-    assert.equal(c.timers.size, 0);
+    assert.equal(c.ticks, 2);
+    assert.equal(c.time.delta, 16);
     assert.equal(c.frames.size, 0);
+    c.time.wake();
+    c.time.destroy();
+    assert.equal(c.frames.size, 0);
+    assert.equal(c.timers.size, 0);
 });
