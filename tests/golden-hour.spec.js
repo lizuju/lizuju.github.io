@@ -45,6 +45,9 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     expect(html).toContain('window.__goldenHourClockEpoch');
     expect(html).toContain("window.__goldenHourReady.then(");
     expect(html).toContain('请使用电脑打开');
+    // The interface language follows the desktop's taskbar 中/EN button.
+    expect(html).toContain('<script src="i18n.js"></script>');
+    expect(html).toContain('window.GoldenHourI18n?.setLanguage(state.lang)');
 
     const game = await request.get('/games/golden-hour/dist/game.js');
     expect(game.ok()).toBe(true);
@@ -414,4 +417,57 @@ test('keeps the robot from appearing on its own while Golden Hour is open', asyn
     await page.locator('.window-controls [data-golden-action="close"]').evaluate((button) => button.click());
     await page.clock.runFor(11000);
     await expect(page.locator('[data-desktop-pet]')).toBeVisible();
+});
+
+// Stand-in for the game page with the real language layer and a few of the game's own labels.
+const I18N_STUB = '<!doctype html><meta charset="utf-8"><title>GOLDEN HOUR — Solstice Hotel</title><script src="i18n.js"></script>'
+    + '<section class="page" id="pg-settings"><header class="topbar"><h2>SETTINGS</h2>'
+    + '<div class="tabs"><button class="tab" data-tab="controls">CONTROLS</button></div></header>'
+    + '<footer class="legend"><span><kbd>Q</kbd><kbd>E</kbd>TAB</span></footer></section>'
+    + '<b data-test="deploy">DEPLOY</b><span data-test="split">OPERATOR · VANGUARD</span>'
+    + '<p data-test="tip">Slide with <b>C</b> while sprinting to take a corner low and fast. Slide kills earn a medal.</p>';
+
+test('shows Golden Hour in Chinese by default and switches back to English from its settings page', async ({ page }) => {
+    await page.route(GAME_PAGE, (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: I18N_STUB }));
+    await page.goto('/games/golden-hour/');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+    await expect(page.locator('[data-test="deploy"]')).toHaveText('出击');
+    await expect(page.locator('[data-test="split"]')).toHaveText('干员 · 先锋');
+    await expect(page.locator('[data-test="tip"]')).toContainText('滑铲');
+    await expect(page.locator('h2')).toHaveText('设置');
+    await expect(page.locator('.legend')).toHaveText('QE切换标签');
+    // Text the game writes later is translated as it appears.
+    await page.locator('[data-test="deploy"]').evaluate((element) => { element.textContent = 'GUNSMITH'; });
+    await expect(page.locator('[data-test="deploy"]')).toHaveText('枪匠');
+
+    const switcher = page.locator('#pg-settings > .gh-lang');
+    await expect(switcher.locator('button[aria-pressed="true"]')).toHaveText('中文');
+    await switcher.locator('button[data-lang="en"]').click();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    await expect(page.locator('[data-test="deploy"]')).toHaveText('GUNSMITH');
+    await expect(page.locator('[data-test="split"]')).toHaveText('OPERATOR · VANGUARD');
+    await expect(page.locator('h2')).toHaveText('SETTINGS');
+    // Opened on its own, the game keeps the choice the way the rest of the site does.
+    expect(await page.evaluate(() => localStorage.getItem('portfolio-lang'))).toBe('en');
+    await page.reload();
+    await expect(page.locator('[data-test="deploy"]')).toHaveText('DEPLOY');
+});
+
+test('keeps Golden Hour in the desktop language in both directions', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'phones get the use-a-computer notice instead');
+    await page.route(GAME_PAGE, (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: GAME_STUB }));
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-golden-hour]').click();
+    await expect.poll(() => gameState(page, 'lang')).toBe('zh-CN');
+
+    await page.locator('[data-taskbar-lang]').click();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    await expect.poll(() => gameState(page, 'lang')).toBe('en');
+
+    // The switch on the game's settings page asks the desktop, which switches everything.
+    const frame = page.frames().find((candidate) => GAME_PAGE(candidate.url()));
+    await frame.evaluate(() => parent.postMessage({ source: 'golden-hour', type: 'language', lang: 'zh-CN' }, '*'));
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+    await expect.poll(() => gameState(page, 'lang')).toBe('zh-CN');
 });

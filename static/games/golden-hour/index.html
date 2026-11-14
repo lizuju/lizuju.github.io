@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" type="image/png" sizes="16x16" href="icon-16.png"><link rel="icon" type="image/png" sizes="32x32" href="icon-32.png"><link rel="icon" type="image/svg+xml" sizes="any" href="icon.svg"><link rel="apple-touch-icon" sizes="180x180" href="icon-180.png"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" type="image/png" sizes="16x16" href="icon-16.png"><link rel="icon" type="image/png" sizes="32x32" href="icon-32.png"><link rel="icon" type="image/svg+xml" sizes="any" href="icon.svg"><link rel="apple-touch-icon" sizes="180x180" href="icon-180.png"><script src="i18n.js"></script><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
 <script>
 (() => {
   // Computer only: the game needs a keyboard and mouse, so phones get a notice instead.
@@ -198,6 +198,8 @@
     if (hold !== nextHold) nextDraw = -Infinity;
     hold = nextHold;
     hostHidden = Boolean(state.hidden);
+    // The desktop's taskbar 中/EN button sets the game's interface language too.
+    if (typeof state.lang === 'string') window.GoldenHourI18n?.setLanguage(state.lang);
     if (!ownStorage && !savedLoaded && state.storage && typeof state.storage === 'object') {
       for (const [key, value] of Object.entries(state.storage)) if (typeof value === 'string') saved.set(key, value);
       savedLoaded = true;
@@ -216,6 +218,14 @@ html.gh-phone body > :not(.gh-phone-notice) { display: none !important; }
 html.gh-phone .gh-phone-notice { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; background: #0d0a08; color: #f3e6d4; text-align: center; font: 15px/1.7 -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
 .gh-phone-notice strong { font-size: 30px; letter-spacing: .14em; color: #ffb35c; }
 .gh-phone-notice p { margin: 0; max-width: 300px; opacity: .8; }
+/* Language switch in the settings header (i18n.js), styled like the game's option buttons. */
+.gh-lang { position: absolute; right: 4.8rem; bottom: 4.6rem; display: flex; align-items: center; gap: .4rem; }
+.gh-lang-label { margin-right: .6rem; font-size: var(--f0, 1.1rem); letter-spacing: .2em; opacity: .62; white-space: nowrap; }
+.gh-lang button { height: 2.8rem; padding: 0 1.2rem; color: #fff; background: rgba(255, 255, 255, .06); border: 1px solid var(--line, rgba(255,255,255,.18)); font: inherit; font-size: var(--f1, 1.3rem); letter-spacing: .14em; cursor: pointer; }
+.gh-lang button:hover { background: rgba(255, 255, 255, .14); }
+.gh-lang button.on { color: #160b02; background: var(--or, #ff8a2a); border-color: var(--or, #ff8a2a); }
+/* Chinese reads better with tighter tracking than the wide English caps. */
+html.gh-zh body :where(button, b, h1, h2, h3, h4, label, span, em, div, p, kbd) { letter-spacing: .06em; }
 </style>
 </head><body>
 <div class="gh-phone-notice" role="alert"><strong>GOLDEN HOUR</strong><p>这款游戏需要键盘和鼠标，请使用电脑打开。</p><p lang="en">Please open this game on a computer.</p></div>
