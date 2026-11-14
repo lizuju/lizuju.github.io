@@ -61,6 +61,88 @@ function random(seed) {
     };
 }
 
+function assertGround(world, x, z, ceiling, tolerance = .05) {
+    let height = -Infinity;
+    let collider = null;
+    for (const col of world.cols) {
+        if (col.off || col.noMove || col.pane) continue;
+        if (x < col.x0 || x > col.x1 || z < col.z0 || z > col.z1) continue;
+        if (col.y1 <= ceiling + tolerance && col.y1 > height) {
+            height = col.y1;
+            collider = col;
+        }
+    }
+    assert.equal(world.groundAt(x, z, ceiling, tolerance), height);
+    assert.equal(world.groundCol, collider);
+}
+
+test('point ground queries preserve heights and collider identity across grid and shape boundaries', () => {
+    const world = new World();
+    const next = random(42110);
+    for (let i = 0; i < 400; i++) {
+        const x = next() * 80 - 40;
+        const z = next() * 80 - 40;
+        const y = next() * 12 - 2;
+        world.addCollider(x, y, z, x + next() * 8, y + next() * 4, z + next() * 8,
+            'concrete', { off: i % 41 === 0, noMove: i % 37 === 0, pane: i % 31 === 0 });
+    }
+    for (let i = 0; i < 3000; i++) {
+        assertGround(world, next() * 100 - 50, next() * 100 - 50, next() * 16 - 3,
+            i % 3 ? .05 : next());
+    }
+    for (const col of world.cols) {
+        for (const x of [col.x0, col.x1]) for (const z of [col.z0, col.z1]) {
+            for (const ceiling of [col.y1 - .05, col.y1, col.y1 + .05]) {
+                assertGround(world, x, z, ceiling);
+            }
+        }
+    }
+    for (let x = -44; x <= 44; x += 4) for (let z = -44; z <= 44; z += 4) {
+        assertGround(world, x, z, 12);
+    }
+});
+
+test('point ground queries keep insertion ties and observe live collider flags', () => {
+    const world = new World();
+    const first = world.addCollider(-4, -1, -4, 4, 0, 4);
+    const second = world.addCollider(-4, -1, -4, 4, 0, 4);
+    assertGround(world, 0, 0, 0);
+    assert.equal(world.groundCol, first);
+    for (const key of ['off', 'noMove', 'pane']) {
+        first[key] = true;
+        assertGround(world, 0, 0, 0);
+        assert.equal(world.groundCol, second);
+        second[key] = true;
+        assertGround(world, 0, 0, 0);
+        assert.equal(world.groundCol, null);
+        first[key] = second[key] = false;
+    }
+    first.noRay = first.water = true;
+    assertGround(world, 0, 0, 0);
+    assert.equal(world.groundCol, first);
+    const higher = world.addCollider(-4, 0, -4, 4, 2, 4);
+    assertGround(world, 4, -4, 2);
+    assert.equal(world.groundCol, higher);
+    assertGround(world, 4, -4, 1);
+    assert.equal(world.groundCol, first);
+});
+
+test('point ground queries do not copy candidates or mutate multi-cell query stamps', () => {
+    const world = new World();
+    world.addCollider(-8, -1, -8, 8, 0, 8);
+    world.addCollider(0, 0, 0, 4, 2, 4);
+    const candidates = [...world.query(-8, -8, 8, 8)];
+    const stamp = world._stamp;
+    const stamps = world.cols.map(col => col.stamp);
+    world.query = () => { throw new Error('Point query copied candidates'); };
+    for (const [x, z, ceiling] of [[0, 0, 2], [-4, 4, 0], [100, 100, 0]]) {
+        assertGround(world, x, z, ceiling);
+    }
+    assert.equal(world._stamp, stamp);
+    assert.deepEqual([...world._q], candidates);
+    assert.deepEqual(world.cols.map(col => col.stamp), stamps);
+});
+
 test('grid rays preserve the original hit, distance and normal across varied shots', () => {
     const world = new World();
     const next = random(42019);

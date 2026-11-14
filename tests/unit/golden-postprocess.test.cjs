@@ -82,7 +82,7 @@ function graphics(quality, { composite = false, failAt = '' } = {}) {
 
 for (const quality of ['medium', 'high']) {
     for (const composite of [false, true]) {
-        test(`${quality}: preserves scene and soft-particle depth while postprocessing retains color MSAA (${composite ? 'volumetric' : 'ordinary'})`, () => {
+        test(`${quality}: geometry retains MSAA and soft-particle depth while the postprocess tail uses resolved color (${composite ? 'volumetric' : 'ordinary'})`, () => {
             const { gfx, draws, particleDraws } = graphics(quality, { composite });
             const targets = [gfx.composer.renderTarget1, gfx.composer.renderTarget2];
             for (let frame = 0; frame < 2; frame++) gfx.composer.render(1 / 60);
@@ -98,6 +98,14 @@ for (const quality of ['medium', 'high']) {
             for (const draw of draws.filter(draw => targets.includes(draw.target))) {
                 assert.equal(draw.samples, qualities[quality].samples);
             }
+            assert.ok(draws.some(draw => gfx._postTargets.includes(draw.target)));
+            for (const target of gfx._postTargets) {
+                assert.equal(target.samples, 0);
+                assert.equal(target.depthBuffer, false);
+                assert.equal(target.texture.type, targets[0].texture.type);
+                assert.equal(target.texture.minFilter, targets[0].texture.minFilter);
+                assert.deepEqual([target.width, target.height], [targets[0].width, targets[0].height]);
+            }
             gfx._dispose();
         });
     }
@@ -111,6 +119,88 @@ test('temporary world and particle depth resolution restores after failed render
         assert.equal(gfx.composer.renderTarget2.resolveDepthBuffer, false);
         gfx._dispose();
     }
+});
+
+test('postprocess swapping follows active blur passes without feeding post targets back into geometry', () => {
+    const { gfx } = graphics('high', { composite: true });
+    const composer = gfx.composer;
+    const geometry = [composer.renderTarget1, composer.renderTarget2];
+    const post = gfx._postTargets;
+    const seen = [];
+    for (const pass of composer.passes) {
+        const render = pass.render;
+        pass.render = function (renderer, write, read, delta, mask) {
+            const result = render.call(this, renderer, write, read, delta, mask);
+            seen.push({ pass, write, read, swaps: this.needsSwap });
+            return result;
+        };
+    }
+    for (const [blur, delta, rays] of [[1, 1 / 60, true], [0, 1 / 60, false], [1, 0, true], [1, 1 / 30, false]]) {
+        gfx.vmBlur = blur;
+        gfx.shutter = .38;
+        gfx.rays.enabled = rays;
+        seen.length = 0;
+        const priorTarget = {};
+        gfx.renderer.setRenderTarget(priorTarget);
+        composer.render(delta);
+        assert.equal(gfx.renderer.getRenderTarget(), priorTarget);
+        assert.ok(geometry.includes(composer.readBuffer));
+        assert.ok(geometry.includes(composer.writeBuffer));
+        const boundary = seen.findIndex(entry => entry.pass === gfx.vmPass);
+        for (const entry of seen.slice(0, boundary + 1)) {
+            assert.ok(geometry.includes(entry.read));
+            assert.ok(geometry.includes(entry.write));
+        }
+        let expectedRead = composer.readBuffer;
+        let expectedWrite = post[0];
+        for (const entry of seen.slice(boundary + 1)) {
+            assert.equal(entry.read, expectedRead);
+            assert.equal(entry.write, expectedWrite);
+            assert.notEqual(entry.read, entry.write);
+            if (entry.swaps) {
+                expectedRead = expectedWrite;
+                expectedWrite = expectedWrite === post[0] ? post[1] : post[0];
+            }
+        }
+        assert.equal(gfx.vmBlurPass.needsSwap, blur > 0 && delta > 1e-5);
+    }
+    const old = {};
+    gfx.renderer.setRenderTarget(old);
+    gfx.bloom.render = () => { throw new Error('postprocess failed'); };
+    assert.throws(() => composer.render(1 / 60), /postprocess failed/);
+    assert.equal(gfx.renderer.getRenderTarget(), old);
+    assert.ok(geometry.includes(composer.readBuffer));
+    gfx._dispose();
+});
+
+test('postprocess targets resize and release across quality changes without allocating them for low quality', () => {
+    const { gfx } = graphics('medium');
+    let targets = gfx._postTargets;
+    for (const quality of ['high', 'ultra', 'low', 'medium']) {
+        const old = targets || [];
+        let disposed = 0;
+        for (const target of old) target.addEventListener('dispose', () => disposed++);
+        gfx.q = qualities[quality];
+        gfx._build();
+        assert.equal(disposed, old.length);
+        targets = gfx._postTargets;
+        if (quality === 'low') {
+            assert.equal(targets, null);
+            continue;
+        }
+        assert.equal(targets.length, 2);
+        assert.notEqual(targets, old);
+        const sameTargets = targets;
+        gfx._measure = () => new THREE.Vector2(1200, 700);
+        gfx.resize();
+        assert.equal(gfx._postTargets, sameTargets);
+        for (const target of targets) assert.deepEqual([target.width, target.height], [1200, 700]);
+    }
+    let disposed = 0;
+    for (const target of targets) target.addEventListener('dispose', () => disposed++);
+    gfx._dispose();
+    assert.equal(disposed, 2);
+    assert.equal(gfx._postTargets, null);
 });
 
 test('Bloom and AO intermediates omit depth while retaining resolution, precision and normal depth', () => {
