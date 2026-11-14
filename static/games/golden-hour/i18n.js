@@ -277,6 +277,10 @@
         'Full resolution, 4× MSAA, ambient occlusion and 4K sun shadows. Recommended.': '全分辨率，4× MSAA，环境光遮蔽和 4K 日光阴影。推荐。',
         'MOTION BLUR': '动态模糊',
         'FLOOR REFLECTIONS': '地面反射',
+        'FRAME RATE CAP': '帧率上限',
+        '30 FPS': '30 帧',
+        '60 FPS': '60 帧',
+        'How often the game draws during a match. 30 FPS halves the rendering work for a cooler, quieter laptop without changing the picture; 60 FPS is smoother. Menus always run at 30.': '对局中每秒绘制画面的次数。30 帧让渲染工作量减半，笔记本更凉更安静，画面本身不变；60 帧更流畅。菜单始终以 30 帧运行。',
         'Mirror reflections on the marble, wood and stone floors. They redraw the whole hotel a second time every frame, so turning them off is the biggest saving: smoother play and a cooler laptop.': '大理石、木地板和石材地面上的镜面反射。开启时每帧都要把整个酒店再画一遍，关掉是最省性能的一项：游戏更流畅，笔记本也更凉。',
         'Film-style blur on fast camera turns and on the weapon and hands as they move (reload, recoil, swap). The weapon stays sharp at rest. Off is the competitive choice.':
             '镜头快速转动以及武器和双手移动（换弹、后坐、切枪）时的电影式模糊。武器静止时保持清晰。竞技玩家建议关闭。',
@@ -682,6 +686,9 @@
         const title = document.querySelector('title');
         if (title) applyTree(title);
         syncSwitch();
+        // Labels change width with the language. The game re-measures its option highlights,
+        // gunsmith layout, HUD and minimap on resize, so ask for that once the new text is in.
+        window.dispatchEvent(new Event('resize'));
     }
 
     let observing = false;

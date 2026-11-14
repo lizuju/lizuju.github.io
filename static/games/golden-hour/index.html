@@ -124,13 +124,17 @@
   const allowFrame = (time) => {
     if (time !== decidedAt) {
       const state = window.GH?.G?.state || 'playing';
-      const interval = hidden ? Infinity : ['menu', 'paused', 'over'].includes(state) ? 1000 / 30 : 1000 / 60;
+      // Matches run at the FRAME RATE CAP setting (game.js keeps it in __goldenHourFpsCap).
+      const cap = window.__goldenHourFpsCap === 30 ? 30 : 60;
+      const interval = hidden ? Infinity : ['menu', 'paused', 'over'].includes(state) ? 1000 / 30 : 1000 / cap;
       if (interval !== frameInterval || time - decidedAt > interval * 2) {
         frameInterval = interval;
         nextRun = time;
       }
       decidedAt = time;
-      runThisFrame = time + 0.001 >= nextRun;
+      // Frame timestamps are rounded to 0.1 ms, so a 16.6 ms refresh must count as on time for a
+      // 16.67 ms interval; 1 ms of slack stays well below any display's refresh period.
+      runThisFrame = time + 1 >= nextRun;
       // Keep refresh jitter from moving the cadence, without accumulating work during slow frames.
       if (runThisFrame) nextRun = Math.max(nextRun + interval, time);
     }
