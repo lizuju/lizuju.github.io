@@ -44,6 +44,8 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     expect(html).toContain('window.__goldenHourShouldRender =');
     expect(html).toContain('window.__goldenHourClockEpoch');
     expect(html).toContain("window.__goldenHourReady.then(");
+    expect(html).toContain('const cap = window.__goldenHourFpsCap === 30 ? 30 : 60;');
+    expect(html).toContain('runThisFrame = time + 1 >= nextRun;');
     expect(html).toContain('请使用电脑打开');
     // The interface language follows the desktop's taskbar 中/EN button.
     expect(html).toContain('<script src="i18n.js"></script>');
@@ -68,6 +70,11 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     expect(code).toContain('{k:"reflections",label:"FLOOR REFLECTIONS",type:"seg",opts:[["off","OFF"],["on","ON"]]');
     expect(code).toContain('y.setSize(n.size.x,n.size.y,_s.reflections==="off"?0:f0.refl)');
     expect(code).toContain('f0==="reflections"&&n.onQuality&&n.onQuality(n.q)');
+    // FRAME RATE CAP (30/60) is saved with the settings and read by the page's frame pacing.
+    expect(code).toContain('reflections:"on",fpsCap:60');
+    expect(code).toContain('{k:"fpsCap",label:"FRAME RATE CAP",type:"seg",opts:[[30,"30 FPS"],[60,"60 FPS"]]');
+    expect(code).toContain('window.__goldenHourFpsCap=_s.fpsCap;');
+    expect(code).toContain('f0==="fpsCap"&&(window.__goldenHourFpsCap=_s.fpsCap)');
 
     for (const old of ['/games/harbor-strike/', '/portfolio/games/harbor-strike/']) {
         expect(await (await request.get(old)).text()).toContain('golden-hour/');
@@ -449,10 +456,12 @@ test('shows Golden Hour in Chinese by default and switches back to English from 
     // Text the gunsmith, pause menu, match and end screen write as you play.
     expect(await page.evaluate(() => [
         'EQUIP AS PRIMARY', 'SIDEARM — ALWAYS CARRIED', 'PRESS AGAIN TO FORFEIT',
-        'STRIX 9 · DUNE', 'EXTENDED MAG FITTED', 'MATCH SCORE +1,200', '1 TAKEDOWN · RECHARGING', 'FLOOR REFLECTIONS'
+        'STRIX 9 · DUNE', 'EXTENDED MAG FITTED', 'MATCH SCORE +1,200', '1 TAKEDOWN · RECHARGING', 'FLOOR REFLECTIONS',
+        'FRAME RATE CAP', '30 FPS'
     ].map((text) => window.GoldenHourI18n.translate(text)))).toEqual([
         '设为主武器', '副武器 — 始终携带', '再按一次确认认输',
-        'STRIX 9 · 沙丘', '已安装扩容弹匣', '比赛得分 +1,200', '1 次击杀 · 充能中', '地面反射'
+        'STRIX 9 · 沙丘', '已安装扩容弹匣', '比赛得分 +1,200', '1 次击杀 · 充能中', '地面反射',
+        '帧率上限', '30 帧'
     ]);
     // Text the game writes later is translated as it appears.
     await page.locator('[data-test="deploy"]').evaluate((element) => { element.textContent = 'GUNSMITH'; });
@@ -460,7 +469,10 @@ test('shows Golden Hour in Chinese by default and switches back to English from 
 
     const switcher = page.locator('#pg-settings > .gh-lang');
     await expect(switcher.locator('button[aria-pressed="true"]')).toHaveText('中文');
+    // Labels change width, so the game is asked to re-measure its layout.
+    const resized = page.evaluate(() => new Promise((resolve) => addEventListener('resize', () => resolve(true), { once: true })));
     await switcher.locator('button[data-lang="en"]').click();
+    expect(await resized).toBe(true);
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
     await expect(page.locator('[data-test="deploy"]')).toHaveText('GUNSMITH');
     await expect(page.locator('[data-test="split"]')).toHaveText('OPERATOR · VANGUARD');
