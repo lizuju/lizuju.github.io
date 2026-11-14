@@ -191,3 +191,57 @@ test('weapon card startup yields between full-size bakes and preserves all cache
     }
     assert.equal(studio.cards.size, 4);
 });
+
+test('final boot warms the shared grenade in the world renderer before detaching its template', async () => {
+    const start = source.indexOf('{let f0=new Vs(4,4,{type:Yn});', source.indexOf('t.loading(.93,"FINAL CHECKS")'));
+    const stop = source.indexOf('await audioReady;', start);
+    assert.ok(start >= 0 && stop > start);
+    const template = { parent: null, geometry: {}, material: {} };
+    const scene = {
+        add(object) { assert.equal(object, template); object.parent = this; },
+        remove(object) { assert.equal(object, template); object.parent = null; },
+    };
+    const renderer = { shadowMap: {} };
+    const camera = {};
+    const viewmodelScene = {};
+    const viewmodelCamera = {};
+    const effects = Array.from({ length: 4 }, () => ({
+        visible: false, isInstancedMesh: true, count: 0, instanceMatrix: { count: 10 },
+        geometry: { drawRange: { start: 0, count: 10 } },
+    }));
+    const events = [];
+    let finishCompile;
+    const pending = vm.runInNewContext(`(async()=>${source.slice(start, stop)})()`, {
+        Vs: class { dispose() { events.push('dispose'); } }, Yn: 1,
+        i: scene, _: template, r: renderer, a: camera,
+        n: { vmScene: viewmodelScene, vmCamera: viewmodelCamera },
+        b: { bots: [], k9: { rigs: () => [] } },
+        p: { chunkMesh: effects[0], caseMesh: effects[1] },
+        u: { decals: { mesh: effects[2] } }, d: { shards: effects[3] },
+        VC(activeRenderer, activeScene, activeCamera) {
+            assert.equal(activeRenderer, renderer);
+            assert.equal(template.parent, scene);
+            if (activeScene === scene) {
+                assert.equal(activeCamera, camera);
+                events.push('compile world');
+                return new Promise(resolve => { finishCompile = resolve; });
+            }
+            assert.equal(activeScene, viewmodelScene);
+            assert.equal(activeCamera, viewmodelCamera);
+            events.push('compile weapon');
+        },
+        Rs0(activeRenderer, activeScene, activeCamera) {
+            assert.equal(activeRenderer, renderer);
+            assert.equal(activeScene, scene);
+            assert.equal(activeCamera, camera);
+            assert.equal(template.parent, scene, 'the shared material textures participate in the real upload draw');
+            events.push('upload');
+        },
+    });
+    assert.deepEqual(events, ['compile world']);
+    assert.equal(template.parent, scene);
+    finishCompile();
+    await pending;
+    assert.deepEqual(events, ['compile world', 'compile weapon', 'upload', 'dispose']);
+    assert.equal(template.parent, null, 'the boot template must not remain in the live world');
+});

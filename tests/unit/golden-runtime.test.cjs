@@ -261,10 +261,13 @@ test('startup warms hidden effect pools and restores their draw state even if up
         }));
         const actors = [{ visible: true }, { visible: true }];
         const renderer = { shadowMap: { needsUpdate: false } };
+        const scene = new THREE.Scene();
+        const grenade = new THREE.Group();
+        scene.add(grenade);
         let draws = 0;
         let disposals = 0;
         const run = () => vm.runInNewContext(source.slice(start, stop), {
-            p, d, u, r: renderer, i: {}, a: {}, _0: actors,
+            p, d, u, r: renderer, i: scene, a: {}, _0: actors, _: grenade,
             f0: { dispose() { disposals++; } },
             Rs0() {
                 draws++;
@@ -282,6 +285,7 @@ test('startup warms hidden effect pools and restores their draw state even if up
         else run();
         assert.equal(draws, 1);
         assert.equal(disposals, 1);
+        assert.equal(grenade.parent, null);
         for (const actor of actors) assert.equal(actor.visible, false);
         effects.forEach((mesh, index) => {
             assert.equal(mesh.visible, previous[index].visible);
