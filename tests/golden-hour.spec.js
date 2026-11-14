@@ -436,6 +436,14 @@ test('shows Golden Hour in Chinese by default and switches back to English from 
     await expect(page.locator('[data-test="tip"]')).toContainText('滑铲');
     await expect(page.locator('h2')).toHaveText('设置');
     await expect(page.locator('.legend')).toHaveText('QE切换标签');
+    // Text the gunsmith, pause menu, match and end screen write as you play.
+    expect(await page.evaluate(() => [
+        'EQUIP AS PRIMARY', 'SIDEARM — ALWAYS CARRIED', 'PRESS AGAIN TO FORFEIT',
+        'STRIX 9 · DUNE', 'EXTENDED MAG FITTED', 'MATCH SCORE +1,200', '1 TAKEDOWN · RECHARGING'
+    ].map((text) => window.GoldenHourI18n.translate(text)))).toEqual([
+        '设为主武器', '副武器 — 始终携带', '再按一次确认认输',
+        'STRIX 9 · 沙丘', '已安装扩容弹匣', '比赛得分 +1,200', '1 次击杀 · 充能中'
+    ]);
     // Text the game writes later is translated as it appears.
     await page.locator('[data-test="deploy"]').evaluate((element) => { element.textContent = 'GUNSMITH'; });
     await expect(page.locator('[data-test="deploy"]')).toHaveText('枪匠');

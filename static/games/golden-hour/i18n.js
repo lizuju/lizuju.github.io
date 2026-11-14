@@ -339,6 +339,34 @@
         'K9 UNIT CHARGING': 'K9 军犬充能中',
         'ENEMY K9 DESTROYED': '敌方 K9 已摧毁',
         'BY YOU': '由你',
+        'ENEMY K9 INBOUND': '敌方 K9 来袭',
+        'HOSTILE UNIT HUNTING — SHOOT IT DOWN': '敌方军犬正在猎杀 — 把它击毁',
+        'UNLEASH THE K9 UNIT — IT HUNTS ON ITS OWN': '放出 K9 军犬 — 它会自主猎杀',
+        'TAKEDOWN': '次击杀',
+        'TAKEDOWNS': '次击杀',
+        'RECHARGING': '充能中',
+        'BALCONY': '阳台',
+        'PRESS AGAIN TO FORFEIT': '再按一次确认认输',
+        'FORFEIT': '认输',
+
+        // Gunsmith and progress
+        'EQUIP AS PRIMARY': '设为主武器',
+        'SIDEARM — ALWAYS CARRIED': '副武器 — 始终携带',
+        'UNLOCKED — ENTER TO EQUIP': '已解锁 — 按 ENTER 装备',
+        'Half again as many rounds; a little slower to handle.': '弹量增加一半；操控稍慢。',
+        'Light and fast; kicks harder.': '轻便迅捷；后坐力更大。',
+        'MAX RANK': '最高等级',
+        'Balanced.': '均衡。',
+        // "STRIX 9 · 2 ATT" on the loadout card: attachments on the sidearm.
+        'ATT': '配件',
+        // Model names stay as printed, but count as translated so "STRIX 9 · DUNE" still
+        // translates the camo after it.
+        'VESPER 9': 'VESPER 9',
+        'STRIX 9': 'STRIX 9',
+        'VANTAGE 2.5×': 'VANTAGE 2.5×',
+        'MATCH SCORE': '比赛得分',
+        'VICTORY BONUS': '胜利奖励',
+        'COMPLETION BONUS': '完赛奖励',
         'BY': '由',
         'FALL': '坠落',
         'CHANDELIER': '吊灯',
@@ -390,7 +418,7 @@
         'PLAY AGAIN': '再来一局',
         'MAIN MENU': '主菜单',
         'SCORE': '得分',
-        'CHOOSE': '选择',
+        'CHOOSE': '切换',
         'ELIMINATIONS': '击杀',
 
         // Loading
@@ -441,6 +469,8 @@
     };
 
     const number = '[+\\-−]?[\\d,.]+';
+    // Chinese runs straight on; a name that starts with a Latin model code gets a space first.
+    const spaced = (name) => (/^[A-Za-z0-9]/.test(name) ? ` ${name}` : name);
     const PATTERNS = [
         [/^([+\-−])([\d.]+)% (.+)$/, (m, word) => word(m[3]) && `${m[1]}${m[2]}% ${word(m[3])}`],
         [/^([\d,]+) \/ ([\d,]+) (.+)$/, (m, word) => word(m[3]) && `${m[1]} / ${m[2]} ${word(m[3])}`],
@@ -448,6 +478,13 @@
         [/^FRAG × (\d+)$/, (m) => `破片手雷 × ${m[1]}`],
         [/^(\d+) v (\d+)$/, (m) => `${m[1]} 对 ${m[2]}`],
         [/^(\d+:\d\d) REMAINING$/, (m) => `剩余 ${m[1]}`],
+        [/^([\d,]+)\/([\d,]+) (.+)$/, (m, word) => word(m[3]) && `${m[1]}/${m[2]} ${word(m[3])}`],
+        [/^GOLD ON (\d+)\/(\d+) WEAPONS$/, (m) => `${m[1]}/${m[2]} 把武器获得黄金迷彩`],
+        [/^RANK UP ×(\d+)$/, (m) => `晋升 ×${m[1]}`],
+        [/^BY (\S+)$/, (m) => `由 ${m[1]}`],
+        // A gunsmith pick: "EXTENDED MAG FITTED", or the factory part "STANDARD MAG RESTORED".
+        [/^(.+) FITTED$/, (m) => `已安装${spaced(translate(m[1]) ?? m[1])}`],
+        [/^(.+) RESTORED$/, (m) => `已换回${spaced(translate(m[1]) ?? m[1])}`],
         [/^(.+) NEED ONE ELIMINATION$/, (m, word) => word(m[1]) && `${word(m[1])} 还差一次击杀`],
         [/^(.+) WIN (\d+)$/, (m, word) => word(m[1]) && `${word(m[1])} 获胜 ${m[2]}`],
         [/^Charges in (\d+) s · hunts on its own for (\d+) s$/, (m) => `${m[1]} 秒充能 · 自主猎杀 ${m[2]} 秒`],
