@@ -161,9 +161,9 @@ test('holds Golden Hour drawing when it is not in front and tells the 3D scene w
     await expect.poll(heavyApp).toEqual([true, false, true, false]);
 });
 
-test('slows the 3D room while Golden Hour runs on the settled monitor', async ({ page, isMobile }) => {
+test('freezes the 3D room and holds the monitor view while Golden Hour is open', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the mobile shell does not create the 3D monitor');
-    test.setTimeout(90000);
+    test.setTimeout(120000);
     await page.route(GAME_PAGE, (route) => route.fulfill({
         contentType: 'text/html; charset=utf-8',
         body: GAME_STUB
@@ -188,6 +188,7 @@ test('slows the 3D room while Golden Hour runs on the settled monitor', async ({
         };
         requestAnimationFrame(count);
     });
+    const roomFrames = () => page.evaluate(() => window.roomFrames);
     const roomFps = async () => {
         const sample = () => page.evaluate(() => ({ frames: window.roomFrames, time: performance.now() }));
         const start = await sample();
@@ -216,13 +217,40 @@ test('slows the 3D room while Golden Hour runs on the settled monitor', async ({
     await desktop.locator('.desktop-shortcut[data-open-golden-hour]').click();
     await expect(desktop.locator('[data-golden-window]')).toBeVisible();
     await expect(desktop.locator('[data-golden-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
-    const gameFps = await roomFps();
-    expect(gameFps).toBeLessThanOrEqual(11);
+    await page.waitForTimeout(500);
+    expect(await roomFps()).toBe(0);
 
-    await desktop.locator('.window-controls [data-golden-action="close"]').click();
+    // The pointer drifting off the screen keeps the monitor view while the game is open.
+    const zoomed = await screen.boundingBox();
+    const outside = { x: 4, y: viewport.height - 4 };
+    expect(outside.x < zoomed.x || outside.y > zoomed.y + zoomed.height).toBe(true);
+    await page.mouse.move(outside.x, outside.y, { steps: 4 });
+    await page.mouse.down();
+    await page.mouse.up();
+    await page.waitForTimeout(1500);
+    expect((await screen.boundingBox()).width).toBeCloseTo(zoomed.width, 0);
+    expect(await roomFps()).toBe(0);
+
+    // A resize still draws the room at its new size, then it freezes again.
+    const before = await roomFrames();
+    await page.setViewportSize({ width: viewport.width - 120, height: viewport.height - 80 });
+    await expect.poll(roomFrames).toBeGreaterThan(before);
+    await expect.poll(async () => (await screen.boundingBox()).width).not.toBeCloseTo(zoomed.width, 0);
+    await page.waitForTimeout(500);
+    expect(await roomFps()).toBe(0);
+    await page.setViewportSize(viewport);
+
+    // Minimizing the game hands the room and the view back to the mouse.
+    await desktop.locator('.window-controls [data-golden-action="minimize"]').click();
     await expect(desktop.locator('[data-golden-window]')).toBeHidden();
-    // Software-rendered browsers may not draw the room much faster than the throttle anyway.
+    // Software-rendered browsers may not draw the room fast in any case.
     if (settledFps >= 20) expect(await roomFps()).toBeGreaterThan(15);
+    else expect(await roomFps()).toBeGreaterThan(0);
+    const zoomedAgain = await screen.boundingBox();
+    await page.mouse.move(viewport.width / 2, viewport.height / 2);
+    await page.mouse.move(outside.x, outside.y, { steps: 4 });
+    await expect.poll(async () => (await screen.boundingBox()).width, { timeout: 10000 })
+        .toBeLessThan(zoomedAgain.width * 0.8);
 });
 
 test('runs Golden Hour as a lazy desktop window and unloads it on close', async ({ page, isMobile }) => {
