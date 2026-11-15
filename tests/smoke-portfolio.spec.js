@@ -83,6 +83,12 @@ test('supports language, navigation, and expandable details', async ({ page, isM
     await expect(languageButton).toBeVisible();
     await expect(taskbarLanguageButton).toBeVisible();
     await expect(taskbarLanguageButton).toHaveText('EN');
+    // The main window's controls are labelled in the interface language, for screen readers and on hover.
+    const minimizeButton = page.locator('[data-app-window] [data-window-action="minimize"]');
+    const closeButton = page.locator('[data-app-window] [data-window-action="close"]');
+    await expect(minimizeButton).toHaveAttribute('aria-label', '最小化窗口');
+    await expect(minimizeButton).toHaveAttribute('title', '最小化窗口');
+    await expect(closeButton).toHaveAttribute('aria-label', '关闭窗口');
     expect(await page.locator('[data-window-scroll]').evaluate((viewport, button) => {
         const viewportRect = viewport.getBoundingClientRect();
         const buttonRect = button.getBoundingClientRect();
@@ -144,6 +150,8 @@ test('supports language, navigation, and expandable details', async ({ page, isM
     await expect(taskbarLanguageButton).toHaveText('中');
     await expect(languageButton).toHaveText('中文');
     await expect(page.locator('h1')).toContainText('Intelligent Systems');
+    await expect(minimizeButton).toHaveAttribute('aria-label', 'Minimize window');
+    await expect(closeButton).toHaveAttribute('title', 'Close window');
     await expect(page.locator('.project-card')).toHaveCount(5);
     await expect(page.locator('.publication-card')).toHaveCount(2);
 
