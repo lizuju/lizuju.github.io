@@ -73,19 +73,19 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     // Medium is the default preset; three.js skips its synchronous shader checks.
     expect(code).toContain('quality:"medium",motionBlur:"high"');
     expect(code).toContain('this.debug={checkShaderErrors:!1,onShaderError:null}');
-    // Floor reflections can be switched off in GRAPHICS; they stay on by default and switch live.
-    expect(code).toContain('motionBlur:"high",reflections:"on"');
-    expect(code).toContain('{k:"reflections",label:"FLOOR REFLECTIONS",type:"seg",opts:[["off","OFF"],["baked","BAKED"],["on","LIVE"]]');
+    // FLOOR REFLECTIONS in GRAPHICS: baked (the default) or live, switched without a reload.
+    expect(code).toContain('motionBlur:"high",reflections:"baked"');
+    expect(code).toContain('{k:"reflections",label:"FLOOR REFLECTIONS",type:"seg",opts:[["baked","BAKED"],["on","LIVE"]]');
     // Baked: each reflective room is captured once into a cube probe and the floors sample it
     // (box projected) instead of redrawing the hotel for a mirror every frame.
     expect(code).toContain('y.mode=_s.reflections==="baked"?"baked":"live"');
     expect(code).toContain('bake(t){this.baked=!0');
     expect(code).toContain('vec3 rc = uReflBaked > 0.5 ? ghProbe(vReflW, rN, rl) : textureLod(tRefl, ruv, rl).rgb;');
-    expect(code).toContain('["on","off","baked"].includes(_s.reflections)');
-    expect(code).toContain('y.setSize(n.size.x,n.size.y,_s.reflections==="off"?0:f0.refl)');
+    expect(code).toContain('["on","baked"].includes(_s.reflections)||(_s.reflections=Ib.reflections)');
+    expect(code).toContain('y.setSize(n.size.x,n.size.y,f0.refl)');
     expect(code).toContain('f0==="reflections"&&n.onQuality&&n.onQuality(n.q)');
     // FRAME RATE CAP (30/60) is saved with the settings and read by the page's frame pacing.
-    expect(code).toContain('reflections:"on",fpsCap:60');
+    expect(code).toContain('reflections:"baked",fpsCap:60');
     expect(code).toContain('{k:"fpsCap",label:"FRAME RATE CAP",type:"seg",opts:[[30,"30 FPS"],[60,"60 FPS"]]');
     expect(code).toContain('window.__goldenHourFpsCap=_s.fpsCap;');
     expect(code).toContain('f0==="fpsCap"&&(window.__goldenHourFpsCap=_s.fpsCap)');
