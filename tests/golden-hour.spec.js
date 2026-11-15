@@ -90,6 +90,11 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     expect(code).toContain('GhShadowCache=class{');
     expect(code).toContain('gl.blitFramebuffer(0,0,w,h,0,0,w,h,gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT,gl.NEAREST)');
     expect(code).toContain('seen!==this.statics.size&&(this.stale=!0)');
+    // Physics: each body only tests the collision boxes within reach of its points, and falls
+    // back to the full list if a point is pushed out of the safe box.
+    expect(code).toContain('_near(g,n,a,r){');
+    expect(code).toContain('let A=L===t.iters-1,nq=this._near(g,n,a,r);');
+    expect(code).toContain('{nF=!0;continue}if(nQ>=nq.n)break;P=nq.i[nQ++]}');
     // FRAME RATE CAP (30/60) is saved with the settings and read by the page's frame pacing.
     expect(code).toContain('reflections:"baked",fpsCap:60');
     expect(code).toContain('{k:"fpsCap",label:"FRAME RATE CAP",type:"seg",opts:[[30,"30 FPS"],[60,"60 FPS"]]');
