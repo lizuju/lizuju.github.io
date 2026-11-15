@@ -282,6 +282,9 @@
         'MOTION BLUR': '动态模糊',
         'FLOOR REFLECTIONS': '地面反射',
         'FRAME RATE CAP': '帧率上限',
+        'DYNAMIC RESOLUTION': '动态分辨率',
+        "Lowers the render resolution for a moment when the frame rate falls below the cap, then raises it back once there is room. Keeps fights smooth on HIGH and ULTRA; the picture is slightly softer while it is lowered. Off keeps the preset's resolution fixed.":
+            '帧率掉到上限以下时，临时降低渲染分辨率，有余量后再升回去。开“高”或“极高”时激战也能保持流畅；降低期间画面会稍微变软。关闭则始终使用画质预设的分辨率。',
         '30 FPS': '30 帧',
         '60 FPS': '60 帧',
         'How often the game draws during a match. 30 FPS halves the rendering work for a cooler, quieter laptop without changing the picture; 60 FPS is smoother. Menus always run at 30.': '对局中每秒绘制画面的次数。30 帧让渲染工作量减半，笔记本更凉更安静，画面本身不变；60 帧更流畅。菜单始终以 30 帧运行。',
