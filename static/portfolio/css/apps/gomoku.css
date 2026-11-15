@@ -144,6 +144,13 @@
     outline-offset: -6px;
 }
 
+/* The two menus are the menubar; the difficulty picker and back button sit beside it. */
+.gomoku-menus {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
 .gomoku-back-button {
     margin-left: auto;
 }
