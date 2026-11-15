@@ -84,6 +84,12 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     expect(code).toContain('["on","baked"].includes(_s.reflections)||(_s.reflections=Ib.reflections)');
     expect(code).toContain('y.setSize(n.size.x,n.size.y,f0.refl)');
     expect(code).toContain('f0==="reflections"&&n.onQuality&&n.onQuality(n.q)');
+    // Sun shadows: casters that hold still are drawn once into a cache that is copied in each
+    // frame; only moving casters are redrawn, and any change to a cached one rebakes that frame.
+    expect(code).toContain('e.shadowMap.autoUpdate=!1,this.shadowCache=new GhShadowCache(e),');
+    expect(code).toContain('GhShadowCache=class{');
+    expect(code).toContain('gl.blitFramebuffer(0,0,w,h,0,0,w,h,gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT,gl.NEAREST)');
+    expect(code).toContain('seen!==this.statics.size&&(this.stale=!0)');
     // FRAME RATE CAP (30/60) is saved with the settings and read by the page's frame pacing.
     expect(code).toContain('reflections:"baked",fpsCap:60');
     expect(code).toContain('{k:"fpsCap",label:"FRAME RATE CAP",type:"seg",opts:[[30,"30 FPS"],[60,"60 FPS"]]');
