@@ -8,7 +8,7 @@ const source = readFileSync(process.env.GOLDEN_RUNTIME_SOURCE ||
     resolve(__dirname, '../../static/games/golden-hour/dist/game.js'), 'utf8');
 const THREE = vm.runInThisContext(`${source.slice(0, source.indexOf('var iu='))}return Ct;})();`);
 const start = source.indexOf('GhShadowCache=class');
-const GhShadowCache = vm.runInNewContext(`(${source.slice(start + 14, source.indexOf(',BM=class{', start))})`);
+const GhShadowCache = vm.runInNewContext(`(${source.slice(start + 14, source.indexOf(',GhDynRes=class{', start))})`);
 
 // A stand-in for Three's shadow pass: it binds the light's map, clears it, then draws every
 // visible shadow caster on the camera's layers, exactly the objects the real pass would draw.

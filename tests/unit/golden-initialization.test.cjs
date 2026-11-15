@@ -165,9 +165,12 @@ test('default construction remains high quality and boot passes validated saved 
     assert.ok(start >= 0 && end > start);
     const calls = [];
     vm.runInNewContext(source.slice(start, end), {
-        BM: class { constructor(canvas, quality) { calls.push(['construct', canvas, quality]); } setMotionBlur(value) { calls.push(['motionBlur', value]); } },
-        o: 'canvas', _s: { quality: 'medium', motionBlur: 'high' },
+        BM: class {
+            constructor(canvas, quality) { calls.push(['construct', canvas, quality]); this.dynRes = { setEnabled: (on) => calls.push(['dynRes', on]) }; }
+            setMotionBlur(value) { calls.push(['motionBlur', value]); }
+        },
+        o: 'canvas', _s: { quality: 'medium', motionBlur: 'high', dynRes: 'on' },
     });
-    assert.deepEqual(calls, [['construct', 'canvas', 'medium'], ['motionBlur', 'high']]);
+    assert.deepEqual(calls, [['construct', 'canvas', 'medium'], ['motionBlur', 'high'], ['dynRes', true]]);
     gfx._dispose();
 });
