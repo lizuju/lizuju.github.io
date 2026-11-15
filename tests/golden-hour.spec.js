@@ -95,6 +95,10 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     expect(code).toContain('_near(g,n,a,r){');
     expect(code).toContain('let A=L===t.iters-1,nq=this._near(g,n,a,r);');
     expect(code).toContain('{nF=!0;continue}if(nQ>=nq.n)break;P=nq.i[nQ++]}');
+    // Point lights: a pixel skips each light's BRDF where that light cannot reach it (past its
+    // cutoff distance or with no colour), where Three's falloff is exactly zero anyway.
+    expect(code).toContain('if ( ( pointLight.distance <= 0.0 || length( pointLight.position - geometryPosition ) < pointLight.distance ) && pointLight.color != vec3( 0.0 ) ) {');
+    expect(code).toContain('#ifdef GH_EVERY_POINT_LIGHT');
     // FRAME RATE CAP (30/60) is saved with the settings and read by the page's frame pacing.
     expect(code).toContain('reflections:"baked",fpsCap:60');
     expect(code).toContain('{k:"fpsCap",label:"FRAME RATE CAP",type:"seg",opts:[[30,"30 FPS"],[60,"60 FPS"]]');

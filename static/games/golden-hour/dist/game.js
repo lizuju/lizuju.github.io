@@ -1268,12 +1268,21 @@ IncidentLight directLight;
 	#pragma unroll_loop_start
 	for ( int i = 0; i < NUM_POINT_LIGHTS; i ++ ) {
 		pointLight = pointLights[ i ];
+		// Golden Hour: a point light adds exactly nothing at or past its cutoff distance, or with no
+		// colour, so its BRDF is skipped there. The distance is the one getPointLightInfo computes.
+		// GH_EVERY_POINT_LIGHT restores the full loop (used to prove both give the same image).
+		#ifdef GH_EVERY_POINT_LIGHT
+		if ( true ) {
+		#else
+		if ( ( pointLight.distance <= 0.0 || length( pointLight.position - geometryPosition ) < pointLight.distance ) && pointLight.color != vec3( 0.0 ) ) {
+		#endif
 		getPointLightInfo( pointLight, geometryPosition, directLight );
 		#if defined( USE_SHADOWMAP ) && ( UNROLLED_LOOP_INDEX < NUM_POINT_LIGHT_SHADOWS )
 		pointLightShadow = pointLightShadows[ i ];
 		directLight.color *= ( directLight.visible && receiveShadow ) ? getPointShadow( pointShadowMap[ i ], pointLightShadow.shadowMapSize, pointLightShadow.shadowIntensity, pointLightShadow.shadowBias, pointLightShadow.shadowRadius, vPointShadowCoord[ i ], pointLightShadow.shadowCameraNear, pointLightShadow.shadowCameraFar ) : 1.0;
 		#endif
 		RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
+		}
 	}
 	#pragma unroll_loop_end
 #endif
