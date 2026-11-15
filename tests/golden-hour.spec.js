@@ -47,6 +47,14 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     expect(html).toContain('const cap = window.__goldenHourFpsCap === 30 ? 30 : 60;');
     expect(html).toContain('runThisFrame = time + 1 >= nextRun;');
     expect(html).toContain('请使用电脑打开');
+    // Search and link previews: a description, canonical URL and share card in the head.
+    const head = html.slice(0, html.indexOf('</head>'));
+    expect(head).toContain('<title>GOLDEN HOUR — Solstice Hotel</title>');
+    expect(head).toContain('<link rel="canonical" href="https://lizuju.github.io/games/golden-hour/">');
+    expect(head).toContain('<meta property="og:image" content="https://lizuju.github.io/games/golden-hour/share.jpg">');
+    expect(head).toContain('<meta name="twitter:card" content="summary_large_image">');
+    expect(head).toMatch(/<meta name="description" content="[^"]+">/);
+    expect((await request.get('/games/golden-hour/share.jpg')).ok()).toBe(true);
     // The interface language follows the desktop's taskbar 中/EN button.
     expect(html).toContain('<script src="i18n.js"></script>');
     expect(html).toContain('window.GoldenHourI18n?.setLanguage(state.lang)');

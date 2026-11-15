@@ -89,6 +89,12 @@ test('supports language, navigation, and expandable details', async ({ page, isM
     await expect(minimizeButton).toHaveAttribute('aria-label', '最小化窗口');
     await expect(minimizeButton).toHaveAttribute('title', '最小化窗口');
     await expect(closeButton).toHaveAttribute('aria-label', '关闭窗口');
+    // Menu bars hold only menu items (the open menus aside), and the avatar beside the name is decorative.
+    const strayMenubarControls = await page.locator('[role="menubar"]').evaluateAll((bars) => bars.flatMap((bar) => [...bar.querySelectorAll('button, select, input, a[href]')]
+        .filter((element) => !element.closest('[role="menu"]') && element.getAttribute('role') !== 'menuitem')
+        .map((element) => element.outerHTML.slice(0, 80))));
+    expect(strayMenubarControls).toEqual([]);
+    await expect(page.locator('.brand-avatar')).toHaveAttribute('alt', '');
     expect(await page.locator('[data-window-scroll]').evaluate((viewport, button) => {
         const viewportRect = viewport.getBoundingClientRect();
         const buttonRect = button.getBoundingClientRect();

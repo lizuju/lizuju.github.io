@@ -152,8 +152,9 @@ import { prepareEncryptedFiles } from './apps/sync-e2ee-files.js';
             document.body.classList.add('direct-portfolio');
         }
 
+        // Name avatar images, except decorative ones (alt="") shown beside the name itself.
         document.querySelectorAll('img[src="' + USER.avatar + '"]').forEach((img) => {
-            img.alt = USER.name;
+            if (img.getAttribute('alt') !== '') img.alt = USER.name;
         });
 
         const favicon = document.getElementById('favicon');

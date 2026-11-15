@@ -269,7 +269,8 @@ main {
 
 .signal-panel span,
 .signal-panel small {
-    color: #555;
+    /* 4.8:1 on the #c0c0c0 panel; #555 was 4.1:1, under the 4.5:1 minimum for small text. */
+    color: #4a4a4a;
     font-size: 11px;
 }
 
