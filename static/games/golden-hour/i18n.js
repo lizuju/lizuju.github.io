@@ -281,7 +281,9 @@
         '30 FPS': '30 帧',
         '60 FPS': '60 帧',
         'How often the game draws during a match. 30 FPS halves the rendering work for a cooler, quieter laptop without changing the picture; 60 FPS is smoother. Menus always run at 30.': '对局中每秒绘制画面的次数。30 帧让渲染工作量减半，笔记本更凉更安静，画面本身不变；60 帧更流畅。菜单始终以 30 帧运行。',
-        'Mirror reflections on the marble, wood and stone floors. They redraw the whole hotel a second time every frame, so turning them off is the biggest saving: smoother play and a cooler laptop.': '大理石、木地板和石材地面上的镜面反射。开启时每帧都要把整个酒店再画一遍，关掉是最省性能的一项：游戏更流畅，笔记本也更凉。',
+        'Reflections on the marble, wood and stone floors. Live redraws the whole hotel a second time every frame. Baked captures each room once and reuses it: nearly as good and far lighter, but people and muzzle flashes do not show in the floor.': '大理石、木地板和石材地面上的反射。实时：每帧把整个酒店再画一遍。烘焙：每个房间只拍一次反复使用，效果接近、负担小得多，但人物和枪口火光不会出现在地面倒影里。',
+        'BAKED': '烘焙',
+        'LIVE': '实时',
         'Film-style blur on fast camera turns and on the weapon and hands as they move (reload, recoil, swap). The weapon stays sharp at rest. Off is the competitive choice.':
             '镜头快速转动以及武器和双手移动（换弹、后坐、切枪）时的电影式模糊。武器静止时保持清晰。竞技玩家建议关闭。',
         'FULLSCREEN': '全屏',

@@ -75,7 +75,13 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     expect(code).toContain('this.debug={checkShaderErrors:!1,onShaderError:null}');
     // Floor reflections can be switched off in GRAPHICS; they stay on by default and switch live.
     expect(code).toContain('motionBlur:"high",reflections:"on"');
-    expect(code).toContain('{k:"reflections",label:"FLOOR REFLECTIONS",type:"seg",opts:[["off","OFF"],["on","ON"]]');
+    expect(code).toContain('{k:"reflections",label:"FLOOR REFLECTIONS",type:"seg",opts:[["off","OFF"],["baked","BAKED"],["on","LIVE"]]');
+    // Baked: each reflective room is captured once into a cube probe and the floors sample it
+    // (box projected) instead of redrawing the hotel for a mirror every frame.
+    expect(code).toContain('y.mode=_s.reflections==="baked"?"baked":"live"');
+    expect(code).toContain('bake(t){this.baked=!0');
+    expect(code).toContain('vec3 rc = uReflBaked > 0.5 ? ghProbe(vReflW, rN, rl) : textureLod(tRefl, ruv, rl).rgb;');
+    expect(code).toContain('["on","off","baked"].includes(_s.reflections)');
     expect(code).toContain('y.setSize(n.size.x,n.size.y,_s.reflections==="off"?0:f0.refl)');
     expect(code).toContain('f0==="reflections"&&n.onQuality&&n.onQuality(n.q)');
     // FRAME RATE CAP (30/60) is saved with the settings and read by the page's frame pacing.
@@ -493,11 +499,11 @@ test('shows Golden Hour in Chinese by default and switches back to English from 
     expect(await page.evaluate(() => [
         'EQUIP AS PRIMARY', 'SIDEARM — ALWAYS CARRIED', 'PRESS AGAIN TO FORFEIT',
         'STRIX 9 · DUNE', 'EXTENDED MAG FITTED', 'MATCH SCORE +1,200', '1 TAKEDOWN · RECHARGING', 'FLOOR REFLECTIONS',
-        'FRAME RATE CAP', '30 FPS'
+        'FRAME RATE CAP', '30 FPS', 'BAKED', 'LIVE'
     ].map((text) => window.GoldenHourI18n.translate(text)))).toEqual([
         '设为主武器', '副武器 — 始终携带', '再按一次确认认输',
         'STRIX 9 · 沙丘', '已安装扩容弹匣', '比赛得分 +1,200', '1 次击杀 · 充能中', '地面反射',
-        '帧率上限', '30 帧'
+        '帧率上限', '30 帧', '烘焙', '实时'
     ]);
     // Text the game writes later is translated as it appears.
     await page.locator('[data-test="deploy"]').evaluate((element) => { element.textContent = 'GUNSMITH'; });
