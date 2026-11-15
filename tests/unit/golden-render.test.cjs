@@ -15,7 +15,9 @@ function loadClass(name, end, globals) {
     return vm.runInNewContext(`(${source.slice(start + name.length + 1, stop)})`, globals);
 }
 
+const GhShadowCache = loadClass('GhShadowCache', ',BM=class{', {});
 const Graphics = loadClass('BM', ';var Ii=', {
+    GhShadowCache,
     Hm: class { constructor() { this.shadowMap = {}; this.info = { reset() {} }; } },
     Q1: THREE.NoToneMapping, gx: THREE.PCFSoftShadowMap,
     zr: THREE.Scene, Eo: THREE.PerspectiveCamera, c9: { high: { mblur: 8 } },

@@ -210,7 +210,9 @@ test('decals skip unused instances and hide only after the longest remaining lif
     assert.equal(d.mesh.count, 1);
 });
 
+const GhShadowCache = loadClass('GhShadowCache', ',BM=class{', {});
 const Graphics = loadClass('BM', ';var Ii=', {
+    GhShadowCache,
     Hm: class { constructor() { this.shadowMap = {}; this.info = {}; } },
     Q1: THREE.NoToneMapping, gx: THREE.PCFSoftShadowMap,
     zr: THREE.Scene, Eo: THREE.PerspectiveCamera, c9: { high: {} },

@@ -11,7 +11,10 @@ const start = source.indexOf('function VK(');
 const end = source.indexOf('var gL=', start);
 const makeObjects = vm.runInNewContext(`(${source.slice(start, end)})`);
 const gfxStart = source.indexOf('BM=class');
+const cacheStart = source.indexOf('GhShadowCache=class');
+const GhShadowCache = vm.runInNewContext(`(${source.slice(cacheStart + 14, source.indexOf(',BM=class{', cacheStart))})`);
 const Graphics = vm.runInNewContext(`(${source.slice(gfxStart + 3, source.indexOf(';var Ii=', gfxStart))})`, {
+    GhShadowCache,
     Hm: class { constructor() { this.info = { render: { frame: 0 }, reset() {} }; this.shadowMap = {}; } },
     Q1: THREE.NoToneMapping, gx: THREE.PCFSoftShadowMap, zr: THREE.Scene, Eo: THREE.PerspectiveCamera,
     c9: { high: {} }, It: THREE.Vector2, a0: THREE.Vector3, Ft: THREE.Quaternion, Lt: THREE.Matrix4,
