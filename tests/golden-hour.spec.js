@@ -30,7 +30,7 @@ test('shows loading until the current game finishes initializing', async ({ page
     await expect(status).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
 });
 
-test('ships Golden Hour without the copy label or ULTRA preset, and redirects Harbor Strike', async ({ request }) => {
+test('ships Golden Hour without the copy label, with ULTRA capped at 125%, and redirects Harbor Strike', async ({ request }) => {
     const page = await request.get('/games/golden-hour/');
     expect(page.ok()).toBe(true);
     const html = await page.text();
@@ -67,9 +67,13 @@ test('ships Golden Hour without the copy label or ULTRA preset, and redirects Ha
     const game = await request.get('/games/golden-hour/dist/game.js');
     expect(game.ok()).toBe(true);
     const code = await game.text();
-    expect(code).toContain('opts:[["low","LOW"],["medium","MEDIUM"],["high","HIGH"]]');
-    expect(code).not.toContain('["ultra","ULTRA"]');
-    expect(code).toContain('["low","medium","high"].includes(_s.quality)||(_s.quality=Ib.quality);');
+    // LOW / MEDIUM / HIGH as shipped, plus ULTRA: its own effects, but no more than HIGH's
+    // 1.25 pixels per point (125% on Retina, native resolution on ordinary screens).
+    expect(code).toContain('opts:[["low","LOW"],["medium","MEDIUM"],["high","HIGH"],["ultra","ULTRA"]]');
+    expect(code).toContain('high:{scale:1,samples:4,shadow:4096,bloom:!0,sharpen:.22,maxDpr:1.25,');
+    expect(code).toContain('ultra:{scale:1,samples:4,shadow:4096,bloom:!0,sharpen:.15,maxDpr:1.25,ao:!0,refl:.75,rays:56,');
+    expect(code).toContain('["low","medium","high","ultra"].includes(_s.quality)||(_s.quality=Ib.quality);');
+    expect(code).toContain('ultra:"Same resolution as HIGH (up to 125% on high-density screens)');
     // Medium is the default preset; three.js skips its synchronous shader checks.
     expect(code).toContain('quality:"medium",motionBlur:"high"');
     expect(code).toContain('this.debug={checkShaderErrors:!1,onShaderError:null}');
@@ -514,11 +518,11 @@ test('shows Golden Hour in Chinese by default and switches back to English from 
     expect(await page.evaluate(() => [
         'EQUIP AS PRIMARY', 'SIDEARM — ALWAYS CARRIED', 'PRESS AGAIN TO FORFEIT',
         'STRIX 9 · DUNE', 'EXTENDED MAG FITTED', 'MATCH SCORE +1,200', '1 TAKEDOWN · RECHARGING', 'FLOOR REFLECTIONS',
-        'FRAME RATE CAP', '30 FPS', 'BAKED', 'LIVE'
+        'FRAME RATE CAP', '30 FPS', 'BAKED', 'LIVE', 'ULTRA', 'ultra'
     ].map((text) => window.GoldenHourI18n.translate(text)))).toEqual([
         '设为主武器', '副武器 — 始终携带', '再按一次确认认输',
         'STRIX 9 · 沙丘', '已安装扩容弹匣', '比赛得分 +1,200', '1 次击杀 · 充能中', '地面反射',
-        '帧率上限', '30 帧', '烘焙', '实时'
+        '帧率上限', '30 帧', '烘焙', '实时', '极高', '极高'
     ]);
     // Text the game writes later is translated as it appears.
     await page.locator('[data-test="deploy"]').evaluate((element) => { element.textContent = 'GUNSMITH'; });

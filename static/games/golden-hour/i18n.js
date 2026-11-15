@@ -268,13 +268,17 @@
         'LOW': '低',
         'MEDIUM': '中',
         'HIGH': '高',
+        'ULTRA': '极高',
         'low': '低',
         'medium': '中',
         'high': '高',
+        'ultra': '极高',
         '70% resolution, no anti-aliasing, no ambient occlusion or floor reflections. For integrated graphics.':
             '70% 分辨率，无抗锯齿，无环境光遮蔽和地面反射。适合集成显卡。',
         '85% resolution, 2× MSAA, half-rate floor reflections and light shafts.': '85% 分辨率，2× MSAA，半速率地面反射和光束。',
         'Full resolution, 4× MSAA, ambient occlusion and 4K sun shadows. Recommended.': '全分辨率，4× MSAA，环境光遮蔽和 4K 日光阴影。推荐。',
+        'Same resolution as HIGH (up to 125% on high-density screens), with denser light shafts and volumetric light, smoother motion blur and sharper live floor reflections. The heaviest preset.':
+            '与高相同的分辨率（高分屏上最高 125%），另加更密的光束和体积光、更细腻的动态模糊和更清晰的实时地面反射。最吃配置。',
         'MOTION BLUR': '动态模糊',
         'FLOOR REFLECTIONS': '地面反射',
         'FRAME RATE CAP': '帧率上限',
