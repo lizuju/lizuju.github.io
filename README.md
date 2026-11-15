@@ -1,96 +1,93 @@
-<p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh-CN.md">简体中文</a>
-</p>
+<div align="center">
 
-# Gavin Immersive Portfolio
+<img src=".github/readme/hero.jpg" alt="A 3D desk with a CRT computer showing Gavin's portfolio" width="100%">
 
-Source code for [lizuju.github.io](https://lizuju.github.io/), the bilingual portfolio of 李祖钜 Gavin. The site presents work in AI agents, robotics, computer vision, recommender systems, full-stack engineering, and applied research.
+# Gavin Lizuju · Immersive Portfolio
 
-Desktop visitors enter an interactive Three.js workspace, move toward a CRT computer, and use the portfolio through a turn-of-the-century desktop and application window. Mobile visitors receive the responsive retro desktop directly; the Three.js application and CRT media are split into desktop-only chunks, so mobile browsers do not download or render the 3D scene. Chinese is the default language, with a complete English version available from the language control.
+**A 3D desk, a CRT, and a working turn-of-the-century desktop: the portfolio of 李祖钜 Gavin.**
 
-## Highlights
+[**Visit lizuju.github.io →**](https://lizuju.github.io) &nbsp;·&nbsp; English &nbsp;|&nbsp; [简体中文](README.zh-CN.md)
 
-- Interactive Three.js workspace with a local, self-contained CRT monitor experience.
-- Functional retro desktop with a draggable and resizable window, taskbar, Start menu, shutdown/restart sequence, and early-web visual system.
-- Playable bilingual Gomoku application with a Windows 2000 Minesweeper-style interface and minimax-powered computer opponent.
-- Lightweight mobile layout designed for touch navigation and smaller screens.
-- Five selected projects, two submitted research works, six capability areas, awards, education highlights, and contact links.
-- Resume-derived public content with the school name intentionally omitted.
-- SEO metadata, a shared JSON-LD profile (`src/profile-schema.json`), web app manifest, retro 404 page, build-dated sitemap, robots policy, and Playwright smoke coverage.
+[![CI](https://github.com/lizuju/lizuju.github.io/actions/workflows/ci.yml/badge.svg)](https://github.com/lizuju/lizuju.github.io/actions/workflows/ci.yml) ![three.js](https://img.shields.io/badge/three.js-000000?logo=threedotjs&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white) ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare_Workers-F38020?logo=cloudflare&logoColor=white) ![Node 22](https://img.shields.io/badge/node-22-339933?logo=nodedotjs&logoColor=white) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-## Project Structure
+</div>
+
+## Inside the desktop
+
+<table>
+  <tr>
+    <td width="50%"><img src=".github/readme/desktop-en.jpg" alt="Retro desktop with the portfolio window"></td>
+    <td width="50%"><img src=".github/readme/golden-hour-en.jpg" alt="Golden Hour main menu"></td>
+  </tr>
+  <tr>
+    <td><b>Retro desktop</b><br>Draggable windows, taskbar, Start menu, 中/EN switch and a system-wide mute.</td>
+    <td><b>Golden Hour</b><br>A full 3D shooter in a sandboxed window: Chinese and English, quality presets, reflections and frame rate settings.</td>
+  </tr>
+  <tr>
+    <td><img src=".github/readme/contact-hub-en.jpg" alt="Contact Hub pairing screen"></td>
+    <td><img src=".github/readme/gomoku-en.jpg" alt="Gomoku against the computer"></td>
+  </tr>
+  <tr>
+    <td><b>Contact Hub</b><br>End-to-end encrypted chat and file sync, paired with a 4-digit code.</td>
+    <td><b>Gomoku</b><br>Minesweeper-style board with a minimax opponent.</td>
+  </tr>
+</table>
+
+Also on the desktop: **Satellite Tracker** (live orbits, SGP4), **Project Files** (RoboMaster photos, papers, music) with an [honors gallery](https://lizuju.github.io/honors/), **E-mail** and a **Recycle Bin**.
+
+## Desktop and phone
+
+<table>
+  <tr>
+    <td width="66%"><img src=".github/readme/project-files-en.jpg" alt="Project Files window"></td>
+    <td width="34%"><img src=".github/readme/mobile-en.jpg" alt="The site on a phone"></td>
+  </tr>
+  <tr>
+    <td>Computers enter the 3D room and use the desktop on the CRT. Heavy apps run in their own window; while a game is open the room freezes to leave the GPU to it.</td>
+    <td>Phones skip the 3D scene and get the touch-friendly desktop directly.</td>
+  </tr>
+</table>
+
+## Quick start
+
+```bash
+nvm use            # Node 22 (.nvmrc)
+npm install
+npm run dev        # http://127.0.0.1:8080
+```
+
+```bash
+npm run build && npm run preview   # production build at http://127.0.0.1:3090
+```
+
+## Tests
+
+```bash
+npm run test:unit                   # unit tests
+npm run test:smoke                  # Playwright: Chromium and WebKit, desktop and mobile
+npm ci --prefix cloudflare/sync     # once, then:
+npm test --prefix cloudflare/sync   # sync backend
+```
+
+## Layout
 
 ```text
-src/                       Three.js shell and desktop UI source
-static/portfolio/          Responsive bilingual portfolio source
-static/portfolio/js/content.js  Bilingual resume and portfolio data
-static/portfolio/js/main.js     Desktop bootstrap and bundled JS/CSS entry
-static/portfolio/js/desktop/    Shared window manager, taskbar, Start menu and scene bridge
-static/portfolio/js/apps/       Portfolio, project folder, mail, satellite, Gomoku, control panel
-                                and the end-to-end encrypted sync chat (sync-*.js)
-static/portfolio/css/           Shared styles, per-app styles, responsive and print rules
-static/portfolio/sync-config.json  Sync Worker address and the sync API version the frontend needs
-static/portfolio/sync-e2ee-worker.js  Service Worker that streams and decrypts attachments
-static/chat/               Standalone /chat/ page for the sync chat
-static/                    3D models, textures, audio, and public files
-cloudflare/sync/           Cloudflare Worker and Durable Objects backend for the sync chat
-bundler/                   Webpack development and production configuration
-scripts/                   Development server and image metadata tools
-tests/                     Playwright browser tests (Chromium and WebKit, desktop and mobile)
-docs/                      Production build output (generated, not committed)
+src/                        3D room: three.js, TypeScript, React overlay
+static/portfolio/           Retro desktop: window manager, apps, bilingual content
+static/games/golden-hour/   Golden Hour: game bundle, language layer, desktop bridge
+static/honors/  static/chat/  Standalone honors and chat pages
+cloudflare/sync/            Sync backend: Workers + Durable Objects
+bundler/  scripts/  tests/  Build config, tooling, Playwright and unit tests
 ```
-
-## Local Development
-
-Node.js 22.15.0 or later is required. With `nvm`, run `nvm use` to select the version declared in `.nvmrc`.
-
-```bash
-npm install
-npm run dev
-```
-
-The development server opens the site at `http://127.0.0.1:8080/` by default.
-
-To build and preview the GitHub Pages output:
-
-```bash
-npm run build
-npm run preview
-```
-
-Then open `http://127.0.0.1:3090/`. The direct portfolio is also available at `http://127.0.0.1:3090/portfolio/`.
-
-## Validation
-
-```bash
-npm run build
-npm run test:unit
-npm run test:smoke
-npm test --prefix cloudflare/sync
-node --check static/portfolio/js/main.js
-node --check static/portfolio/js/content.js
-node --check static/portfolio/js/gomoku-game.js
-```
-
-`npm run build` first runs `npm run images:check`, which fails if any image under `static/` still carries EXIF, GPS, XMP, IPTC, or comment metadata. Run `npm run images:strip` after adding photos; it removes metadata losslessly and keeps ICC color profiles.
-
-Webpack bundles the desktop modules and styles into `docs/portfolio/js/main.js` and `docs/portfolio/css/main.css`; edit their source files under `static/portfolio/`. `docs/` and the Gomoku and satellite bundles in `build/` are ignored by Git: run `npm run build` before previewing or running the browser tests. Run `npm ci --prefix cloudflare/sync` once before the backend tests.
-
-CI assigns whole browser test files using the measured durations in `scripts/browser-test-durations.json` (baseline run `40828775124`), so shared servers and hooks stay together. Run a shard locally with `node scripts/run-browser-shard.cjs webkit-desktop 1/4`; `node --test scripts/browser-shards.test.cjs` checks coverage and balance, including new files. Chromium desktop uses two shards, WebKit desktop four, Chromium mobile one and WebKit mobile two. Failed-attempt traces and reports are uploaded even when a retry succeeds. The split smoke files start with the previous CI total apportioned by local per-file timings; successful CI runs recalibrate these weights. Browser-independent download tests run once via `npm run test:unit`.
 
 ## Release
 
-Pull requests run the backend tests, the production build and the browser tests on GitHub Actions, and must be up to date with `main` before merging. Pushing to `main` then only reruns the backend tests and the build, and publishes the build to GitHub Pages. The sync Worker is deployed by hand with `npm run deploy` in `cloudflare/sync/` (see [`cloudflare/sync/README.md`](cloudflare/sync/README.md)).
+- Pull requests run the backend tests, the build and the browser tests; merging to `main` publishes `docs/` to GitHub Pages.
+- The sync Worker is deployed by hand (`npm run deploy` in `cloudflare/sync/`, see its [README](cloudflare/sync/README.md)). For a new sync protocol, raise `apiVersion` in `static/portfolio/sync-config.json` and `API_VERSION` in `cloudflare/sync/src/api-version.js` together and deploy the Worker first; CI checks the live Worker before publishing.
+- The build refuses photos with EXIF or GPS data: run `npm run images:strip` after adding images.
 
-When a frontend change needs a new sync protocol, raise `apiVersion` in `static/portfolio/sync-config.json` and `API_VERSION` in `cloudflare/sync/src/api-version.js` together, deploy the Worker, then push to `main`. Before publishing Pages, CI runs `npm run check:sync-api`, which reads the live `/health` and stops the release if the Worker serves an older API than the frontend needs or if its deployed source fingerprint differs from the backend sources, dependencies or Wrangler configuration. Frontend-only commits and squash merges do not require another Worker deployment. After Pages is published, `npm run build && npm run verify:release -- <full commit SHA>` compares the live frontend files with the local build and the Worker source fingerprint with the checkout. The Worker may report an earlier commit when its deployable sources are unchanged; `--backend-only` additionally requires its exact deployment commit.
+## Credits
 
-## Attribution
+The 3D room is adapted from [henryjeff/portfolio-website](https://github.com/henryjeff/portfolio-website) ([MIT](licenses/henryjeff-portfolio-website-MIT.md)). The Gomoku opponent uses [`@algorithm.ts/gomoku`](https://www.npmjs.com/package/@algorithm.ts/gomoku) ([MIT](static/portfolio/licenses/algorithm-ts-gomoku-MIT.txt)).
 
-The immersive 3D shell is adapted from [henryjeff/portfolio-website](https://github.com/henryjeff/portfolio-website), used under the MIT License. The upstream license is preserved in [`licenses/henryjeff-portfolio-website-MIT.md`](licenses/henryjeff-portfolio-website-MIT.md).
-
-The Gomoku computer opponent uses [`@algorithm.ts/gomoku`](https://www.npmjs.com/package/@algorithm.ts/gomoku), also under the MIT License. Its license is preserved in [`static/portfolio/licenses/algorithm-ts-gomoku-MIT.txt`](static/portfolio/licenses/algorithm-ts-gomoku-MIT.txt).
-
-## License
-
-This project is released under the [MIT License](LICENSE).
+Released under the [MIT License](LICENSE).

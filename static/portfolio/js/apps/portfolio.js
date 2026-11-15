@@ -241,6 +241,16 @@
             if (copy[key]) element.setAttribute('placeholder', copy[key]);
         });
 
+        // Screen reader labels and hover tips that have desktop copy (e.g. the main window's controls).
+        document.querySelectorAll('[data-i18n-aria]').forEach((element) => {
+            const key = element.getAttribute('data-i18n-aria');
+            if (copy[key]) element.setAttribute('aria-label', copy[key]);
+        });
+        document.querySelectorAll('[data-i18n-title]').forEach((element) => {
+            const key = element.getAttribute('data-i18n-title');
+            if (copy[key]) element.setAttribute('title', copy[key]);
+        });
+
         document.querySelectorAll('[data-i18n-lines]').forEach((element) => {
             const key = element.getAttribute('data-i18n-lines');
             if (!Array.isArray(copy[key])) return;

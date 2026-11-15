@@ -16,7 +16,13 @@ test.beforeEach(async ({ page, context }) => {
         else if (file === 'pairing.js') source = (await readFile(path.join(root, 'static/portfolio/js/apps/sync-pairing.js'), 'utf8')).replace('./sync-crypto.js', './crypto.js');
         else if (file === 'opaque.js') source = await readFile(path.join(root, 'node_modules/@serenity-kit/opaque/esm/index.js'), 'utf8');
         else return route.abort();
-        return route.fulfill({ contentType: 'text/javascript', body: source });
+        // WebKit (Playwright 1.65) treats a routed module that another page of the context already
+        // loaded as a cross-origin load; these headers keep the second page's import valid.
+        return route.fulfill({
+            contentType: 'text/javascript',
+            headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
+            body: source
+        });
     });
     server = await context.newPage();
     await server.goto(testPath);
