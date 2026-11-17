@@ -43,7 +43,7 @@ function runtime({ gate = () => true, render = () => true, state = 'playing' } =
         updateMatrixWorld: () => calls.camera++, updateProjectionMatrix: noop, getWorldDirection: noop
     };
     const graphics = {
-        vmPass: {}, vmScene: {}, sunUv: vector(), uniforms: {},
+        vmPass: {}, vmScene: {}, sunUv: vector(), uniforms: {}, size: { x: 800, y: 600 },
         render(dt, paused) {
             const drawn = render(dt, paused);
             if (drawn) this.pausedFrame = paused;

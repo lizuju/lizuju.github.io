@@ -211,10 +211,12 @@ test('decals skip unused instances and hide only after the longest remaining lif
 });
 
 const GhShadowCache = loadClass('GhShadowCache', ',GhDynRes=class{', {});
-const GhDynRes = loadClass('GhDynRes', ',BM=class{', {});
+const GhDynRes = loadClass('GhDynRes', ',GhUpscale=class{', {});
+const GhUpscale = loadClass('GhUpscale', ',BM=class{', {});
 const Graphics = loadClass('BM', ';var Ii=', {
     GhShadowCache,
     GhDynRes,
+    GhUpscale,
     Hm: class { constructor() { this.shadowMap = {}; this.info = {}; } },
     Q1: THREE.NoToneMapping, gx: THREE.PCFSoftShadowMap,
     zr: THREE.Scene, Eo: THREE.PerspectiveCamera, c9: { high: {} },

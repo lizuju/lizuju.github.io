@@ -110,8 +110,19 @@ test('ships Golden Hour without the copy label, with ULTRA capped at 125%, and r
     expect(code).toContain('["off","on"].includes(_s.dynRes)||(_s.dynRes=Ib.dynRes);');
     expect(code).toContain('n.dynRes.setEnabled(_s.dynRes==="on");');
     expect(code).toContain('f0==="dynRes"&&n.dynRes.setEnabled(_s.dynRes==="on")');
-    expect(code).toContain('s=Math.min(window.devicePixelRatio||1,t.maxDpr)*t.scale*(this.dynK||1);');
+    expect(code).toContain('s=Math.min(window.devicePixelRatio||1,t.maxDpr)*t.scale*(this.dynK||1),o=Math.min(window.devicePixelRatio||1,2);');
     expect(code).toContain('this.dynRes&&this.dynRes.enabled&&this.dynRes.tick(paused,performance.now());');
+    // UPSCALING (off by default): the scene renders at the preset's size, the canvas takes the
+    // screen's, and the final picture goes through FSR 1-style EASU + RCAS instead of the browser.
+    expect(code).toContain('dynRes:"off",upscale:"off"');
+    expect(code).toContain('{k:"upscale",label:"UPSCALING",type:"seg",opts:[["off","OFF"],["on","ON"]]');
+    expect(code).toContain('["off","on"].includes(_s.upscale)||(_s.upscale=Ib.upscale);');
+    expect(code).toContain('n.setUpscale(_s.upscale==="on");');
+    expect(code).toContain('f0==="upscale"&&n.setUpscale(_s.upscale==="on")');
+    expect(code).toContain('if(this._up=this.upscale&&s<o-.01,this._up)return e.setPixelRatio(o)');
+    expect(code).toContain('a(this.final),this._wrapFinal();');
+    expect(code).toContain('GhUpscale=class{');
+    expect(code).toContain('u.update(m0,Je.time+performance.now()*1e-4,n.size.y)');
     // FRAME RATE CAP (30/60) is saved with the settings and read by the page's frame pacing.
     expect(code).toContain('reflections:"baked",fpsCap:60');
     expect(code).toContain('{k:"fpsCap",label:"FRAME RATE CAP",type:"seg",opts:[[30,"30 FPS"],[60,"60 FPS"]]');
@@ -527,11 +538,11 @@ test('shows Golden Hour in Chinese by default and switches back to English from 
     expect(await page.evaluate(() => [
         'EQUIP AS PRIMARY', 'SIDEARM — ALWAYS CARRIED', 'PRESS AGAIN TO FORFEIT',
         'STRIX 9 · DUNE', 'EXTENDED MAG FITTED', 'MATCH SCORE +1,200', '1 TAKEDOWN · RECHARGING', 'FLOOR REFLECTIONS',
-        'FRAME RATE CAP', '30 FPS', 'BAKED', 'LIVE', 'ULTRA', 'ultra', 'DYNAMIC RESOLUTION'
+        'FRAME RATE CAP', '30 FPS', 'BAKED', 'LIVE', 'ULTRA', 'ultra', 'DYNAMIC RESOLUTION', 'UPSCALING'
     ].map((text) => window.GoldenHourI18n.translate(text)))).toEqual([
         '设为主武器', '副武器 — 始终携带', '再按一次确认认输',
         'STRIX 9 · 沙丘', '已安装扩容弹匣', '比赛得分 +1,200', '1 次击杀 · 充能中', '地面反射',
-        '帧率上限', '30 帧', '烘焙', '实时', '极高', '极高', '动态分辨率'
+        '帧率上限', '30 帧', '烘焙', '实时', '极高', '极高', '动态分辨率', '超分辨率放大'
     ]);
     // Text the game writes later is translated as it appears.
     await page.locator('[data-test="deploy"]').evaluate((element) => { element.textContent = 'GUNSMITH'; });
