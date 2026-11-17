@@ -8,7 +8,7 @@ const source = readFileSync(process.env.GOLDEN_RUNTIME_SOURCE ||
     resolve(__dirname, '../../static/games/golden-hour/dist/game.js'), 'utf8');
 const start = source.indexOf('GhDynRes=class');
 const window = { __goldenHourFpsCap: 60 };
-const GhDynRes = vm.runInNewContext(`(${source.slice(start + 9, source.indexOf(',BM=class{', start))})`, { window });
+const GhDynRes = vm.runInNewContext(`(${source.slice(start + 9, source.indexOf(',GhUpscale=class{', start))})`, { window });
 
 // A stand-in for the graphics: frames take `cost(k)` ms of GPU time at render scale k (pipelined,
 // so the frame rate follows it smoothly, as measured in Chrome), and never come faster than the

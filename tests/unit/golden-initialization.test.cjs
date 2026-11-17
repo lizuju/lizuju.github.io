@@ -168,9 +168,10 @@ test('default construction remains high quality and boot passes validated saved 
         BM: class {
             constructor(canvas, quality) { calls.push(['construct', canvas, quality]); this.dynRes = { setEnabled: (on) => calls.push(['dynRes', on]) }; }
             setMotionBlur(value) { calls.push(['motionBlur', value]); }
+            setUpscale(on) { calls.push(['upscale', on]); }
         },
-        o: 'canvas', _s: { quality: 'medium', motionBlur: 'high', dynRes: 'on' },
+        o: 'canvas', _s: { quality: 'medium', motionBlur: 'high', dynRes: 'on', upscale: 'off' },
     });
-    assert.deepEqual(calls, [['construct', 'canvas', 'medium'], ['motionBlur', 'high'], ['dynRes', true]]);
+    assert.deepEqual(calls, [['construct', 'canvas', 'medium'], ['motionBlur', 'high'], ['dynRes', true], ['upscale', false]]);
     gfx._dispose();
 });

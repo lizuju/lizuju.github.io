@@ -14,10 +14,13 @@ const gfxStart = source.indexOf('BM=class');
 const cacheStart = source.indexOf('GhShadowCache=class');
 const GhShadowCache = vm.runInNewContext(`(${source.slice(cacheStart + 14, source.indexOf(',GhDynRes=class{', cacheStart))})`);
 const dynStart = source.indexOf('GhDynRes=class');
-const GhDynRes = vm.runInNewContext(`(${source.slice(dynStart + 9, source.indexOf(',BM=class{', dynStart))})`);
+const GhDynRes = vm.runInNewContext(`(${source.slice(dynStart + 9, source.indexOf(',GhUpscale=class{', dynStart))})`);
+const upStart = source.indexOf('GhUpscale=class');
+const GhUpscale = vm.runInNewContext(`(${source.slice(upStart + 10, source.indexOf(',BM=class{', upStart))})`);
 const Graphics = vm.runInNewContext(`(${source.slice(gfxStart + 3, source.indexOf(';var Ii=', gfxStart))})`, {
     GhShadowCache,
     GhDynRes,
+    GhUpscale,
     Hm: class { constructor() { this.info = { render: { frame: 0 }, reset() {} }; this.shadowMap = {}; } },
     Q1: THREE.NoToneMapping, gx: THREE.PCFSoftShadowMap, zr: THREE.Scene, Eo: THREE.PerspectiveCamera,
     c9: { high: {} }, It: THREE.Vector2, a0: THREE.Vector3, Ft: THREE.Quaternion, Lt: THREE.Matrix4,

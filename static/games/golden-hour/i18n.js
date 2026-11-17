@@ -283,6 +283,9 @@
         'FLOOR REFLECTIONS': '地面反射',
         'FRAME RATE CAP': '帧率上限',
         'DYNAMIC RESOLUTION': '动态分辨率',
+        'UPSCALING': '超分辨率放大',
+        "Draws the final picture at your screen's full resolution with an edge-aware upscale and sharpening, in the style of AMD FSR 1, instead of letting the browser stretch it. Sharper edges and text on high-density screens, for a few milliseconds per frame; the 3D scene is still rendered at the preset's resolution. Pairs well with dynamic resolution. No effect where the preset already renders at full resolution.":
+            '用边缘感知放大和锐化（类似 AMD FSR 1）把最终画面直接输出到屏幕的原生分辨率，而不是由浏览器拉伸。高分屏上边缘和文字更清晰，每帧多花几毫秒；3D 场景仍按画质预设的分辨率渲染。可与动态分辨率搭配使用。预设已是原生分辨率时没有效果。',
         "Lowers the render resolution for a moment when the frame rate falls below the cap, then raises it back once there is room. Keeps fights smooth on HIGH and ULTRA; the picture is slightly softer while it is lowered. Off keeps the preset's resolution fixed.":
             '帧率掉到上限以下时，临时降低渲染分辨率，有余量后再升回去。开“高”或“极高”时激战也能保持流畅；降低期间画面会稍微变软。关闭则始终使用画质预设的分辨率。',
         '30 FPS': '30 帧',

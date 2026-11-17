@@ -16,10 +16,12 @@ function loadClass(name, end, globals) {
 }
 
 const GhShadowCache = loadClass('GhShadowCache', ',GhDynRes=class{', {});
-const GhDynRes = loadClass('GhDynRes', ',BM=class{', {});
+const GhDynRes = loadClass('GhDynRes', ',GhUpscale=class{', {});
+const GhUpscale = loadClass('GhUpscale', ',BM=class{', {});
 const Graphics = loadClass('BM', ';var Ii=', {
     GhShadowCache,
     GhDynRes,
+    GhUpscale,
     Hm: class { constructor() { this.shadowMap = {}; this.info = { reset() {} }; } },
     Q1: THREE.NoToneMapping, gx: THREE.PCFSoftShadowMap,
     zr: THREE.Scene, Eo: THREE.PerspectiveCamera, c9: { high: { mblur: 8 } },
