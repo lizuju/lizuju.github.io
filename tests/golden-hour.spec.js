@@ -300,7 +300,11 @@ test('freezes the 3D room and holds the monitor view while Golden Hour is open',
     await expect.poll(async () => (await screen.boundingBox()).width, { timeout: 10000 })
         .toBeGreaterThan(screenBefore.width * 1.5);
     await page.waitForTimeout(2500);
+    const surfaceTimes = () => page.locator('#video-1, #video-2').evaluateAll(videos =>
+        videos.map(video => ({ paused: video.paused, time: video.currentTime })));
+    const initial = await surfaceTimes();
     const settledFps = await roomFps();
+    const advancing = (await surfaceTimes()).map((video, i) => video.time !== initial[i].time);
 
     const desktop = page.frameLocator('#computer-screen');
     await desktop.locator('[data-window-action="minimize"]').click();
@@ -308,8 +312,6 @@ test('freezes the 3D room and holds the monitor view while Golden Hour is open',
     await expect(desktop.locator('[data-golden-window]')).toBeVisible();
     await expect(desktop.locator('[data-golden-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
     await page.waitForTimeout(500);
-    const surfaceTimes = () => page.locator('#video-1, #video-2').evaluateAll(videos =>
-        videos.map(video => ({ paused: video.paused, time: video.currentTime })));
     const frozen = await surfaceTimes();
     expect(frozen.map(video => video.paused)).toEqual([true, true]);
     expect(await roomFps()).toBe(0);
@@ -339,7 +341,7 @@ test('freezes the 3D room and holds the monitor view while Golden Hour is open',
     await desktop.locator('.window-controls [data-golden-action="minimize"]').click();
     await expect(desktop.locator('[data-golden-window]')).toBeHidden();
     await expect.poll(async () => (await surfaceTimes()).every((video, i) =>
-        !video.paused && video.time !== frozen[i].time)).toBe(true);
+        !video.paused && (!advancing[i] || video.time !== frozen[i].time))).toBe(true);
     // Software-rendered browsers may not draw the room fast in any case.
     if (settledFps >= 20) expect(await roomFps()).toBeGreaterThan(15);
     else expect(await roomFps()).toBeGreaterThan(0);

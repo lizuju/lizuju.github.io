@@ -3544,7 +3544,7 @@ import { pendingMessages } from './sync-outbox.js';
         new ResizeObserver(() => {
             if (input.clientWidth === composerWidth) return;
             composerWidth = input.clientWidth;
-            resizeComposer();
+            requestAnimationFrame(resizeComposer);
         }).observe(input);
         // The pairing card sits above the feed, so scroll by its height change before the next paint to keep the messages still
         // when it opens, closes or appears. Changes while the feed is not rendered have nothing on screen to keep in place.

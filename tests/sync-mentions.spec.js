@@ -228,8 +228,8 @@ test('keeps the selected identity after a rename and retries the original mentio
         if (request.method() !== 'POST' || !request.url().endsWith('/messages')) return false;
         const body = request.postDataJSON();
         submissions.push(body);
-        await route.fulfill({ headers, status: submissions.length === 1 ? 503 : 200,
-            json: submissions.length === 1 ? { error: 'unavailable' } : { id: 1, deviceId, clientId: body.clientId, text: body.text, createdAt: Date.now() } });
+        await route.fulfill({ headers, status: submissions.length === 1 ? 507 : 200,
+            json: submissions.length === 1 ? { error: 'storage_full' } : { id: 1, deviceId, clientId: body.clientId, text: body.text, createdAt: Date.now() } });
         return true;
     });
     await choose(page);
