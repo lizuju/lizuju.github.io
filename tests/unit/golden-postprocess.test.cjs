@@ -6,8 +6,8 @@ const vm = require('node:vm');
 
 const source = readFileSync(process.env.GOLDEN_RUNTIME_SOURCE ||
     resolve(__dirname, '../../static/games/golden-hour/dist/game.js'), 'utf8');
-const { THREE, Graphics, Bloom, GTAO, qualities } = vm.runInNewContext(
-    `${source.slice(0, source.indexOf(';var Ii='))};HY=()=>null;return {THREE:Ct,Graphics:BM,Bloom:mg,GTAO:gg,qualities:c9};})();`,
+const { THREE, Graphics, Upscaler, Bloom, GTAO, qualities } = vm.runInNewContext(
+    `${source.slice(0, source.indexOf(';var Ii='))};HY=()=>null;return {THREE:Ct,Graphics:BM,Upscaler:GhUpscale,Bloom:mg,GTAO:gg,qualities:c9};})();`,
     { AbortController, console, window: { devicePixelRatio: 1 }, innerWidth: 952, innerHeight: 538 },
 );
 
@@ -69,7 +69,7 @@ function graphics(quality, { composite = false, failAt = '' } = {}) {
         setDepthMode(...mode) { depthMode = mode; },
     };
     Object.assign(gfx, {
-        renderer, q: qualities[quality], _passes: [], composer: null, size: new THREE.Vector2(), fx,
+        renderer, q: qualities[quality], _passes: [], composer: null, size: new THREE.Vector2(), fx, upscaler: new Upscaler(),
         scene: new THREE.Scene(), vmScene: new THREE.Scene(),
         camera: new THREE.PerspectiveCamera(), vmCamera: new THREE.PerspectiveCamera(),
         exposure: { auto: 1 }, _blurK: 0, _reproj: new THREE.Matrix4(),

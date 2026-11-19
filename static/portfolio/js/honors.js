@@ -18,9 +18,12 @@ document.addEventListener('DOMContentLoaded', () => {
         startButton: document.querySelector('[data-start-toggle]'),
         startMenu: document.querySelector('[data-start-menu]')
     });
-    const honors = desktopApi.apps.projectFolder(manager);
+    const certificate = new URLSearchParams(location.search).get('certificate');
+    const restoreSession = !certificate || (performance.getEntriesByType('navigation')[0]?.type === 'reload'
+        && desktopApi.readDesktopSession()?.previewCertificate === certificate);
+    const honors = desktopApi.apps.projectFolder(manager, restoreSession ? null : certificate);
     manager.bindGlobalListeners();
-    const active = new URLSearchParams(location.search).has('certificate') ? null : manager.restoreDesktopSession();
+    const active = restoreSession ? manager.restoreDesktopSession() : null;
     const folder = document.querySelector('[data-project-folder-window]');
     folder.classList.add('is-maximized');
     honors.showHonors();

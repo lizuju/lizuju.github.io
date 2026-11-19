@@ -123,7 +123,7 @@ test('retains the original encrypted quote on failed-send retry while preserving
         if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
         const body = route.request().postDataJSON();
         submissions.push(body);
-        await route.fulfill({ status: submissions.length === 1 ? 503 : 200, headers, json: submissions.length === 1 ? { error: 'unavailable' } : confirmed(body, 3) });
+        await route.fulfill({ status: submissions.length === 1 ? 507 : 200, headers, json: submissions.length === 1 ? { error: 'storage_full' } : confirmed(body, 3) });
         return true;
     });
     await page.locator('[data-sync-reply-message]').nth(0).click();

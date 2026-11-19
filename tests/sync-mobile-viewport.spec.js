@@ -69,6 +69,11 @@ for (const standalone of [false, true]) test(`keeps the ${standalone ? 'standalo
     expect(send.y + send.height).toBeLessThanOrEqual(345);
     const long = await input.boundingBox();
     expect(long.height).toBeLessThanOrEqual(112);
+    await input.fill('Wrap this draft');
+    const wide = await input.boundingBox();
+    await input.evaluate(element => { element.style.maxWidth = '64px'; });
+    await expect.poll(() => input.evaluate(element => element.offsetHeight)).toBeGreaterThan(wide.height);
+    await input.evaluate(element => element.style.removeProperty('max-width'));
     await input.fill('Short');
     await expect.poll(() => input.evaluate(element => element.offsetHeight)).toBeLessThan(long.height);
     const height = await app.evaluate(element => element.style.getPropertyValue('--sync-viewport-height'));

@@ -36,6 +36,11 @@ async function createRuntime() {
           export class Room extends ProductionRoom {
             testQueries() { return this.queries.splice(0); }
             testPruneAt(time) { this.nextPruneAt = time; }
+            async testAlarm(pushDue = false) {
+              if (pushDue) this.scheduledPushAt = Date.now() - 1;
+              await this.alarm();
+            }
+            async testFileDeadline() { await this.scheduleAlarm(); return this.nextPruneAt; }
             testInitialized() { return this.initialized; }
             async testReclaim() { await this.ctx.storage.deleteAll(); this.initialized = false; }
             testFailure() {
@@ -107,6 +112,47 @@ test('history pages reuse boundaries and expiry hints while cold and overdue rea
   const overdue = await room.messagePage();
   assert.equal(overdue.history.oldestId, 3);
   assert.notEqual(overdue.history.generation, recovered.history.generation);
+});
+
+test('warm push alarms skip housekeeping until due and cold alarms rebuild the deadline', async t => {
+  const { runtime, room, storage, wake } = await createRuntime(); t.after(() => runtime.dispose());
+  const device = await room.initialize(randomUUID());
+  await room.testQueries();
+  await room.testAlarm(true);
+  const warm = await room.testQueries();
+  assert.ok(warm.every(query => !query.startsWith('DELETE') && !query.includes('FROM file_shards s')));
+
+  await storage.exec("INSERT INTO files (file_id, device_id, client_id, name, type, size, text, status, created_at, updated_at, reserved_bytes) VALUES ('file', ?, 'client', '', '', 0, '', 'deleting', ?, ?, 0)", device.deviceId, Date.now(), Date.now());
+  const deadline = await room.testFileDeadline();
+  assert.equal(await room.testFileDeadline(), deadline);
+  await room.testPruneAt(Date.now() - 1);
+  await room.testAlarm(true);
+  assert.deepEqual(await storage.exec('SELECT file_id FROM files'), []);
+
+  await wake();
+  await room.testQueries();
+  await room.testAlarm();
+  assert.ok((await room.testQueries()).some(query => query.startsWith('DELETE FROM messages WHERE created_at')));
+});
+
+test('reopening a live board only reads the device and game while cold and overdue reads handle expiry', async t => {
+  const { runtime, room, storage, wake } = await createRuntime(); t.after(() => runtime.dispose());
+  const { deviceId } = await room.initialize(randomUUID());
+  const gameId = randomUUID();
+  await storage.exec('INSERT INTO messages (client_id, device_id, text, created_at) VALUES (?, ?, ?, ?)', gameId, deviceId, 'encrypted', Date.now());
+  await storage.exec("INSERT INTO gomoku_games (game_id, message_id, host_device_id, status, revision, updated_at) VALUES (?, 1, ?, 'waiting', 1, ?)", gameId, deviceId, Date.now());
+  await wake();
+  await room.testQueries();
+  assert.equal((await room.readGame(deviceId, gameId)).game.id, gameId);
+  assert.ok((await room.testQueries()).some(sql => sql.startsWith('DELETE FROM messages')));
+  for (let i = 0; i < 3; i++) assert.equal((await room.readGame(deviceId, gameId)).game.id, gameId);
+  const reads = await room.testQueries();
+  assert.equal(reads.length, 6);
+  assert.ok(reads.every(sql => sql.startsWith('SELECT')));
+  await storage.exec('UPDATE messages SET created_at = ? WHERE id = 1', Date.now() - 7 * 86400000 - 1);
+  await room.testPruneAt(Date.now() - 1);
+  assert.equal((await room.readGame(deviceId, gameId)).status, 404);
+  assert.deepEqual(await storage.exec('SELECT game_id FROM gomoku_games'), []);
 });
 
 test('versioned rooms recover with read-only schema checks and preserve credentials, history and file metadata', async t => {

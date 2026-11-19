@@ -23,6 +23,8 @@ import { pendingMessages } from './sync-outbox.js';
     const assetRoot = new URL(document.body.dataset.assetRoot || '.', document.baseURI);
     const ADD_SPACE_KEY = 'portfolio-sync-add-space';
     const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
+    const temporaryTransferError = error => error.code === 'network_error'
+        || [408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(error.status);
     try {
         const old = JSON.parse(localStorage.getItem('portfolio-sync-space') || 'null');
         if (old?.roomId) sessionStorage.removeItem(`portfolio-sync-draft:${old.roomId}`);
@@ -593,13 +595,14 @@ import { pendingMessages } from './sync-outbox.js';
                     return { error: 'unavailable' };
                 });
                 if (!response.ok) {
-                    if (result.error === 'key_changed' && session) await refreshKeys(session);
+                    if (result?.error === 'key_changed' && session) await refreshKeys(session);
                     const retryAfter = response.headers.get('Retry-After');
                     const seconds = Number(retryAfter);
-                    throw Object.assign(new Error(result.error), {
-                        code: result.error,
+                    const code = result?.error || 'unavailable';
+                    throw Object.assign(new Error(code), {
+                        code,
                         status: response.status,
-                        game: result.game,
+                        game: result?.game,
                         retryAfter: Number.isFinite(seconds) ? seconds : Math.max(0, (Date.parse(retryAfter) - Date.now()) / 1000)
                     });
                 }
@@ -728,15 +731,19 @@ import { pendingMessages } from './sync-outbox.js';
         };
         const roomPath = (suffix = '') => `/v1/spaces/${credentials.roomId}${suffix}`;
         const restorePending = async (session, draft) => {
-            if (draft && !draft.durableOutbox) {
-                for (const message of draft.outbox || []) if (message.autoSend && !message.attachment) await pendingMessages.save(session, message, true);
-                draft.durableOutbox = true;
-                const encrypted = await encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, draft);
-                sessionStorage.setItem(`portfolio-sync-draft:${session.roomId}`, encrypted);
+            const legacy = !draft?.durableOutbox && draft?.outbox?.filter(message => message.autoSend && !message.attachment);
+            if (legacy?.length) {
+                await pendingMessages.migrate(session, legacy, async () => {
+                    const compact = { ...draft, durableOutbox: true, outbox: draft.outbox.filter(message => !message.autoSend) };
+                    const encrypted = await encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, compact);
+                    try { sessionStorage.setItem(`portfolio-sync-draft:${session.roomId}`, encrypted); return true; }
+                    catch { return false; }
+                });
             }
             const stored = await pendingMessages.load(session);
             const ids = new Set(stored.map(message => message.clientId));
-            return [...stored, ...(draft?.outbox || []).filter(message => !message.autoSend && !ids.has(message.clientId))];
+            const local = (draft?.outbox || []).filter(message => !message.autoSend && !ids.has(message.clientId));
+            return [...stored.map(message => ({ ...message, durable: true })), ...local];
         };
         const draftKey = () => `portfolio-sync-draft:${credentials.roomId}`;
         const saveDraft = () => {
@@ -751,7 +758,9 @@ import { pendingMessages } from './sync-outbox.js';
                 file: { name: pendingUpload.file.name, type: pendingUpload.file.type, size: pendingUpload.file.size, lastModified: pendingUpload.file.lastModified }
             };
             const key = draftKey();
-            return draftSave = encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, { durableOutbox: true, text: input.value, mentions: mentionComposer.snapshot(), reply: selectedReply, outbox: [...outbox.values()], upload })
+            const local = [...outbox.values()].filter(message => !message.durable)
+                .map(message => message.autoSend ? { ...message, autoSend: false } : message);
+            return draftSave = encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, { durableOutbox: true, text: input.value, mentions: mentionComposer.snapshot(), reply: selectedReply, outbox: local, upload })
                 .then(encrypted => {
                     if (revision !== draftRevision) return false;
                     sessionStorage.setItem(key, encrypted);
@@ -1945,7 +1954,7 @@ import { pendingMessages } from './sync-outbox.js';
                     queued.confirmed = true;
                     record.queuedMessages.delete(message.clientId);
                     if (credentials === session) outbox.delete(message.clientId);
-                    persistQueued(record, queued, true);
+                    pendingMessages.remove(session, queued.clientId).catch(() => { if (credentials === session) setNotice('syncStorageError', true); });
                 }
             }
             const receipts = data.type === 'read' ? [data] : data.readReceipts || [];
@@ -2312,7 +2321,6 @@ import { pendingMessages } from './sync-outbox.js';
                 setup.hidden = !addingSpace;
                 room.hidden = addingSpace;
                 if (active) prepareEncryptedFiles().catch(() => {});
-                await record.queueSave;
                 try {
                     const encrypted = sessionStorage.getItem(draftKey());
                     const draft = encrypted ? await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted) : null;
@@ -2925,7 +2933,7 @@ import { pendingMessages } from './sync-outbox.js';
                             ...options, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(timeout)])
                         }, session);
                     } catch (error) {
-                        if (controller.signal.aborted || credentials !== session || attempt === 2 || (error.code && !['storage_cleaning', 'rate_limited', 'network_error'].includes(error.code))) throw error;
+                        if (controller.signal.aborted || credentials !== session || attempt === 2 || (error.code && !temporaryTransferError(error))) throw error;
                         upload.inflightBytes = 0;
                         const stage = upload.stage;
                         upload.retryAt = Date.now() + Math.max(error.retryAfter || 0, 2 ** attempt) * 1000;
@@ -3160,29 +3168,9 @@ import { pendingMessages } from './sync-outbox.js';
                 await pendingMessages.remove(record.session, outgoing.clientId);
                 return false;
             }
+            outgoing.durable = true;
             record.queuedMessages.set(outgoing.clientId, outgoing);
             return true;
-        };
-        const persistQueued = async (record, outgoing, remove = false) => {
-            if (remove) await pendingMessages.remove(record.session, outgoing.clientId);
-            else await pendingMessages.save(record.session, outgoing);
-            if (credentials === record.session && !switchingSpace) return saveDraft();
-            record.queueSave = (record.queueSave || Promise.resolve()).then(async () => {
-                const session = record.session;
-                if (!liveSession(session) || record.cleared) return;
-                if (credentials === session && !switchingSpace) return saveDraft();
-                const key = `portfolio-sync-draft:${session.roomId}`;
-                const encrypted = sessionStorage.getItem(key);
-                const draft = encrypted ? await decryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, encrypted) : {};
-                draft.durableOutbox = true;
-                draft.outbox = (draft.outbox || []).filter(message => message.clientId !== outgoing.clientId);
-                if (!remove) draft.outbox.push(outgoing);
-                const saved = await encryptPayload(session.keyring, session.roomId, `draft:${session.deviceId}`, draft);
-                if (!liveSession(session) || record.cleared) return;
-                if (credentials === session && !switchingSpace) return saveDraft();
-                sessionStorage.setItem(key, saved);
-            }).catch(() => { if (credentials === record.session) setNotice('syncStorageError', true); });
-            return record.queueSave;
         };
         const flushQueued = async record => {
             if (!record || record.flushing || record.connectionState !== 'online' || !liveSession(record.session) || !record.queuedMessages.size) return;
@@ -3209,7 +3197,9 @@ import { pendingMessages } from './sync-outbox.js';
                             continue;
                         }
                         outgoing.nextAttemptAt = stored.nextAttemptAt;
-                        if (!(outgoing.nextAttemptAt > Date.now())) await sendOutgoing(outgoing, record);
+                        outgoing.retryCount = stored.retryCount || 0;
+                        if (outgoing.nextAttemptAt > Date.now()) outgoing.sendState = 'queued';
+                        else await sendOutgoing(outgoing, record);
                         if (outgoing.sendState === 'queued') {
                             record.queueTimer = setTimeout(() => flushQueued(record), Math.max(1000, (outgoing.nextAttemptAt || 0) - Date.now()));
                             break;
@@ -3228,17 +3218,15 @@ import { pendingMessages } from './sync-outbox.js';
             outgoing.autoSend = true;
             outgoing.queuedAt = Date.now();
             outgoing.nextAttemptAt = 0;
+            outgoing.retryCount = 0;
             outgoing.sendState = online ? 'sending' : 'queued';
             render(true);
             try {
                 if (!await enqueuePending(record, outgoing)) return;
                 if (credentials === session) {
-                    let saving = saveDraft();
-                    let saved = await saving;
-                    while (saving !== draftSave && credentials === session) { saving = draftSave; saved = await saving; }
-                    if (credentials === session && !saved) throw new Error('draft_not_saved');
+                    if (!online) setNotice('syncMessageQueued');
+                    await saveDraft();
                 }
-                if (credentials === session && !online) setNotice('syncMessageQueued');
             } catch {
                 outgoing.sendState = 'failed';
                 outgoing.autoSend = false;
@@ -3272,7 +3260,7 @@ import { pendingMessages } from './sync-outbox.js';
             else if (current()) sendingText = true;
             if (current()) { render(true); updateSelectedFile(); setNotice('syncSending'); }
             try {
-                if (queuedRecord) await persistQueued(queuedRecord, outgoing);
+                if (queuedRecord) await pendingMessages.save(session, outgoing);
                 else saveDraft();
                 if (upload) {
                     const message = await uploadAttachment(upload, session, controller);
@@ -3284,7 +3272,7 @@ import { pendingMessages } from './sync-outbox.js';
                             ...(outgoing.mentions?.length ? { mentions: outgoing.mentions } : {}),
                             ...(outgoing.sticker ? { sticker: outgoing.sticker } : {}), ...(outgoing.gomoku ? { gomoku: outgoing.gomoku } : {}) });
                         outgoing.keyId = keyring.currentKeyId;
-                        if (queuedRecord) await persistQueued(queuedRecord, outgoing);
+                        if (queuedRecord) await pendingMessages.save(session, outgoing);
                         else saveDraft();
                     }
                     if (!liveSession(session) || outgoing.confirmed || !pending()) return;
@@ -3297,13 +3285,13 @@ import { pendingMessages } from './sync-outbox.js';
                         if (current()) outbox.delete(outgoing.clientId);
                         if (current() && !switchingSpace) addMessage(message, null, false);
                         else rememberHistory(queuedRecord, [message], 'append');
-                        await persistQueued(queuedRecord, outgoing, true);
+                        await pendingMessages.remove(session, outgoing.clientId);
                     } else if (current()) addMessage(message, null, false);
                 }
                 if (credentials !== session) return;
                 if (upload?.confirmed || (upload && pendingUpload !== upload)) return;
                 controller?.signal.throwIfAborted();
-                saveDraft();
+                if (!queuedRecord) saveDraft();
                 setNotice('syncSent');
             } catch (error) {
                 if (error.code === 'message_removed' && liveSession(session)) {
@@ -3313,16 +3301,25 @@ import { pendingMessages } from './sync-outbox.js';
                     record.queuedMessages.delete(outgoing.clientId);
                     record.failedMessages.delete(outgoing.clientId);
                     if (current()) reconcileUpload([{ deviceId: session.deviceId, clientId: outgoing.clientId }]);
-                    await persistQueued(record, outgoing, true);
+                    await pendingMessages.remove(session, outgoing.clientId);
                     if (current()) setNotice('syncAlreadySentRemoved');
                     return;
                 }
                 if (queuedRecord && liveSession(session) && !outgoing.confirmed && pending()) {
-                    const retry = !navigator.onLine || queuedRecord.connectionState !== 'online' || ['network_error', 'rate_limited', 'storage_cleaning'].includes(error.code);
+                    const retry = temporaryTransferError(error)
+                        || (!error.status && (!navigator.onLine || queuedRecord.connectionState !== 'online'));
                     outgoing.sendState = retry ? 'queued' : 'failed';
-                    outgoing.nextAttemptAt = Date.now() + Math.max(5000, (error.retryAfter || 0) * 1000);
-                    if (!retry) { outgoing.autoSend = false; queuedRecord.queuedMessages.delete(outgoing.clientId); queuedRecord.failedMessages.add(outgoing.clientId); }
-                    await persistQueued(queuedRecord, outgoing);
+                    if (retry) {
+                        outgoing.retryCount++;
+                        const base = Math.min(300000, 5000 * 2 ** (outgoing.retryCount - 1));
+                        const delay = outgoing.retryCount === 1 ? base : base * (0.8 + 0.2 * Math.random());
+                        outgoing.nextAttemptAt = Date.now() + Math.max(delay, (error.retryAfter || 0) * 1000);
+                    } else {
+                        outgoing.autoSend = false;
+                        queuedRecord.queuedMessages.delete(outgoing.clientId);
+                        queuedRecord.failedMessages.add(outgoing.clientId);
+                    }
+                    await pendingMessages.save(session, outgoing);
                     if (current()) { if (retry) setNotice('syncMessageQueued'); else showError(error); }
                     renderSpaces();
                     return;
@@ -3547,7 +3544,7 @@ import { pendingMessages } from './sync-outbox.js';
         new ResizeObserver(() => {
             if (input.clientWidth === composerWidth) return;
             composerWidth = input.clientWidth;
-            resizeComposer();
+            requestAnimationFrame(resizeComposer);
         }).observe(input);
         // The pairing card sits above the feed, so scroll by its height change before the next paint to keep the messages still
         // when it opens, closes or appears. Changes while the feed is not rendered have nothing on screen to keep in place.

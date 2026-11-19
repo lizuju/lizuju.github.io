@@ -113,6 +113,33 @@ test('a denied clipboard exposes the selectable share URL and an unknown link ke
     await expect(page.locator('[data-image-preview-window]')).toBeVisible();
 });
 
+test('reloading a shared certificate keeps the filtered gallery and minimized preview', async ({ page }) => {
+    await page.goto('/honors/?certificate=certificate-16');
+    const preview = page.locator('[data-image-preview-window]');
+    const search = page.locator('[data-project-folder-search]');
+    const category = page.locator('[data-honors-category]');
+    await expect(preview).toBeVisible();
+    await page.locator('[data-image-preview-action="minimize"]').click();
+    await category.selectOption('robotics');
+    await search.fill('RoboMaster');
+    const visible = page.locator('[data-honor-image]:visible');
+    const count = await visible.count();
+    expect(count).toBeGreaterThan(0);
+    await page.reload();
+    await expect(category).toHaveValue('robotics');
+    await expect(search).toHaveValue('RoboMaster');
+    await expect(visible).toHaveCount(count);
+    await expect(preview).toBeHidden();
+    await page.locator('[data-image-preview-task]').click();
+    await expect(page.locator('[data-image-preview-caption]')).toContainText('APMCM');
+
+    await page.goto('/honors/?certificate=certificate-15');
+    await expect(page.locator('[data-image-preview-caption]')).toContainText('华数杯');
+    await expect(preview).toBeVisible();
+    await expect(search).toHaveValue('');
+    await expect(category).toHaveValue('');
+});
+
 test('arrow navigation keeps the selected certificate inside the scroll viewport', async ({ page }) => {
     await page.goto('/honors/');
     await expect(page.locator('[data-honor-image]')).toHaveCount(35);

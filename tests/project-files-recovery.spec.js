@@ -9,6 +9,36 @@ const openFolder = async page => {
     await page.locator('.desktop-shortcut[data-open-project-folder]').click();
 };
 
+for (const action of ['close', 'minimize']) {
+    test(`defers full photo requests on reload after ${action} until reopening the viewer`, async ({ page }) => {
+        await openFolder(page);
+        await page.locator('[data-folder="photos"]').click();
+        const photo = page.locator('[data-robomaster-image]').first();
+        const preview = page.locator('[data-image-preview-image]');
+        await photo.click();
+        await expect.poll(() => preview.evaluate(image => image.currentSrc)).toMatch(/^blob:/);
+        await page.locator(`[data-image-preview-action="${action}"]`).click();
+        await page.locator('[data-project-folder-action="close"]').click();
+        const requests = [];
+        await page.route('**/robomaster-match-records/previews/*', route => {
+            requests.push(route.request().url());
+            return route.continue();
+        });
+        await page.reload();
+        await expect(page.locator('[data-image-preview-window]')).toBeHidden();
+        expect(await preview.getAttribute('src')).toBeNull();
+        expect(requests).toEqual([]);
+        if (action === 'minimize') await page.locator('[data-image-preview-task]').click();
+        else {
+            await page.locator('.desktop-shortcut[data-open-project-folder]').click();
+            await page.locator('[data-folder="photos"]').click();
+            await photo.click();
+        }
+        await expect.poll(() => preview.evaluate(image => image.currentSrc)).toMatch(/^blob:/);
+        expect(requests[0]).toMatch(/01-match-multi-robot\.webp$/);
+    });
+}
+
 test('retries a failed paper page directly and when reopening without reloading successful pages', async ({ page }) => {
     let requests = 0;
     await page.route('**/math-modeling-papers/national/page-01.webp', route => {
@@ -193,6 +223,41 @@ test('photo errors expose a bilingual retry and successful reopen does not reset
     await page.locator('[data-image-preview-action="close"]').click();
     await page.locator('[data-robomaster-image]').first().click();
     await expect(page.locator('[data-image-preview-toolbar] [data-preview-zoom-value]')).toHaveText('125%');
+});
+
+test('restores the zoom and reading position of a visible or minimized paper across reload', async ({ page }) => {
+    await openFolder(page);
+    await page.locator('[data-folder="papers"]').click();
+    await page.locator('[data-modeling-paper]').first().click();
+    const toolbar = page.locator('[data-paper-preview-toolbar]');
+    const pages = page.locator('[data-paper-preview-pages]');
+    for (let i = 0; i < 4; i++) await toolbar.locator('[data-preview-zoom-in]').click();
+    const chapter = pages.locator('figure').nth(6);
+    await chapter.evaluate(figure => {
+        const viewport = figure.parentElement;
+        const rect = figure.getBoundingClientRect();
+        viewport.scrollTop += rect.top - viewport.getBoundingClientRect().top - viewport.clientTop + rect.height * 0.4;
+        viewport.scrollLeft = (viewport.scrollWidth - viewport.clientWidth) / 2;
+    });
+    const check = async () => {
+        await expect(toolbar.locator('[data-preview-zoom-value]')).toHaveText('200%');
+        await expect.poll(() => chapter.evaluate(figure => {
+            const viewport = figure.parentElement;
+            const rect = figure.getBoundingClientRect();
+            return (viewport.getBoundingClientRect().top + viewport.clientTop - rect.top) / rect.height;
+        })).toBeCloseTo(0.4, 2);
+        await expect.poll(() => pages.evaluate(viewport => viewport.scrollLeft / (viewport.scrollWidth - viewport.clientWidth))).toBeCloseTo(0.5, 2);
+    };
+    await check();
+    await page.reload();
+    await check();
+    await page.locator('[data-paper-preview-action="minimize"]').click();
+    const size = page.viewportSize();
+    await page.setViewportSize({ width: Math.max(280, size.width - 120), height: size.height });
+    await page.reload();
+    await expect(pages).toBeHidden();
+    await page.locator('[data-paper-preview-task]').click();
+    await check();
 });
 
 test('paper focus, filtered selection and opening refer to the same visible document', async ({ page, browserName }) => {

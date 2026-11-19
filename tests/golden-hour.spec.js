@@ -11,6 +11,23 @@ const GAME_STUB = '<!doctype html><meta charset="utf-8"><title>GOLDEN HOUR — S
 const gameState = (page, key) => page.frames().find((frame) => GAME_PAGE(frame.url()))
     ?.evaluate((name) => window.lastState?.[name], key);
 
+test('a failed game script can be retried from the loading screen', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'phones show the keyboard and mouse notice');
+    let requests = 0;
+    await page.route('**/games/golden-hour/dist/game.js', route => {
+        if (++requests <= 2) return route.abort();
+        return route.fulfill({ contentType: 'text/javascript', body: 'document.getElementById("loading").hidden = true; window.GH = { ready: true };' });
+    });
+    await page.goto('/games/golden-hour/');
+    await expect(page.getByRole('alert').filter({ hasText: '游戏加载失败' })).toBeVisible();
+    await page.getByRole('button', { name: '重试' }).click();
+    await expect(page.getByRole('button', { name: '重试' })).toBeVisible();
+    await page.evaluate(() => window.GoldenHourI18n.setLanguage('en'));
+    await page.getByRole('button', { name: 'RETRY' }).click();
+    await expect.poll(() => page.evaluate(() => window.GH?.ready)).toBe(true);
+    expect(requests).toBe(3);
+});
+
 test('shows loading until the current game finishes initializing', async ({ page, isMobile }) => {
     test.skip(isMobile, 'phones do not load the game');
     await page.route(GAME_PAGE, (route) => route.fulfill({
@@ -27,6 +44,26 @@ test('shows loading until the current game finishes initializing', async ({ page
     await expect(status).toHaveText('正在载入至日酒店...');
     const frame = page.frames().find((candidate) => GAME_PAGE(candidate.url()));
     await frame.evaluate(() => parent.postMessage({ source: 'golden-hour', type: 'game-ready' }, '*'));
+    await expect(status).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
+});
+
+test('the desktop game window shows script failure and follows the retry', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'phones do not load the game');
+    let requests = 0;
+    let retry;
+    await page.route('**/games/golden-hour/dist/game.js', route => {
+        if (++requests === 1) return route.abort();
+        retry = route;
+    });
+    await page.goto('/portfolio/');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-golden-hour]').click();
+    const status = page.locator('[data-golden-status]');
+    await expect(status).toHaveText('游戏加载失败');
+    await page.frameLocator('.golden-frame').getByRole('button', { name: '重试' }).click();
+    await expect(status).toHaveText('正在载入至日酒店...');
+    await expect.poll(() => requests).toBe(2);
+    await retry.fulfill({ contentType: 'text/javascript', body: 'parent.postMessage({source:"golden-hour", type:"game-ready"}, "*");' });
     await expect(status).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
 });
 
@@ -119,7 +156,7 @@ test('ships Golden Hour without the copy label, with ULTRA capped at 125%, and r
     expect(code).toContain('["off","on"].includes(_s.upscale)||(_s.upscale=Ib.upscale);');
     expect(code).toContain('n.setUpscale(_s.upscale==="on");');
     expect(code).toContain('f0==="upscale"&&n.setUpscale(_s.upscale==="on")');
-    expect(code).toContain('if(this._up=this.upscale&&s<o-.01,this._up)return e.setPixelRatio(o)');
+    expect(code).toContain('if (this._up && !active) this.upscaler.releaseTargets();');
     expect(code).toContain('a(this.final),this._wrapFinal();');
     expect(code).toContain('GhUpscale=class{');
     expect(code).toContain('u.update(m0,Je.time+performance.now()*1e-4,n.size.y)');
@@ -263,7 +300,11 @@ test('freezes the 3D room and holds the monitor view while Golden Hour is open',
     await expect.poll(async () => (await screen.boundingBox()).width, { timeout: 10000 })
         .toBeGreaterThan(screenBefore.width * 1.5);
     await page.waitForTimeout(2500);
+    const surfaceTimes = () => page.locator('#video-1, #video-2').evaluateAll(videos =>
+        videos.map(video => ({ paused: video.paused, time: video.currentTime })));
+    const initial = await surfaceTimes();
     const settledFps = await roomFps();
+    const advancing = (await surfaceTimes()).map((video, i) => video.time !== initial[i].time);
 
     const desktop = page.frameLocator('#computer-screen');
     await desktop.locator('[data-window-action="minimize"]').click();
@@ -271,7 +312,10 @@ test('freezes the 3D room and holds the monitor view while Golden Hour is open',
     await expect(desktop.locator('[data-golden-window]')).toBeVisible();
     await expect(desktop.locator('[data-golden-status]')).toHaveText('点击画面锁定鼠标 · Esc 释放鼠标');
     await page.waitForTimeout(500);
+    const frozen = await surfaceTimes();
+    expect(frozen.map(video => video.paused)).toEqual([true, true]);
     expect(await roomFps()).toBe(0);
+    expect(await surfaceTimes()).toEqual(frozen);
 
     // The pointer drifting off the screen keeps the monitor view while the game is open.
     const zoomed = await screen.boundingBox();
@@ -296,6 +340,8 @@ test('freezes the 3D room and holds the monitor view while Golden Hour is open',
     // Minimizing the game hands the room and the view back to the mouse.
     await desktop.locator('.window-controls [data-golden-action="minimize"]').click();
     await expect(desktop.locator('[data-golden-window]')).toBeHidden();
+    await expect.poll(async () => (await surfaceTimes()).every((video, i) =>
+        !video.paused && (!advancing[i] || video.time !== frozen[i].time))).toBe(true);
     // Software-rendered browsers may not draw the room fast in any case.
     if (settledFps >= 20) expect(await roomFps()).toBeGreaterThan(15);
     else expect(await roomFps()).toBeGreaterThan(0);

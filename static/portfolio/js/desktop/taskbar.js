@@ -38,8 +38,7 @@
         };
         desktopButton.addEventListener('click', () => {
             manager.toggleDesktop();
-            updateDesktopButton();
-            desktopButton.focus({ preventScroll: true });
+            if (manager.isDesktopShown()) desktopButton.focus({ preventScroll: true });
         });
         window.addEventListener('portfolio-language-change', updateDesktopButton);
         window.addEventListener('gavin:desktop-visibility-change', updateDesktopButton);
@@ -95,13 +94,34 @@
             if (shouldOpen) {
                 startMenu.hidden = false;
                 startButton.setAttribute('aria-expanded', 'true');
+                if (event.detail === 0) startMenu.querySelector('button').focus();
             }
         });
 
         startMenu.addEventListener('click', (event) => event.stopPropagation());
+        startMenu.addEventListener('keydown', (event) => {
+            if (event.key === 'Tab') {
+                closeStartMenu();
+                startButton.focus({ preventScroll: true });
+                return;
+            }
+            if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+            event.preventDefault();
+            const items = [...startMenu.querySelectorAll('button')];
+            const index = items.indexOf(event.target);
+            const direction = event.key === 'ArrowDown' ? 1 : -1;
+            items[(index + direction + items.length) % items.length].focus();
+        });
+        document.addEventListener('focusin', (event) => {
+            if (!startMenu.hidden && !startMenu.contains(event.target) && event.target !== startButton) closeStartMenu();
+        });
         document.addEventListener('click', closeStartMenu);
         document.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape') closeStartMenu();
+            if (event.key === 'Escape' && !startMenu.hidden) {
+                event.preventDefault();
+                closeStartMenu();
+                startButton.focus({ preventScroll: true });
+            }
         });
 
         shutdownButton?.addEventListener('click', startShutdown);

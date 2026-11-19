@@ -445,14 +445,19 @@ test('upload chunks retain the initial global reservation without running regist
   const registryStorage = await runtime.unsafeGetDurableObjectStorage('sync-files-test', 'PairingRegistry', { name: 'registry' });
   const snapshot = await registryStorage.exec('SELECT bytes FROM room_usage WHERE room_id = ?', space.roomId);
   const refreshes = await registry.testRefreshes();
+  const room = await roomObject(space);
+  const uploadAlarm = await room.testReadAlarm();
+  assert.ok(uploadAlarm > Date.now());
   for (const [index, bytes] of [Buffer.alloc(chunkSize), Buffer.alloc(chunkSize), Buffer.from('end')].entries()) {
     const result = await putChunk(request, space, started.body.uploadId, index, bytes);
     assert.equal(result.status, 200);
     assert.equal(await registry.testRefreshes(), refreshes);
     assert.deepEqual(await registryStorage.exec('SELECT bytes FROM room_usage WHERE room_id = ?', space.roomId), snapshot);
-    const room = await roomObject(space);
+    assert.equal(await room.testReadAlarm(), uploadAlarm);
     assert.ok((await room.storageUsage()).bytes <= snapshot[0].bytes, 'Initial reservation must still cover all stored chunks and remaining upload bytes');
   }
+  await room.testRunAlarm();
+  assert.ok(await room.testReadAlarm() > uploadAlarm, 'The early alarm rechecks the updated upload deadline');
   assert.equal((await complete(request, space, started.body.uploadId)).status, 201);
   assert.equal(await registry.testRefreshes(), refreshes + 1);
   const cancelled = await initiate(request, space, { size: chunkSize });
@@ -627,6 +632,8 @@ test('concurrent download and preview requests reuse persisted tickets per devic
   const storage = await roomStorage(space);
   assert.deepEqual(await storage.exec('SELECT count(*) AS count FROM download_tickets'), [{ count: 1 }]);
   await runtime.unsafeEvictDurableObject('sync-files-test', 'SyncRoom', { name: space.roomId });
+  const room = await roomObject(space);
+  assert.equal(await room.testReadAlarm(), results[0].body.expiresAt);
   assert.deepEqual((await request(path, { method: 'POST', token: space.token })).body, results[0].body);
   const paired = await client()('/v1/pair', { method: 'POST', json: { code: space.code } });
   const peer = await request(path, { method: 'POST', token: paired.body.token });
@@ -635,6 +642,10 @@ test('concurrent download and preview requests reuse persisted tickets per devic
   const renewed = await request(path, { method: 'POST', token: space.token });
   assert.notEqual(renewed.body.ticket, results[0].body.ticket);
   assert.ok(renewed.body.expiresAt > Date.now() + 60000);
+  await storage.exec('UPDATE download_tickets SET expires_at = ? WHERE ticket = ?', Date.now() - 1, results[0].body.ticket);
+  await room.testRunAlarm();
+  assert.deepEqual(await storage.exec('SELECT ticket FROM download_tickets WHERE ticket = ?', results[0].body.ticket), []);
+  assert.equal(await room.testReadAlarm(), Math.min(peer.body.expiresAt, renewed.body.expiresAt));
 });
 
 test('upload initialization validates the 2 GiB boundary and reserves an idempotent upload without transferring it', async () => {

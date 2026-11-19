@@ -176,6 +176,23 @@ test('expired endpoints are removed while transient authentication failures reta
   }
 });
 
+test('a subscription that expires after registration is removed before delivery', async () => {
+  await control({ reset: true, status: 503, hold: false });
+  const { host, peers: [peer], storage, path } = await room();
+  const target = { ...subscription(), expirationTime: Date.now() + 60000 };
+  assert.equal((await subscribe(path, peer, target)).status, 200);
+  await storage.exec('UPDATE push_subscriptions SET subscription = ? WHERE device_id = ?',
+    JSON.stringify({ ...target, expirationTime: Date.now() - 1 }), peer.deviceId);
+  assert.equal((await send(path, host)).status, 201);
+  await storage.exec('UPDATE push_queue SET due_at = 0');
+  await drain(host);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), []);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_subscriptions'), []);
+  assert.equal((await send(path, host)).status, 201);
+  assert.deepEqual(await storage.exec('SELECT * FROM push_queue'), []);
+  assert.deepEqual((await control()).calls, []);
+});
+
 test('unsubscribe aborts in-flight work and three-way delivery rechecks queued subscriptions', async () => {
   await control({ reset: true, status: 201, hold: true });
   const { host, peers, storage, path } = await room(6);

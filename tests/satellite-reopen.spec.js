@@ -22,7 +22,10 @@ test('keeps a loaded satellite window ready after minimizing and reopening', asy
         requests += 1;
         return route.fulfill({
             contentType: 'application/json',
-            body: JSON.stringify(satelliteRecords)
+            body: JSON.stringify(requests === 1 ? satelliteRecords : [
+                { ...satelliteRecords[0], OBJECT_NAME: 'TEST', NORAD_CAT_ID: 12345 },
+                satelliteRecords[0]
+            ])
         });
     });
     await page.goto('/portfolio/');
@@ -46,6 +49,52 @@ test('keeps a loaded satellite window ready after minimizing and reopening', asy
     await expect(status).toHaveText('Live propagation running');
     await expect(loading).toBeHidden();
     expect(requests).toBe(1);
+
+    await page.locator('[data-satellite-search]').fill('25544');
+    await page.locator('[data-satellite-search-button]').click();
+    await expect(page.locator('[data-satellite-details]')).toBeVisible();
+    await satelliteWindow.locator('[data-satellite-action="close"]').click();
+    await page.clock.setFixedTime(new Date(Date.now() + 3 * 3600000));
+    await page.locator('.desktop-shortcut[data-open-satellite]').click();
+    await expect.poll(() => requests).toBe(2);
+    await expect(loading).toBeHidden();
+    await expect(status).toHaveText('Live propagation running');
+    await expect(page.locator('[data-satellite-details]')).toBeVisible();
+    await expect(page.locator('[data-satellite-norad]')).toHaveText('25544');
+});
+
+for (const failure of ['error', 'timeout']) test(`recovers the orbital worker after ${failure} without downloading orbital data again`, async ({ page, isMobile }) => {
+    test.skip(isMobile, 'satellite windows are only available in the desktop layout');
+    let dataRequests = 0;
+    await page.addInitScript(mode => {
+        window.orbitWorkerStarts = 0;
+        const NativeWorker = window.Worker;
+        window.Worker = class extends NativeWorker {
+            constructor(url, options) {
+                if (++window.orbitWorkerStarts === 1) {
+                    const script = mode === 'error' ? 'throw new Error("worker startup failed");' : '';
+                    url = URL.createObjectURL(new Blob([script], { type: 'text/javascript' }));
+                }
+                super(url, options);
+            }
+        };
+    }, failure);
+    await page.route('https://celestrak.org/**', route => {
+        dataRequests++;
+        return route.fulfill({ json: satelliteRecords });
+    });
+    await page.goto('/portfolio/');
+    await page.clock.install();
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-satellite]').click();
+    await expect.poll(() => page.evaluate(() => window.orbitWorkerStarts)).toBe(1);
+    if (failure === 'timeout') await page.clock.fastForward(30001);
+    await expect(page.locator('[data-satellite-status]')).toHaveAttribute('data-i18n', 'satelliteWorkerError');
+    await page.locator('[data-satellite-retry]').click();
+    await expect(page.locator('[data-satellite-status]')).toHaveAttribute('data-i18n', 'satelliteReady');
+    await expect(page.locator('[data-satellite-loading]')).toBeHidden();
+    expect(await page.evaluate(() => window.orbitWorkerStarts)).toBe(2);
+    expect(dataRequests).toBe(1);
 });
 
 test('preserves failure translations and respects CelesTrak cooldown across reopen', async ({ page, isMobile }) => {

@@ -23,6 +23,13 @@ test('encrypts offline text, restores it on reload and sends each queued message
     expect(submissions).toHaveLength(0);
     await expect.poll(() => page.evaluate(key => sessionStorage.getItem(key), `portfolio-sync-draft:${roomId}`)).toMatch(/^e2ee1\./);
     expect(await page.evaluate(() => JSON.stringify(sessionStorage))).not.toContain('Private offline');
+    const { session } = require('./fixtures/sync-e2ee.cjs');
+    const { decryptPayload } = await import('../static/portfolio/js/apps/sync-crypto.js');
+    await expect.poll(async () => {
+        const encrypted = await page.evaluate(key => sessionStorage.getItem(key), `portfolio-sync-draft:${roomId}`);
+        const draft = await decryptPayload(session.keyring, roomId, `draft:${deviceId}`, encrypted);
+        return [draft.text, draft.outbox];
+    }).toEqual(['', []]);
     await page.reload();
     if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
     await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(2);
@@ -56,6 +63,108 @@ test('reuses the same client id when a lost response moves an online text into t
     expect(submissions).toHaveLength(2);
     expect(submissions[1].clientId).toBe(submissions[0].clientId);
     await expect(page.locator('[data-sync-input]')).toHaveValue('');
+});
+
+test('backs off temporary HTTP errors across reload and honors Retry-After with the original ciphertext', async ({ page }) => {
+    const statuses = [503, 408, 429, 500, 502, 504, 522, 524];
+    const serverWait = 360;
+    const submissions = [];
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        const status = statuses[submissions.length];
+        submissions.push(route.request().postDataJSON());
+        if (status) {
+            await route.fulfill({ status, headers: { ...headers, 'Access-Control-Expose-Headers': 'Retry-After',
+                ...(status === 429 ? { 'Retry-After': String(serverWait) } : {}) },
+                contentType: 'text/html', body: '<p>Please retry later</p>' });
+        } else await route.fulfill({ headers, json: confirmed(submissions.at(-1), 1) });
+        return true;
+    });
+    await page.clock.install();
+    await chat.send('Text through a gateway outage');
+    for (let i = 0; i < statuses.length; i++) {
+        await expect.poll(() => submissions.length).toBe(i + 1);
+        await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(1);
+        if (i === 1) {
+            await page.reload();
+            if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+            await expect(page.locator('[data-sync-status]')).toHaveAttribute('data-state', 'online');
+        }
+        const maximum = statuses[i] === 429 ? serverWait * 1000 : Math.min(300000, 5000 * 2 ** i);
+        const minimum = i === 0 || statuses[i] === 429 ? maximum : 0.8 * maximum;
+        await page.clock.fastForward(minimum - 1500);
+        expect(submissions).toHaveLength(i + 1);
+        await page.clock.fastForward(maximum - minimum + 1800);
+    }
+    await expect(page.locator('.sync-message[data-state="sent"]')).toHaveCount(1);
+    expect(submissions).toHaveLength(statuses.length + 1);
+    for (const body of submissions) expect(body).toEqual(submissions[0]);
+});
+
+test('a full session draft store does not cancel durable offline delivery', async ({ page }) => {
+    const submissions = [];
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        const body = route.request().postDataJSON();
+        submissions.push(body);
+        await route.fulfill({ headers, json: confirmed(body, 1) });
+        return true;
+    });
+    chat.disconnect();
+    await expect(page.locator('[data-sync-status]')).not.toHaveAttribute('data-state', 'online');
+    const { encrypt } = require('./fixtures/sync-e2ee.cjs');
+    const oldDraft = encrypt(`draft:${deviceId}`, { durableOutbox: true, text: 'Composer still here', outbox: [
+        { clientId: 'old-confirmed', text: 'Stale duplicate', autoSend: true }
+    ] });
+    const fillDraftStore = ({ key, oldDraft }) => {
+        sessionStorage.setItem(key, oldDraft);
+        const setItem = Storage.prototype.setItem;
+        Storage.prototype.setItem = function (name, value) {
+            if (this === sessionStorage && name === key) throw new DOMException('Draft quota', 'QuotaExceededError');
+            return setItem.call(this, name, value);
+        };
+    };
+    const seed = { key: `portfolio-sync-draft:${roomId}`, oldDraft };
+    await page.evaluate(fillDraftStore, seed);
+    await page.addInitScript(fillDraftStore, seed);
+    await chat.send('Durable despite draft quota');
+    await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(1);
+    await expect(page.locator('[data-sync-notice]')).toHaveAttribute('data-i18n', 'syncStorageError');
+    await page.reload();
+    if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+    await expect(page.locator('.sync-message[data-state="queued"]')).toHaveCount(1);
+    await expect(page.locator('[data-sync-input]')).toHaveValue('Composer still here');
+    chat.reconnect();
+    await expect(page.locator('.sync-message[data-state="sent"]')).toHaveText(/Durable despite draft quota/);
+    expect(submissions).toHaveLength(1);
+});
+
+test('a failed IndexedDB write keeps a recoverable manual retry without submitting', async ({ page }) => {
+    const submissions = [];
+    const chat = await openChat(page, async route => {
+        if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
+        const body = route.request().postDataJSON();
+        submissions.push(body);
+        await route.fulfill({ headers, json: confirmed(body, 1) });
+        return true;
+    });
+    await page.evaluate(() => {
+        const transaction = IDBDatabase.prototype.transaction;
+        IDBDatabase.prototype.transaction = function (stores, mode, ...options) {
+            if (this.name === 'gavin-sync-outbox' && mode === 'readwrite') throw new DOMException('Outbox quota', 'QuotaExceededError');
+            return transaction.call(this, stores, mode, ...options);
+        };
+    });
+    await chat.send('Retry after outbox storage recovers');
+    await expect(page.locator('.sync-message[data-state="failed"]')).toHaveCount(1);
+    await expect(page.locator('[data-sync-retry-message]')).toBeEnabled();
+    expect(submissions).toHaveLength(0);
+    await page.reload();
+    if (!await page.locator('[data-sync-window]').isVisible()) await page.locator('.desktop-shortcut[data-open-sync-space]').click();
+    await expect(page.locator('.sync-message[data-state="failed"]')).toHaveCount(1);
+    await page.locator('[data-sync-retry-message]').click();
+    await expect(page.locator('.sync-message[data-state="sent"]')).toHaveText(/Retry after outbox storage recovers/);
+    expect(submissions).toHaveLength(1);
 });
 
 test('settles a retry whose delivered message was removed without restoring it or losing the new draft', async ({ page }) => {
@@ -147,7 +256,7 @@ test('resumes a deferred retry after a slow space-name save finishes', async ({ 
         await page.locator('[data-sync-space-name]').fill('新的名称');
         await page.locator('[data-sync-space-name-form]').getByRole('button', { name: '保存', exact: true }).click();
         await expect.poll(() => profileStarted).toBe(true);
-        await page.clock.runFor(6000);
+        await page.clock.runFor(10500);
         expect(posts).toBe(2);
         release();
         await expect(page.locator('[data-sync-space-name-dialog]')).not.toBeVisible();

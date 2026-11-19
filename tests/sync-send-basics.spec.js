@@ -109,7 +109,7 @@ test('restores a failed bubble after reload and retries its original client id w
         if (route.request().method() !== 'POST' || !route.request().url().endsWith('/messages')) return false;
         const body = route.request().postDataJSON();
         submissions.push(body);
-        if (submissions.length === 1) await route.fulfill({ status: 503, headers, json: { error: 'unavailable' } });
+        if (submissions.length === 1) await route.fulfill({ status: 507, headers, json: { error: 'storage_full' } });
         else {
             await retryGate;
             await route.fulfill({ headers, json: confirmed(body, 1) });

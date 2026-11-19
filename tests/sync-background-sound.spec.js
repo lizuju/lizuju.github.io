@@ -174,7 +174,7 @@ test('shows only the most important space dot and restores unread green after a 
 
 test('keeps a failed-send red dot above unread green after switching spaces and refreshing', async ({ page }) => {
     const chat = await openChat(page);
-    await page.route('https://sync.test/**/messages', route => route.fulfill({ status: 503, headers, json: { error: 'unavailable' } }));
+    await page.route('https://sync.test/**/messages', route => route.fulfill({ status: 507, headers, json: { error: 'storage_full' } }));
     await page.locator('[data-sync-input]').fill('A failed outgoing message');
     await page.locator('[data-sync-send]').click();
     await expect(page.locator('.sync-message[data-state="failed"]')).toHaveCount(1);
