@@ -454,6 +454,8 @@
         'FINAL CHECKS': '最终检查',
         'READY': '就绪',
         'PREPARING': '准备中',
+        'GAME COULD NOT LOAD': '游戏加载失败',
+        'RETRY': '重试',
         'FIELD NOTES': '战术提示',
         'Bullets punch through thin cover. Wooden slats, plaster and furniture will not save anyone.':
             '子弹能穿透薄掩体，木板、石膏墙和家具都挡不住。',

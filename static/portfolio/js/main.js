@@ -83,12 +83,15 @@ import { prepareEncryptedFiles } from './apps/sync-e2ee-files.js';
             portfolio.showMobileHomepage();
         } else if (restoredActiveEntry) {
             manager.focusWindow(restoredActiveEntry.element);
+        } else if (manager.isDesktopShown()) {
+            document.querySelector('[data-show-desktop]').focus({ preventScroll: true });
         } else {
             manager.focusWindow(portfolio.entry.element);
         }
         satellite?.resumeIfVisible();
         goldenHour?.resumeIfVisible();
-        if (!restoredActiveEntry && document.body.classList.contains('direct-portfolio') && window.innerWidth > 900) {
+        if (!restoredActiveEntry && manager.isWindowVisible(portfolio.entry.element)
+            && document.body.classList.contains('direct-portfolio') && window.innerWidth > 900) {
             portfolio.entry.toggleMaximize();
         }
 

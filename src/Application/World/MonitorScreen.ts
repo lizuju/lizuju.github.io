@@ -34,6 +34,7 @@ export default class MonitorScreen extends EventEmitter {
     inComputer: boolean;
     mouseClickInProgress: boolean;
     gameOpen: boolean;
+    surfaceFrozen = false;
     dimmingPlane: THREE.Mesh;
     videoTextures: { [key in string]: THREE.VideoTexture };
 
@@ -57,6 +58,10 @@ export default class MonitorScreen extends EventEmitter {
         this.initializeScreenEvents();
         this.createIframe();
         const maxOffset = this.createTextureLayers();
+        const listenerOptions = { signal: this.application.eventController.signal };
+        this.application.motionQuery.addEventListener('change', this.updateSurfaceVideos, listenerOptions);
+        document.addEventListener('visibilitychange', this.updateSurfaceVideos, listenerOptions);
+        this.updateSurfaceVideos();
         this.createEnclosingPlanes(maxOffset);
         this.createPerspectiveDimmer(maxOffset);
     }
@@ -192,9 +197,14 @@ export default class MonitorScreen extends EventEmitter {
         // While a game window is open on the desktop, the settled monitor view does not change, so
         // the room (its 3D scene, the screen's surface layers, the coffee steam) stops drawing and
         // leaves the GPU and main thread to the game. A resize or camera move draws again.
-        this.application.time.freezeWhen = () => this.gameOpen
-            && !this.camera.freeCam
-            && this.camera.currentKeyframe === CameraKey.MONITOR;
+        this.application.time.freezeWhen = () => {
+            const frozen = this.gameOpen && !this.camera.freeCam && this.camera.currentKeyframe === CameraKey.MONITOR;
+            if (frozen !== this.surfaceFrozen) {
+                this.surfaceFrozen = frozen;
+                this.updateSurfaceVideos();
+            }
+            return frozen;
+        };
 
         // Bubble iframe input to the main application without duplicating the bridge on reload.
         window.addEventListener('message', (event) => {
@@ -401,17 +411,17 @@ export default class MonitorScreen extends EventEmitter {
         const video = document.getElementById(videoId) as HTMLVideoElement;
         video.src = video.dataset.src!;
         video.load();
-        const updateMotion = () => {
-            if (this.application.reducedMotion) video.pause();
-            else video.play().catch(() => undefined);
-        };
-        this.application.motionQuery.addEventListener('change', updateMotion, {
-            signal: this.application.eventController.signal,
-        });
-        updateMotion();
-
         return new THREE.VideoTexture(video);
     }
+
+    updateSurfaceVideos = () => {
+        const pause = this.surfaceFrozen || document.hidden || this.application.reducedMotion;
+        for (const texture of Object.values(this.videoTextures)) {
+            const video = texture.image as HTMLVideoElement;
+            if (pause) video.pause();
+            else if (video.paused) video.play().catch(() => undefined);
+        }
+    };
 
     /**
      * Adds a texture layer to the screen

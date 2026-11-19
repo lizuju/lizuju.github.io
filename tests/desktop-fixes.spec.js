@@ -2,6 +2,59 @@ const { test, expect } = require('@playwright/test');
 
 test.use({ serviceWorkers: 'block' });
 
+test('restores the Show desktop snapshot and keyboard focus after a reload', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'multiple desktop windows and keyboard focus');
+    await page.goto('/portfolio/');
+    const portfolio = page.locator('[data-app-window]');
+    const folder = page.locator('[data-project-folder-window]');
+    const desktop = page.locator('[data-show-desktop]');
+    await page.locator('[data-window-action="minimize"]').click();
+    await page.locator('[data-open-recycle-bin]').click();
+    await page.locator('[data-recycle-action="minimize"]').click();
+    await page.locator('.desktop-shortcut[data-open-project-folder]').click();
+    await page.locator('[data-task-window]').click();
+    await page.locator('[data-project-folder-task]').click();
+    await desktop.click();
+    await expect(desktop).toHaveAttribute('aria-pressed', 'true');
+    await page.reload();
+    await expect(desktop).toHaveAttribute('aria-pressed', 'true');
+    await expect(desktop).toBeFocused();
+    await expect(portfolio).toBeHidden();
+    await expect(folder).toBeHidden();
+    await desktop.press('Enter');
+    await expect(desktop).toHaveAttribute('aria-pressed', 'false');
+    await expect(portfolio).toBeVisible();
+    await expect(portfolio).toHaveClass(/is-maximized/);
+    await expect(folder).toHaveClass(/is-active/);
+    await expect(folder.locator('[data-folder="photos"]')).toBeFocused();
+    await expect(page.locator('[data-recycle-window]')).toBeHidden();
+});
+
+test('navigates the Start menu from the keyboard and closes it when focus leaves', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'desktop keyboard navigation');
+    await page.goto('/portfolio/');
+    const start = page.locator('[data-start-toggle]');
+    const menu = page.locator('[data-start-menu]');
+    const items = menu.getByRole('button');
+    await start.press('Enter');
+    await expect(items.first()).toBeFocused();
+    await page.keyboard.press('ArrowUp');
+    await expect(items.last()).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(items.first()).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(items.nth(1)).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(menu).toBeHidden();
+    await expect(start).toBeFocused();
+    await start.press('Space');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('Tab');
+    await expect(menu).toBeHidden();
+    await expect(start).toHaveAttribute('aria-expanded', 'false');
+    expect(await menu.evaluate(element => element.contains(document.activeElement))).toBe(false);
+});
+
 test('keeps edge window menus inside the work area and scrolls short menus with the keyboard', async ({ page, isMobile }) => {
     test.skip(isMobile, 'the desktop menubar is hidden on small screens');
     await page.setViewportSize({ width: 1200, height: 793 });

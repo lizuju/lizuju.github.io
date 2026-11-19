@@ -72,7 +72,8 @@
     font: inherit;
 }
 
-.satellite-toolbar > button {
+.satellite-toolbar > button,
+.satellite-loading > button {
     height: 24px;
     padding: 0 10px;
     border: 2px outset #fff;
@@ -81,7 +82,8 @@
     font: inherit;
 }
 
-.satellite-toolbar > button:active {
+.satellite-toolbar > button:active,
+.satellite-loading > button:active {
     border-style: inset;
 }
 

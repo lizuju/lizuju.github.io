@@ -53,6 +53,7 @@ let currentPositions;
 let nextPositions;
 let positionTimestamp = 0;
 let worker;
+let workerTimer;
 let resizeObserver;
 let frameId;
 let lastFrameTime = 0;
@@ -134,6 +135,7 @@ function setLoading(visible, key = 'satelliteLoading') {
     const label = loading.querySelector('strong');
     label.dataset.i18n = key;
     label.textContent = copy()[key];
+    loading.querySelector('[data-satellite-retry]').hidden = key !== 'satelliteWorkerError';
 }
 
 function createStars() {
@@ -462,7 +464,7 @@ function updateSelectedDetails() {
 }
 
 function selectSatellite(index) {
-    if (!records[index]) return;
+    if (!records[index] || !dataLoaded) return;
     clearSelectionTracks();
     selectedIndex = index;
     selectedState = null;
@@ -474,6 +476,7 @@ function selectSatellite(index) {
 }
 
 function runSearch() {
+    if (!dataLoaded) return;
     const query = searchInput.value.trim().toUpperCase();
     if (!query) return;
     const index = records.findIndex((record) => (
@@ -541,11 +544,16 @@ function createTrackLine(positions, color, opacity, ground = false) {
 }
 
 function handleWorkerMessage(event) {
+    if (event.currentTarget !== worker) return;
     if (event.data.type === 'ready') {
+        clearTimeout(workerTimer);
         dataLoaded = true;
         setLoading(false);
         setStatus(dataStatusKey);
-        if (isActive()) worker.postMessage({ type: 'propagate', timestamp: Date.now(), selectedIndex });
+        if (isActive()) {
+            if (selectedIndex >= 0) selectSatellite(selectedIndex);
+            else worker.postMessage({ type: 'propagate', timestamp: Date.now(), selectedIndex });
+        }
         syncAnimation();
         return;
     }
@@ -578,14 +586,40 @@ function handleWorkerMessage(event) {
     }
 }
 
+function startWorker() {
+    clearTimeout(workerTimer);
+    worker?.terminate();
+    worker = null;
+    dataLoaded = false;
+    const fail = () => {
+        clearTimeout(workerTimer);
+        worker?.terminate();
+        worker = null;
+        dataLoaded = false;
+        setLoading(true, 'satelliteWorkerError');
+        setStatus('satelliteWorkerError');
+    };
+    try {
+        worker = new Worker(new URL('./worker.js', import.meta.url));
+        worker.addEventListener('message', handleWorkerMessage);
+        worker.addEventListener('error', event => { if (event.currentTarget === worker) fail(); });
+        workerTimer = setTimeout(fail, REQUEST_TIMEOUT);
+        worker.postMessage({ type: 'init', records });
+    } catch { fail(); }
+}
+
 function applyRecords(nextRecords) {
+    const selectedId = records[selectedIndex]?.NORAD_CAT_ID;
     records = nextRecords;
-    selectedIndex = -1;
+    selectedIndex = selectedId == null ? -1 : records.findIndex(record => String(record.NORAD_CAT_ID) === String(selectedId));
     selectedState = null;
+    currentPositions = nextPositions = null;
+    selectedMarker.visible = groundMarker.visible = false;
+    groundTrackTimestamp = 0;
     clearSelectionTracks();
     initializePoints();
     updateSelectedDetails();
-    worker.postMessage({ type: 'init', records });
+    startWorker();
 }
 
 async function loadData() {
@@ -597,7 +631,7 @@ async function loadData() {
         if (cached?.records?.length) {
             dataTimestamp = cached.timestamp;
             dataStatusKey = Date.now() - cached.timestamp < CACHE_TTL ? 'satelliteReady' : 'satelliteCached';
-            if (!dataLoaded || appliedTimestamp !== cached.timestamp) {
+            if (!records.length || appliedTimestamp !== cached.timestamp) {
                 applyRecords(cached.records);
                 appliedTimestamp = cached.timestamp;
             }
@@ -611,7 +645,7 @@ async function loadData() {
                 worker.postMessage({ type: 'propagate', timestamp: Date.now(), selectedIndex });
             }
         } catch {
-            if (records.length) { dataStatusKey = 'satelliteCached'; setStatus(dataStatusKey); }
+            if (records.length) { dataStatusKey = 'satelliteCached'; if (worker) setStatus(dataStatusKey); }
             else { setLoading(true, 'satelliteLoadError'); setStatus('satelliteLoadError'); }
         }
     })().finally(() => { loadingPromise = null; });
@@ -622,8 +656,7 @@ function initialize() {
     if (initialized) return;
     initialized = true;
     initializeScene();
-    worker = new Worker(new URL('./worker.js', import.meta.url));
-    worker.addEventListener('message', handleWorkerMessage);
+    loading.querySelector('[data-satellite-retry]').addEventListener('click', refresh);
     new MutationObserver(syncAnimation).observe(windowElement, {
         attributes: true,
         attributeFilter: ['class', 'inert']
@@ -640,15 +673,23 @@ function open() {
     initialize();
     if (dataLoaded) {
         setLoading(false);
+        if (Date.now() >= dataTimestamp + CACHE_TTL) dataStatusKey = 'satelliteCached';
         setStatus(dataStatusKey);
-    } else {
-        loadData();
+    }
+    if ((!worker && records.length) || !records.length || Date.now() >= Math.max(dataTimestamp + CACHE_TTL, requestAfter)) {
+        refresh();
     }
     syncAnimation();
     window.requestAnimationFrame(resize);
 }
 
 function refresh() {
+    if (!worker && records.length) {
+        setLoading(true, 'satelliteCalculating');
+        setStatus('satelliteCalculating');
+        startWorker();
+        return;
+    }
     loadData();
 }
 

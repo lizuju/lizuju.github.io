@@ -566,6 +566,10 @@
                 version: 1,
                 context: desktopApi.getSessionContext(),
                 activeWindowId: activeEntry?.id || null,
+                desktopSnapshot: desktopSnapshot && {
+                    windowIds: [...desktopSnapshot.entries].map(entry => entry.id),
+                    activeWindowId: desktopSnapshot.active?.id || null
+                },
                 windows: Object.fromEntries(windowEntries.map((entry) => [entry.id, getWindowSessionState(entry)]))
             };
             sessionHooks.forEach(({ save }) => save && Object.assign(session, save()));
@@ -584,6 +588,10 @@
 
                 entry.element.classList.toggle('is-minimized', Boolean(state.minimized));
                 entry.element.classList.toggle('is-closed', Boolean(state.closed));
+                if (!isWindowVisible(entry.element)) {
+                    entry.element.classList.remove('is-active');
+                    entry.task.classList.remove('is-active');
+                }
                 entry.task.hidden = Boolean(state.taskHidden);
                 if (state.zIndex) entry.element.style.zIndex = state.zIndex;
             });
@@ -605,6 +613,14 @@
                 });
             }
 
+            if (savedState.desktopSnapshot) {
+                const entries = savedState.desktopSnapshot.windowIds.map(getWindow)
+                    .filter(entry => entry?.element.classList.contains('is-minimized'));
+                if (entries.length) {
+                    desktopSnapshot = { entries: new Set(entries), active: getWindow(savedState.desktopSnapshot.activeWindowId) };
+                    notifyDesktopVisibility();
+                }
+            }
             sessionHooks.forEach(({ restore }) => restore?.(savedState));
 
             const activeEntry = windowEntries.find(({ id, element }) => (

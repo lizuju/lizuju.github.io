@@ -376,6 +376,7 @@ test('clearing, seven-day expiry, capacity pruning and the 500-message cap delet
       await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - 7 * 24 * 60 * 60 * 1000 + 60 * 60 * 1000, game.messageId);
       assert.deepEqual((await read(host, game.id)).body.game.board, moved.board);
       await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - 7 * 24 * 60 * 60 * 1000 - 1, game.messageId);
+      await (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(host.roomId).scheduleAlarm();
     }
     if (mode === 'capacity') await (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(host.roomId).pruneOldest();
     if (mode === 'count') {
@@ -470,6 +471,7 @@ test('history pressure preserves waiting and playing games while removing other 
     }
     if (status === 'playing') assert.equal((await move(host, game, 7, 7)).status, 200);
     await storage.exec('UPDATE messages SET created_at = ? WHERE id = ?', Date.now() - 7 * 86400000 - 1, game.messageId);
+    await (await runtime.getDurableObjectNamespace('E2EE_SYNC_ROOMS')).getByName(host.roomId).scheduleAlarm();
     assert.equal((await read(host, game.id)).status, 404);
     assert.deepEqual((await connected.next(frame => frame.type === 'history')).history.removedIds, [game.messageId]);
     connected.socket.close();

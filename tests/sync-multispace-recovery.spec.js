@@ -90,27 +90,34 @@ const openChat = async page => {
 };
 const backlog = room => ({ messages: messages(room, 2, 51), historyMode: 'append', history: { ...bounds(80), continuationId: 51, hasNewer: true } });
 
-test('does not migrate cleared background pending messages again after a reload', async ({ page }) => {
+for (const full of [false, true]) test(`does not migrate cleared background messages again with a ${full ? 'full' : 'writable'} draft store`, async ({ page }) => {
     const clientId = 'aa0dba34-089b-41d4-9a87-ddda79ef3133';
     const draft = encrypt(rooms[1], `draft:${deviceId}`, { text: 'Keep this composer draft', outbox: [{
         clientId, deviceId, text: 'Old pending text', createdAt: Date.now(), sendState: 'queued', autoSend: true,
         nextAttemptAt: Date.now() + 3600000
     }] });
-    await page.addInitScript(({ key, draft }) => {
+    await page.addInitScript(({ key, draft, full }) => {
         if (!sessionStorage.getItem('outbox-migration-seeded')) {
             sessionStorage.setItem(key, draft);
             sessionStorage.setItem('outbox-migration-seeded', 'yes');
         }
-    }, { key: `portfolio-sync-draft:${rooms[1]}`, draft });
+        if (full) {
+            const setItem = Storage.prototype.setItem;
+            Storage.prototype.setItem = function (name, value) {
+                if (this === sessionStorage && name === key) throw new DOMException('Draft quota', 'QuotaExceededError');
+                return setItem.call(this, name, value);
+            };
+        }
+    }, { key: `portfolio-sync-draft:${rooms[1]}`, draft, full });
     let posts = 0;
     page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/messages')) posts++; });
     const chat = await openChat(page);
-    const count = () => page.evaluate(async () => {
+    const count = () => page.evaluate(async scope => {
         const database = await new Promise(resolve => { const request = indexedDB.open('gavin-sync-outbox', 1); request.onsuccess = () => resolve(request.result); });
-        const count = await new Promise(resolve => { const request = database.transaction('messages').objectStore('messages').count(); request.onsuccess = () => resolve(request.result); });
+        const count = await new Promise(resolve => { const request = database.transaction('messages').objectStore('messages').index('scope').count(scope); request.onsuccess = () => resolve(request.result); });
         database.close();
         return count;
-    });
+    }, `${rooms[1]}:${deviceId}`);
     await expect.poll(count).toBe(1);
     chat.clear(rooms[1]);
     await expect.poll(count).toBe(0);

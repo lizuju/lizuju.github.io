@@ -114,6 +114,8 @@
             }
             if (!frame || event.source !== frame.contentWindow || event.data?.source !== 'golden-hour') return;
             if (event.data.type === 'ready') postState();
+            if (event.data.type === 'game-loading') setStatus('goldenLoading');
+            if (event.data.type === 'game-load-error') setStatus('goldenLoadError');
             // The game's own language switch flips the system language through the taskbar button,
             // so the desktop and the game always agree.
             if (event.data.type === 'language' && ['zh-CN', 'en'].includes(event.data.lang)

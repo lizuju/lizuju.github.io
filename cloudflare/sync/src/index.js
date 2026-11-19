@@ -283,7 +283,8 @@ export default {
     const directRead = request.method === 'GET' && (['/devices', '/messages', '/profile', '/key-grants'].includes(match[2]) || (gamePath && !gamePath[2]));
     const directFile = (['GET', 'HEAD'].includes(request.method) && /^\/files\/[1-9][0-9]*$/.test(match[2] || ''))
       || (request.method === 'POST' && /^\/files\/[1-9][0-9]*\/download$/.test(match[2] || ''));
-    if (!gamePath && match[2] !== '/profile') {
+    const postMessage = request.method === 'POST' && match[2] === '/messages';
+    if (!gamePath && match[2] !== '/profile' && !postMessage) {
       const cached = (directRead || directFile) && knownReadRooms.get(roomId) > Date.now();
       if (!cached) {
         if (!await registry.hasRoom(roomId)) {
@@ -315,15 +316,18 @@ export default {
       return room.fetch(new Request(request, { headers }));
     }
     const token = request.headers.get('Authorization')?.match(/^Bearer ([0-9a-f]{64})$/)?.[1];
-    if (request.method === 'POST' && match[2] === '/messages') {
-      if (!token) return json({ error: 'unauthorized' }, 401);
+    if (postMessage) {
+      // Failed input still reports a missing room first, as the other room routes do.
+      const reject = async (error, status) => await registry.hasRoom(roomId)
+        ? json({ error }, status) : json({ error: 'not_found' }, 404);
+      if (!token) return reject('unauthorized', 401);
       const body = await readJson(request, 73728);
-      if (body.error) return resultResponse(body);
+      if (body.error) return reject(body.error, body.status);
       const { clientId, text, game, previousGameId } = body.value;
-      if (typeof clientId !== 'string' || !ROOM_ID.test(clientId)) return json({ error: 'invalid_client_id' }, 400);
-      if (!encrypted(text)) return json({ error: 'invalid_text' }, 400);
-      if (game !== undefined && game !== 'gomoku') return json({ error: 'game_invalid_move' }, 400);
-      if (previousGameId !== undefined && (game !== 'gomoku' || typeof previousGameId !== 'string' || !ROOM_ID.test(previousGameId))) return json({ error: 'game_invalid_move' }, 400);
+      if (typeof clientId !== 'string' || !ROOM_ID.test(clientId)) return reject('invalid_client_id', 400);
+      if (!encrypted(text)) return reject('invalid_text', 400);
+      if (game !== undefined && game !== 'gomoku') return reject('game_invalid_move', 400);
+      if (previousGameId !== undefined && (game !== 'gomoku' || typeof previousGameId !== 'string' || !ROOM_ID.test(previousGameId))) return reject('game_invalid_move', 400);
       const result = await registry.storeMessage(roomId, token, clientId, text, request.headers.get('X-Sync-Key-Id'), game, previousGameId);
       if (result.error) return resultResponse(result);
       return json(result.message, result.created ? 201 : 200);
@@ -1651,6 +1655,11 @@ export class E2eeSyncRoom extends DurableObject {
             WHERE p.device_id = ? AND d.last_active_at > ? AND d.read_message_id < ?`,
             recipient.device_id, Date.now() - DEVICE_IDLE_LIFETIME, recipient.message_id).toArray()[0];
           if (!subscription || recipient.created_at + 3600000 <= Date.now() || this.foregroundDevices().has(recipient.device_id)) { remove(); return; }
+          const target = JSON.parse(subscription.subscription);
+          if (target.expirationTime != null && target.expirationTime <= Date.now()) {
+            this.sql.exec('DELETE FROM push_subscriptions WHERE device_id = ?', recipient.device_id);
+            return;
+          }
           const controller = new AbortController();
           controller.messageId = recipient.message_id;
           let requests = this.pushRequests.get(recipient.device_id);
@@ -1658,7 +1667,7 @@ export class E2eeSyncRoom extends DurableObject {
           requests.add(controller);
           let result;
           try {
-            result = await sendWebPush(JSON.parse(subscription.subscription), {
+            result = await sendWebPush(target, {
               roomId, messageId: recipient.message_id, language: subscription.language
             }, this.env, { signal: controller.signal });
           } catch { result = { status: 0 }; }
@@ -1764,7 +1773,7 @@ export class E2eeSyncRoom extends DurableObject {
 
   readGame(deviceId, gameId) {
     if (!this.initialized) return { error: 'game_not_found', status: 404 };
-    this.pruneExpired();
+    this.pruneBeforeReadIfDue();
     if (!this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
     const game = this.sql.exec('SELECT * FROM gomoku_games WHERE game_id = ?', gameId).toArray()[0];
     return game ? { game: this.gameSnapshot(game, true) } : { error: 'game_not_found', status: 404 };
@@ -1894,12 +1903,16 @@ export class E2eeSyncRoom extends DurableObject {
     };
   }
 
-  messagePage({ before = null, after = null, limit = 50, generation = null } = {}) {
-    if (!this.initialized) return { error: 'not_found', status: 404 };
+  pruneBeforeReadIfDue() {
     if (!(this.nextPruneAt > Date.now())) {
       this.pruneExpired();
       this.ctx.waitUntil(this.scheduleAlarm());
     }
+  }
+
+  messagePage({ before = null, after = null, limit = 50, generation = null } = {}) {
+    if (!this.initialized) return { error: 'not_found', status: 404 };
+    this.pruneBeforeReadIfDue();
     const bounds = this.historySnapshot();
     let historyMode = 'replace';
     let rows;
@@ -2157,7 +2170,8 @@ export class E2eeSyncRoom extends DurableObject {
     try { return await writing; }
     finally {
       if (this.uploadWrites.get(uploadId) === writing) this.uploadWrites.delete(uploadId);
-      await this.scheduleAlarm();
+      // Upload progress only extends its expiry. The existing alarm can recheck it when due.
+      if (!(this.nextPruneAt > Date.now())) await this.scheduleAlarm();
     }
   }
 
@@ -2248,6 +2262,7 @@ export class E2eeSyncRoom extends DurableObject {
 
   async eraseDeletedFiles() {
     if (!this.initialized) return;
+    this.fileCleanupAt = null;
     const shards = this.sql.exec("SELECT s.file_id, s.shard_index FROM file_shards s JOIN files f ON f.file_id = s.file_id WHERE f.status = 'deleting' ORDER BY f.created_at, s.shard_index LIMIT 4").toArray();
     for (const shard of shards) {
       if (this.uploadWrites.has(shard.file_id)) continue;
@@ -2268,14 +2283,14 @@ export class E2eeSyncRoom extends DurableObject {
     if (!this.initialized || !this.sql.exec('SELECT 1 FROM devices WHERE device_id = ?', deviceId).toArray().length) return { error: 'unauthorized', status: 401 };
     const file = this.sql.exec("SELECT file_id FROM files WHERE message_id = ? AND status = 'complete' AND created_at > ? AND EXISTS (SELECT 1 FROM messages WHERE id = files.message_id)", messageId, Date.now() - MESSAGE_LIFETIME).toArray()[0];
     if (!file) return { error: 'not_found', status: 404 };
-    const existing = this.sql.exec('SELECT ticket, expires_at AS expiresAt FROM download_tickets WHERE device_id = ? AND file_id = ? AND expires_at > ? ORDER BY expires_at DESC LIMIT 1', deviceId, file.file_id, Date.now() + 60000).toArray()[0];
-    if (existing) return existing;
-    this.sql.exec('DELETE FROM download_tickets WHERE device_id = ? AND file_id = ? AND expires_at <= ?', deviceId, file.file_id, Date.now());
-    const ticket = credential();
-    const expiresAt = Date.now() + DOWNLOAD_LIFETIME;
-    this.sql.exec('INSERT INTO download_tickets (ticket, file_id, device_id, expires_at) VALUES (?, ?, ?, ?)', ticket, file.file_id, deviceId, expiresAt);
-    if (this.nextPruneAt !== undefined) this.nextPruneAt = Math.min(this.nextPruneAt, expiresAt);
-    return { ticket, expiresAt };
+    let ticket = this.sql.exec('SELECT ticket, expires_at AS expiresAt FROM download_tickets WHERE device_id = ? AND file_id = ? AND expires_at > ? ORDER BY expires_at DESC LIMIT 1', deviceId, file.file_id, Date.now() + 60000).toArray()[0];
+    if (!ticket) {
+      this.sql.exec('DELETE FROM download_tickets WHERE device_id = ? AND file_id = ? AND expires_at <= ?', deviceId, file.file_id, Date.now());
+      ticket = { ticket: credential(), expiresAt: Date.now() + DOWNLOAD_LIFETIME };
+      this.sql.exec('INSERT INTO download_tickets (ticket, file_id, device_id, expires_at) VALUES (?, ?, ?, ?)', ticket.ticket, file.file_id, deviceId, ticket.expiresAt);
+    }
+    if (!(this.nextPruneAt <= ticket.expiresAt)) await this.scheduleAlarm();
+    return ticket;
   }
 
   async prepareMessage(token, clientId, text, keyId) {
@@ -2662,7 +2677,10 @@ export class E2eeSyncRoom extends DurableObject {
     if (oldestDevice !== null) deadlines.push(oldestDevice + DEVICE_IDLE_LIFETIME);
     const uploading = expiry.upload;
     if (uploading !== null) deadlines.push(uploading + UPLOAD_LIFETIME);
-    if (expiry.deleting) deadlines.push(Date.now() + 1000);
+    if (expiry.deleting) {
+      this.fileCleanupAt ??= Date.now() + 1000;
+      deadlines.push(this.fileCleanupAt);
+    } else this.fileCleanupAt = null;
     if (this.sql.exec("SELECT 1 FROM metadata WHERE key = 'maintenanceJob'").toArray().length) {
       const retryAt = Number(this.sql.exec("SELECT value FROM metadata WHERE key = 'maintenanceRetryAt'").toArray()[0]?.value || 0);
       deadlines.push(Math.max(Date.now() + 1000, retryAt));
@@ -2680,6 +2698,7 @@ export class E2eeSyncRoom extends DurableObject {
 
   async alarm() {
     if (!this.initialized) return;
+    const pushDue = this.scheduledPushAt != null && this.scheduledPushAt <= Date.now();
     await this.sendPushNotifications();
     const now = Date.now();
     for (const socket of this.ctx.getWebSockets()) {
@@ -2719,14 +2738,16 @@ export class E2eeSyncRoom extends DurableObject {
         this.maintenanceCompletion?.resolve(false);
         throw error;
       } finally { this.maintenanceCompletion = null; }
-    } else {
+    } else if (!pushDue || !(this.nextPruneAt > now)) {
       deleted = this.pruneExpired();
       hadPending = this.sql.exec("SELECT 1 FROM files WHERE status = 'deleting' LIMIT 1").toArray().length;
       await this.cleanupFiles();
     }
-    const roomId = this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'roomId').toArray()[0]?.value;
     await this.scheduleAlarm();
-    if ((deleted || hadPending || this.roomExpired) && roomId) this.ctx.waitUntil(this.env.E2EE_PAIRING_REGISTRY.getByName('registry').refreshRoom(roomId));
+    if (deleted || hadPending || this.roomExpired) {
+      const roomId = this.sql.exec('SELECT value FROM metadata WHERE key = ?', 'roomId').toArray()[0]?.value;
+      if (roomId) this.ctx.waitUntil(this.env.E2EE_PAIRING_REGISTRY.getByName('registry').refreshRoom(roomId));
+    }
   }
 
   async webSocketClose(socket) {

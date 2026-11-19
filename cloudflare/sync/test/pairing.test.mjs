@@ -1910,7 +1910,7 @@ test('history retains the latest 500 messages and clearing releases the stored m
   socket.close();
 });
 
-test('text sends use four Durable Object RPCs while duplicate and lost-response retries remain idempotent', async () => {
+test('text sends use three Durable Object RPCs while duplicate and lost-response retries remain idempotent', async () => {
   const request = client();
   const space = await createSpace(request);
   const session = request.state.sessions.get(space.token);
@@ -1923,12 +1923,12 @@ test('text sends use four Durable Object RPCs while duplicate and lost-response 
   await registry.testRpcCalls();
   const sent = await send();
   assert.equal(sent.status, 201);
-  assert.deepEqual(await registry.testRpcCalls(), ['hasRoom', 'storeMessage', 'prepareMessage', 'addMessage']);
+  assert.deepEqual(await registry.testRpcCalls(), ['storeMessage', 'prepareMessage', 'addMessage']);
   assert.equal('usage' in sent.body, false);
   const repeated = await send();
   assert.equal(repeated.status, 200);
   assert.deepEqual(repeated.body, sent.body);
-  assert.deepEqual(await registry.testRpcCalls(), ['hasRoom', 'storeMessage', 'prepareMessage']);
+  assert.deepEqual(await registry.testRpcCalls(), ['storeMessage', 'prepareMessage']);
   assert.deepEqual(await storage.exec('SELECT 1 FROM reservations WHERE room_id = ?', space.roomId), []);
 
   await room.testFailCommittedMessageReply();
@@ -1936,12 +1936,12 @@ test('text sends use four Durable Object RPCs while duplicate and lost-response 
   const failedText = await cryptoClient.encryptPayload(session.keyring, space.roomId, `message:${space.deviceId}:${failedId}`, { text: 'response was lost' });
   const retry = () => request.raw(`/v1/spaces/${space.roomId}/messages`, { method: 'POST', token: space.token, headers: { 'X-Sync-Key-Id': session.keyring.currentKeyId }, json: { clientId: failedId, text: failedText } });
   assert.equal((await retry()).status, 500);
-  assert.deepEqual(await registry.testRpcCalls(), ['hasRoom', 'storeMessage', 'prepareMessage', 'addMessage', 'storageUsage']);
+  assert.deepEqual(await registry.testRpcCalls(), ['storeMessage', 'prepareMessage', 'addMessage', 'storageUsage']);
   assert.deepEqual(await storage.exec('SELECT 1 FROM reservations WHERE room_id = ?', space.roomId), []);
   const recovered = await retry();
   assert.equal(recovered.status, 200);
   assert.equal(recovered.body.id, sent.body.id + 1);
-  assert.deepEqual(await registry.testRpcCalls(), ['hasRoom', 'storeMessage', 'prepareMessage']);
+  assert.deepEqual(await registry.testRpcCalls(), ['storeMessage', 'prepareMessage']);
 });
 
 test('text commit rechecks revoked devices and changed encryption keys after capacity reservation', async t => {

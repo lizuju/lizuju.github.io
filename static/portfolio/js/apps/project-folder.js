@@ -6,7 +6,7 @@ import { ProjectImageCache } from './project-image-cache.js';
     const { t } = desktopApi;
 
     // Project folders and their media preview windows.
-    function setupProjectFolder(manager) {
+    function setupProjectFolder(manager, sharedCertificate = null) {
         const projectFolderWindow = document.querySelector('[data-project-folder-window]');
         const projectFolderTitlebar = document.querySelector('[data-project-folder-drag]');
         const projectFolderResizeHandle = document.querySelector('[data-project-folder-resize]');
@@ -84,7 +84,7 @@ import { ProjectImageCache } from './project-image-cache.js';
         });
         let selectedPaperButton = paperButtons[0];
         let previewPaperButton;
-        let pendingPaperScrollTop;
+        let pendingPaperPosition;
         let pendingFolderScrollTop;
         const robomasterImageButtons = Array.from(document.querySelectorAll('[data-robomaster-image]'));
         const imageButtons = [...robomasterImageButtons];
@@ -92,7 +92,6 @@ import { ProjectImageCache } from './project-image-cache.js';
         const folderItems = { root: folderButtons, photos: robomasterImageButtons, music: [musicVideoButton], papers: paperButtons, honors: [] };
         let honorsRequest;
         let pendingImageRestore;
-        let sharedCertificate = standaloneHonors ? new URLSearchParams(location.search).get('certificate') : null;
         let videoPosition = 0;
         try {
             const saved = Number(localStorage.getItem('portfolio-music-position'));
@@ -129,6 +128,28 @@ import { ProjectImageCache } from './project-image-cache.js';
         const imageZoom = new PreviewZoom({ toolbar: document.querySelector('[data-image-preview-toolbar]'), onChange: layoutImage });
         const videoZoom = new PreviewZoom({ toolbar: document.querySelector('[data-video-preview-toolbar]'), onChange: layoutVideo });
         const paperZoom = new PreviewZoom({ toolbar: document.querySelector('[data-paper-preview-toolbar]'), onChange: layoutPaper });
+        const paperPosition = () => {
+            const top = paperPreviewPages.getBoundingClientRect().top + paperPreviewPages.clientTop;
+            const pages = [...paperPreviewPages.children];
+            const index = pages.findIndex(page => page.getBoundingClientRect().bottom > top);
+            if (index < 0) return null;
+            const rect = pages[index].getBoundingClientRect();
+            return { index, offset: (top - rect.top) / rect.height, zoom: paperZoom.value,
+                horizontal: paperPreviewPages.scrollLeft / Math.max(1, paperPreviewPages.scrollWidth - paperPreviewPages.clientWidth) };
+        };
+        const restorePaperPosition = () => {
+            if (!pendingPaperPosition || !paperPreviewPages.clientWidth) return;
+            const { index, offset, zoom, horizontal, scrollTop } = pendingPaperPosition;
+            paperZoom.set(zoom || 1);
+            const page = paperPreviewPages.children[index];
+            if (page) {
+                const rect = page.getBoundingClientRect();
+                const top = paperPreviewPages.getBoundingClientRect().top + paperPreviewPages.clientTop;
+                paperPreviewPages.scrollTop += rect.top - top + rect.height * offset;
+            } else paperPreviewPages.scrollTop = scrollTop || 0;
+            paperPreviewPages.scrollLeft = (horizontal || 0) * (paperPreviewPages.scrollWidth - paperPreviewPages.clientWidth);
+            pendingPaperPosition = null;
+        };
         video.addEventListener('loadedmetadata', layoutVideo);
         video.addEventListener('loadedmetadata', () => {
             if (videoPosition > 0 && videoPosition < video.duration) video.currentTime = videoPosition;
@@ -177,6 +198,10 @@ import { ProjectImageCache } from './project-image-cache.js';
             actionAttribute: 'data-image-preview-action',
             minWidth: 380,
             minHeight: 300,
+            show: () => {
+                manager.showWindow(imagePreviewWindow, imagePreviewTask, { revealTask: true });
+                if (previewImageButton && !imagePreviewImage.hasAttribute('src')) updateImagePreview(previewImageButton, false);
+            },
             hide: (state) => {
                 manager.hideWindow(imagePreviewWindow, imagePreviewTask, state, { hideTask: state === 'is-closed' });
                 if (state === 'is-closed') {
@@ -234,13 +259,10 @@ import { ProjectImageCache } from './project-image-cache.js';
             minHeight: 320,
             show: () => {
                 manager.showWindow(paperPreviewWindow, paperPreviewTask, { revealTask: true });
-                if (pendingPaperScrollTop !== undefined) {
-                    paperPreviewPages.scrollTop = pendingPaperScrollTop;
-                    pendingPaperScrollTop = undefined;
-                }
+                restorePaperPosition();
             },
             hide: (state) => {
-                pendingPaperScrollTop = paperPreviewPages.scrollTop;
+                pendingPaperPosition = paperPosition();
                 manager.hideWindow(paperPreviewWindow, paperPreviewTask, state, { hideTask: state === 'is-closed' });
             },
             focusTarget: () => paperPreviewPages
@@ -274,7 +296,7 @@ import { ProjectImageCache } from './project-image-cache.js';
         const updatePaperPreview = (button) => {
             if (previewPaperButton !== button) {
                 previewPaperButton = button;
-                pendingPaperScrollTop = 0;
+                pendingPaperPosition = { scrollTop: 0 };
                 const count = Number(button.dataset.paperPages);
                 paperPreviewPages.replaceChildren(...Array.from({ length: count }, (_, index) => {
                     const figure = document.createElement('figure');
@@ -510,9 +532,9 @@ import { ProjectImageCache } from './project-image-cache.js';
                 try { await imageCache.get(source, { priority: 'low', width: Number(button?.dataset.imageWidth) || 0, height: Number(button?.dataset.imageHeight) || 0 }); } catch {}
             }
         };
-        const updateImagePreview = async (button) => {
+        const updateImagePreview = async (button, select = true) => {
             const changed = imagePreviewImage.getAttribute('src') !== button.dataset.imageSrc;
-            if (!button.hidden) selectPhoto(button);
+            if (select && !button.hidden) selectPhoto(button);
             previewImageButton = button;
             imageShareUrl.hidden = true;
             if (button.hasAttribute('data-honor-image')) {
@@ -618,7 +640,11 @@ import { ProjectImageCache } from './project-image-cache.js';
         const restoreImages = (savedState) => {
             previewImages = savedState.previewImageIndices?.map(index => imageButtons[index]).filter(Boolean) || robomasterImageButtons;
             const previewImage = imageButtons[savedState.previewImageIndex];
-            if (previewImage) updateImagePreview(previewImage);
+            if (previewImage && !imagePreviewWindow.classList.contains('is-closed')) {
+                previewImageButton = previewImage;
+                if (manager.isWindowVisible(imagePreviewWindow)) updateImagePreview(previewImage, false);
+                else updateImageCopy();
+            }
             selectPhoto(imageButtons[savedState.selectedImageIndex]);
             filterFolder();
             if (pendingFolderScrollTop !== undefined && manager.isWindowVisible(projectFolderWindow)) {
@@ -831,7 +857,8 @@ import { ProjectImageCache } from './project-image-cache.js';
                 selectedFolderIndex: folderButtons.indexOf(selectedFolderButton),
                 selectedPaperIndex: paperButtons.indexOf(selectedPaperButton),
                 previewPaperIndex: paperButtons.indexOf(previewPaperButton),
-                paperScrollTop: pendingPaperScrollTop ?? paperPreviewPages.scrollTop,
+                paperPosition: pendingPaperPosition ?? (manager.isWindowVisible(paperPreviewWindow) ? paperPosition() : null),
+                ...(standaloneHonors ? { previewCertificate: previewImageButton?.dataset.honorImage ?? pendingImageRestore?.previewCertificate } : {}),
                 selectedImageIndex: pendingImageRestore?.selectedImageIndex ?? (selectedImageButton ? imageButtons.indexOf(selectedImageButton) : null),
                 previewImageIndex: pendingImageRestore?.previewImageIndex ?? (previewImageButton ? imageButtons.indexOf(previewImageButton) : null),
                 previewImageIndices: pendingImageRestore?.previewImageIndices ?? previewImages.map(button => imageButtons.indexOf(button))
@@ -854,10 +881,8 @@ import { ProjectImageCache } from './project-image-cache.js';
                 if (manager.isWindowVisible(videoPreviewWindow)) loadVideo();
                 if (!paperPreviewWindow.classList.contains('is-closed')) {
                     updatePaperPreview(paperButtons[savedState.previewPaperIndex] || selectedPaperButton || paperButtons[0]);
-                    if (manager.isWindowVisible(paperPreviewWindow)) {
-                        paperPreviewPages.scrollTop = savedState.paperScrollTop || 0;
-                        pendingPaperScrollTop = undefined;
-                    } else pendingPaperScrollTop = savedState.paperScrollTop || 0;
+                    pendingPaperPosition = savedState.paperPosition || { scrollTop: savedState.paperScrollTop || 0 };
+                    if (manager.isWindowVisible(paperPreviewWindow)) restorePaperPosition();
                 }
             }
         });

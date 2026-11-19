@@ -4734,8 +4734,32 @@ render(r,src,dst){if(!this.quad){this.easu=new We({uniforms:{tSrc:{value:null},u
 let o=r.getDrawingBufferSize(this.v||(this.v=new It)),W=o.x,H=o.y;(!this.mid||this.mid.width!==W||this.mid.height!==H)&&(this.mid&&this.mid.dispose(),this.mid=new Vs(W,H,{type:1009,depthBuffer:!1,minFilter:no,magFilter:no}));
 let e=this.easu.uniforms;e.tSrc.value=src.texture;e.uIn.value.set(src.width,src.height);e.uOut.value.set(W,H);r.setRenderTarget(this.mid);this.quad.material=this.easu;this.quad.render(r);
 let c=this.rcas.uniforms;c.tSrc.value=this.mid.texture;c.uSharp.value=Math.pow(2,-this.sharp);r.setRenderTarget(dst);this.quad.material=this.rcas;this.quad.render(r)}
-dispose(){this.inp&&this.inp.dispose();this.mid&&this.mid.dispose();this.inp=this.mid=null;this.quad&&(this.quad.dispose(),this.easu.dispose(),this.rcas.dispose(),this.quad=null)}
-},BM=class{constructor(t,quality="high"){let e=this.renderer=new Hm({canvas:t,antialias:!1,powerPreference:"high-performance",stencil:!1,alpha:!1});e.toneMapping=Q1,e.shadowMap.enabled=!0,e.shadowMap.type=gx,e.shadowMap.autoUpdate=!1,this.shadowCache=new GhShadowCache(e),this.dynRes=new GhDynRes(this),this.upscale=!1,this._up=!1,this.upscaler=new GhUpscale,e.info.autoReset=!1,this.scene=new zr,this.scene.matrixAutoUpdate=!1,this.camera=new Eo(90,1,.06,2500),this.camera.rotation.order="YXZ",this.camera.layers.enable(1),this.vmScene=new zr,this.vmScene.matrixAutoUpdate=!1,this.vmCamera=new Eo(55,1,.01,10),this.quality=quality,this.q=c9[quality],this.composer=null,this.uniforms=null,this.time=0,this.preRender=null,this.sunUv=new It(.5,.5),this.rayK=0,this.fx=null,this.motionBlur=1,this.vmBlur=1,this.shutter=.38,this.exposure={auto:1,key:.15,comp:.46,min:.5,max:1.6,up:1.1,down:3.2,clamp:6},this._lastCam=new a0(1e9,0,0),this.size=new It,this._passes=[],this._prevQ=new Ft,this._hasPrev=!1,this._blurK=0,this._turn=0,this._reproj=new Lt,this._skeletonFrame=0,this._build(),this._resizeTimer=0,addEventListener("resize",()=>{clearTimeout(this._resizeTimer),this._resizeTimer=setTimeout(()=>this.resize(),150)}),t.addEventListener("webglcontextrestored",()=>{this.pausedFrame=!1})}_dispose(){if(this._postTargets){for(const target of this._postTargets)target.dispose();this._postTargets=null}this.fx&&this.fx.releaseTargets();for(let t of this._passes)t.dispose&&t.dispose();this._passes.length=0,this.gtao&&(this.gtao.gtaoMaterial&&this.gtao.gtaoMaterial.dispose(),this.gtao.blendMaterial&&this.gtao.blendMaterial.dispose(),this.gtao=null),this.composer&&(this.composer.dispose(),this.composer=null),this._worldRT=null}_measure(){let t=this.q,e=this.renderer,s=Math.min(window.devicePixelRatio||1,t.maxDpr)*t.scale*(this.dynK||1),o=Math.min(window.devicePixelRatio||1,2);if(this._up=this.upscale&&s<o-.01,this._up)return e.setPixelRatio(o),e.setSize(innerWidth,innerHeight,!1),this.size.set(Math.max(1,Math.floor(innerWidth*s)),Math.max(1,Math.floor(innerHeight*s)));return e.setPixelRatio(s),e.setSize(innerWidth,innerHeight,!1),e.getDrawingBufferSize(this.size)}
+releaseTargets(){
+    this.inp?.dispose();
+    this.mid?.dispose();
+    this.inp = this.mid = null;
+    if (this.quad) {
+        this.easu.uniforms.tSrc.value = null;
+        this.rcas.uniforms.tSrc.value = null;
+    }
+}
+dispose(){
+    this.releaseTargets();
+    if (this.quad) {
+        this.quad.dispose();
+        this.easu.dispose();
+        this.rcas.dispose();
+        this.quad = this.easu = this.rcas = null;
+    }
+}
+},BM=class{constructor(t,quality="high"){let e=this.renderer=new Hm({canvas:t,antialias:!1,powerPreference:"high-performance",stencil:!1,alpha:!1});e.toneMapping=Q1,e.shadowMap.enabled=!0,e.shadowMap.type=gx,e.shadowMap.autoUpdate=!1,this.shadowCache=new GhShadowCache(e),this.dynRes=new GhDynRes(this),this.upscale=!1,this._up=!1,this.upscaler=new GhUpscale,e.info.autoReset=!1,this.scene=new zr,this.scene.matrixAutoUpdate=!1,this.camera=new Eo(90,1,.06,2500),this.camera.rotation.order="YXZ",this.camera.layers.enable(1),this.vmScene=new zr,this.vmScene.matrixAutoUpdate=!1,this.vmCamera=new Eo(55,1,.01,10),this.quality=quality,this.q=c9[quality],this.composer=null,this.uniforms=null,this.time=0,this.preRender=null,this.sunUv=new It(.5,.5),this.rayK=0,this.fx=null,this.motionBlur=1,this.vmBlur=1,this.shutter=.38,this.exposure={auto:1,key:.15,comp:.46,min:.5,max:1.6,up:1.1,down:3.2,clamp:6},this._lastCam=new a0(1e9,0,0),this.size=new It,this._passes=[],this._prevQ=new Ft,this._hasPrev=!1,this._blurK=0,this._turn=0,this._reproj=new Lt,this._skeletonFrame=0,this._build(),this._resizeTimer=0,addEventListener("resize",()=>{clearTimeout(this._resizeTimer),this._resizeTimer=setTimeout(()=>this.resize(),150)}),t.addEventListener("webglcontextrestored",()=>{this.pausedFrame=!1})}_dispose(){this.upscaler.dispose();if(this._postTargets){for(const target of this._postTargets)target.dispose();this._postTargets=null}this.fx&&this.fx.releaseTargets();for(let t of this._passes)t.dispose&&t.dispose();this._passes.length=0,this.gtao&&(this.gtao.gtaoMaterial&&this.gtao.gtaoMaterial.dispose(),this.gtao.blendMaterial&&this.gtao.blendMaterial.dispose(),this.gtao=null),this.composer&&(this.composer.dispose(),this.composer=null),this._worldRT=null}_measure(){let t=this.q,e=this.renderer,s=Math.min(window.devicePixelRatio||1,t.maxDpr)*t.scale*(this.dynK||1),o=Math.min(window.devicePixelRatio||1,2);
+const active = this.upscale && s < o - .01;
+if (this._up && !active) this.upscaler.releaseTargets();
+this._up = active;
+e.setPixelRatio(active ? o : s);
+e.setSize(innerWidth, innerHeight, false);
+if (active) return this.size.set(Math.max(1, Math.floor(innerWidth * s)), Math.max(1, Math.floor(innerHeight * s)));
+return e.getDrawingBufferSize(this.size)}
 setUpscale(on){on=!!on;on!==this.upscale&&(this.upscale=on,this.resize())}
 _wrapFinal(){let f=this.final,base=f.render.bind(f),g=this;f.render=function(e,w,rd,dt,m){if(!g._up)return base(e,w,rd,dt,m);let screen=f.renderToScreen,sh=g.uniforms.uSharpen,k=sh.value,inp=g.upscaler.input(rd.width,rd.height);f.renderToScreen=!1;sh.value=0;try{base(e,inp,rd,dt,m)}finally{f.renderToScreen=screen;sh.value=k}g.upscaler.render(e,inp,screen?null:w)}}_build(){this.pausedFrame=!1;let t=this.q,e=this.renderer;this._dispose();let s=this._measure(),n=new Vs(s.x,s.y,{type:Yn,samples:t.samples,depthBuffer:!0,resolveDepthBuffer:!1});t.soft&&(n.depthTexture=new N2(s.x,s.y),n.depthTexture.type=J1,n.depthTexture.minFilter=n.depthTexture.magFilter=no);let i=this.composer=new LM(e,n);
 if(t.samples>0){const post=new Vs(s.x,s.y,{type:n.texture.type,minFilter:n.texture.minFilter,magFilter:n.texture.magFilter,depthBuffer:!1});this._postTargets=[post,post.clone()];i.render=delta=>this._renderComposer(delta)}

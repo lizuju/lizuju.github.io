@@ -713,6 +713,9 @@ html.gh-zh body :where(button, b, h1, h2, h3, h4, label, span, em, div, p, kbd) 
   .e-btns { display: flex; gap: 1.4rem; margin-top: 3.4rem; opacity: 0; align-items: center; } .e-btns .btn { min-width: 26rem; height: 5.4rem; }
 
   /* ---- loading ---- */
+  #loading .load-failure { margin-top: 2rem; }
+  #loading .load-failure p { margin-bottom: 1rem; }
+  #loading.has-error :is(#lbar, .lrow, #ltip) { display: none; }
   .screen { position: fixed; inset: 0; display: flex; pointer-events: auto; }
   #loading { align-items: flex-end; background: radial-gradient(120% 90% at 70% 40%, #3a1c0a 0%, #120904 55%, #050403 100%); transition: opacity .35s; }
   #loading .in { padding: 0 0 9rem 9.6rem; width: 100%; }
@@ -809,6 +812,10 @@ html.gh-zh body :where(button, b, h1, h2, h3, h4, label, span, em, div, p, kbd) 
     <h1>GOLDEN<span>HOUR</span></h1>
     <div id="lbar"><b></b></div>
     <div class="lrow"><span id="ltxt">PREPARING</span><span id="lpct">0%</span></div>
+    <div class="load-failure" hidden>
+      <p role="alert">GAME COULD NOT LOAD</p>
+      <button type="button" class="btn">RETRY</button>
+    </div>
     <div id="ltip"><div class="tk">FIELD NOTES</div><p id="ltipp"></p></div>
   </div>
 </div>
@@ -816,9 +823,24 @@ html.gh-zh body :where(button, b, h1, h2, h3, h4, label, span, em, div, p, kbd) 
 <script>
 // The game starts once the desktop has sent its saved settings (or right away outside the desktop).
 if (!window.__goldenHourPhone) window.__goldenHourReady.then(() => {
-  const script = document.createElement('script');
-  script.src = 'dist/game.js';
-  document.body.appendChild(script);
+  const loading = document.getElementById('loading');
+  const failure = loading.querySelector('.load-failure');
+  function loadGame() {
+    failure.hidden = true;
+    loading.classList.remove('has-error');
+    if (window.parent !== window) window.parent.postMessage({ source: 'golden-hour', type: 'game-loading' }, '*');
+    const script = document.createElement('script');
+    script.src = 'dist/game.js';
+    script.onerror = () => {
+      script.remove();
+      loading.classList.add('has-error');
+      failure.hidden = false;
+      if (window.parent !== window) window.parent.postMessage({ source: 'golden-hour', type: 'game-load-error' }, '*');
+    };
+    document.body.appendChild(script);
+  }
+  failure.querySelector('button').addEventListener('click', loadGame);
+  loadGame();
 });
 </script>
 

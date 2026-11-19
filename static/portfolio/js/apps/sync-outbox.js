@@ -31,6 +31,26 @@ export const pendingMessages = {
             });
         });
     },
+    migrate(session, legacy, finishDraft) {
+        return change(session, async () => {
+            const key = [`migrated:${scope(session)}`, legacy.map(message => message.clientId).join(',')];
+            if (!await store('readonly', messages => messages.getKey(key))) {
+                const entries = await Promise.all(legacy.map(async message => ({
+                    scope: scope(session), clientId: message.clientId,
+                    encrypted: await encryptPayload(session.keyring, session.roomId, `outbox:${session.deviceId}:${message.clientId}`, message)
+                })));
+                await store('readwrite', messages => {
+                    for (const entry of entries) {
+                        const existing = messages.getKey([entry.scope, entry.clientId]);
+                        existing.onsuccess = () => { if (!existing.result) messages.put(entry); };
+                    }
+                    // Keep the migration receipt if the tab cannot replace its legacy draft.
+                    messages.put({ scope: key[0], clientId: key[1] });
+                });
+            }
+            if (await finishDraft()) await store('readwrite', messages => messages.delete(key));
+        });
+    },
     async load(session) {
         const entries = await store('readonly', messages => messages.index('scope').getAll(scope(session)));
         const loaded = await Promise.all(entries.map(entry => decryptPayload(session.keyring, session.roomId, `outbox:${session.deviceId}:${entry.clientId}`, entry.encrypted)));

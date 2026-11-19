@@ -62,6 +62,38 @@ test('upscaling stays out of the way where the preset already renders at the scr
     wide.gfx._dispose();
 });
 
+test('leaving upscaling releases both textures and re-enabling it allocates fresh targets', () => {
+    const { gfx, window } = graphics();
+    gfx.renderer.setRenderTarget = () => {};
+    gfx.renderer.render = () => {};
+    function drawUpscale() {
+        const input = gfx.upscaler.input(gfx.size.x, gfx.size.y);
+        gfx.upscaler.render(gfx.renderer, input, null);
+        const targets = [input, gfx.upscaler.mid];
+        const released = [];
+        for (const target of targets) target.addEventListener('dispose', () => released.push(target));
+        return { targets, released };
+    }
+    gfx.setUpscale(true);
+    const first = drawUpscale();
+    gfx.setUpscale(false);
+    assert.deepEqual(first.released, first.targets);
+    assert.equal(gfx.upscaler.easu.uniforms.tSrc.value, null);
+    assert.equal(gfx.upscaler.rcas.uniforms.tSrc.value, null);
+    gfx.setUpscale(true);
+    const second = drawUpscale();
+    assert.notEqual(first.targets[0], second.targets[0]);
+    assert.notEqual(first.targets[1], second.targets[1]);
+    gfx.setQuality('high');
+    assert.deepEqual(second.released, second.targets);
+    const third = drawUpscale();
+    window.devicePixelRatio = 1;
+    gfx.resize();
+    assert.equal(gfx._up, false);
+    assert.deepEqual(third.released, third.targets);
+    gfx._dispose();
+});
+
 test('the final pass draws into the upscaler input without its own sharpening, then the upscaler draws the screen', () => {
     const { gfx } = graphics();
     const calls = [];

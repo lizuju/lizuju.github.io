@@ -2,6 +2,46 @@ const { test, expect, roomId, deviceId, otherId, message, headers, bounds, confi
 
 test.use({ serviceWorkers: 'block' });
 
+test('retries a temporary upload gateway failure in place and stops after two retries', async ({ page }) => {
+    const chunks = [];
+    const requests = [];
+    let uploaded;
+    const chat = await openChat(page, async route => {
+        const request = route.request();
+        const path = new URL(request.url()).pathname;
+        if (!path.includes('/files/uploads')) return false;
+        requests.push([request.method(), path]);
+        if (path.endsWith('/uploads')) {
+            uploaded = request.postDataJSON();
+            await route.fulfill({ headers, json: { uploadId: 'repeat-chunk', receivedBytes: 0, chunkSize: 8 * 1024 * 1024 } });
+        } else if (path.includes('/chunks/')) {
+            chunks.push(request.postDataBuffer());
+            if (chunks.length <= 3) await route.fulfill({ status: 503, headers: { ...headers, 'Access-Control-Expose-Headers': 'Retry-After',
+                'Retry-After': '4' }, contentType: 'text/html', body: 'Temporarily unavailable' });
+            else await route.fulfill({ headers, json: { receivedBytes: chunks.at(-1).length } });
+        } else if (path.endsWith('/complete')) await route.fulfill({ headers, json: confirmed(uploaded, 1) });
+        return true;
+    });
+    await page.clock.install();
+    await page.locator('[data-sync-file-input]').setInputFiles({ name: 'retry.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep this chunk') });
+    await chat.send('Upload during outage');
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        await expect.poll(() => chunks.length).toBe(attempt);
+        await expect(page.locator('[data-sync-upload-status]')).toContainText('4');
+        await page.clock.fastForward(3000);
+        expect(chunks).toHaveLength(attempt);
+        await page.clock.fastForward(1100);
+    }
+    await expect(page.locator('.sync-message')).toHaveAttribute('data-state', 'failed');
+    await page.clock.fastForward(15000);
+    expect(chunks).toHaveLength(3);
+    expect(requests.filter(([method]) => method === 'POST')).toHaveLength(1);
+    await page.locator('[data-sync-retry-message]').click();
+    await expect(page.locator('.sync-message')).toHaveAttribute('data-state', 'sent');
+    expect(chunks).toHaveLength(4);
+    for (const chunk of chunks) expect(chunk.equals(chunks[0])).toBe(true);
+});
+
 test('shows an uploading attachment immediately and enables preview and download after confirmation', async ({ page }) => {
     let uploaded;
     let completeRelease;
@@ -65,7 +105,7 @@ test('sends and retries a quoted text independently while an attachment is still
         } else if (path.endsWith('/messages') && request.method() === 'POST') {
             texts.push(request.postDataJSON());
             await route.fulfill(texts.length === 1
-                ? { status: 503, headers, json: { error: 'unavailable' } }
+                ? { status: 507, headers, json: { error: 'storage_full' } }
                 : { headers, json: confirmed(texts.at(-1), 2) });
         } else return false;
         return true;
