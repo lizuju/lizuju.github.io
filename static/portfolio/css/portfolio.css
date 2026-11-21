@@ -322,6 +322,60 @@ main {
     font: 700 31px/1.05 var(--font-heading);
 }
 
+.awards-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 16px;
+    align-items: end;
+}
+
+.awards-heading > :not(.awards-certificates) {
+    grid-column: 1;
+}
+
+.awards-certificates {
+    display: inline-flex;
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: end;
+    align-items: center;
+    gap: 7px;
+    min-height: 36px;
+    margin-bottom: 10px;
+    padding: 4px 12px 4px 9px;
+    border: 2px outset #fff;
+    background: var(--window-gray);
+    color: var(--ink);
+    font: 12px/1.4 var(--font-system);
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.awards-certificates:active {
+    border-style: inset;
+}
+
+.awards-certificates-icon {
+    position: relative;
+    width: 16px;
+    height: 12px;
+    margin-top: 2px;
+    border: 1px solid #a77200;
+    background: #efc94b;
+}
+
+.awards-certificates-icon::before {
+    position: absolute;
+    top: -4px;
+    left: -1px;
+    width: 7px;
+    height: 3px;
+    content: "";
+    border: 1px solid #a77200;
+    border-bottom: 0;
+    background: #f5da6b;
+}
+
 .method-layout {
     display: grid;
     grid-template-columns: minmax(230px, 0.7fr) minmax(0, 1.3fr);

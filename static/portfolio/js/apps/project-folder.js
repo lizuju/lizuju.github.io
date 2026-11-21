@@ -759,6 +759,16 @@ import { ProjectImageCache } from './project-image-cache.js';
         document.querySelectorAll('[data-open-project-folder]').forEach((button) => {
             button.addEventListener('click', openProjectFolder);
         });
+        // The honors section links to the certificates page; a plain click opens the same folder
+        // in this desktop instead, and a modified click still opens the page in a new tab.
+        document.querySelectorAll('[data-open-honors-window]').forEach((link) => {
+            link.addEventListener('click', (event) => {
+                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                setProjectFolderView('honors');
+                folderEntry.show();
+            });
+        });
         folderSearch.addEventListener('input', () => {
             pendingFolderScrollTop = undefined;
             filterFolder();

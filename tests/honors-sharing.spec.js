@@ -169,3 +169,20 @@ test('desktop honors reuse categories and share the standalone link', async ({ p
     await expect(page.locator('[data-image-share-url]')).toHaveValue(/\/honors\/\?certificate=certificate-22$/);
     await expect(page).toHaveURL(/\/portfolio\/$/);
 });
+
+test('the honors section opens the certificates folder, and its link still leads to the certificates page', async ({ page, isMobile }) => {
+    await page.goto(isMobile ? '/portfolio/?view=mobile-homepage' : '/portfolio/');
+    const link = page.locator('#awards [data-open-honors-window]');
+    await expect(link).toHaveText('查看奖状');
+    await expect(link).toHaveAttribute('href', '/honors/');
+    await link.click();
+    await expect(page.locator('[data-project-folder-window]')).toBeVisible();
+    await expect(page.locator('[data-honors-folder-view]')).toBeVisible();
+    await expect(page.locator('[data-honors-category]')).toBeVisible();
+    await expect(page.locator('[data-honor-image]')).toHaveCount(35);
+    await expect(page.locator('[data-project-folder-window]')).toContainText('荣誉奖状 - 资源管理器');
+    await expect(page).toHaveURL(/\/portfolio\/(\?view=mobile-homepage)?$/);
+    // The open window covers the page's language button, so switch language from the page itself.
+    await page.evaluate(() => document.querySelector('[data-lang-toggle]').click());
+    await expect(link).toHaveText('View certificates');
+});
