@@ -98,6 +98,7 @@
             detailsDrawer.className = 'project-details';
             detailsDrawer.open = Boolean(openDetails[index]);
             const summary = document.createElement('summary');
+            summary.className = 'retro-button';
             summary.textContent = copy.projectDetailLabel;
             const details = document.createElement('ul');
             details.className = 'detail-list';
