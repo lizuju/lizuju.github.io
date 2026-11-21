@@ -543,3 +543,20 @@ test('shows a retro file-not-found page for missing paths', async ({ page, isMob
     expect(page.browserErrors.filter((error) => error === expectedNotFound)).toHaveLength(1);
     page.browserErrors.splice(page.browserErrors.indexOf(expectedNotFound), 1);
 });
+
+test('the detail toggles and the certificates link share one push-button style with a pointer cursor', async ({ page, isMobile }) => {
+    await page.goto(isMobile ? '/portfolio/?view=mobile-homepage' : '/portfolio/');
+    const buttons = ['.detail-drawer summary', '.project-details summary', '#awards [data-open-honors-window]'];
+    const looks = await page.evaluate((selectors) => selectors.map((selector) => {
+        const element = document.querySelector(selector);
+        const style = getComputedStyle(element);
+        return {
+            shared: element.classList.contains('retro-button'),
+            look: [style.cursor, style.color, style.backgroundColor, style.borderTopStyle, style.font, style.padding,
+                Math.round(element.getBoundingClientRect().height)].join(' | ')
+        };
+    }), buttons);
+    expect(looks.every(({ shared }) => shared)).toBe(true);
+    expect(new Set(looks.map(({ look }) => look)).size).toBe(1);
+    expect(looks[0].look).toMatch(/^pointer \| /);
+});

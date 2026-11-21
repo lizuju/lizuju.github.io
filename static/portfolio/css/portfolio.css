@@ -334,37 +334,70 @@ main {
 }
 
 .awards-certificates {
-    display: inline-flex;
     grid-column: 2;
     grid-row: 1 / span 2;
     align-self: end;
-    align-items: center;
-    gap: 7px;
-    min-height: 36px;
     margin-bottom: 10px;
-    padding: 4px 12px 4px 9px;
-    border: 2px outset #fff;
-    background: var(--window-gray);
-    color: var(--ink);
-    font: 12px/1.4 var(--font-system);
-    text-decoration: none;
-    white-space: nowrap;
 }
 
-.awards-certificates:active {
+/* The page's raised push button, shared by links, buttons and <details> toggles. */
+.retro-button {
+    display: inline-block;
+    min-height: 30px;
+    padding: 5px 12px 5px 10px;
+    border: 2px outset #fff;
+    color: #111;
+    background: var(--window-gray);
+    font: 700 12px/1.4 var(--font-system);
+    text-decoration: none;
+    white-space: nowrap;
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+}
+
+.retro-button:link,
+.retro-button:visited {
+    color: #111;
+    text-decoration: none;
+    filter: none;
+}
+
+.retro-button:active,
+details[open] > .retro-button {
     border-style: inset;
 }
 
-.awards-certificates-icon {
-    position: relative;
-    width: 16px;
-    height: 12px;
-    margin-top: 2px;
-    border: 1px solid #a77200;
-    background: #efc94b;
+.retro-button::-webkit-details-marker {
+    display: none;
 }
 
-.awards-certificates-icon::before {
+/* Each button leads with a 16px mark: an icon, or + / - on a toggle. */
+.retro-button-icon,
+details > .retro-button::before {
+    display: inline-block;
+    width: 16px;
+    margin-right: 6px;
+    text-align: center;
+}
+
+details > .retro-button::before {
+    content: "+";
+}
+
+details[open] > .retro-button::before {
+    content: "-";
+}
+
+.retro-button-icon--folder {
+    position: relative;
+    height: 12px;
+    border: 1px solid #a77200;
+    background: #efc94b;
+    vertical-align: -1px;
+}
+
+.retro-button-icon--folder::before {
     position: absolute;
     top: -4px;
     left: -1px;
@@ -496,40 +529,6 @@ main {
 .detail-drawer,
 .project-details {
     margin-top: 14px;
-}
-
-.detail-drawer summary,
-.project-details summary {
-    display: inline-block;
-    min-height: 27px;
-    padding: 4px 10px;
-    border: 2px outset #fff;
-    color: #111;
-    background: #c0c0c0;
-    font: 700 12px/1.3 var(--font-system);
-    list-style: none;
-    cursor: default;
-}
-
-.detail-drawer summary::-webkit-details-marker,
-.project-details summary::-webkit-details-marker {
-    display: none;
-}
-
-.detail-drawer summary::before,
-.project-details summary::before {
-    margin-right: 6px;
-    content: "+";
-}
-
-.detail-drawer[open] summary,
-.project-details[open] summary {
-    border-style: inset;
-}
-
-.detail-drawer[open] summary::before,
-.project-details[open] summary::before {
-    content: "-";
 }
 
 .feature-list,
