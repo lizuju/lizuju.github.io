@@ -532,11 +532,12 @@ test('shows a retro file-not-found page for missing paths', async ({ page, isMob
     await expect(previewPage.locator('[data-missing-path]')).toHaveText('C:\\GAVIN\\404');
     await previewPage.close();
 
-    const portfolioLink = page.getByRole('link', { name: /Portfolio/ });
-    await expect(portfolioLink).toHaveAttribute('href', '/portfolio/');
-    await portfolioLink.click();
-    await expect(page).toHaveURL(/\/portfolio\/$/);
-    await expect(page.locator('[data-app-window]')).toBeVisible();
+    // One way on: the immersive home. The direct portfolio link is gone.
+    const actions = page.locator('.actions a');
+    await expect(actions).toHaveCount(1);
+    await expect(actions).toHaveText('沉浸式主页 / Home');
+    await expect(actions).toHaveAttribute('href', '/');
+    await expect(page.getByRole('link', { name: /Portfolio/ })).toHaveCount(0);
 
     const expectedNotFound = 'console: Failed to load resource: the server responded with a status of 404 (Not Found)';
     expect(page.browserErrors.filter((error) => error === expectedNotFound)).toHaveLength(1);
