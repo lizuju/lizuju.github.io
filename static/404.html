@@ -59,6 +59,11 @@
             font-weight: 700;
         }
 
+        .titlebar h1 {
+            margin: 0;
+            font: inherit;
+        }
+
         .titlebar a {
             display: grid;
             width: 22px;
@@ -165,9 +170,9 @@
 </head>
 
 <body>
-    <main class="dialog" role="alertdialog" aria-labelledby="error-title" aria-describedby="error-message">
+    <main class="dialog" aria-labelledby="error-title" aria-describedby="error-message">
         <div class="titlebar">
-            <span id="error-title">C:\GAVIN - 找不到文件 / File Not Found</span>
+            <h1 id="error-title">C:\GAVIN - 找不到文件 / File Not Found</h1>
             <a href="/" aria-label="关闭并返回首页 / Close and go home" title="Close">×</a>
         </div>
         <div class="body">

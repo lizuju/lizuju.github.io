@@ -152,6 +152,7 @@ import { prepareEncryptedFiles } from './apps/sync-e2ee-files.js';
 
         if (directReturn && window.parent === window && !mobileHomepage) {
             directReturn.hidden = false;
+            directReturn.closest('nav').hidden = false;
             document.body.classList.add('direct-portfolio');
         }
 

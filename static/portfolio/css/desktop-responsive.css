@@ -130,3 +130,20 @@ body.direct-portfolio .direct-return-button {
         overflow-y: auto;
     }
 }
+
+/* Touch screens: window buttons get at least the 24 x 24 px target WCAG 2.2 asks for (2.5.8),
+   and the title bar grows to hold them. Mouse-driven desktops keep the classic 22 x 20. */
+@media (pointer: coarse) {
+    .window-titlebar {
+        flex-basis: 30px;
+    }
+
+    .window-controls {
+        gap: 3px;
+    }
+
+    .window-controls button {
+        width: 26px;
+        height: 24px;
+    }
+}
