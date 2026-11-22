@@ -39,11 +39,13 @@
 
 <body>
     <div class="retro-desktop" data-retro-desktop>
-        <a class="scene-link direct-return-button" href="../" data-direct-return hidden
-            aria-label="返回沉浸式场景 / Back to immersive scene"
-            title="返回沉浸式场景 / Back to immersive scene">
-            返回沉浸式场景 / Back to immersive scene
-        </a>
+        <nav class="scene-return" aria-label="沉浸式场景 / Immersive scene" hidden>
+            <a class="scene-link direct-return-button" href="../" data-direct-return hidden
+                aria-label="返回沉浸式场景 / Back to immersive scene"
+                title="返回沉浸式场景 / Back to immersive scene">
+                返回沉浸式场景 / Back to immersive scene
+            </a>
+        </nav>
         <nav class="desktop-shortcuts" aria-label="Desktop shortcuts">
             <button class="desktop-shortcut" type="button" data-open-window data-target="#top">
                 <span class="shortcut-icon shortcut-icon--computer" aria-hidden="true"></span>
@@ -281,7 +283,7 @@
             <button class="window-resize-handle" type="button" data-control-panel-resize data-i18n-aria="controlPanelResize" aria-label="调整控制面板窗口大小"></button>
         </section>
 
-        <section class="app-window is-active" data-app-window aria-label="Gavin portfolio window">
+        <section class="app-window is-active" data-app-window role="main" aria-label="Gavin portfolio window">
             <div class="window-titlebar" data-window-drag>
                 <div class="window-title">
                     <span class="window-app-icon" aria-hidden="true">G</span>
@@ -423,7 +425,7 @@
             <a href="#contact" data-i18n="navContact">联系</a>
         </div>
 
-        <main>
+        <div class="page-main">
             <section class="hero section" aria-labelledby="hero-title">
                 <div class="hero-copy reveal">
                     <p class="hero-name" data-i18n="heroName">李祖钜 Gavin</p>
@@ -719,7 +721,7 @@
                     <p class="contact-feedback" data-contact-feedback role="status" aria-live="polite"></p>
                 </div>
             </section>
-        </main>
+        </div>
 
                     <footer class="site-footer section">
                         <span data-i18n="footerName">李祖钜 Gavin</span>

@@ -215,7 +215,7 @@
         const windowScroll = document.querySelector('[data-window-scroll]');
         const projectCards = [...document.querySelectorAll('[data-projects] > .project-card')];
         const openDetails = projectCards.map((card) => card.querySelector('details').open);
-        const anchorSelector = '.page-shell main > section, .method-step, .project-card, .project-body > *, .project-details summary, .project-details[open] li, .skill-card';
+        const anchorSelector = '.page-shell .page-main > section, .method-step, .project-card, .project-body > *, .project-details summary, .project-details[open] li, .skill-card';
         const anchorCandidates = [...document.querySelectorAll(anchorSelector)];
         const viewportTop = windowScroll.getBoundingClientRect().top + windowScroll.clientTop
             + (windowScroll.closest('[data-app-window]').clientWidth <= 900 ? document.querySelector('.site-header').offsetHeight : 0);

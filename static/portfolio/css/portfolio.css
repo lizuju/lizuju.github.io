@@ -117,7 +117,7 @@
     display: none;
 }
 
-main {
+.page-main {
     min-width: 0;
     background: rgba(251, 250, 242, 0.96);
 }

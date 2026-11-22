@@ -51,6 +51,7 @@ function startShell(mobileMode: boolean) {
         .catch((error) => {
             console.warn('Unable to start the immersive shell', error);
             const shellError = document.getElementById('shell-error');
+            document.getElementById('boot-screen')?.remove();
             if (shellError) shellError.hidden = false;
         });
 }
