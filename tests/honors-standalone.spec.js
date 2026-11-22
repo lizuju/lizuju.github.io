@@ -135,3 +135,18 @@ test('opens honors from the desktop in a new tab without replacing or overwritin
     await expect(page.locator('[data-project-folder-search]')).toHaveValue('APMCM');
     await expect(page.locator('[data-honor-image]:visible')).toHaveCount(1);
 });
+
+test('the honors page carries a share card whose image is served', async ({ page, request, isMobile }) => {
+    test.skip(isMobile, 'static head tags only need one pass');
+    await page.goto('/honors/');
+    const meta = (selector) => page.locator(selector).getAttribute('content');
+    expect(await meta('meta[property="og:title"]')).toBe('荣誉奖状 | GAVIN OS');
+    expect(await meta('meta[property="og:url"]')).toBe('https://lizuju.github.io/honors/');
+    expect(await meta('meta[name="twitter:card"]')).toBe('summary_large_image');
+    const image = await meta('meta[property="og:image"]');
+    expect(image).toBe('https://lizuju.github.io/portfolio/assets/honors-share.jpg');
+    expect(await meta('meta[name="twitter:image"]')).toBe(image);
+    const served = await request.get(new URL(image).pathname);
+    expect(served.ok()).toBe(true);
+    expect(served.headers()['content-type']).toContain('image/jpeg');
+});
