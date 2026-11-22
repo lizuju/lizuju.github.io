@@ -373,3 +373,10 @@ test('stays inside desktop bounds and remains disabled for small screens and tou
     await expect(pet).toHaveAttribute('hidden', '');
     await expect(pet).toBeHidden();
 });
+
+test('names the robot buttons in the page language before the robot first appears', async ({ page, isMobile }) => {
+    await page.addInitScript(() => localStorage.setItem('portfolio-lang', 'en'));
+    await page.goto(isMobile ? '/portfolio/?view=mobile-homepage' : '/portfolio/');
+    await expect(page.locator('[data-pet-greet]')).toHaveAttribute('aria-label', 'Say hello to the robot');
+    await expect(page.locator('[data-pet-dismiss]')).toHaveAttribute('aria-label', 'Dismiss robot');
+});
