@@ -23,15 +23,6 @@ body.direct-portfolio .direct-return-button {
 }
 
 @media (max-width: 900px) {
-    .desktop-shortcuts {
-        top: 12px;
-        left: 8px;
-        display: grid;
-        max-height: calc(100% - 131px);
-        grid-template-rows: repeat(auto-fill, minmax(61px, auto));
-        gap: 6px 4px;
-    }
-
     .app-window,
     .app-window.is-maximized {
         top: 4px;
@@ -117,17 +108,14 @@ body.direct-portfolio .direct-return-button {
     }
 }
 
-@media (max-height: 620px) and (min-width: 901px), (max-height: 520px) {
+/* Narrow or short screens, phones in either orientation among them: icons start nearer the top
+   on a tighter row pitch, and still fill each column down to the recycle bin before wrapping into
+   the next, as on a full-size desktop. They never scroll inside a box. */
+@media (max-width: 900px), (max-height: 620px) {
     .desktop-shortcuts {
         top: 12px;
-        width: 168px;
-        max-height: calc(100% - 132px);
-        grid-auto-flow: row;
-        grid-template-columns: repeat(2, 76px);
-        grid-template-rows: none;
-        align-content: start;
-        gap: 8px 0;
-        overflow-y: auto;
+        max-height: calc(100% - 131px);
+        grid-template-rows: repeat(auto-fill, minmax(61px, auto));
     }
 }
 

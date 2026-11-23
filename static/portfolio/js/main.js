@@ -107,9 +107,12 @@ import { prepareEncryptedFiles } from './apps/sync-e2ee-files.js';
                     .map(element => element.querySelector('.window-controls').getBoundingClientRect())
                     .filter(bounds => bounds.width > 0);
                 if (!controls.length) {
-                    const shortcuts = desktop.querySelector('.desktop-shortcuts').getBoundingClientRect();
+                    // The rightmost icon, not the icon list's box: Chrome can keep that box at its
+                    // old width after a resize adds a column.
+                    const shortcutsRight = Math.max(...Array.from(desktop.querySelectorAll('.desktop-shortcuts > *'),
+                        shortcut => shortcut.getBoundingClientRect().right));
                     directReturn.style.right = '12px';
-                    directReturn.style.maxWidth = `${window.innerWidth - shortcuts.right - 20}px`;
+                    directReturn.style.maxWidth = `${window.innerWidth - shortcutsRight - 20}px`;
                 }
 
                 for (let index = 0; index < controls.length; index++) {

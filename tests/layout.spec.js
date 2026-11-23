@@ -172,3 +172,58 @@ test('keeps the Start button full size and usable when many tasks fill the taskb
         await expect(page.locator('[data-start-menu]')).toBeHidden();
     }
 });
+
+test('lays desktop icons out in columns above the bottom-left recycle bin on phones and short screens', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the viewport matrix runs once per browser engine');
+
+    const screens = [
+        { name: 'phone landscape', width: 844, height: 390, view: '?view=mobile-homepage', columns: 3 },
+        { name: 'small phone landscape', width: 568, height: 320, view: '?view=mobile-homepage', columns: 4 },
+        { name: 'phone portrait', width: 375, height: 667, view: '?view=mobile-homepage', columns: 1 },
+        { name: 'short desktop', width: 1280, height: 600, view: '', columns: 2 },
+        { name: 'desktop', width: 1366, height: 768, view: '', columns: 1 },
+    ];
+    // Every screen starts as a first visit: no minimized window or language kept from the last one.
+    await page.addInitScript(() => {
+        localStorage.clear();
+        sessionStorage.clear();
+    });
+    for (const screen of screens) {
+        await page.setViewportSize({ width: screen.width, height: screen.height });
+        await page.goto(`/portfolio/${screen.view}`);
+        await page.locator('[data-app-window] [data-window-action="minimize"]').click();
+        for (const language of ['zh', 'en']) {
+            if (language === 'en') await page.locator('[data-taskbar-lang]').click();
+            const layout = await page.evaluate(() => {
+                const list = document.querySelector('.desktop-shortcuts');
+                const icons = [...list.children].map((icon) => icon.getBoundingClientRect());
+                const bin = document.querySelector('.desktop-recycle-bin').getBoundingClientRect();
+                const taskbar = document.querySelector('.desktop-taskbar').getBoundingClientRect();
+                // Column by column: each icon sits below the one before it, or starts the next
+                // column to its right at the top.
+                const columnOrder = icons.every((icon, index) => {
+                    const previous = icons[index - 1];
+                    if (!previous) return true;
+                    if (Math.abs(icon.left - previous.left) < 1) return icon.top >= previous.bottom;
+                    return icon.left >= previous.right && Math.abs(icon.top - icons[0].top) < 1;
+                });
+                return {
+                    columns: new Set(icons.map((icon) => Math.round(icon.left))).size,
+                    columnOrder,
+                    scrolls: list.scrollHeight > list.clientHeight + 1 || /auto|scroll/.test(getComputedStyle(list).overflowY),
+                    aboveBin: icons.every((icon) => icon.bottom <= bin.top),
+                    onScreen: icons.every((icon) => icon.right <= window.innerWidth),
+                    binBottomLeft: Math.round(bin.left) === 8 && bin.bottom <= taskbar.top && taskbar.top - bin.bottom < 20,
+                };
+            });
+            expect(layout, `${screen.name} (${screen.width}x${screen.height}, ${language})`).toEqual({
+                columns: screen.columns,
+                columnOrder: true,
+                scrolls: false,
+                aboveBin: true,
+                onScreen: true,
+                binBottomLeft: true,
+            });
+        }
+    }
+});
