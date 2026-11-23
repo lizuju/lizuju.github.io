@@ -91,13 +91,14 @@
       border: 0;
     }
 
+    /* The dialog centres with auto margins, which stop at the edges, so a dialog taller than the
+       screen starts at the top and scrolls instead of losing its first lines above the screen. */
     #mobile-entry {
       display: none;
       position: fixed;
       inset: 0;
       z-index: 10;
-      align-items: center;
-      justify-content: center;
+      overflow-y: auto;
       box-sizing: border-box;
       padding: 28px;
       background: #000;
@@ -108,6 +109,7 @@
 
     .mobile-entry-dialog {
       width: min(100%, 620px);
+      margin: auto;
       box-sizing: border-box;
       border: 7px solid #fff;
       padding: clamp(26px, 8vw, 46px);
@@ -165,6 +167,47 @@
       outline: 0;
       background: #fff;
       color: #000;
+    }
+
+    /* A phone held sideways is short rather than narrow: type and spacing follow the height (the
+       small viewport, so Safari's bars are counted), and Enter sits beside the prompt. The whole
+       dialog fits on screen without scrolling. Short portrait screens keep the layout above. */
+    @media (max-height: 520px) and (orientation: landscape) {
+      #mobile-entry {
+        padding: 12px;
+        font-size: clamp(14px, 5.6vh, 22px);
+        font-size: clamp(14px, 5.6svh, 22px);
+      }
+
+      .mobile-entry-dialog {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: end;
+        column-gap: 24px;
+        width: min(100%, 720px);
+        border-width: 6px;
+        padding: clamp(14px, 7vh, 36px) clamp(20px, 4vw, 44px);
+        padding: clamp(14px, 7svh, 36px) clamp(20px, 4vw, 44px);
+      }
+
+      .mobile-entry-dialog p {
+        grid-column: 1 / -1;
+      }
+
+      .mobile-entry-warning {
+        margin-top: clamp(10px, 6vh, 30px) !important;
+        margin-top: clamp(10px, 6svh, 30px) !important;
+      }
+
+      .mobile-entry-prompt {
+        margin-top: clamp(10px, 6vh, 30px);
+        margin-top: clamp(10px, 6svh, 30px);
+      }
+
+      .mobile-entry-button {
+        margin: 0;
+        padding: 6px 14px;
+      }
     }
 
     #shell-error {

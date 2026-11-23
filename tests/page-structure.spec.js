@@ -67,3 +67,32 @@ test('the not-found page has a main landmark and a level-one heading', async ({ 
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('C:\\GAVIN - 找不到文件 / File Not Found');
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
 });
+
+test('the phone intro dialog fits a phone held either way and scrolls from its top on tiny screens', async ({ page, isMobile }) => {
+    test.skip(!isMobile, 'the intro dialog is the phone shell');
+    const screens = [
+        { width: 932, height: 320, fits: true },  // Pro Max held sideways, Safari bars showing
+        { width: 844, height: 390, fits: true },
+        { width: 568, height: 250, fits: true },
+        { width: 390, height: 664, fits: true },
+        { width: 600, height: 160, fits: false },
+    ];
+    for (const screen of screens) {
+        await page.setViewportSize({ width: screen.width, height: screen.height });
+        await page.goto('/');
+        await expect(page.locator('#mobile-entry')).toBeVisible();
+        const layout = await page.locator('#mobile-entry').evaluate((entry) => {
+            const dialog = entry.querySelector('.mobile-entry-dialog').getBoundingClientRect();
+            return {
+                inside: dialog.top >= 0 && dialog.left >= 0 && dialog.right <= innerWidth && dialog.bottom <= innerHeight,
+                startsOnScreen: dialog.top >= 0,
+                scrolls: entry.scrollHeight > entry.clientHeight,
+            };
+        });
+        expect(layout, `${screen.width}x${screen.height}`).toEqual({ inside: screen.fits, startsOnScreen: true, scrolls: !screen.fits });
+    }
+    await page.setViewportSize({ width: 932, height: 320 });
+    await page.goto('/');
+    await page.locator('[data-mobile-enter]').click();
+    await expect(page.locator('#mobile-site')).toBeVisible();
+});
